@@ -1,0 +1,36 @@
+# 敏感資料 - 絕對不要複製進 Docker image
+.env
+*.env
+
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 本地資料
+data/
+logs/
+*.log
+
+# 文件（減少 image 大小）
+*.md
+LICENSE
+
+# macOS
+.DS_Store
+
+# 暫存
+*.tmp
+*.bak
