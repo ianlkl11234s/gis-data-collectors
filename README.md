@@ -33,6 +33,10 @@ data-collectors/
 │   ├── auth.py            # API 認證（TDX、CWA）
 │   └── notify.py          # 通知（Webhook、LINE）
 │
+├── api/                    # HTTP API（下載資料）
+│   ├── __init__.py
+│   └── server.py          # Flask API Server
+│
 └── data/                   # 本地資料（開發用）
     └── .gitkeep
 ```
@@ -66,8 +70,10 @@ python main.py
 |------|------|------|
 | `TDX_APP_ID` | ✅ | TDX API Client ID |
 | `TDX_APP_KEY` | ✅ | TDX API Client Secret |
+| `API_KEY` | | HTTP API 認證金鑰（建議設定） |
+| `API_PORT` | | HTTP API 端口（預設 8080） |
 | `CWA_API_KEY` | | 氣象局 API Key |
-| `S3_BUCKET` | | S3 儲存桶（建議設定） |
+| `S3_BUCKET` | | S3 儲存桶 |
 | `S3_ACCESS_KEY` | | AWS Access Key |
 | `S3_SECRET_KEY` | | AWS Secret Key |
 | `WEBHOOK_URL` | | 通知 Webhook |
@@ -108,6 +114,77 @@ s3://your-bucket/
 │   └── ...
 └── logs/
     └── ...
+```
+
+## HTTP API（下載資料）
+
+設定 `API_KEY` 環境變數後，會自動啟動 HTTP API Server，可透過 API 下載收集的資料。
+
+### 認證方式
+
+使用 API Key 認證，支援兩種方式：
+
+```bash
+# 方式 1: Header（推薦）
+curl -H "X-API-Key: your_api_key" https://your-app.zeabur.app/api/...
+
+# 方式 2: Query Parameter
+curl "https://your-app.zeabur.app/api/...?api_key=your_api_key"
+```
+
+### 產生 API Key
+
+```bash
+# 使用 OpenSSL 產生隨機金鑰
+openssl rand -hex 32
+```
+
+### API 端點
+
+| 端點 | 認證 | 說明 |
+|------|------|------|
+| `GET /` | 不需要 | 服務資訊 |
+| `GET /health` | 不需要 | 健康檢查 |
+| `GET /api/collectors` | 需要 | 列出所有收集器 |
+| `GET /api/data/<collector>` | 需要 | 列出某收集器的所有檔案 |
+| `GET /api/data/<collector>/latest` | 需要 | 取得最新資料 |
+| `GET /api/data/<collector>/<date>` | 需要 | 取得特定日期資料（YYYY-MM-DD） |
+| `GET /api/download/<collector>/<filename>` | 需要 | 下載特定檔案 |
+
+### 使用範例
+
+```bash
+# 列出所有收集器
+curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/collectors
+
+# 取得 YouBike 最新資料
+curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/youbike/latest
+
+# 列出 YouBike 所有檔案
+curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/youbike
+
+# 取得特定日期的資料
+curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/youbike/2024-12-15
+
+# 下載特定檔案
+curl -H "X-API-Key: your_key" -O https://your-app.zeabur.app/api/download/youbike/availability_2024-12-15_1430.json
+```
+
+### 回應格式
+
+所有 API 回應皆為 JSON 格式：
+
+```json
+// GET /api/data/youbike/latest
+{
+  "filename": "availability_2024-12-15_1430.json",
+  "data": {
+    "collected_at": "2024-12-15T14:30:00+08:00",
+    "cities": ["Taipei", "NewTaipei", "Taoyuan"],
+    "total_stations": 3837,
+    "stations": [...]
+  }
+}
 ```
 
 ## 監控
