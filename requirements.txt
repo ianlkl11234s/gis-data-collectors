@@ -3,6 +3,9 @@ requests>=2.28.0
 schedule>=1.2.0
 python-dotenv>=1.0.0
 
+# HTTP API
+flask>=3.0.0
+
 # S3 儲存（選填）
 boto3>=1.28.0
 

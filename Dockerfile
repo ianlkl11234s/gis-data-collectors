@@ -22,9 +22,12 @@ RUN mkdir -p /data
 ENV ZEABUR=true
 ENV PYTHONUNBUFFERED=1
 
-# 健康檢查
+# 開放 API 端口（預設 8080）
+EXPOSE 8080
+
+# 健康檢查（改用 HTTP API）
 HEALTHCHECK --interval=5m --timeout=10s --start-period=30s \
-    CMD python -c "import config; config.validate_config()" || exit 1
+    CMD curl -f http://localhost:8080/health || python -c "import config; config.validate_config()" || exit 1
 
 # 執行
 CMD ["python", "main.py"]

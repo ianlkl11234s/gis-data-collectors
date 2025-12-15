@@ -58,6 +58,13 @@ else:
     LOCAL_DATA_DIR = Path(__file__).parent / 'data'
 
 # ============================================================
+# API 設定
+# ============================================================
+
+API_KEY = os.getenv('API_KEY')  # 用於 HTTP API 認證
+API_PORT = int(os.getenv('API_PORT', '8080'))
+
+# ============================================================
 # 通知設定
 # ============================================================
 
@@ -116,6 +123,7 @@ def print_config():
     print(f"   TDX: {'✓' if TDX_APP_ID else '✗'}")
     print(f"   CWA: {'✓' if CWA_API_KEY else '✗'}")
     print(f"   S3:  {'✓ ' + S3_BUCKET if S3_BUCKET else '✗ (使用本地儲存)'}")
+    print(f"   API: {'✓ Port ' + str(API_PORT) if API_KEY else '✗ (未設定 API_KEY)'}")
     print(f"   通知: {'✓' if WEBHOOK_URL or LINE_TOKEN else '✗'}")
     print(f"   資料目錄: {LOCAL_DATA_DIR}")
     print("=" * 50)

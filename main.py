@@ -2,12 +2,13 @@
 """
 Data Collectors 主程式
 
-統一管理所有資料收集器的排程執行。
+統一管理所有資料收集器的排程執行，並提供 HTTP API 下載資料。
 """
 
 import signal
 import sys
 import time
+import threading
 from datetime import datetime
 
 import schedule
@@ -16,18 +17,8 @@ import config
 from collectors import YouBikeCollector
 
 
-def main():
-    """主程式"""
-    print("=" * 60)
-    print("📡 Data Collectors")
-    print("=" * 60)
-
-    # 驗證設定
-    if not config.validate_config():
-        sys.exit(1)
-
-    config.print_config()
-
+def run_collectors():
+    """執行收集器排程"""
     # 初始化收集器
     collectors = []
 
@@ -45,18 +36,7 @@ def main():
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")
-        sys.exit(1)
-
-    # 設定 graceful shutdown
-    running = True
-
-    def signal_handler(signum, frame):
-        nonlocal running
-        print(f"\n\n🛑 收到停止信號，正在結束...")
-        running = False
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+        return []
 
     # 立即執行一次所有收集器
     print("\n" + "=" * 60)
@@ -75,6 +55,83 @@ def main():
     if next_run:
         print(f"\n⏰ 下次執行: {next_run.strftime('%H:%M:%S')}")
 
+    return collectors
+
+
+def run_api_server_thread():
+    """在背景執行 API Server"""
+    if not config.API_KEY:
+        print("\n⚠️  API_KEY 未設定，API Server 不會啟動")
+        print("   設定 API_KEY 環境變數以啟用 HTTP API")
+        return None
+
+    from api import run_api_server
+
+    # 在背景執行 Flask
+    def start_server():
+        # 使用 werkzeug 內建 server，關閉 reloader 以避免多執行緒問題
+        from api.server import create_app
+        app = create_app()
+
+        # 關閉 Flask 的輸出
+        import logging
+        log = logging.getLogger('werkzeug')
+        log.setLevel(logging.WARNING)
+
+        print(f"\n{'=' * 60}")
+        print(f"🌐 API Server 已啟動")
+        print(f"{'=' * 60}")
+        print(f"   URL: http://0.0.0.0:{config.API_PORT}")
+        print(f"   認證: X-API-Key header 或 api_key 參數")
+        print(f"{'=' * 60}")
+
+        app.run(
+            host='0.0.0.0',
+            port=config.API_PORT,
+            threaded=True,
+            use_reloader=False
+        )
+
+    thread = threading.Thread(target=start_server, daemon=True)
+    thread.start()
+    return thread
+
+
+def main():
+    """主程式"""
+    print("=" * 60)
+    print("📡 Data Collectors")
+    print("=" * 60)
+
+    # 驗證設定
+    if not config.validate_config():
+        sys.exit(1)
+
+    config.print_config()
+
+    # 啟動 API Server（背景執行緒）
+    api_thread = run_api_server_thread()
+
+    # 啟動收集器
+    collectors = run_collectors()
+
+    if not collectors:
+        # 如果沒有收集器但有 API，繼續執行
+        if not api_thread:
+            sys.exit(1)
+        print("\n⚠️  沒有收集器，僅執行 API Server")
+
+    # 設定 graceful shutdown
+    running = True
+
+    def signal_handler(signum, frame):
+        nonlocal running
+        print(f"\n\n🛑 收到停止信號，正在結束...")
+        running = False
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     print("\n" + "=" * 60)
     print("📡 等待排程執行... (按 Ctrl+C 停止)")
     print("=" * 60)
@@ -85,12 +142,13 @@ def main():
         time.sleep(1)
 
     # 結束
-    print("\n📊 執行統計:")
-    for collector in collectors:
-        status = collector.get_status()
-        print(f"   [{status['name']}] "
-              f"執行 {status['run_count']} 次 | "
-              f"錯誤 {status['error_count']} 次")
+    if collectors:
+        print("\n📊 執行統計:")
+        for collector in collectors:
+            status = collector.get_status()
+            print(f"   [{status['name']}] "
+                  f"執行 {status['run_count']} 次 | "
+                  f"錯誤 {status['error_count']} 次")
 
     print("\n👋 已停止")
 
