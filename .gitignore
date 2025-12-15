@@ -1,0 +1,35 @@
+# 環境變數
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+
+# 虛擬環境
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 資料
+data/
+!data/.gitkeep
+
+# 日誌
+logs/
+*.log
+
+# macOS
+.DS_Store
+
+# 暫存
+*.tmp
+*.bak

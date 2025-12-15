@@ -1,0 +1,11 @@
+# 核心依賴
+requests>=2.28.0
+schedule>=1.2.0
+python-dotenv>=1.0.0
+
+# S3 儲存（選填）
+boto3>=1.28.0
+
+# 未來擴充
+# pandas>=2.0.0
+# aiohttp>=3.8.0
