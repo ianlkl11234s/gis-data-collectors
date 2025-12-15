@@ -49,8 +49,11 @@ S3_REGION = os.getenv('S3_REGION', 'ap-northeast-1')
 S3_ENDPOINT = os.getenv('S3_ENDPOINT')  # 用於 MinIO 等相容服務
 
 # 本地儲存路徑
-if IS_PRODUCTION:
-    LOCAL_DATA_DIR = Path('/tmp/data')
+# Zeabur Volume 掛載在 /data，優先使用環境變數 DATA_DIR
+if os.getenv('DATA_DIR'):
+    LOCAL_DATA_DIR = Path(os.getenv('DATA_DIR'))
+elif IS_PRODUCTION:
+    LOCAL_DATA_DIR = Path('/data')  # Zeabur Volume 掛載點
 else:
     LOCAL_DATA_DIR = Path(__file__).parent / 'data'
 
