@@ -61,7 +61,7 @@ def create_app():
                 '/api/data/<collector>': 'List data files for collector',
                 '/api/data/<collector>/latest': 'Get latest data',
                 '/api/data/<collector>/<date>': 'Get data by date (YYYY-MM-DD)',
-                '/api/download/<collector>/<filename>': 'Download specific file'
+                '/api/download/<collector>/<path>': 'Download file (e.g., 2025/12/16/weather_1443.json)'
             },
             'auth': 'Use X-API-Key header or api_key query parameter'
         })
@@ -86,10 +86,12 @@ def create_app():
         if data_dir.exists():
             for item in data_dir.iterdir():
                 if item.is_dir():
-                    file_count = len(list(item.glob('*.json')))
+                    # 使用遞迴 glob 搜尋所有 JSON 檔案（排除 latest.json）
+                    all_files = [f for f in item.glob('**/*.json') if f.name != 'latest.json']
                     collectors.append({
                         'name': item.name,
-                        'file_count': file_count
+                        'file_count': len(all_files),
+                        'has_latest': (item / 'latest.json').exists()
                     })
 
         return jsonify({
@@ -109,11 +111,17 @@ def create_app():
                 'message': f'Collector "{collector}" not found'
             }), 404
 
+        # 使用遞迴 glob 搜尋所有 JSON 檔案（排除 latest.json）
         files = []
-        for f in sorted(collector_dir.glob('*.json'), reverse=True):
+        for f in sorted(collector_dir.glob('**/*.json'), key=lambda x: x.stat().st_mtime, reverse=True):
+            if f.name == 'latest.json':
+                continue
             stat = f.stat()
+            # 計算相對路徑以顯示日期結構
+            rel_path = f.relative_to(collector_dir)
             files.append({
                 'filename': f.name,
+                'path': str(rel_path),
                 'size': stat.st_size,
                 'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
             })
@@ -136,15 +144,21 @@ def create_app():
                 'message': f'Collector "{collector}" not found'
             }), 404
 
-        # 找最新的檔案
-        files = sorted(collector_dir.glob('*.json'), reverse=True)
-        if not files:
-            return jsonify({
-                'error': 'No data',
-                'message': f'No data files found for "{collector}"'
-            }), 404
-
-        latest_file = files[0]
+        # 優先使用 latest.json
+        latest_file = collector_dir / 'latest.json'
+        if not latest_file.exists():
+            # 回退到搜尋最新檔案
+            files = sorted(
+                [f for f in collector_dir.glob('**/*.json') if f.name != 'latest.json'],
+                key=lambda x: x.stat().st_mtime,
+                reverse=True
+            )
+            if not files:
+                return jsonify({
+                    'error': 'No data',
+                    'message': f'No data files found for "{collector}"'
+                }), 404
+            latest_file = files[0]
 
         # 根據 Accept header 或 format 參數決定回傳格式
         if request.args.get('format') == 'file':
@@ -161,6 +175,7 @@ def create_app():
 
         return jsonify({
             'filename': latest_file.name,
+            'modified': datetime.fromtimestamp(latest_file.stat().st_mtime).isoformat(),
             'data': data
         })
 
@@ -178,16 +193,21 @@ def create_app():
 
         # 驗證日期格式
         try:
-            datetime.strptime(date, '%Y-%m-%d')
+            parsed_date = datetime.strptime(date, '%Y-%m-%d')
         except ValueError:
             return jsonify({
                 'error': 'Invalid date',
                 'message': 'Date format should be YYYY-MM-DD'
             }), 400
 
-        # 找該日期的檔案
-        pattern = f'*{date}*.json'
-        files = list(collector_dir.glob(pattern))
+        # 根據目錄結構搜尋 (YYYY/MM/DD)
+        date_dir = collector_dir / parsed_date.strftime('%Y/%m/%d')
+
+        if date_dir.exists():
+            files = list(date_dir.glob('*.json'))
+        else:
+            # 回退到搜尋所有檔案中包含日期的
+            files = []
 
         if not files:
             return jsonify({
@@ -197,10 +217,13 @@ def create_app():
 
         # 回傳檔案列表
         result = []
-        for f in sorted(files, reverse=True):
+        for f in sorted(files, key=lambda x: x.stat().st_mtime, reverse=True):
+            rel_path = f.relative_to(collector_dir)
             result.append({
                 'filename': f.name,
-                'size': f.stat().st_size
+                'path': str(rel_path),
+                'size': f.stat().st_size,
+                'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
             })
 
         return jsonify({
@@ -210,30 +233,30 @@ def create_app():
             'total': len(result)
         })
 
-    @app.route('/api/download/<collector>/<filename>')
+    @app.route('/api/download/<collector>/<path:filepath>')
     @require_api_key
-    def download_file(collector, filename):
-        """下載特定檔案"""
+    def download_file(collector, filepath):
+        """下載特定檔案（支援巢狀路徑如 2025/12/16/weather_1443.json）"""
         # 防止路徑遍歷攻擊
-        if '..' in filename or filename.startswith('/'):
+        if '..' in filepath:
             return jsonify({
-                'error': 'Invalid filename',
-                'message': 'Invalid filename'
+                'error': 'Invalid path',
+                'message': 'Invalid file path'
             }), 400
 
-        file_path = config.LOCAL_DATA_DIR / collector / filename
+        file_path = config.LOCAL_DATA_DIR / collector / filepath
 
         if not file_path.exists():
             return jsonify({
                 'error': 'Not found',
-                'message': f'File not found: {filename}'
+                'message': f'File not found: {filepath}'
             }), 404
 
         return send_file(
             file_path,
             mimetype='application/json',
             as_attachment=True,
-            download_name=filename
+            download_name=file_path.name
         )
 
     return app
