@@ -10,12 +10,13 @@ import config
 
 
 class TDXAuth:
-    """TDX API 認證管理器"""
+    """TDX API 認證管理器（使用 Session 重用連線）"""
 
-    def __init__(self):
+    def __init__(self, session: requests.Session = None):
         if not config.TDX_APP_ID or not config.TDX_APP_KEY:
             raise ValueError("TDX_APP_ID 和 TDX_APP_KEY 未設定")
 
+        self._session = session or requests.Session()
         self._access_token = None
         self._token_expiry = 0
 
@@ -24,7 +25,7 @@ class TDXAuth:
         if self._access_token and time.time() < self._token_expiry - 300:
             return self._access_token
 
-        response = requests.post(
+        response = self._session.post(
             config.TDX_AUTH_URL,
             headers={'content-type': 'application/x-www-form-urlencoded'},
             data={

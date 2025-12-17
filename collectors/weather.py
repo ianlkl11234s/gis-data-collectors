@@ -14,7 +14,7 @@ from .base import BaseCollector
 
 
 class WeatherCollector(BaseCollector):
-    """氣象觀測資料收集器"""
+    """氣象觀測資料收集器（使用 Session 重用連線）"""
 
     name = "weather"
     interval_minutes = config.WEATHER_INTERVAL
@@ -32,6 +32,8 @@ class WeatherCollector(BaseCollector):
         super().__init__()
         self.stations = stations or config.WEATHER_STATIONS
         self.api_key = config.CWA_API_KEY
+        # 建立共用 Session，重用 TCP 連線以節省記憶體
+        self._session = requests.Session()
 
         if not self.api_key:
             raise ValueError("CWA_API_KEY 未設定")
@@ -49,7 +51,7 @@ class WeatherCollector(BaseCollector):
         if self.stations:
             params['StationId'] = ','.join(self.stations)
 
-        response = requests.get(
+        response = self._session.get(
             url,
             params=params,
             timeout=config.REQUEST_TIMEOUT

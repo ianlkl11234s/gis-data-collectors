@@ -28,7 +28,7 @@ CITY_NAMES = {
 
 
 class YouBikeCollector(BaseCollector):
-    """YouBike 即時車位資料收集器"""
+    """YouBike 即時車位資料收集器（使用 Session 重用連線）"""
 
     name = "youbike"
     interval_minutes = config.YOUBIKE_INTERVAL
@@ -36,14 +36,16 @@ class YouBikeCollector(BaseCollector):
     def __init__(self, cities: list = None):
         super().__init__()
         self.cities = cities or config.YOUBIKE_CITIES
-        self.auth = TDXAuth()
+        # 建立共用 Session，重用 TCP 連線以節省記憶體
+        self._session = requests.Session()
+        self.auth = TDXAuth(session=self._session)
 
     def _fetch_city(self, city: str) -> list:
         """取得單一城市的即時資料"""
         url = f"{config.TDX_API_BASE}/v2/Bike/Availability/City/{city}"
         headers = self.auth.get_auth_header()
 
-        response = requests.get(
+        response = self._session.get(
             url,
             headers=headers,
             params={'$format': 'JSON'},
