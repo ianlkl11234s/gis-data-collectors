@@ -4,13 +4,14 @@ API Server
 提供 HTTP API 下載收集的資料，使用 API Key 認證。
 """
 
+import gc
 import os
 import json
 from pathlib import Path
 from functools import wraps
 from datetime import datetime
 
-from flask import Flask, jsonify, request, send_file, abort
+from flask import Flask, jsonify, request, send_file, abort, Response
 
 import config
 
@@ -173,11 +174,17 @@ def create_app():
         with open(latest_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
-        return jsonify({
+        response = jsonify({
             'filename': latest_file.name,
             'modified': datetime.fromtimestamp(latest_file.stat().st_mtime).isoformat(),
             'data': data
         })
+
+        # 清理載入的資料並觸發 GC
+        del data
+        gc.collect()
+
+        return response
 
     @app.route('/api/data/<collector>/<date>')
     @require_api_key
@@ -236,7 +243,7 @@ def create_app():
     @app.route('/api/download/<collector>/<path:filepath>')
     @require_api_key
     def download_file(collector, filepath):
-        """下載特定檔案（支援巢狀路徑如 2025/12/16/weather_1443.json）"""
+        """下載特定檔案（支援巢狀路徑如 2025/12/16/weather_1443.json）- 使用串流回應"""
         # 防止路徑遍歷攻擊
         if '..' in filepath:
             return jsonify({
@@ -252,11 +259,22 @@ def create_app():
                 'message': f'File not found: {filepath}'
             }), 404
 
-        return send_file(
-            file_path,
+        def generate():
+            """串流讀取檔案，避免一次載入整個檔案到記憶體"""
+            try:
+                with open(file_path, 'rb') as f:
+                    while chunk := f.read(8192):  # 每次讀取 8KB
+                        yield chunk
+            finally:
+                gc.collect()  # 串流結束後觸發 GC
+
+        return Response(
+            generate(),
             mimetype='application/json',
-            as_attachment=True,
-            download_name=file_path.name
+            headers={
+                'Content-Disposition': f'attachment; filename={file_path.name}',
+                'Content-Length': str(file_path.stat().st_size)
+            }
         )
 
     return app
