@@ -4,6 +4,7 @@
 所有收集器都應繼承此類別。
 """
 
+import gc
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
@@ -74,6 +75,10 @@ class BaseCollector(ABC):
                 'error': error_msg,
                 'error_count': self.error_count
             }
+
+        finally:
+            # 每次收集後觸發 GC，避免記憶體累積
+            gc.collect()
 
     def get_status(self) -> dict:
         """取得收集器狀態"""
