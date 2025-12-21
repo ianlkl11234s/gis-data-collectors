@@ -263,7 +263,10 @@ def create_app():
             """串流讀取檔案，避免一次載入整個檔案到記憶體"""
             try:
                 with open(file_path, 'rb') as f:
-                    while chunk := f.read(8192):  # 每次讀取 8KB
+                    while True:
+                        chunk = f.read(8192)  # 每次讀取 8KB
+                        if not chunk:
+                            break
                         yield chunk
             finally:
                 gc.collect()  # 串流結束後觸發 GC
