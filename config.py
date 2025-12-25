@@ -84,6 +84,10 @@ YOUBIKE_INTERVAL = int(os.getenv('YOUBIKE_INTERVAL', '15'))
 WEATHER_INTERVAL = int(os.getenv('WEATHER_INTERVAL', '60'))
 WEATHER_STATIONS = os.getenv('WEATHER_STATIONS', '').split(',') if os.getenv('WEATHER_STATIONS') else []
 
+# VD 車輛偵測器
+VD_CITIES = os.getenv('VD_CITIES', 'Taipei,NewTaipei').split(',')
+VD_INTERVAL = int(os.getenv('VD_INTERVAL', '5'))
+
 # ============================================================
 # 全域設定
 # ============================================================

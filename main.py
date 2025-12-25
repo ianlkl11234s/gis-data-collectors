@@ -14,7 +14,7 @@ from datetime import datetime
 import schedule
 
 import config
-from collectors import YouBikeCollector, WeatherCollector
+from collectors import YouBikeCollector, WeatherCollector, VDCollector
 
 
 def run_collectors():
@@ -40,6 +40,14 @@ def run_collectors():
             print(f"✗ Weather 收集器初始化失敗: {e}")
     else:
         print("⚠️  CWA_API_KEY 未設定，跳過 Weather 收集器")
+
+    # VD 車輛偵測器收集器
+    try:
+        vd = VDCollector()
+        collectors.append(vd)
+        print(f"✓ VD 收集器 (每 {vd.interval_minutes} 分鐘)")
+    except Exception as e:
+        print(f"✗ VD 收集器初始化失敗: {e}")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")
