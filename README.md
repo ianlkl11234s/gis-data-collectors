@@ -9,7 +9,8 @@ data-collectors/
 ├── README.md
 ├── docs/                   # 詳細文件
 │   ├── API.md             # API 詳細文件
-│   └── ARCHITECTURE.md    # 架構與歸檔流程
+│   ├── ARCHITECTURE.md    # 架構與歸檔流程
+│   └── S3_SETUP.md        # S3 設定指南
 ├── requirements.txt
 ├── Dockerfile
 ├── zeabur.json
@@ -198,6 +199,8 @@ s3://bucket/               # S3 (永久歸檔)
 3. 清理空目錄
 
 詳細架構說明請參閱 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+
+首次設定 S3 請參閱 [docs/S3_SETUP.md](./docs/S3_SETUP.md)
 
 ## HTTP API
 

@@ -297,3 +297,9 @@ S3 存取只需要以下權限：
 - 30 天後轉移到 S3 Infrequent Access（成本降低 40%）
 - 90 天後轉移到 S3 Glacier（成本降低 80%）
 - 根據需求設定過期刪除
+
+## 相關文件
+
+- [S3_SETUP.md](./S3_SETUP.md) - S3 設定指南
+- [API.md](./API.md) - API 端點文件
+- [README.md](../README.md) - 專案總覽
