@@ -102,6 +102,10 @@ TEMPERATURE_DATASET = 'O-A0038-003'  # 小時溫度觀測分析格點資料
 PARKING_CITIES = os.getenv('PARKING_CITIES', 'Taipei,NewTaipei,Taichung').split(',')
 PARKING_INTERVAL = int(os.getenv('PARKING_INTERVAL', '15'))
 
+# 台鐵 (TDX TRA API)
+TRA_TRAIN_INTERVAL = int(os.getenv('TRA_TRAIN_INTERVAL', '2'))  # 即時列車位置，每 2 分鐘
+TRA_STATIC_INTERVAL = int(os.getenv('TRA_STATIC_INTERVAL', '1440'))  # 靜態資料，每日一次
+
 # ============================================================
 # 全域設定
 # ============================================================

@@ -20,7 +20,9 @@ from collectors import (
     WeatherCollector,
     VDCollector,
     TemperatureGridCollector,
-    ParkingCollector
+    ParkingCollector,
+    TRATrainCollector,
+    TRAStaticCollector,
 )
 from tasks import ArchiveTask
 
@@ -73,6 +75,22 @@ def run_collectors():
         print(f"✓ Parking 收集器 (每 {parking.interval_minutes} 分鐘)")
     except Exception as e:
         print(f"✗ Parking 收集器初始化失敗: {e}")
+
+    # 台鐵即時列車位置收集器 (需要 TDX API)
+    try:
+        tra_train = TRATrainCollector()
+        collectors.append(tra_train)
+        print(f"✓ TRA Train 收集器 (每 {tra_train.interval_minutes} 分鐘)")
+    except Exception as e:
+        print(f"✗ TRA Train 收集器初始化失敗: {e}")
+
+    # 台鐵靜態資料收集器 (需要 TDX API，每日一次)
+    try:
+        tra_static = TRAStaticCollector()
+        collectors.append(tra_static)
+        print(f"✓ TRA Static 收集器 (每 {tra_static.interval_minutes} 分鐘)")
+    except Exception as e:
+        print(f"✗ TRA Static 收集器初始化失敗: {e}")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")

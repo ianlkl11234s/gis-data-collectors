@@ -6,6 +6,8 @@ from .weather import WeatherCollector
 from .vd import VDCollector
 from .temperature import TemperatureGridCollector
 from .parking import ParkingCollector
+from .tra_train import TRATrainCollector
+from .tra_static import TRAStaticCollector
 
 __all__ = [
     'BaseCollector',
@@ -13,5 +15,7 @@ __all__ = [
     'WeatherCollector',
     'VDCollector',
     'TemperatureGridCollector',
-    'ParkingCollector'
+    'ParkingCollector',
+    'TRATrainCollector',
+    'TRAStaticCollector',
 ]
