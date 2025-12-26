@@ -36,6 +36,7 @@ TDX_API_BASE = "https://tdx.transportdata.tw/api/basic"
 
 CWA_API_KEY = os.getenv('CWA_API_KEY')
 CWA_API_BASE = "https://opendata.cwa.gov.tw/api"
+CWA_FILE_API_BASE = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi"
 
 # ============================================================
 # 儲存設定
@@ -87,6 +88,14 @@ WEATHER_STATIONS = os.getenv('WEATHER_STATIONS', '').split(',') if os.getenv('WE
 # VD 車輛偵測器
 VD_CITIES = os.getenv('VD_CITIES', 'Taipei,NewTaipei').split(',')
 VD_INTERVAL = int(os.getenv('VD_INTERVAL', '5'))
+
+# 溫度網格 (CWA O-A0038-003)
+TEMPERATURE_INTERVAL = int(os.getenv('TEMPERATURE_INTERVAL', '60'))
+TEMPERATURE_DATASET = 'O-A0038-003'  # 小時溫度觀測分析格點資料
+
+# 路邊停車 (TDX Parking API)
+PARKING_CITIES = os.getenv('PARKING_CITIES', 'Taipei,NewTaipei,Taichung').split(',')
+PARKING_INTERVAL = int(os.getenv('PARKING_INTERVAL', '15'))
 
 # ============================================================
 # 全域設定

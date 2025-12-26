@@ -7,6 +7,7 @@
 ```
 data-collectors/
 ├── README.md
+├── API_DOCS.md             # API 詳細文件
 ├── requirements.txt
 ├── Dockerfile
 ├── zeabur.json
@@ -19,14 +20,15 @@ data-collectors/
 │   ├── __init__.py
 │   ├── base.py            # 收集器基底類別
 │   ├── youbike.py         # YouBike 即時車位
-│   ├── weather.py         # 氣象資料（CWA）
-│   └── parking.py         # 停車場資料（未來）
+│   ├── weather.py         # 氣象觀測站資料（CWA）
+│   ├── vd.py              # VD 車輛偵測器
+│   ├── temperature.py     # 溫度網格資料（CWA）
+│   └── parking.py         # 路邊停車即時可用性
 │
 ├── storage/                # 儲存後端
 │   ├── __init__.py
 │   ├── local.py           # 本地檔案儲存
-│   ├── s3.py              # AWS S3 儲存
-│   └── gcs.py             # Google Cloud Storage（未來）
+│   └── s3.py              # AWS S3 儲存
 │
 ├── utils/                  # 共用工具
 │   ├── __init__.py
@@ -70,14 +72,27 @@ python main.py
 |------|------|------|
 | `TDX_APP_ID` | ✅ | TDX API Client ID |
 | `TDX_APP_KEY` | ✅ | TDX API Client Secret |
+| `CWA_API_KEY` | ✅ | 氣象局 API Key |
 | `API_KEY` | | HTTP API 認證金鑰（建議設定） |
 | `API_PORT` | | HTTP API 端口（預設 8080） |
-| `CWA_API_KEY` | | 氣象局 API Key |
 | `S3_BUCKET` | | S3 儲存桶 |
 | `S3_ACCESS_KEY` | | AWS Access Key |
 | `S3_SECRET_KEY` | | AWS Secret Key |
 | `WEBHOOK_URL` | | 通知 Webhook |
 | `LINE_TOKEN` | | LINE Notify Token |
+
+### 收集器專屬設定
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `YOUBIKE_CITIES` | `Taipei,NewTaipei,Taoyuan` | YouBike 收集城市 |
+| `YOUBIKE_INTERVAL` | `15` | YouBike 收集間隔（分鐘） |
+| `WEATHER_INTERVAL` | `60` | 氣象站收集間隔（分鐘） |
+| `VD_CITIES` | `Taipei,NewTaipei` | VD 收集城市 |
+| `VD_INTERVAL` | `5` | VD 收集間隔（分鐘） |
+| `TEMPERATURE_INTERVAL` | `60` | 溫度網格收集間隔（分鐘） |
+| `PARKING_CITIES` | `Taipei,NewTaipei,Taichung` | 路邊停車收集城市 |
+| `PARKING_INTERVAL` | `15` | 路邊停車收集間隔（分鐘） |
 
 ## 收集器說明
 
@@ -87,103 +102,150 @@ python main.py
 - **範圍**: 臺北市、新北市、桃園市
 - **資料量**: ~3,800 站/次
 
-### 氣象資料（規劃中）
-- **頻率**: 每小時
-- **來源**: CWA 開放資料平台
-- **資料類型**:
-  - 即時觀測（溫度、雨量、風速）
-  - 未來 36hr 預報
-  - 雷達回波圖
+### 氣象觀測站資料
+- **頻率**: 每 60 分鐘
+- **來源**: CWA API `O-A0001-001`
+- **資料類型**: 即時觀測（溫度、雨量、風速、氣壓等）
+- **資料量**: ~700 測站
+
+### VD 車輛偵測器
+- **頻率**: 每 5 分鐘
+- **來源**: TDX API `/v2/Road/Traffic/VD/{City}`
+- **範圍**: 臺北市、新北市
+- **資料類型**: 車流量、車速
+
+### 溫度網格資料 🆕
+- **頻率**: 每 60 分鐘
+- **來源**: CWA File API `O-A0038-003`
+- **資料類型**: 小時溫度觀測分析格點資料
+- **解析度**: 0.03 度（約 3.3 公里）
+- **覆蓋範圍**: 全台灣
+- **資料量**: ~50,000 格點
+
+### 路邊停車即時可用性 🆕
+- **頻率**: 每 15 分鐘
+- **來源**: TDX API `/v1/Parking/OnStreet/ParkingSegmentAvailability/{City}`
+- **範圍**: 臺北市、新北市、臺中市
+- **注意**: 高雄市不在 TDX 支援範圍
+- **資料量**: ~4,600 路段
+
+## 每日 API 呼叫統計
+
+| 收集器 | 頻率 | 每日次數 | 來源 |
+|--------|------|---------|------|
+| YouBike | 15 min | 96 × 3 城市 = 288 | TDX |
+| Weather | 60 min | 24 | CWA |
+| VD | 5 min | 288 × 2 城市 = 576 | TDX |
+| Temperature | 60 min | 24 | CWA |
+| Parking | 15 min | 96 × 3 城市 = 288 | TDX |
 
 ## 資料儲存
 
 ### 本地模式
 資料儲存在 `data/` 目錄，適合開發測試。
 
-### S3 模式（推薦）
-設定 `S3_BUCKET` 後，資料自動上傳到 S3：
+### 儲存結構
 ```
-s3://your-bucket/
+data/
 ├── youbike/
-│   ├── 2024/12/09/
-│   │   ├── availability_0000.json
-│   │   ├── availability_0015.json
-│   │   └── ...
-│   └── latest.json
+│   └── 2025/12/26/
+│       ├── youbike_2025-12-26T08-00-00.json
+│       └── youbike_2025-12-26T08-15-00.json
 ├── weather/
-│   └── ...
-└── logs/
-    └── ...
+│   └── 2025/12/26/
+│       └── weather_2025-12-26T09-00-00.json
+├── vd/
+│   └── 2025/12/26/
+│       └── vd_2025-12-26T08-05-00.json
+├── temperature/
+│   └── 2025/12/26/
+│       └── temperature_2025-12-26T09-00-00.json
+└── parking/
+    └── 2025/12/26/
+        ├── parking_2025-12-26T08-00-00.json
+        └── parking_2025-12-26T08-15-00.json
 ```
 
-## HTTP API（下載資料）
+### S3 模式（推薦）
+設定 `S3_BUCKET` 後，資料自動上傳到 S3。
 
-設定 `API_KEY` 環境變數後，會自動啟動 HTTP API Server，可透過 API 下載收集的資料。
+## HTTP API
 
-### 認證方式
+設定 `API_KEY` 環境變數後，會自動啟動 HTTP API Server。
 
-使用 API Key 認證，支援兩種方式：
+詳細文件請參閱 [API_DOCS.md](./API_DOCS.md)
 
-```bash
-# 方式 1: Header（推薦）
-curl -H "X-API-Key: your_api_key" https://your-app.zeabur.app/api/...
-
-# 方式 2: Query Parameter
-curl "https://your-app.zeabur.app/api/...?api_key=your_api_key"
-```
-
-### 產生 API Key
+### 快速範例
 
 ```bash
-# 使用 OpenSSL 產生隨機金鑰
-openssl rand -hex 32
-```
+# 健康檢查（無需認證）
+curl https://your-app.zeabur.app/health
 
-### API 端點
-
-| 端點 | 認證 | 說明 |
-|------|------|------|
-| `GET /` | 不需要 | 服務資訊 |
-| `GET /health` | 不需要 | 健康檢查 |
-| `GET /api/collectors` | 需要 | 列出所有收集器 |
-| `GET /api/data/<collector>` | 需要 | 列出某收集器的所有檔案 |
-| `GET /api/data/<collector>/latest` | 需要 | 取得最新資料 |
-| `GET /api/data/<collector>/<date>` | 需要 | 取得特定日期資料（YYYY-MM-DD） |
-| `GET /api/download/<collector>/<filename>` | 需要 | 下載特定檔案 |
-
-### 使用範例
-
-```bash
 # 列出所有收集器
 curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/collectors
 
-# 取得 YouBike 最新資料
-curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/youbike/latest
+# 取得最新溫度網格資料
+curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/temperature/latest
 
-# 列出 YouBike 所有檔案
-curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/youbike
-
-# 取得特定日期的資料
-curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/youbike/2024-12-15
-
-# 下載特定檔案
-curl -H "X-API-Key: your_key" -O https://your-app.zeabur.app/api/download/youbike/availability_2024-12-15_1430.json
+# 取得最新路邊停車資料
+curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/parking/latest
 ```
 
-### 回應格式
+## 資料格式
 
-所有 API 回應皆為 JSON 格式：
+### 溫度網格 (temperature)
 
 ```json
-// GET /api/data/youbike/latest
 {
-  "filename": "availability_2024-12-15_1430.json",
-  "data": {
-    "collected_at": "2024-12-15T14:30:00+08:00",
-    "cities": ["Taipei", "NewTaipei", "Taoyuan"],
-    "total_stations": 3837,
-    "stations": [...]
-  }
+  "fetch_time": "2025-12-26T09:00:00",
+  "observation_time": "2025-12-26T09:00:00+08:00",
+  "geo_info": {
+    "bottom_left_lon": 118.0,
+    "bottom_left_lat": 21.0,
+    "top_right_lon": 123.0,
+    "top_right_lat": 26.0,
+    "resolution_deg": 0.03,
+    "resolution_km": 3.3
+  },
+  "grid_size": { "rows": 167, "cols": 167 },
+  "valid_points": 48392,
+  "min_temp": 5.2,
+  "max_temp": 28.4,
+  "avg_temp": 18.6,
+  "data": [[18.2, 18.3, ...], ...]
+}
+```
+
+### 路邊停車 (parking)
+
+```json
+{
+  "fetch_time": "2025-12-26T09:00:00",
+  "total_segments": 4627,
+  "total_spaces": 133509,
+  "total_available": 45231,
+  "overall_occupancy": 0.661,
+  "by_city": {
+    "Taipei": {
+      "name": "臺北市",
+      "segments": 2365,
+      "total_spaces": 46864,
+      "available_spaces": 15234,
+      "full_segments": 128,
+      "avg_occupancy": 0.675
+    }
+  },
+  "data": [
+    {
+      "segment_id": "1002053",
+      "segment_name": "中山北路1段53巷",
+      "total_spaces": 8,
+      "available_spaces": 4,
+      "occupancy": 0.5,
+      "full_status": 0,
+      "_city": "Taipei"
+    }
+  ]
 }
 ```
 
@@ -198,7 +260,8 @@ curl -H "X-API-Key: your_key" -O https://your-app.zeabur.app/api/download/youbik
 1. 在 `collectors/` 建立新模組
 2. 繼承 `BaseCollector` 類別
 3. 實作 `collect()` 方法
-4. 在 `main.py` 註冊排程
+4. 在 `collectors/__init__.py` 註冊
+5. 在 `main.py` 初始化並加入排程
 
 ```python
 from collectors.base import BaseCollector
@@ -212,3 +275,7 @@ class MyCollector(BaseCollector):
         data = self.fetch_api(...)
         return {"count": len(data), "data": data}
 ```
+
+## 授權
+
+MIT License

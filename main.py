@@ -14,7 +14,13 @@ from datetime import datetime
 import schedule
 
 import config
-from collectors import YouBikeCollector, WeatherCollector, VDCollector
+from collectors import (
+    YouBikeCollector,
+    WeatherCollector,
+    VDCollector,
+    TemperatureGridCollector,
+    ParkingCollector
+)
 
 
 def run_collectors():
@@ -48,6 +54,23 @@ def run_collectors():
         print(f"✓ VD 收集器 (每 {vd.interval_minutes} 分鐘)")
     except Exception as e:
         print(f"✗ VD 收集器初始化失敗: {e}")
+
+    # 溫度網格收集器 (需要 CWA API Key)
+    if config.CWA_API_KEY:
+        try:
+            temperature = TemperatureGridCollector()
+            collectors.append(temperature)
+            print(f"✓ Temperature Grid 收集器 (每 {temperature.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Temperature Grid 收集器初始化失敗: {e}")
+
+    # 路邊停車收集器 (需要 TDX API)
+    try:
+        parking = ParkingCollector()
+        collectors.append(parking)
+        print(f"✓ Parking 收集器 (每 {parking.interval_minutes} 分鐘)")
+    except Exception as e:
+        print(f"✗ Parking 收集器初始化失敗: {e}")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")
