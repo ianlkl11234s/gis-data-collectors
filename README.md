@@ -1,13 +1,15 @@
 # Data Collectors
 
-定期自動化資料收集服務，部署於 Zeabur 24hr 運作。
+定期自動化資料收集服務，部署於 Zeabur 24hr 運作。支援 S3 歸檔與資料生命週期管理。
 
 ## 專案結構
 
 ```
 data-collectors/
 ├── README.md
-├── API_DOCS.md             # API 詳細文件
+├── docs/                   # 詳細文件
+│   ├── API.md             # API 詳細文件
+│   └── ARCHITECTURE.md    # 架構與歸檔流程
 ├── requirements.txt
 ├── Dockerfile
 ├── zeabur.json
@@ -28,7 +30,11 @@ data-collectors/
 ├── storage/                # 儲存後端
 │   ├── __init__.py
 │   ├── local.py           # 本地檔案儲存
-│   └── s3.py              # AWS S3 儲存
+│   └── s3.py              # AWS S3 儲存與歸檔
+│
+├── tasks/                  # 排程任務
+│   ├── __init__.py
+│   └── archive.py         # S3 歸檔任務
 │
 ├── utils/                  # 共用工具
 │   ├── __init__.py
@@ -75,11 +81,20 @@ python main.py
 | `CWA_API_KEY` | ✅ | 氣象局 API Key |
 | `API_KEY` | | HTTP API 認證金鑰（建議設定） |
 | `API_PORT` | | HTTP API 端口（預設 8080） |
-| `S3_BUCKET` | | S3 儲存桶 |
+| `S3_BUCKET` | | S3 儲存桶（啟用歸檔必填） |
 | `S3_ACCESS_KEY` | | AWS Access Key |
 | `S3_SECRET_KEY` | | AWS Secret Key |
+| `S3_REGION` | | S3 區域（預設 ap-southeast-2） |
 | `WEBHOOK_URL` | | 通知 Webhook |
 | `LINE_TOKEN` | | LINE Notify Token |
+
+### 歸檔設定
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `ARCHIVE_ENABLED` | `true` | 是否啟用 S3 歸檔 |
+| `ARCHIVE_RETENTION_DAYS` | `7` | 本地資料保留天數 |
+| `ARCHIVE_TIME` | `03:00` | 每日歸檔執行時間 |
 
 ### 收集器專屬設定
 
@@ -139,41 +154,61 @@ python main.py
 | Temperature | 60 min | 24 | CWA |
 | Parking | 15 min | 96 × 3 城市 = 288 | TDX |
 
-## 資料儲存
+## 資料儲存與歸檔
 
-### 本地模式
-資料儲存在 `data/` 目錄，適合開發測試。
+### 雙層儲存架構
+
+採用熱/冷資料分離策略，有效降低儲存成本：
+
+| 層級 | 儲存位置 | 資料範圍 | 用途 |
+|------|----------|----------|------|
+| 熱資料 | Zeabur Volume | 最近 7 天 | 快速存取 |
+| 冷資料 | AWS S3 | 全部歷史 | 永久歸檔 |
+
+### 成本比較 (50GB 資料/月)
+
+- **純 Zeabur**: ~$7.50/月
+- **Zeabur + S3**: ~$1.79/月 (節省 76%)
 
 ### 儲存結構
 ```
-data/
+data/                       # 本地 (最近 7 天)
 ├── youbike/
+│   ├── latest.json        # 最新資料快取
 │   └── 2025/12/26/
-│       ├── youbike_2025-12-26T08-00-00.json
-│       └── youbike_2025-12-26T08-15-00.json
+│       └── youbike_0900.json
 ├── weather/
-│   └── 2025/12/26/
-│       └── weather_2025-12-26T09-00-00.json
 ├── vd/
-│   └── 2025/12/26/
-│       └── vd_2025-12-26T08-05-00.json
 ├── temperature/
-│   └── 2025/12/26/
-│       └── temperature_2025-12-26T09-00-00.json
 └── parking/
-    └── 2025/12/26/
-        ├── parking_2025-12-26T08-00-00.json
-        └── parking_2025-12-26T08-15-00.json
+
+s3://bucket/               # S3 (永久歸檔)
+├── youbike/
+│   └── 2025/12/20/       # 歷史資料
+│       └── youbike_0900.json
+├── weather/
+└── ...
 ```
 
-### S3 模式（推薦）
-設定 `S3_BUCKET` 後，資料自動上傳到 S3。
+### 歸檔流程
+
+每日 03:00 自動執行：
+1. 同步所有本地資料到 S3（跳過已存在）
+2. 刪除超過 7 天的本地檔案
+3. 清理空目錄
+
+詳細架構說明請參閱 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 ## HTTP API
 
 設定 `API_KEY` 環境變數後，會自動啟動 HTTP API Server。
 
-詳細文件請參閱 [API_DOCS.md](./API_DOCS.md)
+**特色功能**：
+- 自動從本地或 S3 讀取資料（透明切換）
+- 支援列出所有可用日期
+- 歸檔狀態查詢
+
+詳細文件請參閱 [docs/API.md](./docs/API.md)
 
 ### 快速範例
 
@@ -184,11 +219,17 @@ curl https://your-app.zeabur.app/health
 # 列出所有收集器
 curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/collectors
 
-# 取得最新溫度網格資料
-curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/temperature/latest
-
 # 取得最新路邊停車資料
 curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/parking/latest
+
+# 列出可用日期（包含 S3 歷史資料）
+curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/parking/dates
+
+# 取得歷史資料（自動從 S3 讀取）
+curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/parking/2025-12-01
+
+# 查看歸檔狀態
+curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/archive/status
 ```
 
 ## 資料格式

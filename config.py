@@ -46,8 +46,13 @@ CWA_FILE_API_BASE = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi"
 S3_BUCKET = os.getenv('S3_BUCKET')
 S3_ACCESS_KEY = os.getenv('S3_ACCESS_KEY') or os.getenv('AWS_ACCESS_KEY_ID')
 S3_SECRET_KEY = os.getenv('S3_SECRET_KEY') or os.getenv('AWS_SECRET_ACCESS_KEY')
-S3_REGION = os.getenv('S3_REGION', 'ap-northeast-1')
+S3_REGION = os.getenv('S3_REGION', 'ap-southeast-2')
 S3_ENDPOINT = os.getenv('S3_ENDPOINT')  # 用於 MinIO 等相容服務
+
+# 歸檔設定
+ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').lower() in ('true', '1', 'yes')
+ARCHIVE_RETENTION_DAYS = int(os.getenv('ARCHIVE_RETENTION_DAYS', '7'))  # 本地保留天數
+ARCHIVE_TIME = os.getenv('ARCHIVE_TIME', '03:00')  # 每日歸檔時間 (HH:MM)
 
 # 本地儲存路徑
 # Zeabur Volume 掛載在 /data，優先使用環境變數 DATA_DIR

@@ -3,6 +3,7 @@
 Data Collectors 主程式
 
 統一管理所有資料收集器的排程執行，並提供 HTTP API 下載資料。
+支援 S3 歸檔與資料生命週期管理。
 """
 
 import signal
@@ -21,6 +22,7 @@ from collectors import (
     TemperatureGridCollector,
     ParkingCollector
 )
+from tasks import ArchiveTask
 
 
 def run_collectors():
@@ -135,6 +137,29 @@ def run_api_server_thread():
     return thread
 
 
+def run_archive_task():
+    """設定歸檔任務排程"""
+    if not config.ARCHIVE_ENABLED:
+        print("\n⚠️  歸檔功能已停用 (ARCHIVE_ENABLED=false)")
+        return None
+
+    if not config.S3_BUCKET:
+        print("\n⚠️  S3_BUCKET 未設定，歸檔功能停用")
+        return None
+
+    try:
+        archive_task = ArchiveTask()
+        print(f"\n✓ 歸檔任務已設定 (每日 {config.ARCHIVE_TIME})")
+
+        # 設定每日排程
+        schedule.every().day.at(config.ARCHIVE_TIME).do(archive_task.run)
+
+        return archive_task
+    except Exception as e:
+        print(f"\n✗ 歸檔任務初始化失敗: {e}")
+        return None
+
+
 def main():
     """主程式"""
     print("=" * 60)
@@ -152,6 +177,9 @@ def main():
 
     # 啟動收集器
     collectors = run_collectors()
+
+    # 設定歸檔任務
+    archive_task = run_archive_task()
 
     if not collectors:
         # 如果沒有收集器但有 API，繼續執行
