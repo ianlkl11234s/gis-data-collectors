@@ -91,6 +91,7 @@ WEATHER_INTERVAL = int(os.getenv('WEATHER_INTERVAL', '60'))
 WEATHER_STATIONS = os.getenv('WEATHER_STATIONS', '').split(',') if os.getenv('WEATHER_STATIONS') else []
 
 # VD 車輛偵測器
+VD_ENABLED = os.getenv('VD_ENABLED', 'false').lower() in ('true', '1', 'yes')  # 預設停用
 VD_CITIES = os.getenv('VD_CITIES', 'Taipei,NewTaipei').split(',')
 VD_INTERVAL = int(os.getenv('VD_INTERVAL', '5'))
 

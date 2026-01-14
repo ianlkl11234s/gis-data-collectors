@@ -52,12 +52,15 @@ def run_collectors():
         print("⚠️  CWA_API_KEY 未設定，跳過 Weather 收集器")
 
     # VD 車輛偵測器收集器
-    try:
-        vd = VDCollector()
-        collectors.append(vd)
-        print(f"✓ VD 收集器 (每 {vd.interval_minutes} 分鐘)")
-    except Exception as e:
-        print(f"✗ VD 收集器初始化失敗: {e}")
+    if config.VD_ENABLED:
+        try:
+            vd = VDCollector()
+            collectors.append(vd)
+            print(f"✓ VD 收集器 (每 {vd.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ VD 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  VD 收集器已停用 (VD_ENABLED=false)")
 
     # 溫度網格收集器 (需要 CWA API Key)
     if config.CWA_API_KEY:
