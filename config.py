@@ -107,6 +107,12 @@ PARKING_INTERVAL = int(os.getenv('PARKING_INTERVAL', '15'))
 TRA_TRAIN_INTERVAL = int(os.getenv('TRA_TRAIN_INTERVAL', '2'))  # 即時列車位置，每 2 分鐘
 TRA_STATIC_INTERVAL = int(os.getenv('TRA_STATIC_INTERVAL', '1440'))  # 靜態資料，每日一次
 
+# 航運 (Ship)
+SHIP_TDX_ENABLED = os.getenv('SHIP_TDX_ENABLED', 'true').lower() in ('true', '1', 'yes')  # TDX 國內航線
+SHIP_TDX_INTERVAL = int(os.getenv('SHIP_TDX_INTERVAL', '2'))  # 每 2 分鐘
+SHIP_AIS_ENABLED = os.getenv('SHIP_AIS_ENABLED', 'true').lower() in ('true', '1', 'yes')  # 航港局 AIS
+SHIP_AIS_INTERVAL = int(os.getenv('SHIP_AIS_INTERVAL', '2'))  # 每 2 分鐘
+
 # ============================================================
 # 全域設定
 # ============================================================

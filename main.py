@@ -23,6 +23,8 @@ from collectors import (
     ParkingCollector,
     TRATrainCollector,
     TRAStaticCollector,
+    ShipTDXCollector,
+    ShipAISCollector,
 )
 from tasks import ArchiveTask
 
@@ -94,6 +96,28 @@ def run_collectors():
         print(f"✓ TRA Static 收集器 (每 {tra_static.interval_minutes} 分鐘)")
     except Exception as e:
         print(f"✗ TRA Static 收集器初始化失敗: {e}")
+
+    # TDX 國內航線船位收集器 (需要 TDX API)
+    if config.SHIP_TDX_ENABLED:
+        try:
+            ship_tdx = ShipTDXCollector()
+            collectors.append(ship_tdx)
+            print(f"✓ Ship TDX 收集器 (每 {ship_tdx.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Ship TDX 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Ship TDX 收集器已停用 (SHIP_TDX_ENABLED=false)")
+
+    # 航港局 AIS 船位收集器
+    if config.SHIP_AIS_ENABLED:
+        try:
+            ship_ais = ShipAISCollector()
+            collectors.append(ship_ais)
+            print(f"✓ Ship AIS 收集器 (每 {ship_ais.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Ship AIS 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Ship AIS 收集器已停用 (SHIP_AIS_ENABLED=false)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")
