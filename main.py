@@ -74,12 +74,15 @@ def run_collectors():
             print(f"✗ Temperature Grid 收集器初始化失敗: {e}")
 
     # 路邊停車收集器 (需要 TDX API)
-    try:
-        parking = ParkingCollector()
-        collectors.append(parking)
-        print(f"✓ Parking 收集器 (每 {parking.interval_minutes} 分鐘)")
-    except Exception as e:
-        print(f"✗ Parking 收集器初始化失敗: {e}")
+    if config.PARKING_ENABLED:
+        try:
+            parking = ParkingCollector()
+            collectors.append(parking)
+            print(f"✓ Parking 收集器 (每 {parking.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Parking 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Parking 收集器已停用 (PARKING_ENABLED=false)")
 
     # 台鐵即時列車位置收集器 (需要 TDX API)
     try:

@@ -100,6 +100,7 @@ TEMPERATURE_INTERVAL = int(os.getenv('TEMPERATURE_INTERVAL', '60'))
 TEMPERATURE_DATASET = 'O-A0038-003'  # 小時溫度觀測分析格點資料
 
 # 路邊停車 (TDX Parking API)
+PARKING_ENABLED = os.getenv('PARKING_ENABLED', 'false').lower() in ('true', '1', 'yes')  # 預設停用
 PARKING_CITIES = os.getenv('PARKING_CITIES', 'Taipei,NewTaipei,Taichung').split(',')
 PARKING_INTERVAL = int(os.getenv('PARKING_INTERVAL', '15'))
 
