@@ -42,7 +42,8 @@ class ShipTDXCollector(BaseCollector):
         # TDX Ship API 回傳格式可能是陣列或物件
         if isinstance(data, list):
             return data
-        return data.get('ShipLivePositions', data.get('Data', []))
+        # API 回傳的 key 是 'LivePositions'
+        return data.get('LivePositions', data.get('ShipLivePositions', data.get('Data', [])))
 
     def _fetch_routes(self) -> list:
         """取得航線資料（用於補充資訊）"""
