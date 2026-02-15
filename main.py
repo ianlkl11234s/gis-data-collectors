@@ -25,6 +25,7 @@ from collectors import (
     TRAStaticCollector,
     ShipTDXCollector,
     ShipAISCollector,
+    FlightFR24Collector,
 )
 from tasks import ArchiveTask
 
@@ -121,6 +122,17 @@ def run_collectors():
             print(f"✗ Ship AIS 收集器初始化失敗: {e}")
     else:
         print("⏸️  Ship AIS 收集器已停用 (SHIP_AIS_ENABLED=false)")
+
+    # FlightRadar24 航班軌跡收集器
+    if config.FLIGHT_FR24_ENABLED:
+        try:
+            flight_fr24 = FlightFR24Collector()
+            collectors.append(flight_fr24)
+            print(f"✓ Flight FR24 收集器 (每 {flight_fr24.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Flight FR24 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Flight FR24 收集器已停用 (FLIGHT_FR24_ENABLED=false)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")

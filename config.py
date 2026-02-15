@@ -114,6 +114,12 @@ SHIP_TDX_INTERVAL = int(os.getenv('SHIP_TDX_INTERVAL', '2'))  # 每 2 分鐘
 SHIP_AIS_ENABLED = os.getenv('SHIP_AIS_ENABLED', 'true').lower() in ('true', '1', 'yes')  # 航港局 AIS
 SHIP_AIS_INTERVAL = int(os.getenv('SHIP_AIS_INTERVAL', '10'))  # 每 10 分鐘
 
+# FlightRadar24 航班軌跡
+FLIGHT_FR24_ENABLED = os.getenv('FLIGHT_FR24_ENABLED', 'false').lower() in ('true', '1', 'yes')
+FLIGHT_FR24_INTERVAL = int(os.getenv('FLIGHT_FR24_INTERVAL', '5'))  # 每 5 分鐘
+FLIGHT_FR24_AIRPORTS = os.getenv('FLIGHT_FR24_AIRPORTS', 'RCTP,RCSS,RCKH,RCMQ,RCNN,RCYU,RCBS,RCFN,RCQC,RCFG,RCMT,RCLY,RCKU,RCKW,RCGI,RCCM,RCWA').split(',')
+FLIGHT_FR24_TRAIL_DELAY = float(os.getenv('FLIGHT_FR24_TRAIL_DELAY', '3'))  # trail 請求間隔秒數
+
 # ============================================================
 # 全域設定
 # ============================================================
