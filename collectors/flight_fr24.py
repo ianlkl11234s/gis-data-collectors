@@ -98,10 +98,10 @@ class FlightFR24Collector(BaseCollector):
                     status_text = flight.get("status", {}).get("text", "")
                     fr24_id = ident.get("id")
 
-                    # 只取已降落/已起飛且有 ID 的
+                    # 只取已降落且有 ID 的（確保 trail 完整）
                     if not fr24_id:
                         continue
-                    if "Landed" not in status_text and "Departed" not in status_text:
+                    if "Landed" not in status_text:
                         continue
 
                     # 提取機場資訊
