@@ -26,7 +26,12 @@ data-collectors/
 │   ├── weather.py         # 氣象觀測站資料（CWA）
 │   ├── vd.py              # VD 車輛偵測器
 │   ├── temperature.py     # 溫度網格資料（CWA）
-│   └── parking.py         # 路邊停車即時可用性
+│   ├── parking.py         # 路邊停車即時可用性
+│   ├── tra_train.py       # 台鐵即時列車位置（TDX）
+│   ├── tra_static.py      # 台鐵靜態資料（TDX）
+│   ├── ship_tdx.py        # TDX 國內航線船位
+│   ├── ship_ais.py        # 航港局 AIS 船位
+│   └── flight_fr24.py     # FlightRadar24 航班軌跡
 │
 ├── storage/                # 儲存後端
 │   ├── __init__.py
@@ -109,6 +114,16 @@ python main.py
 | `TEMPERATURE_INTERVAL` | `60` | 溫度網格收集間隔（分鐘） |
 | `PARKING_CITIES` | `Taipei,NewTaipei,Taichung` | 路邊停車收集城市 |
 | `PARKING_INTERVAL` | `15` | 路邊停車收集間隔（分鐘） |
+| `TRA_TRAIN_INTERVAL` | `2` | 台鐵列車位置收集間隔（分鐘） |
+| `TRA_STATIC_INTERVAL` | `1440` | 台鐵靜態資料間隔（分鐘） |
+| `SHIP_TDX_ENABLED` | `false` | 是否啟用 TDX 船位收集 |
+| `SHIP_TDX_INTERVAL` | `2` | TDX 船位收集間隔（分鐘） |
+| `SHIP_AIS_ENABLED` | `true` | 是否啟用航港局 AIS 船位 |
+| `SHIP_AIS_INTERVAL` | `10` | AIS 船位收集間隔（分鐘） |
+| `FLIGHT_FR24_ENABLED` | `false` | 是否啟用 FR24 航班軌跡 |
+| `FLIGHT_FR24_INTERVAL` | `5` | FR24 收集間隔（分鐘） |
+| `FLIGHT_FR24_AIRPORTS` | `RCTP,RCSS,...（17 個）` | 掃描的台灣機場 ICAO 代碼 |
+| `FLIGHT_FR24_TRAIL_DELAY` | `3` | trail 請求間隔（秒） |
 
 ## 收集器說明
 
@@ -138,12 +153,38 @@ python main.py
 - **覆蓋範圍**: 全台灣
 - **資料量**: ~50,000 格點
 
-### 路邊停車即時可用性 🆕
+### 路邊停車即時可用性
 - **頻率**: 每 15 分鐘
 - **來源**: TDX API `/v1/Parking/OnStreet/ParkingSegmentAvailability/{City}`
 - **範圍**: 臺北市、新北市、臺中市
 - **注意**: 高雄市不在 TDX 支援範圍
 - **資料量**: ~4,600 路段
+
+### 台鐵即時列車位置
+- **頻率**: 每 2 分鐘
+- **來源**: TDX API
+- **資料類型**: 即時列車位置與班次
+
+### 台鐵靜態資料
+- **頻率**: 每日 1 次
+- **來源**: TDX API
+- **資料類型**: 車站、路線等靜態資料
+
+### 航港局 AIS 船位
+- **頻率**: 每 10 分鐘
+- **來源**: 航港局 AIS 開放資料
+- **資料類型**: 台灣周邊船舶即時位置
+
+### FlightRadar24 航班軌跡 🆕
+- **頻率**: 每 5 分鐘
+- **來源**: FlightRadar24（非官方 API，僅供教育用途）
+- **範圍**: 台灣 17 個民航機場（RCTP、RCSS、RCKH 等）
+- **資料類型**: 完整飛行軌跡（含經緯度、高度、時間戳記）
+- **運作機制**:
+  - **arrivals**: 掃描已降落航班，立即抓取完整 trail
+  - **departures**: 記錄已出發航班至 pending 追蹤清單，每輪輪詢 clickhandler API 確認是否降落，降落後抓取完整 trail
+  - 超過 24 小時未降落的追蹤航班自動放棄
+- **防封鎖**: User-Agent 輪替（5 組）、隨機抖動等待間隔
 
 ## 每日 API 呼叫統計
 
@@ -154,6 +195,10 @@ python main.py
 | VD | 5 min | 288 × 2 城市 = 576 | TDX |
 | Temperature | 60 min | 24 | CWA |
 | Parking | 15 min | 96 × 3 城市 = 288 | TDX |
+| TRA Train | 2 min | 720 | TDX |
+| TRA Static | 1440 min | 1 | TDX |
+| Ship AIS | 10 min | 144 | 航港局 |
+| Flight FR24 | 5 min | 288（掃描）+ pending 追蹤 | FR24 |
 
 ## 資料儲存與歸檔
 
@@ -188,6 +233,9 @@ s3://bucket/               # S3 (永久歸檔)
 │   └── 2025/12/20/       # 歷史資料
 │       └── youbike_0900.json
 ├── weather/
+├── flight_fr24/
+│   └── 2026/02/16/
+│       └── flight_fr24_0835.json
 └── ...
 ```
 
@@ -292,6 +340,41 @@ curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/archive/status
   ]
 }
 ```
+
+### FlightRadar24 航班軌跡 (flight_fr24)
+
+```json
+{
+  "fetch_time": "2026-02-16T08:35:00",
+  "date": "2026-02-16",
+  "flight_count": 72,
+  "with_trail": 72,
+  "pending_tracking": 15,
+  "data": [
+    {
+      "fr24_id": "3a1b2c3d",
+      "callsign": "BR11",
+      "registration": "B-16725",
+      "aircraft_type": "77W",
+      "origin_icao": "KLAX",
+      "origin_iata": "LAX",
+      "dest_icao": "RCTP",
+      "dest_iata": "TPE",
+      "dep_time": 1739600000,
+      "arr_time": 1739640000,
+      "status": "Landed 04:44",
+      "trail_points": 929,
+      "path": [
+        [33.94, -118.42, 0, 1739600000],
+        [34.12, -118.89, 3048, 1739600300],
+        ...
+      ]
+    }
+  ]
+}
+```
+
+`path` 格式：`[緯度, 經度, 高度(m), Unix 時間戳記]`
 
 ## 監控
 
