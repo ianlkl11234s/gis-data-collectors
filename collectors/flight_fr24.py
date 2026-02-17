@@ -14,9 +14,11 @@ FlightRadar24 台灣機場航班軌跡收集器
 資料來源：FlightRadar24（非官方，僅供教育用途）
 """
 
+import json
 import random
 import time as time_module
 from datetime import datetime
+from pathlib import Path
 
 import requests
 
@@ -67,6 +69,11 @@ class FlightFR24Collector(BaseCollector):
     # pending 航班最長追蹤時間（秒），超過即放棄
     PENDING_TIMEOUT = 24 * 3600  # 24 小時
 
+    # 持久化檔案路徑
+    PERSIST_DIR = config.LOCAL_DATA_DIR / "flight_fr24"
+    PENDING_FILE = PERSIST_DIR / "_pending.json"
+    COLLECTED_IDS_FILE = PERSIST_DIR / "_collected_ids.json"
+
     def __init__(self):
         super().__init__()
         self._session = requests.Session()
@@ -79,6 +86,8 @@ class FlightFR24Collector(BaseCollector):
         # 待追蹤的出發航班 flight ID → 航班基本資料 + 記錄時間
         self._pending: dict[str, dict] = {}
         self._today: str = ""
+        # 從磁碟載入持久化資料
+        self._load_persistent_data()
 
     def _rotate_ua(self):
         """隨機切換 User-Agent"""
@@ -89,12 +98,68 @@ class FlightFR24Collector(BaseCollector):
         jitter = base * random.uniform(0.5, 1.5)
         time_module.sleep(jitter)
 
+    # === 持久化方法 ===
+
+    def _load_persistent_data(self):
+        """啟動時從磁碟載入 pending 和 collected IDs"""
+        self.PERSIST_DIR.mkdir(parents=True, exist_ok=True)
+
+        # 載入 pending
+        if self.PENDING_FILE.exists():
+            try:
+                data = json.loads(self.PENDING_FILE.read_text(encoding="utf-8"))
+                self._pending = data if isinstance(data, dict) else {}
+                print(f"   💾 從磁碟載入 {len(self._pending)} 筆 pending 航班")
+            except Exception as e:
+                print(f"   ⚠ 載入 pending 失敗: {e}")
+                self._pending = {}
+
+        # 載入 collected IDs（僅 ID，用於去重）
+        if self.COLLECTED_IDS_FILE.exists():
+            try:
+                data = json.loads(self.COLLECTED_IDS_FILE.read_text(encoding="utf-8"))
+                today = datetime.now().strftime("%Y-%m-%d")
+                # 只載入當天的 collected IDs
+                if data.get("date") == today:
+                    for fid in data.get("ids", []):
+                        if fid not in self._collected:
+                            self._collected[fid] = {}  # 佔位，僅做去重
+                    self._today = today
+                    print(f"   💾 從磁碟載入 {len(data.get('ids', []))} 筆 collected IDs")
+            except Exception as e:
+                print(f"   ⚠ 載入 collected IDs 失敗: {e}")
+
+    def _save_pending(self):
+        """將 pending 寫入磁碟"""
+        try:
+            self.PERSIST_DIR.mkdir(parents=True, exist_ok=True)
+            self.PENDING_FILE.write_text(
+                json.dumps(self._pending, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            print(f"   ⚠ 儲存 pending 失敗: {e}")
+
+    def _save_collected_ids(self):
+        """將當日 collected flight IDs 寫入磁碟（僅 ID，不含完整資料）"""
+        try:
+            self.PERSIST_DIR.mkdir(parents=True, exist_ok=True)
+            self.COLLECTED_IDS_FILE.write_text(
+                json.dumps({
+                    "date": self._today,
+                    "ids": list(self._collected.keys()),
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            print(f"   ⚠ 儲存 collected IDs 失敗: {e}")
+
     def _reset_if_new_day(self):
-        """跨日時清空快取"""
+        """跨日時清空當日 collected（pending 保留，由 PENDING_TIMEOUT 控制過期）"""
         today = datetime.now().strftime("%Y-%m-%d")
         if today != self._today:
             self._collected = {}
-            self._pending = {}
+            # pending 不清除！跨日仍需追蹤未降落航班
             self._today = today
 
     def _get_airport_flights(self, icao: str) -> tuple[list[dict], list[dict]]:
@@ -292,6 +357,7 @@ class FlightFR24Collector(BaseCollector):
             self._pending.pop(fid, None)
 
         if expired:
+            self._save_pending()  # 有變動就存檔
             timed_out = len(expired) - completed
             if timed_out > 0:
                 print(f"   ♻ 移除 {timed_out} 筆過期追蹤")
@@ -363,12 +429,19 @@ class FlightFR24Collector(BaseCollector):
                 print(f"   📡 追蹤 {f['callsign']} ({f['origin_iata']}→{f['dest_iata'] or '?'}) "
                       f"[{f['status']}]")
 
+        # 新增 pending 後存檔
+        if new_pending > 0:
+            self._save_pending()
+
         # === 階段二：檢查 pending 航班是否已降落 ===
         completed_pending = self._check_pending_flights()
 
+        # === 持久化 ===
+        self._save_collected_ids()
+
         # === 整理輸出 ===
         all_flights = list(self._collected.values())
-        with_trail = sum(1 for f in all_flights if f["path"])
+        with_trail = sum(1 for f in all_flights if f.get("path"))
 
         print(f"   ✓ 新增 {new_flights} 筆(抵達), "
               f"新追蹤 {new_pending} 筆(出發), "
