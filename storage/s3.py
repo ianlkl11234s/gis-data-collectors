@@ -243,6 +243,22 @@ class S3Storage:
 
         return sorted(dates, reverse=True)
 
+    def generate_presigned_url(self, key: str, expires_in: int = 3600) -> str:
+        """產生 S3 presigned URL
+
+        Args:
+            key: S3 物件 key
+            expires_in: 過期秒數（預設 1 小時）
+
+        Returns:
+            str: presigned URL
+        """
+        return self.s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': self.bucket, 'Key': key},
+            ExpiresIn=expires_in,
+        )
+
     def list_files_by_date(self, collector_name: str, date: str) -> list:
         """列出某日期的所有檔案
 

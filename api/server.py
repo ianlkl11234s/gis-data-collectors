@@ -372,6 +372,127 @@ def create_app():
             'total': len(dates)
         })
 
+    # ========== FR24 公開 API（不需要 API Key）==========
+
+    @app.after_request
+    def add_cors_for_fr24(response):
+        """對 /api/fr24/* 路由加 CORS headers"""
+        if request.path.startswith('/api/fr24/'):
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
+
+    @app.route('/api/fr24/manifest')
+    def fr24_manifest():
+        """FR24 航班資料 manifest — 可用日期 + 每日 last_modified"""
+        collector = 'flight_fr24'
+        retention_days = 14
+        dates_info = {}
+
+        s3 = get_s3_storage()
+        if s3:
+            available_dates = s3.list_dates(collector)
+            for date_str in available_dates:
+                files = s3.list_files_by_date(collector, date_str)
+                if files:
+                    last_mod = max(f['modified'] for f in files)
+                    dates_info[date_str] = {
+                        'last_modified': last_mod,
+                        'file_count': len(files),
+                    }
+        else:
+            # Fallback 到本地
+            collector_dir = config.LOCAL_DATA_DIR / collector
+            if collector_dir.exists():
+                for year_dir in collector_dir.iterdir():
+                    if not year_dir.is_dir() or not year_dir.name.isdigit():
+                        continue
+                    for month_dir in year_dir.iterdir():
+                        if not month_dir.is_dir():
+                            continue
+                        for day_dir in month_dir.iterdir():
+                            if not day_dir.is_dir():
+                                continue
+                            date_str = f"{year_dir.name}-{month_dir.name}-{day_dir.name}"
+                            files = list(day_dir.glob('*.json'))
+                            if files:
+                                last_mod = max(
+                                    datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                                    for f in files
+                                )
+                                dates_info[date_str] = {
+                                    'last_modified': last_mod,
+                                    'file_count': len(files),
+                                }
+
+        return jsonify({
+            'dates': dates_info,
+            'retention_days': retention_days,
+        })
+
+    @app.route('/api/fr24/urls/<date>/latest')
+    def fr24_url_latest(date):
+        """取得某日期最新一筆資料的 presigned URL"""
+        collector = 'flight_fr24'
+
+        try:
+            datetime.strptime(date, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'error': 'Invalid date format, use YYYY-MM-DD'}), 400
+
+        s3 = get_s3_storage()
+        if not s3:
+            return jsonify({'error': 'S3 not configured'}), 503
+
+        files = s3.list_files_by_date(collector, date)
+        if not files:
+            return jsonify({'error': f'No data for {date}'}), 404
+
+        # 取最新的檔案（依 key 排序，HHMM 格式保證字典序 = 時間序）
+        latest = sorted(files, key=lambda f: f['key'])[-1]
+        expires_in = 3600
+        url = s3.generate_presigned_url(latest['key'], expires_in)
+
+        return jsonify({
+            'date': date,
+            'key': latest['key'],
+            'url': url,
+            'expires_in': expires_in,
+        })
+
+    @app.route('/api/fr24/urls/<date>')
+    def fr24_urls(date):
+        """取得某日期所有檔案的 presigned URLs"""
+        collector = 'flight_fr24'
+
+        try:
+            datetime.strptime(date, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'error': 'Invalid date format, use YYYY-MM-DD'}), 400
+
+        s3 = get_s3_storage()
+        if not s3:
+            return jsonify({'error': 'S3 not configured'}), 503
+
+        files = s3.list_files_by_date(collector, date)
+        if not files:
+            return jsonify({'error': f'No data for {date}'}), 404
+
+        expires_in = 3600
+        file_urls = []
+        for f in sorted(files, key=lambda x: x['key']):
+            file_urls.append({
+                'key': f['key'],
+                'url': s3.generate_presigned_url(f['key'], expires_in),
+            })
+
+        return jsonify({
+            'date': date,
+            'files': file_urls,
+            'expires_in': expires_in,
+        })
+
     @app.route('/api/archive/status')
     @require_api_key
     def archive_status():
