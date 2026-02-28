@@ -11,6 +11,7 @@ from .tra_static import TRAStaticCollector
 from .ship_tdx import ShipTDXCollector
 from .ship_ais import ShipAISCollector
 from .flight_fr24 import FlightFR24Collector
+from .bus import BusCollector
 
 __all__ = [
     'BaseCollector',
@@ -24,4 +25,5 @@ __all__ = [
     'ShipTDXCollector',
     'ShipAISCollector',
     'FlightFR24Collector',
+    'BusCollector',
 ]

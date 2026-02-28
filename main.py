@@ -26,6 +26,7 @@ from collectors import (
     ShipTDXCollector,
     ShipAISCollector,
     FlightFR24Collector,
+    BusCollector,
 )
 from tasks import ArchiveTask
 
@@ -84,6 +85,17 @@ def run_collectors():
             print(f"✗ Parking 收集器初始化失敗: {e}")
     else:
         print("⏸️  Parking 收集器已停用 (PARKING_ENABLED=false)")
+
+    # 公車即時位置收集器 (需要 TDX API)
+    if config.BUS_ENABLED:
+        try:
+            bus = BusCollector()
+            collectors.append(bus)
+            print(f"✓ Bus 收集器 (每 {bus.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Bus 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Bus 收集器已停用 (BUS_ENABLED=false)")
 
     # 台鐵即時列車位置收集器 (需要 TDX API)
     try:

@@ -104,6 +104,11 @@ PARKING_ENABLED = os.getenv('PARKING_ENABLED', 'false').lower() in ('true', '1',
 PARKING_CITIES = os.getenv('PARKING_CITIES', 'Taipei,NewTaipei,Taichung').split(',')
 PARKING_INTERVAL = int(os.getenv('PARKING_INTERVAL', '15'))
 
+# 公車即時位置 (TDX Bus RealTimeByFrequency)
+BUS_ENABLED = os.getenv('BUS_ENABLED', 'true').lower() in ('true', '1', 'yes')
+BUS_CITIES = os.getenv('BUS_CITIES', 'Taipei,NewTaipei,Taoyuan').split(',')
+BUS_INTERVAL = int(os.getenv('BUS_INTERVAL', '1'))  # 每 1 分鐘
+
 # 台鐵 (TDX TRA API)
 TRA_TRAIN_INTERVAL = int(os.getenv('TRA_TRAIN_INTERVAL', '2'))  # 即時列車位置，每 2 分鐘
 TRA_STATIC_INTERVAL = int(os.getenv('TRA_STATIC_INTERVAL', '1440'))  # 靜態資料，每日一次
