@@ -170,6 +170,12 @@ python main.py
 - **來源**: TDX API
 - **資料類型**: 車站、路線等靜態資料
 
+### 公車即時位置 🆕
+- **頻率**: 每 1 分鐘
+- **來源**: TDX API `/v2/Bus/RealTimeByFrequency/{City}`
+- **範圍**: 依 `BUS_CITIES` 設定
+- **資料類型**: 公車即時位置（GPS 座標、速度、方位角）
+
 ### 航港局 AIS 船位
 - **頻率**: 每 10 分鐘
 - **來源**: 航港局 AIS 開放資料
@@ -197,54 +203,74 @@ python main.py
 | Parking | 15 min | 96 × 3 城市 = 288 | TDX |
 | TRA Train | 2 min | 720 | TDX |
 | TRA Static | 1440 min | 1 | TDX |
+| Bus | 1 min | 1,440 | TDX |
 | Ship AIS | 10 min | 144 | 航港局 |
 | Flight FR24 | 5 min | 288（掃描）+ pending 追蹤 | FR24 |
 
 ## 資料儲存與歸檔
 
-### 雙層儲存架構
+### 本地優先 + tar.gz 歸檔
 
-採用熱/冷資料分離策略，有效降低儲存成本：
+收集器永遠寫入本地（LocalStorage），S3 歸檔由 ArchiveTask 以 tar.gz 批次上傳。
+PUT 請求從 ~5,000/天 降至 ~10/天（99.8% 降幅）。
 
 | 層級 | 儲存位置 | 資料範圍 | 用途 |
 |------|----------|----------|------|
-| 熱資料 | Zeabur Volume | 最近 7 天 | 快速存取 |
-| 冷資料 | AWS S3 | 全部歷史 | 永久歸檔 |
-
-### 成本比較 (50GB 資料/月)
-
-- **純 Zeabur**: ~$7.50/月
-- **Zeabur + S3**: ~$1.79/月 (節省 76%)
+| 熱資料 | Zeabur Volume | 最近 7 天 | 即時存取（個別 JSON） |
+| 冷資料 | AWS S3 | 全部歷史 | 永久歸檔（tar.gz） |
 
 ### 儲存結構
 ```
-data/                       # 本地 (最近 7 天)
+data/                           # 本地 (最近 7 天，個別 JSON)
 ├── youbike/
-│   ├── latest.json        # 最新資料快取
+│   ├── latest.json            # 最新資料快取
 │   └── 2025/12/26/
 │       └── youbike_0900.json
 ├── weather/
 ├── vd/
 ├── temperature/
-└── parking/
+├── parking/
+├── bus/
+└── flight_fr24/
 
-s3://bucket/               # S3 (永久歸檔)
+s3://bucket/                   # S3 (永久歸檔，tar.gz)
 ├── youbike/
-│   └── 2025/12/20/       # 歷史資料
-│       └── youbike_0900.json
+│   └── archives/
+│       ├── 2025-12-20.tar.gz  # 每天 1 個 PUT
+│       └── 2025-12-21.tar.gz
 ├── weather/
+│   └── archives/
+│       └── ...
 ├── flight_fr24/
-│   └── 2026/02/16/
-│       └── flight_fr24_0835.json
+│   └── archives/
+│       └── 2026-02-16.tar.gz
 └── ...
+
+# 舊格式（已存在的個別檔案保留不動）
+├── youbike/
+│   └── 2025/12/01/            # 舊資料，API 仍可讀取
+│       └── youbike_0900.json
 ```
 
 ### 歸檔流程
 
 每日 03:00 自動執行：
-1. 同步所有本地資料到 S3（跳過已存在）
-2. 刪除超過 7 天的本地檔案
-3. 清理空目錄
+1. 遍歷各收集器的 YYYY/MM/DD 日期目錄（跳過今天）
+2. 壓成 `collector/archives/YYYY-MM-DD.tar.gz`
+3. 上傳 1 個 PUT 到 S3（每個收集器每天 1 個）
+4. 刪除超過保留天數且 S3 已有歸檔的日期目錄
+5. 清理空目錄
+
+### 下游專案影響
+
+| 專案 | 影響 | 說明 |
+|------|------|------|
+| mini-taiwan-pulse | 無 | 使用不同 S3 prefix |
+| mini-taipei-v3 | 無 | 不讀 S3 |
+| weather_change | 需更新 | 讀 `temperature/`、`weather/` 個別檔 → 需改讀 tar.gz |
+| ship-gis | 需更新 | 讀 `ship_ais/` 個別檔 → 需改讀 tar.gz |
+
+> S3 上已有的舊個別檔案保留不動，API 仍支援讀取。
 
 詳細架構說明請參閱 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 

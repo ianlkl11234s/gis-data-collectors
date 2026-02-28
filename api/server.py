@@ -244,21 +244,28 @@ def create_app():
                     'source': 'local'
                 })
 
-        # 如果本地沒有，嘗試 S3
+        # 如果本地沒有，嘗試從 S3 tar.gz 歸檔讀取
         if not result:
             s3 = get_s3_storage()
             if s3:
-                s3_files = s3.list_files_by_date(collector, date)
-                for f in s3_files:
-                    result.append({
-                        'filename': f['key'].split('/')[-1],
-                        'path': '/'.join(f['key'].split('/')[1:]),  # 移除 collector 前綴
-                        'size': f['size'],
-                        'modified': f['modified'],
-                        'source': 's3'
-                    })
-                if result:
-                    source = 's3'
+                # 新格式：tar.gz 歸檔
+                archive_files = s3.list_archive_files(collector, date)
+                if archive_files:
+                    result = archive_files
+                    source = 's3_archive'
+                else:
+                    # 舊格式：個別檔案（向後相容）
+                    s3_files = s3.list_files_by_date(collector, date)
+                    for f in s3_files:
+                        result.append({
+                            'filename': f['key'].split('/')[-1],
+                            'path': '/'.join(f['key'].split('/')[1:]),
+                            'size': f['size'],
+                            'modified': f['modified'],
+                            'source': 's3'
+                        })
+                    if result:
+                        source = 's3'
 
         if not result:
             return jsonify({
@@ -315,6 +322,26 @@ def create_app():
         # 嘗試從 S3 讀取
         s3 = get_s3_storage()
         if s3:
+            # 嘗試從 tar.gz 歸檔提取（新格式）
+            # filepath 格式: YYYY/MM/DD/collector_HHMM.json
+            parts = filepath.split('/')
+            if len(parts) == 4:
+                date_str = f"{parts[0]}-{parts[1]}-{parts[2]}"
+                archive_filename = parts[3]
+                content = s3.extract_file_from_archive(collector, date_str, archive_filename)
+                if content:
+                    gc.collect()
+                    return Response(
+                        content,
+                        mimetype='application/json',
+                        headers={
+                            'Content-Disposition': f'attachment; filename={filename}',
+                            'Content-Length': str(len(content)),
+                            'X-Data-Source': 's3_archive'
+                        }
+                    )
+
+            # 舊格式：個別檔案（向後相容）
             s3_key = f"{collector}/{filepath}"
             content = s3.get_file(s3_key)
             if content:
@@ -390,41 +417,46 @@ def create_app():
         retention_days = 14
         dates_info = {}
 
+        # 從本地取得
+        collector_dir = config.LOCAL_DATA_DIR / collector
+        if collector_dir.exists():
+            for year_dir in collector_dir.iterdir():
+                if not year_dir.is_dir() or not year_dir.name.isdigit():
+                    continue
+                for month_dir in year_dir.iterdir():
+                    if not month_dir.is_dir():
+                        continue
+                    for day_dir in month_dir.iterdir():
+                        if not day_dir.is_dir():
+                            continue
+                        date_str = f"{year_dir.name}-{month_dir.name}-{day_dir.name}"
+                        files = list(day_dir.glob('*.json'))
+                        if files:
+                            last_mod = max(
+                                datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+                                for f in files
+                            )
+                            dates_info[date_str] = {
+                                'last_modified': last_mod,
+                                'file_count': len(files),
+                                'source': 'local',
+                            }
+
+        # 從 S3 tar.gz 歸檔補充
         s3 = get_s3_storage()
         if s3:
-            available_dates = s3.list_dates(collector)
-            for date_str in available_dates:
-                files = s3.list_files_by_date(collector, date_str)
-                if files:
-                    last_mod = max(f['modified'] for f in files)
+            s3_dates = s3.list_dates(collector)
+            for date_str in s3_dates:
+                if date_str in dates_info:
+                    continue  # 本地已有，不重複
+                archive_files = s3.list_archive_files(collector, date_str)
+                if archive_files:
+                    last_mod = max(f['modified'] for f in archive_files)
                     dates_info[date_str] = {
                         'last_modified': last_mod,
-                        'file_count': len(files),
+                        'file_count': len(archive_files),
+                        'source': 's3_archive',
                     }
-        else:
-            # Fallback 到本地
-            collector_dir = config.LOCAL_DATA_DIR / collector
-            if collector_dir.exists():
-                for year_dir in collector_dir.iterdir():
-                    if not year_dir.is_dir() or not year_dir.name.isdigit():
-                        continue
-                    for month_dir in year_dir.iterdir():
-                        if not month_dir.is_dir():
-                            continue
-                        for day_dir in month_dir.iterdir():
-                            if not day_dir.is_dir():
-                                continue
-                            date_str = f"{year_dir.name}-{month_dir.name}-{day_dir.name}"
-                            files = list(day_dir.glob('*.json'))
-                            if files:
-                                last_mod = max(
-                                    datetime.fromtimestamp(f.stat().st_mtime).isoformat()
-                                    for f in files
-                                )
-                                dates_info[date_str] = {
-                                    'last_modified': last_mod,
-                                    'file_count': len(files),
-                                }
 
         return jsonify({
             'dates': dates_info,
@@ -492,6 +524,40 @@ def create_app():
             'files': file_urls,
             'expires_in': expires_in,
         })
+
+    @app.route('/api/fr24/data/<date>/<filename>')
+    def fr24_data_proxy(date, filename):
+        """FR24 資料代理 — 從本地或 S3 tar.gz 提供個別檔案資料"""
+        collector = 'flight_fr24'
+
+        try:
+            parsed_date = datetime.strptime(date, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'error': 'Invalid date format, use YYYY-MM-DD'}), 400
+
+        if not filename.endswith('.json'):
+            return jsonify({'error': 'Invalid filename'}), 400
+
+        # 先嘗試本地
+        date_dir = config.LOCAL_DATA_DIR / collector / parsed_date.strftime('%Y/%m/%d')
+        local_file = date_dir / filename
+        if local_file.exists():
+            with open(local_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return jsonify(data)
+
+        # 從 S3 tar.gz 歸檔提取
+        s3 = get_s3_storage()
+        if s3:
+            content = s3.extract_file_from_archive(collector, date, filename)
+            if content:
+                return Response(
+                    content,
+                    mimetype='application/json',
+                    headers={'X-Data-Source': 's3_archive'}
+                )
+
+        return jsonify({'error': f'File not found: {date}/{filename}'}), 404
 
     @app.route('/api/archive/status')
     @require_api_key

@@ -1,11 +1,20 @@
 """
 歸檔任務
 
-負責將本地資料同步到 S3，並清理過期的本地資料。
+負責將本地資料壓成 tar.gz 上傳到 S3，並清理過期的本地資料。
+
+新流程：
+1. 遍歷各收集器的 YYYY/MM/DD 日期目錄
+2. 跳過今天（還在收集中）
+3. 將該日所有 JSON 壓成 collector/archives/YYYY-MM-DD.tar.gz
+4. 上傳 1 個 PUT 到 S3
+5. 清理：確認 tar.gz 存在後刪除整個日期目錄
 """
 
 import gc
+import io
 import shutil
+import tarfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -50,8 +59,8 @@ class ArchiveTask:
         print(f"   保留天數: {config.ARCHIVE_RETENTION_DAYS}")
         print(f"   S3 Bucket: {config.S3_BUCKET}")
 
-        # 步驟 1: 同步所有資料到 S3
-        sync_stats = self._sync_to_s3()
+        # 步驟 1: 壓縮並上傳 tar.gz 到 S3
+        archive_stats = self._archive_to_s3()
 
         # 步驟 2: 清理過期的本地資料
         cleanup_stats = self._cleanup_local()
@@ -62,96 +71,162 @@ class ArchiveTask:
         print(f"\n{'=' * 60}")
         print(f"📊 歸檔完成")
         print(f"{'=' * 60}")
-        print(f"   同步: 上傳 {sync_stats['uploaded']} | 跳過 {sync_stats['skipped']} | 失敗 {sync_stats['failed']}")
-        print(f"   清理: 刪除 {cleanup_stats['deleted']} 個檔案 | 保留 {cleanup_stats['kept']} 個檔案")
+        print(f"   歸檔: 上傳 {archive_stats['uploaded']} | 跳過 {archive_stats['skipped']} | 失敗 {archive_stats['failed']}")
+        print(f"   清理: 刪除 {cleanup_stats['deleted']} 個目錄")
         print(f"{'=' * 60}")
 
         return {
-            'sync': sync_stats,
+            'archive': archive_stats,
             'cleanup': cleanup_stats
         }
 
-    def _sync_to_s3(self) -> dict:
-        """同步本地資料到 S3"""
-        print(f"\n📤 同步資料到 S3...")
+    def _find_date_dirs(self, collector_dir: Path) -> list:
+        """找出收集器目錄下所有日期目錄（YYYY/MM/DD 結構）
 
-        total_stats = {'uploaded': 0, 'skipped': 0, 'failed': 0}
+        Args:
+            collector_dir: 收集器目錄（如 data/weather/）
+
+        Returns:
+            list: [(date_str, date_dir_path), ...] 如 [('2026-02-27', Path('data/weather/2026/02/27'))]
+        """
+        date_dirs = []
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        for year_dir in collector_dir.iterdir():
+            if not year_dir.is_dir() or not year_dir.name.isdigit():
+                continue
+            for month_dir in year_dir.iterdir():
+                if not month_dir.is_dir():
+                    continue
+                for day_dir in month_dir.iterdir():
+                    if not day_dir.is_dir():
+                        continue
+                    date_str = f"{year_dir.name}-{month_dir.name}-{day_dir.name}"
+                    # 跳過今天（還在收集中）
+                    if date_str == today:
+                        continue
+                    date_dirs.append((date_str, day_dir))
+
+        return sorted(date_dirs)
+
+    def _create_tar_gz(self, date_dir: Path, collector_name: str) -> bytes:
+        """將日期目錄下所有 JSON 壓成 tar.gz
+
+        Args:
+            date_dir: 日期目錄（如 data/weather/2026/02/27/）
+            collector_name: 收集器名稱
+
+        Returns:
+            bytes: tar.gz 內容
+        """
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+            for json_file in sorted(date_dir.glob('*.json')):
+                # 歸檔內只存檔名（如 weather_0900.json），不含目錄結構
+                tar.add(str(json_file), arcname=json_file.name)
+
+        return buf.getvalue()
+
+    def _archive_to_s3(self) -> dict:
+        """壓縮並上傳 tar.gz 到 S3"""
+        print(f"\n📤 壓縮並上傳 tar.gz 到 S3...")
+
+        stats = {'uploaded': 0, 'skipped': 0, 'failed': 0}
 
         if not config.LOCAL_DATA_DIR.exists():
             print("   ⚠️  本地資料目錄不存在")
-            return total_stats
+            return stats
 
-        # 遍歷所有收集器目錄
         for collector_dir in config.LOCAL_DATA_DIR.iterdir():
             if not collector_dir.is_dir():
                 continue
 
             collector_name = collector_dir.name
+            date_dirs = self._find_date_dirs(collector_dir)
 
-            # 同步該收集器的資料
-            stats = self.s3.sync_directory(
-                local_dir=collector_dir,
-                s3_prefix=collector_name,
-                skip_existing=True
-            )
+            for date_str, date_dir in date_dirs:
+                s3_key = f"{collector_name}/archives/{date_str}.tar.gz"
 
-            total_stats['uploaded'] += stats['uploaded']
-            total_stats['skipped'] += stats['skipped']
-            total_stats['failed'] += stats['failed']
+                # 檢查 S3 上是否已有此歸檔
+                if self.s3.archive_exists(s3_key):
+                    stats['skipped'] += 1
+                    continue
 
-            if stats['uploaded'] > 0:
-                print(f"   ✓ {collector_name}: 上傳 {stats['uploaded']} 個檔案")
-            elif stats['skipped'] > 0:
-                print(f"   - {collector_name}: 已同步 ({stats['skipped']} 個檔案)")
+                # 確認目錄中有 JSON 檔案
+                json_files = list(date_dir.glob('*.json'))
+                if not json_files:
+                    continue
 
-        return total_stats
+                # 壓縮
+                try:
+                    tar_data = self._create_tar_gz(date_dir, collector_name)
+                except Exception as e:
+                    print(f"   ✗ {collector_name}/{date_str}: 壓縮失敗 - {e}")
+                    stats['failed'] += 1
+                    continue
+
+                # 寫入臨時檔案再上傳
+                tmp_path = config.LOCAL_DATA_DIR / f".tmp_{collector_name}_{date_str}.tar.gz"
+                try:
+                    tmp_path.write_bytes(tar_data)
+                    if self.s3.upload_archive(tmp_path, s3_key):
+                        stats['uploaded'] += 1
+                        print(f"   ✓ {collector_name}/{date_str}: {len(json_files)} 個檔案 → tar.gz ({len(tar_data)} bytes)")
+                    else:
+                        stats['failed'] += 1
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+
+            if stats['uploaded'] > 0 or stats['skipped'] > 0:
+                uploaded = stats['uploaded']
+                skipped = stats['skipped']
+                if uploaded > 0:
+                    print(f"   {collector_name}: 上傳 {uploaded} 個歸檔")
+
+        return stats
 
     def _cleanup_local(self) -> dict:
-        """清理過期的本地資料"""
+        """清理過期的本地資料（已歸檔到 S3 的日期目錄）"""
         print(f"\n🗑️  清理過期資料 (>{config.ARCHIVE_RETENTION_DAYS} 天)...")
 
-        stats = {'deleted': 0, 'kept': 0}
+        stats = {'deleted': 0}
         cutoff_date = datetime.now() - timedelta(days=config.ARCHIVE_RETENTION_DAYS)
 
         if not config.LOCAL_DATA_DIR.exists():
             return stats
 
-        # 遍歷所有收集器目錄
         for collector_dir in config.LOCAL_DATA_DIR.iterdir():
             if not collector_dir.is_dir():
                 continue
 
             collector_name = collector_dir.name
-
-            # 遍歷年/月/日目錄結構
+            date_dirs = self._find_date_dirs(collector_dir)
             deleted_count = 0
-            for json_file in collector_dir.glob('**/*.json'):
-                # 跳過 latest.json
-                if json_file.name == 'latest.json':
-                    stats['kept'] += 1
+
+            for date_str, date_dir in date_dirs:
+                # 檢查是否超過保留天數
+                try:
+                    dir_date = datetime.strptime(date_str, '%Y-%m-%d')
+                except ValueError:
                     continue
 
-                # 檢查檔案修改時間
-                file_mtime = datetime.fromtimestamp(json_file.stat().st_mtime)
+                if dir_date >= cutoff_date:
+                    continue
 
-                if file_mtime < cutoff_date:
-                    # 確認 S3 上已有此檔案
-                    rel_path = json_file.relative_to(collector_dir)
-                    s3_key = f"{collector_name}/{rel_path}"
+                # 確認 S3 上已有 tar.gz 歸檔
+                s3_key = f"{collector_name}/archives/{date_str}.tar.gz"
+                if not self.s3.archive_exists(s3_key):
+                    continue
 
-                    if self.s3.file_exists(s3_key):
-                        json_file.unlink()
-                        deleted_count += 1
-                        stats['deleted'] += 1
-                    else:
-                        stats['kept'] += 1
-                else:
-                    stats['kept'] += 1
+                # 刪除整個日期目錄
+                shutil.rmtree(date_dir)
+                deleted_count += 1
+                stats['deleted'] += 1
 
             if deleted_count > 0:
-                print(f"   ✓ {collector_name}: 刪除 {deleted_count} 個過期檔案")
+                print(f"   ✓ {collector_name}: 刪除 {deleted_count} 個過期日期目錄")
 
-                # 清理空目錄
+                # 清理空的年/月目錄
                 self._cleanup_empty_dirs(collector_dir)
 
         return stats
@@ -177,7 +252,6 @@ class ArchiveTask:
         if not config.LOCAL_DATA_DIR.exists():
             return status
 
-        # 統計各收集器的資料
         for collector_dir in config.LOCAL_DATA_DIR.iterdir():
             if not collector_dir.is_dir():
                 continue
@@ -193,11 +267,12 @@ class ArchiveTask:
                 'local_size_mb': round(total_size / (1024 * 1024), 2)
             }
 
-            # 如果 S3 可用，統計 S3 上的資料
+            # 如果 S3 可用，統計歸檔數量
             if self.s3:
-                s3_files = self.s3.list_files(collector_dir.name)
-                s3_size = sum(f['size'] for f in s3_files)
-                collector_status['s3_files'] = len(s3_files)
+                archive_prefix = f"{collector_dir.name}/archives/"
+                archive_files = self.s3.list_files(archive_prefix)
+                collector_status['s3_archives'] = len(archive_files)
+                s3_size = sum(f['size'] for f in archive_files)
                 collector_status['s3_size_mb'] = round(s3_size / (1024 * 1024), 2)
 
             status['collectors'].append(collector_status)

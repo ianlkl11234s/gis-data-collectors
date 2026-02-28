@@ -101,6 +101,39 @@ class S3Storage:
             print(f"   ✗ 上傳失敗 {s3_key}: {e}")
             return False
 
+    def upload_archive(self, local_path: Path, s3_key: str) -> bool:
+        """上傳 tar.gz 歸檔到 S3
+
+        Args:
+            local_path: 本地 tar.gz 檔案路徑
+            s3_key: S3 物件 key
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            self.s3.upload_file(
+                str(local_path),
+                self.bucket,
+                s3_key,
+                ExtraArgs={'ContentType': 'application/gzip'}
+            )
+            return True
+        except Exception as e:
+            print(f"   ✗ 上傳歸檔失敗 {s3_key}: {e}")
+            return False
+
+    def archive_exists(self, s3_key: str) -> bool:
+        """檢查 tar.gz 歸檔是否存在於 S3
+
+        Args:
+            s3_key: S3 物件 key（如 collector/archives/YYYY-MM-DD.tar.gz）
+
+        Returns:
+            bool: 是否存在
+        """
+        return self.file_exists(s3_key)
+
     def file_exists(self, s3_key: str) -> bool:
         """檢查 S3 檔案是否存在
 
@@ -214,28 +247,42 @@ class S3Storage:
     def list_dates(self, collector_name: str) -> list:
         """列出某個收集器有資料的日期
 
+        從 collector/archives/YYYY-MM-DD.tar.gz 解析日期，
+        同時也掃描舊格式 collector/YYYY/MM/DD/ 以保持向後相容。
+
         Args:
             collector_name: 收集器名稱
 
         Returns:
             list: 日期列表 (YYYY-MM-DD 格式)
         """
-        dates = set()
-        prefix = f"{collector_name}/"
+        import re
 
+        dates = set()
         paginator = self.s3.get_paginator('list_objects_v2')
+
+        # 新格式：從 archives/ 目錄解析
+        archive_prefix = f"{collector_name}/archives/"
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=archive_prefix):
+            for obj in page.get('Contents', []):
+                # 格式: collector/archives/YYYY-MM-DD.tar.gz
+                match = re.search(r'(\d{4}-\d{2}-\d{2})\.tar\.gz$', obj['Key'])
+                if match:
+                    dates.add(match.group(1))
+
+        # 舊格式：掃描 collector/YYYY/MM/DD/ 結構（向後相容）
+        prefix = f"{collector_name}/"
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix, Delimiter='/'):
             for cp in page.get('CommonPrefixes', []):
-                # 格式: collector/YYYY/
                 year_prefix = cp['Prefix']
-                # 繼續列出月份
+                # 排除 archives/ 目錄
+                if 'archives/' in year_prefix:
+                    continue
                 for month_page in paginator.paginate(Bucket=self.bucket, Prefix=year_prefix, Delimiter='/'):
                     for month_cp in month_page.get('CommonPrefixes', []):
                         month_prefix = month_cp['Prefix']
-                        # 繼續列出日期
                         for day_page in paginator.paginate(Bucket=self.bucket, Prefix=month_prefix, Delimiter='/'):
                             for day_cp in day_page.get('CommonPrefixes', []):
-                                # 格式: collector/YYYY/MM/DD/
                                 parts = day_cp['Prefix'].rstrip('/').split('/')
                                 if len(parts) >= 4:
                                     date_str = f"{parts[1]}-{parts[2]}-{parts[3]}"
@@ -258,6 +305,74 @@ class S3Storage:
             Params={'Bucket': self.bucket, 'Key': key},
             ExpiresIn=expires_in,
         )
+
+    def get_archive(self, collector_name: str, date: str) -> bytes:
+        """取得 tar.gz 歸檔內容
+
+        Args:
+            collector_name: 收集器名稱
+            date: 日期 (YYYY-MM-DD)
+
+        Returns:
+            bytes: tar.gz 內容，不存在則回傳 None
+        """
+        s3_key = f"{collector_name}/archives/{date}.tar.gz"
+        return self.get_file(s3_key)
+
+    def list_archive_files(self, collector_name: str, date: str) -> list:
+        """列出 tar.gz 歸檔中的檔案清單（不下載完整內容）
+
+        Args:
+            collector_name: 收集器名稱
+            date: 日期 (YYYY-MM-DD)
+
+        Returns:
+            list: 檔案資訊列表
+        """
+        import tarfile
+
+        archive_data = self.get_archive(collector_name, date)
+        if not archive_data:
+            return []
+
+        files = []
+        with tarfile.open(fileobj=io.BytesIO(archive_data), mode='r:gz') as tar:
+            for member in tar.getmembers():
+                if member.isfile():
+                    files.append({
+                        'filename': member.name,
+                        'size': member.size,
+                        'modified': datetime.fromtimestamp(member.mtime).isoformat(),
+                        'source': 's3_archive'
+                    })
+
+        return sorted(files, key=lambda f: f['filename'], reverse=True)
+
+    def extract_file_from_archive(self, collector_name: str, date: str, filename: str) -> bytes:
+        """從 tar.gz 歸檔中提取單一檔案
+
+        Args:
+            collector_name: 收集器名稱
+            date: 日期 (YYYY-MM-DD)
+            filename: 檔案名稱（如 collector_HHMM.json）
+
+        Returns:
+            bytes: 檔案內容，不存在則回傳 None
+        """
+        import tarfile
+
+        archive_data = self.get_archive(collector_name, date)
+        if not archive_data:
+            return None
+
+        with tarfile.open(fileobj=io.BytesIO(archive_data), mode='r:gz') as tar:
+            for member in tar.getmembers():
+                if member.isfile() and member.name == filename:
+                    f = tar.extractfile(member)
+                    if f:
+                        return f.read()
+
+        return None
 
     def list_files_by_date(self, collector_name: str, date: str) -> list:
         """列出某日期的所有檔案
