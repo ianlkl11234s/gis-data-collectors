@@ -90,10 +90,14 @@ YOUBIKE_INTERVAL = int(os.getenv('YOUBIKE_INTERVAL', '15'))
 WEATHER_INTERVAL = int(os.getenv('WEATHER_INTERVAL', '60'))
 WEATHER_STATIONS = os.getenv('WEATHER_STATIONS', '').split(',') if os.getenv('WEATHER_STATIONS') else []
 
-# VD 車輛偵測器
+# VD 車輛偵測器（縣市道路）
 VD_ENABLED = os.getenv('VD_ENABLED', 'false').lower() in ('true', '1', 'yes')  # 預設停用
 VD_CITIES = os.getenv('VD_CITIES', 'Taipei,NewTaipei').split(',')
 VD_INTERVAL = int(os.getenv('VD_INTERVAL', '5'))
+
+# 國道即時車流 + 壅塞 (TDX Freeway VD/Live)
+FREEWAY_VD_ENABLED = os.getenv('FREEWAY_VD_ENABLED', 'true').lower() in ('true', '1', 'yes')
+FREEWAY_VD_INTERVAL = int(os.getenv('FREEWAY_VD_INTERVAL', '10'))  # 每 10 分鐘
 
 # 溫度網格 (CWA O-A0038-003)
 TEMPERATURE_INTERVAL = int(os.getenv('TEMPERATURE_INTERVAL', '60'))

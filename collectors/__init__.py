@@ -12,6 +12,7 @@ from .ship_tdx import ShipTDXCollector
 from .ship_ais import ShipAISCollector
 from .flight_fr24 import FlightFR24Collector
 from .bus import BusCollector
+from .freeway_vd import FreewayVDCollector
 
 __all__ = [
     'BaseCollector',
@@ -26,4 +27,5 @@ __all__ = [
     'ShipAISCollector',
     'FlightFR24Collector',
     'BusCollector',
+    'FreewayVDCollector',
 ]

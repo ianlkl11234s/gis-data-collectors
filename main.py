@@ -27,6 +27,7 @@ from collectors import (
     ShipAISCollector,
     FlightFR24Collector,
     BusCollector,
+    FreewayVDCollector,
 )
 from tasks import ArchiveTask
 
@@ -65,6 +66,17 @@ def run_collectors():
             print(f"✗ VD 收集器初始化失敗: {e}")
     else:
         print("⏸️  VD 收集器已停用 (VD_ENABLED=false)")
+
+    # 國道即時車流 + 壅塞收集器 (需要 TDX API)
+    if config.FREEWAY_VD_ENABLED:
+        try:
+            freeway_vd = FreewayVDCollector()
+            collectors.append(freeway_vd)
+            print(f"✓ Freeway VD 收集器 (每 {freeway_vd.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Freeway VD 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Freeway VD 收集器已停用 (FREEWAY_VD_ENABLED=false)")
 
     # 溫度網格收集器 (需要 CWA API Key)
     if config.CWA_API_KEY:
