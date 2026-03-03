@@ -26,6 +26,7 @@ from collectors import (
     ShipTDXCollector,
     ShipAISCollector,
     FlightFR24Collector,
+    FlightOpenSkyCollector,
     BusCollector,
     FreewayVDCollector,
 )
@@ -157,6 +158,17 @@ def run_collectors():
             print(f"✗ Flight FR24 收集器初始化失敗: {e}")
     else:
         print("⏸️  Flight FR24 收集器已停用 (FLIGHT_FR24_ENABLED=false)")
+
+    # OpenSky 空域快照收集器
+    if config.FLIGHT_OPENSKY_ENABLED:
+        try:
+            opensky_collector = FlightOpenSkyCollector()
+            collectors.append(opensky_collector)
+            print(f"✓ OpenSky 收集器 (每 {opensky_collector.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ OpenSky 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  OpenSky 收集器已停用 (FLIGHT_OPENSKY_ENABLED=false)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")

@@ -129,6 +129,14 @@ FLIGHT_FR24_INTERVAL = int(os.getenv('FLIGHT_FR24_INTERVAL', '5'))  # 每 5 分�
 FLIGHT_FR24_AIRPORTS = os.getenv('FLIGHT_FR24_AIRPORTS', 'RCTP,RCSS,RCKH,RCMQ,RCNN,RCYU,RCBS,RCFN,RCQC,RCFG,RCMT,RCLY,RCKU,RCKW,RCGI,RCCM,RCWA').split(',')
 FLIGHT_FR24_TRAIL_DELAY = float(os.getenv('FLIGHT_FR24_TRAIL_DELAY', '3'))  # trail 請求間隔秒數
 
+# OpenSky 空域快照
+FLIGHT_OPENSKY_ENABLED = os.getenv('FLIGHT_OPENSKY_ENABLED', 'false').lower() in ('true', '1', 'yes')
+FLIGHT_OPENSKY_INTERVAL = int(os.getenv('FLIGHT_OPENSKY_INTERVAL', '5'))  # 每 5 分鐘
+FLIGHT_OPENSKY_CLIENT_ID = os.getenv('FLIGHT_OPENSKY_CLIENT_ID', '')      # OAuth2（新帳號）
+FLIGHT_OPENSKY_CLIENT_SECRET = os.getenv('FLIGHT_OPENSKY_CLIENT_SECRET', '')
+FLIGHT_OPENSKY_USERNAME = os.getenv('FLIGHT_OPENSKY_USERNAME', '')        # Basic Auth（舊帳號）
+FLIGHT_OPENSKY_PASSWORD = os.getenv('FLIGHT_OPENSKY_PASSWORD', '')
+
 # ============================================================
 # 全域設定
 # ============================================================
