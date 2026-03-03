@@ -122,6 +122,10 @@ TRA_TRAIN_INTERVAL = int(os.getenv('TRA_TRAIN_INTERVAL', '2'))  # 即時列車�
 TRA_STATIC_ENABLED = os.getenv('TRA_STATIC_ENABLED', 'true').lower() in ('true', '1', 'yes')
 TRA_STATIC_INTERVAL = int(os.getenv('TRA_STATIC_INTERVAL', '1440'))  # 靜態資料，每日一次
 
+# 台鐵 + 高鐵每日時刻表歸檔（DailyTimetable，含停駛/加班車）
+RAIL_TIMETABLE_ENABLED = os.getenv('RAIL_TIMETABLE_ENABLED', 'true').lower() in ('true', '1', 'yes')
+RAIL_TIMETABLE_INTERVAL = int(os.getenv('RAIL_TIMETABLE_INTERVAL', '1440'))  # 每日一次
+
 # 航運 (Ship)
 SHIP_TDX_ENABLED = os.getenv('SHIP_TDX_ENABLED', 'false').lower() in ('true', '1', 'yes')  # TDX 國內航線
 SHIP_TDX_INTERVAL = int(os.getenv('SHIP_TDX_INTERVAL', '2'))  # 每 2 分鐘

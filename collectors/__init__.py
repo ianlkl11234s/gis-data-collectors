@@ -8,6 +8,7 @@ from .temperature import TemperatureGridCollector
 from .parking import ParkingCollector
 from .tra_train import TRATrainCollector
 from .tra_static import TRAStaticCollector
+from .rail_timetable import RailTimetableCollector
 from .ship_tdx import ShipTDXCollector
 from .ship_ais import ShipAISCollector
 from .flight_fr24 import FlightFR24Collector
@@ -25,6 +26,7 @@ __all__ = [
     'ParkingCollector',
     'TRATrainCollector',
     'TRAStaticCollector',
+    'RailTimetableCollector',
     'ShipTDXCollector',
     'ShipAISCollector',
     'FlightFR24Collector',

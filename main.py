@@ -23,6 +23,7 @@ from collectors import (
     ParkingCollector,
     TRATrainCollector,
     TRAStaticCollector,
+    RailTimetableCollector,
     ShipTDXCollector,
     ShipAISCollector,
     FlightFR24Collector,
@@ -139,6 +140,17 @@ def run_collectors():
             print(f"✗ TRA Static 收集器初始化失敗: {e}")
     else:
         print("⏸️  TRA Static 收集器已停用 (TRA_STATIC_ENABLED=false)")
+
+    # 台鐵 + 高鐵每日時刻表歸檔（需要 TDX API）
+    if config.RAIL_TIMETABLE_ENABLED:
+        try:
+            rail_tt = RailTimetableCollector()
+            collectors.append(rail_tt)
+            print(f"✓ Rail Timetable 收集器 (每 {rail_tt.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Rail Timetable 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Rail Timetable 收集器已停用 (RAIL_TIMETABLE_ENABLED=false)")
 
     # TDX 國內航線船位收集器 (需要 TDX API)
     if config.SHIP_TDX_ENABLED:
