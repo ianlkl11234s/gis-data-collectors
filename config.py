@@ -83,10 +83,12 @@ SLACK_WEBHOOK = os.getenv('SLACK_WEBHOOK')
 # ============================================================
 
 # YouBike
+YOUBIKE_ENABLED = os.getenv('YOUBIKE_ENABLED', 'true').lower() in ('true', '1', 'yes')
 YOUBIKE_CITIES = os.getenv('YOUBIKE_CITIES', 'Taipei,NewTaipei,Taoyuan').split(',')
 YOUBIKE_INTERVAL = int(os.getenv('YOUBIKE_INTERVAL', '15'))
 
 # 氣象
+WEATHER_ENABLED = os.getenv('WEATHER_ENABLED', 'true').lower() in ('true', '1', 'yes')
 WEATHER_INTERVAL = int(os.getenv('WEATHER_INTERVAL', '60'))
 WEATHER_STATIONS = os.getenv('WEATHER_STATIONS', '').split(',') if os.getenv('WEATHER_STATIONS') else []
 
@@ -100,6 +102,7 @@ FREEWAY_VD_ENABLED = os.getenv('FREEWAY_VD_ENABLED', 'true').lower() in ('true',
 FREEWAY_VD_INTERVAL = int(os.getenv('FREEWAY_VD_INTERVAL', '10'))  # 每 10 分鐘
 
 # 溫度網格 (CWA O-A0038-003)
+TEMPERATURE_ENABLED = os.getenv('TEMPERATURE_ENABLED', 'true').lower() in ('true', '1', 'yes')
 TEMPERATURE_INTERVAL = int(os.getenv('TEMPERATURE_INTERVAL', '60'))
 TEMPERATURE_DATASET = 'O-A0038-003'  # 小時溫度觀測分析格點資料
 
@@ -114,7 +117,9 @@ BUS_CITIES = os.getenv('BUS_CITIES', 'Taipei,NewTaipei,Taoyuan').split(',')
 BUS_INTERVAL = int(os.getenv('BUS_INTERVAL', '1'))  # 每 1 分鐘
 
 # 台鐵 (TDX TRA API)
+TRA_TRAIN_ENABLED = os.getenv('TRA_TRAIN_ENABLED', 'true').lower() in ('true', '1', 'yes')
 TRA_TRAIN_INTERVAL = int(os.getenv('TRA_TRAIN_INTERVAL', '2'))  # 即時列車位置，每 2 分鐘
+TRA_STATIC_ENABLED = os.getenv('TRA_STATIC_ENABLED', 'true').lower() in ('true', '1', 'yes')
 TRA_STATIC_INTERVAL = int(os.getenv('TRA_STATIC_INTERVAL', '1440'))  # 靜態資料，每日一次
 
 # 航運 (Ship)

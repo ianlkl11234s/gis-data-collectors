@@ -39,21 +39,26 @@ def run_collectors():
     collectors = []
 
     # YouBike 收集器
-    try:
-        youbike = YouBikeCollector()
-        collectors.append(youbike)
-        print(f"\n✓ YouBike 收集器 (每 {youbike.interval_minutes} 分鐘)")
-    except Exception as e:
-        print(f"\n✗ YouBike 收集器初始化失敗: {e}")
+    if config.YOUBIKE_ENABLED:
+        try:
+            youbike = YouBikeCollector()
+            collectors.append(youbike)
+            print(f"\n✓ YouBike 收集器 (每 {youbike.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"\n✗ YouBike 收集器初始化失敗: {e}")
+    else:
+        print("\n⏸️  YouBike 收集器已停用 (YOUBIKE_ENABLED=false)")
 
     # Weather 收集器
-    if config.CWA_API_KEY:
+    if config.WEATHER_ENABLED and config.CWA_API_KEY:
         try:
             weather = WeatherCollector()
             collectors.append(weather)
             print(f"✓ Weather 收集器 (每 {weather.interval_minutes} 分鐘)")
         except Exception as e:
             print(f"✗ Weather 收集器初始化失敗: {e}")
+    elif not config.WEATHER_ENABLED:
+        print("⏸️  Weather 收集器已停用 (WEATHER_ENABLED=false)")
     else:
         print("⚠️  CWA_API_KEY 未設定，跳過 Weather 收集器")
 
@@ -80,13 +85,15 @@ def run_collectors():
         print("⏸️  Freeway VD 收集器已停用 (FREEWAY_VD_ENABLED=false)")
 
     # 溫度網格收集器 (需要 CWA API Key)
-    if config.CWA_API_KEY:
+    if config.TEMPERATURE_ENABLED and config.CWA_API_KEY:
         try:
             temperature = TemperatureGridCollector()
             collectors.append(temperature)
             print(f"✓ Temperature Grid 收集器 (每 {temperature.interval_minutes} 分鐘)")
         except Exception as e:
             print(f"✗ Temperature Grid 收集器初始化失敗: {e}")
+    elif not config.TEMPERATURE_ENABLED:
+        print("⏸️  Temperature Grid 收集器已停用 (TEMPERATURE_ENABLED=false)")
 
     # 路邊停車收集器 (需要 TDX API)
     if config.PARKING_ENABLED:
@@ -111,20 +118,26 @@ def run_collectors():
         print("⏸️  Bus 收集器已停用 (BUS_ENABLED=false)")
 
     # 台鐵即時列車位置收集器 (需要 TDX API)
-    try:
-        tra_train = TRATrainCollector()
-        collectors.append(tra_train)
-        print(f"✓ TRA Train 收集器 (每 {tra_train.interval_minutes} 分鐘)")
-    except Exception as e:
-        print(f"✗ TRA Train 收集器初始化失敗: {e}")
+    if config.TRA_TRAIN_ENABLED:
+        try:
+            tra_train = TRATrainCollector()
+            collectors.append(tra_train)
+            print(f"✓ TRA Train 收集器 (每 {tra_train.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ TRA Train 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  TRA Train 收集器已停用 (TRA_TRAIN_ENABLED=false)")
 
     # 台鐵靜態資料收集器 (需要 TDX API，每日一次)
-    try:
-        tra_static = TRAStaticCollector()
-        collectors.append(tra_static)
-        print(f"✓ TRA Static 收集器 (每 {tra_static.interval_minutes} 分鐘)")
-    except Exception as e:
-        print(f"✗ TRA Static 收集器初始化失敗: {e}")
+    if config.TRA_STATIC_ENABLED:
+        try:
+            tra_static = TRAStaticCollector()
+            collectors.append(tra_static)
+            print(f"✓ TRA Static 收集器 (每 {tra_static.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ TRA Static 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  TRA Static 收集器已停用 (TRA_STATIC_ENABLED=false)")
 
     # TDX 國內航線船位收集器 (需要 TDX API)
     if config.SHIP_TDX_ENABLED:
