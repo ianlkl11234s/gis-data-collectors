@@ -85,27 +85,35 @@ class FlightOpenSkyCollector(BaseCollector):
     # OAuth2 token 管理
     # ------------------------------------------------------------------
 
-    def _get_access_token(self) -> str:
-        """取得或刷新 OAuth2 access token（30 分鐘過期，提前 60 秒刷新）"""
+    def _get_access_token(self) -> str | None:
+        """取得或刷新 OAuth2 access token（30 分鐘過期，提前 60 秒刷新）
+
+        若 token endpoint 連線失敗，回傳 None 讓 collect() 降級為匿名查詢。
+        """
         now = _time.time()
         if self._access_token and now < self._token_expires_at - 60:
             return self._access_token
 
-        resp = requests.post(
-            OPENSKY_TOKEN_URL,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": config.FLIGHT_OPENSKY_CLIENT_ID,
-                "client_secret": config.FLIGHT_OPENSKY_CLIENT_SECRET,
-            },
-            timeout=config.REQUEST_TIMEOUT,
-        )
-        resp.raise_for_status()
-        token_data = resp.json()
+        try:
+            resp = requests.post(
+                OPENSKY_TOKEN_URL,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": config.FLIGHT_OPENSKY_CLIENT_ID,
+                    "client_secret": config.FLIGHT_OPENSKY_CLIENT_SECRET,
+                },
+                timeout=config.REQUEST_TIMEOUT,
+            )
+            resp.raise_for_status()
+            token_data = resp.json()
 
-        self._access_token = token_data["access_token"]
-        self._token_expires_at = now + token_data.get("expires_in", 1800)
-        return self._access_token
+            self._access_token = token_data["access_token"]
+            self._token_expires_at = now + token_data.get("expires_in", 1800)
+            return self._access_token
+        except Exception as e:
+            print(f"[{self.name}] OAuth2 token 取得失敗，降級為匿名: {e}")
+            self._access_token = None
+            return None
 
     # ------------------------------------------------------------------
     # collect
@@ -121,7 +129,8 @@ class FlightOpenSkyCollector(BaseCollector):
         }
         if self._oauth2:
             token = self._get_access_token()
-            kwargs["headers"] = {"Authorization": f"Bearer {token}"}
+            if token:
+                kwargs["headers"] = {"Authorization": f"Bearer {token}"}
         elif self.auth:
             kwargs["auth"] = self.auth
 

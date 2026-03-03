@@ -75,7 +75,7 @@ class FreewayVDCollector(BaseCollector):
                 'SectionID': lv.get('SectionID', ''),
                 'TravelTime': lv.get('TravelTime', 0),
                 'TravelSpeed': lv.get('TravelSpeed', 0),
-                'CongestionLevel': lv.get('CongestionLevel', 0),
+                'CongestionLevel': int(lv.get('CongestionLevel', 0)),
                 'DataCollectTime': lv.get('DataCollectTime', ''),
             })
 
