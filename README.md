@@ -2,6 +2,40 @@
 
 定期自動化資料收集服務，部署於 Zeabur 24hr 運作。支援 S3 歸檔與資料生命週期管理。
 
+## 收集器總覽
+
+共 16 個收集器，每個都可獨立啟停。
+
+| 收集器 | `_ENABLED` 環境變數 | 預設 | 頻率 | 來源 | 說明 |
+|--------|---------------------|------|------|------|------|
+| YouBike | `YOUBIKE_ENABLED` | `true` | 15 min | TDX | 即時車位 |
+| Weather | `WEATHER_ENABLED` | `true` | 60 min | CWA | 氣象觀測站 |
+| VD | `VD_ENABLED` | **false** | 5 min | TDX | 縣市道路車輛偵測器 |
+| Freeway VD | `FREEWAY_VD_ENABLED` | `true` | 10 min | TDX | 國道即時車流+壅塞 |
+| Temperature | `TEMPERATURE_ENABLED` | `true` | 60 min | CWA | 溫度網格 |
+| Parking | `PARKING_ENABLED` | **false** | 15 min | TDX | 路邊停車即時可用性 |
+| Bus | `BUS_ENABLED` | `true` | 1 min | TDX | 公車即時位置 |
+| TRA Train | `TRA_TRAIN_ENABLED` | `true` | 2 min | TDX | 台鐵即時列車位置 |
+| TRA Static | `TRA_STATIC_ENABLED` | `true` | 1440 min | TDX | 台鐵靜態資料（每日） |
+| Rail Timetable | `RAIL_TIMETABLE_ENABLED` | `true` | 1440 min | TDX | 台鐵+高鐵每日時刻表歸檔 |
+| Ship TDX | `SHIP_TDX_ENABLED` | **false** | 2 min | TDX | 國內航線船位 |
+| Ship AIS | `SHIP_AIS_ENABLED` | `true` | 10 min | 航港局 | AIS 船位追蹤 |
+| Flight FR24 | `FLIGHT_FR24_ENABLED` | **false** | 5 min | FR24 | 台灣機場航班完整軌跡 |
+| FR24 Zone | `FLIGHT_FR24_ZONE_ENABLED` | **false** | 5 min | FR24 | 空域快照（最多飛機+起降機場） |
+| OpenSky | `FLIGHT_OPENSKY_ENABLED` | **false** | 5 min | OpenSky | 空域快照（精確高度+垂直速率） |
+
+> 預設 **false** 的收集器需手動啟用（設定環境變數為 `true`）。
+
+### 飛機三源互補
+
+三個飛機收集器各有優勢，都有 `icao24` 欄位可直接 merge：
+
+| 收集器 | 角色 | 飛機數/輪 | 優勢 | 缺失 |
+|--------|------|-----------|------|------|
+| Flight FR24 | 台灣起降航班 | ~20-50 | 完整 trail 軌跡 | 只追蹤台灣機場起降 |
+| FR24 Zone | 空域快照 | ~120 | 最多飛機、有 origin/dest | 無軌跡 |
+| OpenSky | 空域快照 | ~65 | 精確高度、垂直速率 | 無 origin/destination |
+
 ## 專案結構
 
 ```
@@ -25,13 +59,18 @@ data-collectors/
 │   ├── youbike.py         # YouBike 即時車位
 │   ├── weather.py         # 氣象觀測站資料（CWA）
 │   ├── vd.py              # VD 車輛偵測器
+│   ├── freeway_vd.py      # 國道即時車流+壅塞（TDX）
 │   ├── temperature.py     # 溫度網格資料（CWA）
 │   ├── parking.py         # 路邊停車即時可用性
+│   ├── bus.py             # 公車即時位置（TDX）
 │   ├── tra_train.py       # 台鐵即時列車位置（TDX）
 │   ├── tra_static.py      # 台鐵靜態資料（TDX）
+│   ├── rail_timetable.py  # 台鐵+高鐵每日時刻表歸檔（TDX）
 │   ├── ship_tdx.py        # TDX 國內航線船位
 │   ├── ship_ais.py        # 航港局 AIS 船位
-│   └── flight_fr24.py     # FlightRadar24 航班軌跡
+│   ├── flight_fr24.py     # FlightRadar24 航班軌跡
+│   ├── flight_fr24_zone.py # FR24 Zone 空域快照
+│   └── flight_opensky.py  # OpenSky 空域快照
 │
 ├── storage/                # 儲存後端
 │   ├── __init__.py
@@ -80,18 +119,26 @@ python main.py
 
 ## 環境變數
 
-| 變數 | 必填 | 說明 |
+### 必填
+
+| 變數 | 說明 |
+|------|------|
+| `TDX_APP_ID` | TDX API Client ID |
+| `TDX_APP_KEY` | TDX API Client Secret |
+| `CWA_API_KEY` | 氣象局 API Key（Weather、Temperature 需要） |
+
+### 選填
+
+| 變數 | 預設 | 說明 |
 |------|------|------|
-| `TDX_APP_ID` | ✅ | TDX API Client ID |
-| `TDX_APP_KEY` | ✅ | TDX API Client Secret |
-| `CWA_API_KEY` | ✅ | 氣象局 API Key |
-| `API_KEY` | | HTTP API 認證金鑰（建議設定） |
-| `API_PORT` | | HTTP API 端口（預設 8080） |
+| `API_KEY` | | HTTP API 認證金鑰（設定才會啟動 API Server） |
+| `API_PORT` | `8080` | HTTP API 端口 |
 | `S3_BUCKET` | | S3 儲存桶（啟用歸檔必填） |
 | `S3_ACCESS_KEY` | | AWS Access Key |
 | `S3_SECRET_KEY` | | AWS Secret Key |
-| `S3_REGION` | | S3 區域（預設 ap-southeast-2） |
-| `WEBHOOK_URL` | | 通知 Webhook |
+| `S3_REGION` | `ap-southeast-2` | S3 區域 |
+| `S3_ENDPOINT` | | S3 相容 endpoint（MinIO 等） |
+| `WEBHOOK_URL` | | 通知 Webhook（Discord、Slack） |
 | `LINE_TOKEN` | | LINE Notify Token |
 
 ### 歸檔設定
@@ -102,110 +149,159 @@ python main.py
 | `ARCHIVE_RETENTION_DAYS` | `7` | 本地資料保留天數 |
 | `ARCHIVE_TIME` | `03:00` | 每日歸檔執行時間 |
 
-### 收集器專屬設定
+### 收集器開關與設定
+
+每個收集器都有 `_ENABLED` 開關和 `_INTERVAL` 頻率設定。
+
+#### 陸運
 
 | 變數 | 預設值 | 說明 |
 |------|--------|------|
-| `YOUBIKE_CITIES` | `Taipei,NewTaipei,Taoyuan` | YouBike 收集城市 |
-| `YOUBIKE_INTERVAL` | `15` | YouBike 收集間隔（分鐘） |
-| `WEATHER_INTERVAL` | `60` | 氣象站收集間隔（分鐘） |
-| `VD_CITIES` | `Taipei,NewTaipei` | VD 收集城市 |
-| `VD_INTERVAL` | `5` | VD 收集間隔（分鐘） |
-| `TEMPERATURE_INTERVAL` | `60` | 溫度網格收集間隔（分鐘） |
-| `PARKING_CITIES` | `Taipei,NewTaipei,Taichung` | 路邊停車收集城市 |
-| `PARKING_INTERVAL` | `15` | 路邊停車收集間隔（分鐘） |
-| `TRA_TRAIN_INTERVAL` | `2` | 台鐵列車位置收集間隔（分鐘） |
-| `TRA_STATIC_INTERVAL` | `1440` | 台鐵靜態資料間隔（分鐘） |
-| `SHIP_TDX_ENABLED` | `false` | 是否啟用 TDX 船位收集 |
-| `SHIP_TDX_INTERVAL` | `2` | TDX 船位收集間隔（分鐘） |
-| `SHIP_AIS_ENABLED` | `true` | 是否啟用航港局 AIS 船位 |
-| `SHIP_AIS_INTERVAL` | `10` | AIS 船位收集間隔（分鐘） |
-| `FLIGHT_FR24_ENABLED` | `false` | 是否啟用 FR24 航班軌跡 |
-| `FLIGHT_FR24_INTERVAL` | `5` | FR24 收集間隔（分鐘） |
-| `FLIGHT_FR24_AIRPORTS` | `RCTP,RCSS,...（17 個）` | 掃描的台灣機場 ICAO 代碼 |
+| `YOUBIKE_ENABLED` | `true` | YouBike 即時車位 |
+| `YOUBIKE_CITIES` | `Taipei,NewTaipei,Taoyuan` | 收集城市 |
+| `YOUBIKE_INTERVAL` | `15` | 間隔（分鐘） |
+| `VD_ENABLED` | `false` | 縣市道路 VD 車輛偵測器 |
+| `VD_CITIES` | `Taipei,NewTaipei` | 收集城市 |
+| `VD_INTERVAL` | `5` | 間隔（分鐘） |
+| `FREEWAY_VD_ENABLED` | `true` | 國道即時車流+壅塞 |
+| `FREEWAY_VD_INTERVAL` | `10` | 間隔（分鐘） |
+| `PARKING_ENABLED` | `false` | 路邊停車即時可用性 |
+| `PARKING_CITIES` | `Taipei,NewTaipei,Taichung` | 收集城市 |
+| `PARKING_INTERVAL` | `15` | 間隔（分鐘） |
+| `BUS_ENABLED` | `true` | 公車即時位置 |
+| `BUS_CITIES` | `Taipei,NewTaipei,Taoyuan` | 收集城市 |
+| `BUS_INTERVAL` | `1` | 間隔（分鐘） |
+
+#### 鐵路
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `TRA_TRAIN_ENABLED` | `true` | 台鐵即時列車位置 |
+| `TRA_TRAIN_INTERVAL` | `2` | 間隔（分鐘） |
+| `TRA_STATIC_ENABLED` | `true` | 台鐵靜態資料（車站、路線等） |
+| `TRA_STATIC_INTERVAL` | `1440` | 間隔（分鐘，1440=每日） |
+| `RAIL_TIMETABLE_ENABLED` | `true` | 台鐵+高鐵每日時刻表歸檔 |
+| `RAIL_TIMETABLE_INTERVAL` | `1440` | 間隔（分鐘，1440=每日） |
+
+#### 航運
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `SHIP_TDX_ENABLED` | `false` | TDX 國內航線船位 |
+| `SHIP_TDX_INTERVAL` | `2` | 間隔（分鐘） |
+| `SHIP_AIS_ENABLED` | `true` | 航港局 AIS 船位 |
+| `SHIP_AIS_INTERVAL` | `10` | 間隔（分鐘） |
+
+#### 航空
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `FLIGHT_FR24_ENABLED` | `false` | FR24 台灣機場航班軌跡 |
+| `FLIGHT_FR24_INTERVAL` | `5` | 間隔（分鐘） |
+| `FLIGHT_FR24_AIRPORTS` | 17 個台灣機場 ICAO | 掃描機場清單 |
 | `FLIGHT_FR24_TRAIL_DELAY` | `3` | trail 請求間隔（秒） |
+| `FLIGHT_FR24_ZONE_ENABLED` | `false` | FR24 Zone 空域快照 |
+| `FLIGHT_FR24_ZONE_INTERVAL` | `5` | 間隔（分鐘） |
+| `FLIGHT_FR24_ZONE_LAMIN` | `21` | bbox 南界緯度 |
+| `FLIGHT_FR24_ZONE_LAMAX` | `27` | bbox 北界緯度 |
+| `FLIGHT_FR24_ZONE_LOMIN` | `117` | bbox 西界經度 |
+| `FLIGHT_FR24_ZONE_LOMAX` | `123` | bbox 東界經度 |
+| `FLIGHT_OPENSKY_ENABLED` | `false` | OpenSky 空域快照 |
+| `FLIGHT_OPENSKY_INTERVAL` | `5` | 間隔（分鐘） |
+| `FLIGHT_OPENSKY_CLIENT_ID` | | OAuth2 Client ID |
+| `FLIGHT_OPENSKY_CLIENT_SECRET` | | OAuth2 Client Secret |
+| `FLIGHT_OPENSKY_USERNAME` | | Basic Auth 帳號（二擇一） |
+| `FLIGHT_OPENSKY_PASSWORD` | | Basic Auth 密碼 |
+
+#### 氣象
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `WEATHER_ENABLED` | `true` | 氣象觀測站 |
+| `WEATHER_INTERVAL` | `60` | 間隔（分鐘） |
+| `TEMPERATURE_ENABLED` | `true` | 溫度網格 |
+| `TEMPERATURE_INTERVAL` | `60` | 間隔（分鐘） |
 
 ## 收集器說明
 
 ### YouBike 即時車位
-- **頻率**: 每 15 分鐘
 - **來源**: TDX API `/v2/Bike/Availability/{City}`
 - **範圍**: 臺北市、新北市、桃園市
 - **資料量**: ~3,800 站/次
 
 ### 氣象觀測站資料
-- **頻率**: 每 60 分鐘
 - **來源**: CWA API `O-A0001-001`
 - **資料類型**: 即時觀測（溫度、雨量、風速、氣壓等）
 - **資料量**: ~700 測站
 
 ### VD 車輛偵測器
-- **頻率**: 每 5 分鐘
 - **來源**: TDX API `/v2/Road/Traffic/VD/{City}`
 - **範圍**: 臺北市、新北市
 - **資料類型**: 車流量、車速
 
-### 溫度網格資料 🆕
-- **頻率**: 每 60 分鐘
+### 國道即時車流+壅塞
+- **來源**: TDX API `/v2/Road/Traffic/VD/Freeway` + `/v1/Road/Traffic/Live/Freeway`
+- **資料類型**: 國道各偵測器車流量、車速、壅塞等級
+
+### 溫度網格資料
 - **來源**: CWA File API `O-A0038-003`
 - **資料類型**: 小時溫度觀測分析格點資料
 - **解析度**: 0.03 度（約 3.3 公里）
-- **覆蓋範圍**: 全台灣
 - **資料量**: ~50,000 格點
 
 ### 路邊停車即時可用性
-- **頻率**: 每 15 分鐘
 - **來源**: TDX API `/v1/Parking/OnStreet/ParkingSegmentAvailability/{City}`
 - **範圍**: 臺北市、新北市、臺中市
-- **注意**: 高雄市不在 TDX 支援範圍
 - **資料量**: ~4,600 路段
 
+### 公車即時位置
+- **來源**: TDX API `/v2/Bus/RealTimeByFrequency/{City}`
+- **範圍**: 依 `BUS_CITIES` 設定
+- **資料類型**: 公車即時 GPS 座標、速度、方位角
+
 ### 台鐵即時列車位置
-- **頻率**: 每 2 分鐘
 - **來源**: TDX API
 - **資料類型**: 即時列車位置與班次
 
 ### 台鐵靜態資料
-- **頻率**: 每日 1 次
 - **來源**: TDX API
-- **資料類型**: 車站、路線等靜態資料
+- **資料類型**: 車站、路線、站序、車種、當日時刻表
 
-### 公車即時位置 🆕
-- **頻率**: 每 1 分鐘
-- **來源**: TDX API `/v2/Bus/RealTimeByFrequency/{City}`
-- **範圍**: 依 `BUS_CITIES` 設定
-- **資料類型**: 公車即時位置（GPS 座標、速度、方位角）
+### 台鐵+高鐵每日時刻表歸檔
+- **來源**: TDX API `/v3/Rail/TRA/DailyTrainTimetable/Today` + `/v2/Rail/THSR/DailyTimetable/Today`
+- **資料類型**: 每日時刻表（含停駛/加班車標記）
+- **資料量**: 台鐵 ~950 班 + 高鐵 ~160 班
+- **說明**: TDX DailyTimetable 每天更新，歷史僅保留約 90 天，需每日歸檔留存
 
 ### 航港局 AIS 船位
-- **頻率**: 每 10 分鐘
 - **來源**: 航港局 AIS 開放資料
 - **資料類型**: 台灣周邊船舶即時位置
 
-### FlightRadar24 航班軌跡 🆕
-- **頻率**: 每 5 分鐘
-- **來源**: FlightRadar24（非官方 API，僅供教育用途）
-- **範圍**: 台灣 17 個民航機場（RCTP、RCSS、RCKH 等）
+### TDX 國內航線船位
+- **來源**: TDX API
+- **資料類型**: 國內航線船舶位置
+
+### FlightRadar24 航班軌跡
+- **來源**: FlightRadar24（非官方 API）
+- **範圍**: 台灣 17 個民航機場
 - **資料類型**: 完整飛行軌跡（含經緯度、高度、時間戳記）
 - **運作機制**:
-  - **arrivals**: 掃描已降落航班，立即抓取完整 trail
-  - **departures**: 記錄已出發航班至 pending 追蹤清單，每輪輪詢 clickhandler API 確認是否降落，降落後抓取完整 trail
-  - 超過 24 小時未降落的追蹤航班自動放棄
-- **防封鎖**: User-Agent 輪替（5 組）、隨機抖動等待間隔
+  - arrivals：掃描已降落航班，立即抓取完整 trail
+  - departures：記錄至 pending 追蹤清單，確認降落後抓取 trail
+- **防封鎖**: User-Agent 輪替、隨機抖動等待間隔
 
-## 每日 API 呼叫統計
+### FR24 Zone 空域快照
+- **來源**: FlightRadar24 公開 feed endpoint（無需 API key）
+- **範圍**: 台灣空域 bbox（21-27N, 117-123E）
+- **資料類型**: 即時飛機位置、origin/destination IATA
+- **資料量**: ~120 架/次
+- **防封鎖**: 獨立 User-Agent 池（與 Flight FR24 不同）
 
-| 收集器 | 頻率 | 每日次數 | 來源 |
-|--------|------|---------|------|
-| YouBike | 15 min | 96 × 3 城市 = 288 | TDX |
-| Weather | 60 min | 24 | CWA |
-| VD | 5 min | 288 × 2 城市 = 576 | TDX |
-| Temperature | 60 min | 24 | CWA |
-| Parking | 15 min | 96 × 3 城市 = 288 | TDX |
-| TRA Train | 2 min | 720 | TDX |
-| TRA Static | 1440 min | 1 | TDX |
-| Bus | 1 min | 1,440 | TDX |
-| Ship AIS | 10 min | 144 | 航港局 |
-| Flight FR24 | 5 min | 288（掃描）+ pending 追蹤 | FR24 |
+### OpenSky 空域快照
+- **來源**: OpenSky Network API
+- **範圍**: 台灣空域 bbox
+- **資料類型**: state vectors（位置、高度、垂直速率、squawk 等）
+- **認證**: OAuth2 > Basic Auth > 匿名（匿名 400 credits/天）
 
 ## 資料儲存與歸檔
 
@@ -223,33 +319,25 @@ PUT 請求從 ~5,000/天 降至 ~10/天（99.8% 降幅）。
 ```
 data/                           # 本地 (最近 7 天，個別 JSON)
 ├── youbike/
-│   ├── latest.json            # 最新資料快取
-│   └── 2025/12/26/
-│       └── youbike_0900.json
 ├── weather/
 ├── vd/
+├── freeway_vd/
 ├── temperature/
 ├── parking/
 ├── bus/
-└── flight_fr24/
+├── tra_train/
+├── tra_static/
+├── rail_timetable/
+├── ship_tdx/
+├── ship_ais/
+├── flight_fr24/
+├── flight_fr24_zone/
+└── flight_opensky/
 
 s3://bucket/                   # S3 (永久歸檔，tar.gz)
-├── youbike/
-│   └── archives/
-│       ├── 2025-12-20.tar.gz  # 每天 1 個 PUT
-│       └── 2025-12-21.tar.gz
-├── weather/
-│   └── archives/
-│       └── ...
-├── flight_fr24/
-│   └── archives/
-│       └── 2026-02-16.tar.gz
-└── ...
-
-# 舊格式（已存在的個別檔案保留不動）
-├── youbike/
-│   └── 2025/12/01/            # 舊資料，API 仍可讀取
-│       └── youbike_0900.json
+└── {collector}/
+    └── archives/
+        └── YYYY-MM-DD.tar.gz  # 每天 1 個 PUT
 ```
 
 ### 歸檔流程
@@ -261,17 +349,6 @@ s3://bucket/                   # S3 (永久歸檔，tar.gz)
 4. 刪除超過保留天數且 S3 已有歸檔的日期目錄
 5. 清理空目錄
 
-### 下游專案影響
-
-| 專案 | 影響 | 說明 |
-|------|------|------|
-| mini-taiwan-pulse | 無 | 使用不同 S3 prefix |
-| mini-taipei-v3 | 無 | 不讀 S3 |
-| weather_change | 需更新 | 讀 `temperature/`、`weather/` 個別檔 → 需改讀 tar.gz |
-| ship-gis | 需更新 | 讀 `ship_ais/` 個別檔 → 需改讀 tar.gz |
-
-> S3 上已有的舊個別檔案保留不動，API 仍支援讀取。
-
 詳細架構說明請參閱 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 首次設定 S3 請參閱 [docs/S3_SETUP.md](./docs/S3_SETUP.md)
@@ -280,14 +357,7 @@ s3://bucket/                   # S3 (永久歸檔，tar.gz)
 
 設定 `API_KEY` 環境變數後，會自動啟動 HTTP API Server。
 
-**特色功能**：
-- 自動從本地或 S3 讀取資料（透明切換）
-- 支援列出所有可用日期
-- 歸檔狀態查詢
-
 詳細文件請參閱 [docs/API.md](./docs/API.md)
-
-### 快速範例
 
 ```bash
 # 健康檢查（無需認證）
@@ -296,136 +366,32 @@ curl https://your-app.zeabur.app/health
 # 列出所有收集器
 curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/collectors
 
-# 取得最新路邊停車資料
+# 取得最新資料
 curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/parking/latest
 
 # 列出可用日期（包含 S3 歷史資料）
 curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/parking/dates
-
-# 取得歷史資料（自動從 S3 讀取）
-curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/data/parking/2025-12-01
-
-# 查看歸檔狀態
-curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/archive/status
 ```
-
-## 資料格式
-
-### 溫度網格 (temperature)
-
-```json
-{
-  "fetch_time": "2025-12-26T09:00:00",
-  "observation_time": "2025-12-26T09:00:00+08:00",
-  "geo_info": {
-    "bottom_left_lon": 118.0,
-    "bottom_left_lat": 21.0,
-    "top_right_lon": 123.0,
-    "top_right_lat": 26.0,
-    "resolution_deg": 0.03,
-    "resolution_km": 3.3
-  },
-  "grid_size": { "rows": 167, "cols": 167 },
-  "valid_points": 48392,
-  "min_temp": 5.2,
-  "max_temp": 28.4,
-  "avg_temp": 18.6,
-  "data": [[18.2, 18.3, ...], ...]
-}
-```
-
-### 路邊停車 (parking)
-
-```json
-{
-  "fetch_time": "2025-12-26T09:00:00",
-  "total_segments": 4627,
-  "total_spaces": 133509,
-  "total_available": 45231,
-  "overall_occupancy": 0.661,
-  "by_city": {
-    "Taipei": {
-      "name": "臺北市",
-      "segments": 2365,
-      "total_spaces": 46864,
-      "available_spaces": 15234,
-      "full_segments": 128,
-      "avg_occupancy": 0.675
-    }
-  },
-  "data": [
-    {
-      "segment_id": "1002053",
-      "segment_name": "中山北路1段53巷",
-      "total_spaces": 8,
-      "available_spaces": 4,
-      "occupancy": 0.5,
-      "full_status": 0,
-      "_city": "Taipei"
-    }
-  ]
-}
-```
-
-### FlightRadar24 航班軌跡 (flight_fr24)
-
-```json
-{
-  "fetch_time": "2026-02-16T08:35:00",
-  "date": "2026-02-16",
-  "flight_count": 72,
-  "with_trail": 72,
-  "pending_tracking": 15,
-  "data": [
-    {
-      "fr24_id": "3a1b2c3d",
-      "callsign": "BR11",
-      "registration": "B-16725",
-      "aircraft_type": "77W",
-      "origin_icao": "KLAX",
-      "origin_iata": "LAX",
-      "dest_icao": "RCTP",
-      "dest_iata": "TPE",
-      "dep_time": 1739600000,
-      "arr_time": 1739640000,
-      "status": "Landed 04:44",
-      "trail_points": 929,
-      "path": [
-        [33.94, -118.42, 0, 1739600000],
-        [34.12, -118.89, 3048, 1739600300],
-        ...
-      ]
-    }
-  ]
-}
-```
-
-`path` 格式：`[緯度, 經度, 高度(m), Unix 時間戳記]`
-
-## 監控
-
-- 每次執行會輸出統計日誌
-- 可設定 Webhook 接收執行結果
-- 支援 LINE Notify 異常通知
 
 ## 開發新收集器
 
 1. 在 `collectors/` 建立新模組
 2. 繼承 `BaseCollector` 類別
 3. 實作 `collect()` 方法
-4. 在 `collectors/__init__.py` 註冊
-5. 在 `main.py` 初始化並加入排程
+4. 在 `config.py` 新增 `_ENABLED` 和 `_INTERVAL` 設定
+5. 在 `collectors/__init__.py` 註冊
+6. 在 `main.py` 初始化並加入排程
 
 ```python
 from collectors.base import BaseCollector
+import config
 
 class MyCollector(BaseCollector):
     name = "my_collector"
-    interval_minutes = 30
+    interval_minutes = config.MY_COLLECTOR_INTERVAL
 
     def collect(self) -> dict:
-        # 實作資料收集邏輯
-        data = self.fetch_api(...)
+        data = ...
         return {"count": len(data), "data": data}
 ```
 

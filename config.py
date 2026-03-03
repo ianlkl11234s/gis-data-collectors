@@ -141,10 +141,10 @@ FLIGHT_FR24_TRAIL_DELAY = float(os.getenv('FLIGHT_FR24_TRAIL_DELAY', '3'))  # tr
 # FR24 Zone 空域快照（公開 feed，無需 API key）
 FLIGHT_FR24_ZONE_ENABLED = os.getenv('FLIGHT_FR24_ZONE_ENABLED', 'false').lower() in ('true', '1', 'yes')
 FLIGHT_FR24_ZONE_INTERVAL = int(os.getenv('FLIGHT_FR24_ZONE_INTERVAL', '5'))
-FLIGHT_FR24_ZONE_LAMIN = float(os.getenv('FLIGHT_FR24_ZONE_LAMIN', '21'))
-FLIGHT_FR24_ZONE_LAMAX = float(os.getenv('FLIGHT_FR24_ZONE_LAMAX', '27'))
-FLIGHT_FR24_ZONE_LOMIN = float(os.getenv('FLIGHT_FR24_ZONE_LOMIN', '117'))
-FLIGHT_FR24_ZONE_LOMAX = float(os.getenv('FLIGHT_FR24_ZONE_LOMAX', '123'))
+FLIGHT_FR24_ZONE_LAMIN = float(os.getenv('FLIGHT_FR24_ZONE_LAMIN', '20.8'))
+FLIGHT_FR24_ZONE_LAMAX = float(os.getenv('FLIGHT_FR24_ZONE_LAMAX', '27.5'))
+FLIGHT_FR24_ZONE_LOMIN = float(os.getenv('FLIGHT_FR24_ZONE_LOMIN', '116.2'))
+FLIGHT_FR24_ZONE_LOMAX = float(os.getenv('FLIGHT_FR24_ZONE_LOMAX', '124.5'))
 
 # OpenSky 空域快照
 FLIGHT_OPENSKY_ENABLED = os.getenv('FLIGHT_OPENSKY_ENABLED', 'false').lower() in ('true', '1', 'yes')
