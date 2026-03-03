@@ -11,6 +11,7 @@ from .tra_static import TRAStaticCollector
 from .ship_tdx import ShipTDXCollector
 from .ship_ais import ShipAISCollector
 from .flight_fr24 import FlightFR24Collector
+from .flight_fr24_zone import FlightFR24ZoneCollector
 from .flight_opensky import FlightOpenSkyCollector
 from .bus import BusCollector
 from .freeway_vd import FreewayVDCollector
@@ -27,6 +28,7 @@ __all__ = [
     'ShipTDXCollector',
     'ShipAISCollector',
     'FlightFR24Collector',
+    'FlightFR24ZoneCollector',
     'FlightOpenSkyCollector',
     'BusCollector',
     'FreewayVDCollector',

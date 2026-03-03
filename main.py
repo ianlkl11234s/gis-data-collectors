@@ -26,6 +26,7 @@ from collectors import (
     ShipTDXCollector,
     ShipAISCollector,
     FlightFR24Collector,
+    FlightFR24ZoneCollector,
     FlightOpenSkyCollector,
     BusCollector,
     FreewayVDCollector,
@@ -171,6 +172,17 @@ def run_collectors():
             print(f"✗ Flight FR24 收集器初始化失敗: {e}")
     else:
         print("⏸️  Flight FR24 收集器已停用 (FLIGHT_FR24_ENABLED=false)")
+
+    # FR24 Zone 空域快照收集器
+    if config.FLIGHT_FR24_ZONE_ENABLED:
+        try:
+            fr24_zone = FlightFR24ZoneCollector()
+            collectors.append(fr24_zone)
+            print(f"✓ FR24 Zone 收集器 (每 {fr24_zone.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ FR24 Zone 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  FR24 Zone 收集器已停用 (FLIGHT_FR24_ZONE_ENABLED=false)")
 
     # OpenSky 空域快照收集器
     if config.FLIGHT_OPENSKY_ENABLED:
