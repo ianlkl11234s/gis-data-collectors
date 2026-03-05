@@ -154,6 +154,10 @@ FLIGHT_OPENSKY_CLIENT_SECRET = os.getenv('FLIGHT_OPENSKY_CLIENT_SECRET', '')
 FLIGHT_OPENSKY_USERNAME = os.getenv('FLIGHT_OPENSKY_USERNAME', '')        # Basic Auth（舊帳號）
 FLIGHT_OPENSKY_PASSWORD = os.getenv('FLIGHT_OPENSKY_PASSWORD', '')
 
+# 地震報告 (CWA Earthquake API)
+EARTHQUAKE_ENABLED = os.getenv('EARTHQUAKE_ENABLED', 'true').lower() in ('true', '1', 'yes')
+EARTHQUAKE_INTERVAL = int(os.getenv('EARTHQUAKE_INTERVAL', '1440'))  # 每日一次 (1440 分鐘)
+
 # ============================================================
 # 全域設定
 # ============================================================
