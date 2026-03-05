@@ -1,10 +1,11 @@
 """
 地震報告資料收集器
 
-從中央氣象署 (CWA) API 取得有感地震報告，每日收集一次。
+從中央氣象署 (CWA) API 取得地震資料，每日收集一次。
 API 端點:
-    E-A0015-001 (顯著有感地震報告)
-    E-A0016-001 (小區域有感地震報告)
+    E-A0015-001 (顯著有感地震報告) - datastore API
+    E-A0016-001 (小區域有感地震報告) - datastore API
+    E-A0073-001 (完整地震目錄，含無感地震) - fileapi，約每月更新
 """
 
 from datetime import datetime
@@ -21,11 +22,14 @@ class EarthquakeCollector(BaseCollector):
     name = "earthquake"
     interval_minutes = config.EARTHQUAKE_INTERVAL
 
-    # CWA API 端點
+    # CWA datastore API 端點（有感地震報告）
     ENDPOINTS = {
         'significant': 'E-A0015-001',  # 顯著有感地震報告
         'local': 'E-A0016-001',        # 小區域有感地震報告
     }
+
+    # CWA fileapi 端點（完整地震目錄，含無感）
+    CATALOG_URL = 'https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/E-A0073-001'
 
     def __init__(self):
         super().__init__()
@@ -99,14 +103,54 @@ class EarthquakeCollector(BaseCollector):
             'report_image_uri': eq.get('ReportImageURI', ''),
         }
 
+    def _fetch_catalog(self) -> list:
+        """從 CWA fileapi 取得完整地震目錄（含無感地震）"""
+        params = {
+            'Authorization': self.api_key,
+            'downloadType': 'WEB',
+            'format': 'JSON',
+        }
+
+        response = self._session.get(
+            self.CATALOG_URL,
+            params=params,
+            timeout=config.REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+
+        data = response.json()
+        catalog = data.get('cwaopendata', {}).get('Dataset', {}).get('Catalog', {})
+        earthquakes = catalog.get('EarthquakeInfo', [])
+
+        return earthquakes
+
+    def _parse_catalog_entry(self, eq: dict) -> dict:
+        """解析地震目錄單筆資料"""
+        def _safe_float(val):
+            try:
+                return float(val) if val is not None else None
+            except (ValueError, TypeError):
+                return None
+
+        return {
+            'origin_time': eq.get('OriginTime', ''),
+            'longitude': _safe_float(eq.get('EpicenterLongitude')),
+            'latitude': _safe_float(eq.get('EpicenterLatitude')),
+            'focal_depth_km': _safe_float(eq.get('FocalDepth')),
+            'local_magnitude': _safe_float(eq.get('LocalMagnitude')),
+            'station_number': eq.get('StationNumber'),
+            'quality': eq.get('Quality', ''),
+            'review_status': eq.get('ReviewStatus', ''),
+        }
+
     def collect(self) -> dict:
-        """收集地震報告（顯著有感 + 小區域有感）"""
+        """收集地震報告（有感報告 + 完整目錄）"""
         fetch_time = datetime.now()
 
-        print(f"   正在從 CWA API 取得地震報告...")
+        # === 1. 有感地震報告 ===
+        print(f"   正在從 CWA API 取得有感地震報告...")
 
         all_reports = []
-
         for eq_type, endpoint_id in self.ENDPOINTS.items():
             try:
                 reports = self._fetch_reports(endpoint_id, limit=30)
@@ -127,7 +171,6 @@ class EarthquakeCollector(BaseCollector):
                 seen.add(eq_no)
                 unique_reports.append(report)
 
-        # 按時間排序（新到舊）
         unique_reports.sort(key=lambda x: x['origin_time'], reverse=True)
 
         # 篩選今日的報告
@@ -140,9 +183,23 @@ class EarthquakeCollector(BaseCollector):
         magnitudes = [r['magnitude_value'] for r in unique_reports if r['magnitude_value']]
         max_mag = max(magnitudes) if magnitudes else None
 
-        print(f"   合計: {total} 筆不重複報告 (今日: {today_count} 筆)")
-        if max_mag:
-            print(f"   最大規模: {max_mag}")
+        print(f"   有感報告: {total} 筆 (今日: {today_count} 筆)")
+
+        # === 2. 完整地震目錄 ===
+        catalog_entries = []
+        catalog_range = None
+        try:
+            print(f"   正在取得完整地震目錄 (E-A0073-001)...")
+            raw_catalog = self._fetch_catalog()
+            catalog_entries = [self._parse_catalog_entry(eq) for eq in raw_catalog]
+            catalog_entries.sort(key=lambda x: x['origin_time'], reverse=True)
+
+            if catalog_entries:
+                dates = [e['origin_time'][:10] for e in catalog_entries if e['origin_time']]
+                catalog_range = f"{min(dates)} ~ {max(dates)}"
+                print(f"   目錄: {len(catalog_entries)} 筆 ({catalog_range})")
+        except Exception as e:
+            print(f"   目錄取得失敗: {e}")
 
         return {
             'fetch_time': fetch_time.isoformat(),
@@ -153,5 +210,10 @@ class EarthquakeCollector(BaseCollector):
                 'min': min(magnitudes) if magnitudes else None,
                 'max': max_mag,
             },
-            'data': unique_reports,
+            'catalog_count': len(catalog_entries),
+            'catalog_range': catalog_range,
+            'data': {
+                'felt_reports': unique_reports,
+                'catalog': catalog_entries,
+            },
         }
