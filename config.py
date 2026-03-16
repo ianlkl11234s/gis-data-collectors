@@ -21,6 +21,9 @@ except ImportError:
 IS_PRODUCTION = os.getenv('ZEABUR') or os.getenv('PRODUCTION')
 IS_DEBUG = os.getenv('DEBUG', '').lower() in ('true', '1', 'yes')
 
+# 實例名稱（用於多實例部署時辨識來源）
+INSTANCE_NAME = os.getenv('INSTANCE_NAME', '')
+
 # ============================================================
 # TDX API 設定
 # ============================================================
@@ -77,6 +80,20 @@ API_PORT = int(os.getenv('API_PORT', '8080'))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 LINE_TOKEN = os.getenv('LINE_TOKEN')
 SLACK_WEBHOOK = os.getenv('SLACK_WEBHOOK')
+
+# Telegram Bot
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+
+# 每日報告
+DAILY_REPORT_ENABLED = os.getenv('DAILY_REPORT_ENABLED', 'true').lower() in ('true', '1', 'yes')
+DAILY_REPORT_TIME = os.getenv('DAILY_REPORT_TIME', '08:00')  # 每日報告時間 (HH:MM)
+
+# 連續錯誤告警門檻
+CONSECUTIVE_ERROR_THRESHOLD = int(os.getenv('CONSECUTIVE_ERROR_THRESHOLD', '3'))
+
+# 磁碟空間告警門檻（MB）
+DISK_ALERT_THRESHOLD_MB = int(os.getenv('DISK_ALERT_THRESHOLD_MB', '8000'))  # 預設 8GB
 
 # ============================================================
 # 收集器設定
@@ -198,6 +215,8 @@ def print_config():
     print(f"   CWA: {'✓' if CWA_API_KEY else '✗'}")
     print(f"   S3:  {'✓ ' + S3_BUCKET if S3_BUCKET else '✗ (使用本地儲存)'}")
     print(f"   API: {'✓ Port ' + str(API_PORT) if API_KEY else '✗ (未設定 API_KEY)'}")
-    print(f"   通知: {'✓' if WEBHOOK_URL or LINE_TOKEN else '✗'}")
+    print(f"   通知: {'✓' if WEBHOOK_URL or LINE_TOKEN or TELEGRAM_BOT_TOKEN else '✗'}")
+    if TELEGRAM_BOT_TOKEN:
+        print(f"   Telegram: ✓ (日報 {DAILY_REPORT_TIME})")
     print(f"   資料目錄: {LOCAL_DATA_DIR}")
     print("=" * 50)

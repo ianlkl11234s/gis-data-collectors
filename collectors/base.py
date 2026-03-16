@@ -26,6 +26,7 @@ class BaseCollector(ABC):
         self.last_run: Optional[datetime] = None
         self.run_count: int = 0
         self.error_count: int = 0
+        self.consecutive_errors: int = 0
 
     @abstractmethod
     def collect(self) -> dict:
@@ -60,15 +61,17 @@ class BaseCollector(ABC):
             }
 
             self.last_run = timestamp
+            self.consecutive_errors = 0  # 成功則重置連續錯誤
             notify_success(self.name, stats)
 
             return stats
 
         except Exception as e:
             self.error_count += 1
+            self.consecutive_errors += 1
             error_msg = str(e)
             print(f"[{self.name}] ✗ 錯誤: {error_msg}")
-            notify_error(self.name, error_msg)
+            notify_error(self.name, error_msg, self.consecutive_errors)
 
             return {
                 'timestamp': timestamp.isoformat(),
@@ -87,5 +90,6 @@ class BaseCollector(ABC):
             'interval_minutes': self.interval_minutes,
             'run_count': self.run_count,
             'error_count': self.error_count,
+            'consecutive_errors': self.consecutive_errors,
             'last_run': self.last_run.isoformat() if self.last_run else None,
         }

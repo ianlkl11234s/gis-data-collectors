@@ -33,7 +33,8 @@ from collectors import (
     FreewayVDCollector,
     EarthquakeCollector,
 )
-from tasks import ArchiveTask
+from tasks import ArchiveTask, DailyReportTask
+from utils.notify import notify_archive_complete
 
 
 def run_collectors():
@@ -284,7 +285,7 @@ def run_api_server_thread():
     return thread
 
 
-def run_archive_task():
+def run_archive_task(daily_report_task=None):
     """設定歸檔任務排程"""
     if not config.ARCHIVE_ENABLED:
         print("\n⚠️  歸檔功能已停用 (ARCHIVE_ENABLED=false)")
@@ -298,12 +299,44 @@ def run_archive_task():
         archive_task = ArchiveTask()
         print(f"\n✓ 歸檔任務已設定 (每日 {config.ARCHIVE_TIME})")
 
+        # 包裝歸檔任務，加入 Telegram 通知和結果記錄
+        def archive_with_notify():
+            result = archive_task.run()
+            if result:
+                notify_archive_complete(result)
+                # 將結果傳給每日報告
+                if daily_report_task:
+                    daily_report_task.last_archive_result = result
+            return result
+
         # 設定每日排程
-        schedule.every().day.at(config.ARCHIVE_TIME).do(archive_task.run)
+        schedule.every().day.at(config.ARCHIVE_TIME).do(archive_with_notify)
 
         return archive_task
     except Exception as e:
         print(f"\n✗ 歸檔任務初始化失敗: {e}")
+        return None
+
+
+def run_daily_report_task(collectors: list, archive_task=None):
+    """設定每日報告排程"""
+    if not config.DAILY_REPORT_ENABLED:
+        print("\n⚠️  每日報告已停用 (DAILY_REPORT_ENABLED=false)")
+        return None
+
+    if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
+        print("\n⚠️  TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 未設定，每日報告停用")
+        return None
+
+    try:
+        daily_report = DailyReportTask(collectors, archive_task)
+        print(f"✓ 每日報告已設定 (每日 {config.DAILY_REPORT_TIME})")
+
+        schedule.every().day.at(config.DAILY_REPORT_TIME).do(daily_report.run)
+
+        return daily_report
+    except Exception as e:
+        print(f"\n✗ 每日報告初始化失敗: {e}")
         return None
 
 
@@ -325,8 +358,15 @@ def main():
     # 啟動收集器
     collectors = run_collectors()
 
-    # 設定歸檔任務
-    archive_task = run_archive_task()
+    # 設定每日報告（先建立，讓歸檔任務可以回傳結果）
+    daily_report_task = run_daily_report_task(collectors)
+
+    # 設定歸檔任務（傳入 daily_report_task 以記錄結果）
+    archive_task = run_archive_task(daily_report_task)
+
+    # 將歸檔任務回傳給每日報告
+    if daily_report_task and archive_task:
+        daily_report_task.archive_task = archive_task
 
     if not collectors:
         # 如果沒有收集器但有 API，繼續執行
