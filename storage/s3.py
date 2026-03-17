@@ -209,6 +209,37 @@ class S3Storage:
 
         return files
 
+    def get_bucket_stats(self) -> dict:
+        """取得整個 bucket 的統計資訊（遍歷所有物件）
+
+        Returns:
+            dict: {
+                'total_objects': int,
+                'total_size_bytes': int,
+                'by_collector': {name: {'objects': int, 'size_bytes': int}}
+            }
+        """
+        stats = {
+            'total_objects': 0,
+            'total_size_bytes': 0,
+            'by_collector': {}
+        }
+
+        paginator = self.s3.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=self.bucket):
+            for obj in page.get('Contents', []):
+                stats['total_objects'] += 1
+                stats['total_size_bytes'] += obj['Size']
+
+                # 按收集器分組（key 的第一段是收集器名）
+                collector = obj['Key'].split('/')[0]
+                if collector not in stats['by_collector']:
+                    stats['by_collector'][collector] = {'objects': 0, 'size_bytes': 0}
+                stats['by_collector'][collector]['objects'] += 1
+                stats['by_collector'][collector]['size_bytes'] += obj['Size']
+
+        return stats
+
     def get_file(self, s3_key: str) -> bytes:
         """取得 S3 檔案內容
 

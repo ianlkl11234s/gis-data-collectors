@@ -53,8 +53,11 @@ class DailyReportTask:
         # 收集狀態
         lines.append(self._section_collector_status())
 
-        # 檔案統計
+        # 檔案統計（本地）
         lines.append(self._section_file_stats())
+
+        # S3 統計
+        lines.append(self._section_s3_stats())
 
         # 歸檔結果
         if self.archive_task:
@@ -116,10 +119,10 @@ class DailyReportTask:
         return '\n'.join(parts)
 
     def _section_file_stats(self) -> str:
-        """檔案統計區塊"""
+        """本地檔案統計區塊"""
         data_dir = config.LOCAL_DATA_DIR
         if not data_dir.exists():
-            return "\n📁 *檔案統計*\n  本地資料目錄不存在"
+            return "\n📁 *本地檔案*\n  資料目錄不存在"
 
         total_files = 0
         total_size = 0
@@ -150,12 +153,50 @@ class DailyReportTask:
         size_mb = total_size / (1024 * 1024)
 
         parts = [
-            f"\n📁 *檔案統計*",
-            f"  本地總計: *{total_files}* 個檔案 ({size_mb:.1f} MB)",
+            f"\n📁 *本地檔案*",
+            f"  總計: *{total_files}* 個 ({size_mb:.1f} MB)",
             f"  今日新增: *{today_files}* 個",
         ]
         if collector_stats:
             parts.append(f"  {' | '.join(collector_stats)}")
+
+        return '\n'.join(parts)
+
+    def _section_s3_stats(self) -> str:
+        """S3 儲存統計區塊"""
+        if not config.S3_BUCKET:
+            return "\n☁️ *S3 儲存*\n  未設定"
+
+        try:
+            from storage.s3 import S3Storage
+            s3 = S3Storage()
+            stats = s3.get_bucket_stats()
+        except Exception as e:
+            return f"\n☁️ *S3 儲存*\n  查詢失敗: {e}"
+
+        total_objects = stats['total_objects']
+        total_gb = stats['total_size_bytes'] / (1024 ** 3)
+        estimated_cost = total_gb * config.S3_PRICE_PER_GB
+
+        parts = [
+            f"\n☁️ *S3 儲存* ({config.S3_BUCKET})",
+            f"  總計: *{total_objects}* 個物件 ({total_gb:.2f} GB)",
+            f"  估算月費: *${estimated_cost:.2f}* USD",
+        ]
+
+        # 按收集器顯示（只顯示前幾大的）
+        by_collector = stats['by_collector']
+        if by_collector:
+            sorted_collectors = sorted(
+                by_collector.items(),
+                key=lambda x: x[1]['size_bytes'],
+                reverse=True
+            )
+            top_items = []
+            for name, info in sorted_collectors[:5]:
+                size_mb = info['size_bytes'] / (1024 ** 2)
+                top_items.append(f"`{name}` {size_mb:.0f}MB")
+            parts.append(f"  {' | '.join(top_items)}")
 
         return '\n'.join(parts)
 
@@ -195,7 +236,7 @@ class DailyReportTask:
         parts = [
             f"\n⚙️ *系統資訊*",
             f"  運行時間: {days}天{hours}小時",
-            f"  磁碟使用: {used_mb:.0f} MB",
+            f"  本地磁碟: {used_mb:.0f} MB",
         ]
 
         return '\n'.join(parts)
