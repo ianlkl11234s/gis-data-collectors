@@ -99,12 +99,14 @@ class SupabaseWriter:
     def _transform_youbike(self, result: dict, ts: datetime) -> list[dict]:
         records = []
         for r in result.get('data', []):
+            rent = r.get('AvailableRentBikes', 0) or 0
+            ret = r.get('AvailableReturnBikes', 0) or 0
             records.append({
-                'station_uid': r.get('StationUID', {}).get('StationUID', '') if isinstance(r.get('StationUID'), dict) else r.get('StationUID', ''),
+                'station_uid': str(r.get('StationUID', '')),
                 'city': r.get('_city', ''),
-                'available_rent': r.get('AvailableRentBikes', r.get('AvailableRentBikesDetail', {}).get('GeneralBikes', 0)) if isinstance(r.get('AvailableRentBikesDetail'), dict) else r.get('AvailableRentBikes', 0),
-                'available_return': r.get('AvailableReturnBikes', 0),
-                'total': r.get('AvailableRentBikes', 0) + r.get('AvailableReturnBikes', 0),
+                'available_rent': rent,
+                'available_return': ret,
+                'total': rent + ret,
                 'collected_at': ts.isoformat(),
             })
         return records
@@ -130,8 +132,11 @@ class SupabaseWriter:
     def _transform_weather(self, result: dict, ts: datetime) -> list[dict]:
         records = []
         for r in result.get('data', []):
-            lat = r.get('latitude')
-            lng = r.get('longitude')
+            try:
+                lat = float(r.get('latitude')) if r.get('latitude') else None
+                lng = float(r.get('longitude')) if r.get('longitude') else None
+            except (ValueError, TypeError):
+                lat, lng = None, None
             records.append({
                 'station_id': r.get('station_id', ''),
                 'station_name': r.get('station_name', ''),
