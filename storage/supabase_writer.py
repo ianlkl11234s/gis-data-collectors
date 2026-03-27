@@ -273,6 +273,99 @@ class SupabaseWriter:
                 })
         return records
 
+    def _transform_flight_fr24(self, result: dict, ts: datetime) -> list[dict]:
+        """FR24 航班：含 trail 軌跡的航班資料"""
+        records = []
+        for r in result.get('data', []):
+            if not isinstance(r, dict) or not r:
+                continue
+            lat = r.get('lat') or r.get('latitude')
+            lng = r.get('lng') or r.get('longitude')
+            # FR24 有些航班只有 trail 沒有即時位置，取 trail 最後一點
+            if not lat and r.get('trail') and isinstance(r['trail'], list) and r['trail']:
+                last = r['trail'][-1]
+                if isinstance(last, dict):
+                    lat = last.get('lat')
+                    lng = last.get('lng') or last.get('lon')
+                elif isinstance(last, list) and len(last) >= 2:
+                    lat, lng = last[0], last[1]
+            if not lat or not lng:
+                continue
+            records.append({
+                'flight_id': r.get('fr24_id', r.get('flight_id', '')),
+                'callsign': r.get('callsign', ''),
+                'aircraft_type': r.get('aircraft_type', ''),
+                'origin': r.get('origin_icao', r.get('origin_iata', r.get('origin', ''))),
+                'destination': r.get('dest_icao', r.get('dest_iata', r.get('destination', ''))),
+                'lat': float(lat),
+                'lng': float(lng),
+                'altitude': r.get('altitude', r.get('altitude_ft')),
+                'speed': r.get('speed', r.get('speed_kts')),
+                'heading': r.get('heading', r.get('track')),
+                'collected_at': ts.isoformat(),
+                'geom': f'SRID=4326;POINT({lng} {lat})',
+            })
+        return records
+
+    def _transform_flight_fr24_zone(self, result: dict, ts: datetime) -> list[dict]:
+        """FR24 Zone 空域快照"""
+        records = []
+        for r in result.get('data', []):
+            if not isinstance(r, dict):
+                continue
+            lat = r.get('latitude')
+            lng = r.get('longitude')
+            if not lat or not lng:
+                continue
+            records.append({
+                'flight_id': r.get('fr24_id', r.get('icao24', '')),
+                'callsign': r.get('callsign', ''),
+                'aircraft_type': r.get('aircraft_type', ''),
+                'origin': r.get('origin_iata', ''),
+                'destination': r.get('destination_iata', ''),
+                'lat': float(lat),
+                'lng': float(lng),
+                'altitude': r.get('altitude_ft'),
+                'speed': r.get('speed_kts'),
+                'heading': r.get('track'),
+                'collected_at': ts.isoformat(),
+                'geom': f'SRID=4326;POINT({lng} {lat})',
+            })
+        return records
+
+    def _transform_flight_opensky(self, result: dict, ts: datetime) -> list[dict]:
+        """OpenSky 空域快照"""
+        records = []
+        for r in result.get('data', []):
+            if not isinstance(r, dict):
+                continue
+            lat = r.get('latitude')
+            lng = r.get('longitude')
+            if not lat or not lng:
+                continue
+            records.append({
+                'flight_id': r.get('icao24', ''),
+                'callsign': (r.get('callsign') or '').strip(),
+                'aircraft_type': '',
+                'origin': r.get('origin_country', ''),
+                'destination': '',
+                'lat': float(lat),
+                'lng': float(lng),
+                'altitude': r.get('baro_altitude') or r.get('geo_altitude'),
+                'speed': r.get('velocity'),
+                'heading': r.get('true_track'),
+                'collected_at': ts.isoformat(),
+                'geom': f'SRID=4326;POINT({lng} {lat})',
+            })
+        return records
+
+    def _transform_freeway_vd(self, result: dict, ts: datetime) -> list[dict]:
+        """國道壅塞 + VD 車流：寫入同一張表，用 JSONB 分別存"""
+        # freeway_vd 的 data 是 dict{sections, vd}，結構特殊
+        # 暫時只寫 sections（壅塞路段），因為沒有獨立的 DB 表
+        # TODO: 未來可建 freeway_sections / freeway_vd 表
+        return []  # 暫不寫入，等建表後再啟用
+
     TRANSFORMERS = {
         'youbike': _transform_youbike,
         'bus': _transform_bus,
@@ -282,6 +375,10 @@ class SupabaseWriter:
         'ship_ais': _transform_ship_ais,
         'earthquake': _transform_earthquake,
         'rail_timetable': _transform_rail_timetable,
+        'flight_fr24': _transform_flight_fr24,
+        'flight_fr24_zone': _transform_flight_fr24_zone,
+        'flight_opensky': _transform_flight_opensky,
+        'freeway_vd': _transform_freeway_vd,
     }
 
     # ============================================================
@@ -331,6 +428,18 @@ class SupabaseWriter:
         },
         'rail_timetable': {
             'is_reference': True,
+        },
+        'flight_fr24': {
+            'history': 'realtime.flight_positions',
+            'columns': ['flight_id', 'callsign', 'aircraft_type', 'origin', 'destination', 'lat', 'lng', 'altitude', 'speed', 'heading', 'collected_at', 'geom'],
+        },
+        'flight_fr24_zone': {
+            'history': 'realtime.flight_positions',
+            'columns': ['flight_id', 'callsign', 'aircraft_type', 'origin', 'destination', 'lat', 'lng', 'altitude', 'speed', 'heading', 'collected_at', 'geom'],
+        },
+        'flight_opensky': {
+            'history': 'realtime.flight_positions',
+            'columns': ['flight_id', 'callsign', 'aircraft_type', 'origin', 'destination', 'lat', 'lng', 'altitude', 'speed', 'heading', 'collected_at', 'geom'],
         },
     }
 
