@@ -9,6 +9,9 @@ flask>=3.0.0
 # S3 儲存（選填）
 boto3>=1.28.0
 
+# Supabase 即時寫入（選填）
+psycopg2-binary>=2.9.0
+
 # FlightRadar24（非官方）
 FlightRadarAPI>=1.3.0
 beautifulsoup4>=4.12.0

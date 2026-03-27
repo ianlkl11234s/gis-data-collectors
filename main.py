@@ -33,7 +33,7 @@ from collectors import (
     FreewayVDCollector,
     EarthquakeCollector,
 )
-from tasks import ArchiveTask, DailyReportTask
+from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
 
 
@@ -340,6 +340,29 @@ def run_daily_report_task(collectors: list, archive_task=None):
         return None
 
 
+def run_mini_taipei_publish_task():
+    """設定 Mini Taipei 每日時刻表發布任務"""
+    if not getattr(config, 'MINI_TAIPEI_PUBLISH_ENABLED', False):
+        print("\n⏸️  Mini Taipei 發布已停用 (MINI_TAIPEI_PUBLISH_ENABLED=false)")
+        return None
+
+    if not config.S3_BUCKET:
+        print("\n⚠️  S3_BUCKET 未設定，Mini Taipei 發布功能停用")
+        return None
+
+    try:
+        publish_task = MiniTaipeiPublishTask()
+        publish_time = getattr(config, 'MINI_TAIPEI_PUBLISH_TIME', '07:00')
+        print(f"\n✓ Mini Taipei 發布任務已設定 (每日 {publish_time})")
+
+        schedule.every().day.at(publish_time).do(publish_task.run)
+
+        return publish_task
+    except Exception as e:
+        print(f"\n✗ Mini Taipei 發布任務初始化失敗: {e}")
+        return None
+
+
 def main():
     """主程式"""
     print("=" * 60)
@@ -363,6 +386,17 @@ def main():
 
     # 設定歸檔任務（傳入 daily_report_task 以記錄結果）
     archive_task = run_archive_task(daily_report_task)
+
+    # 設定 Mini Taipei 發布任務
+    run_mini_taipei_publish_task()
+
+    # Supabase buffer flush 排程
+    if config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:
+        from collectors.base import get_supabase_writer
+        sb_writer = get_supabase_writer()
+        if sb_writer:
+            schedule.every(config.SUPABASE_BUFFER_INTERVAL).minutes.do(sb_writer.flush_buffer)
+            print(f"\n✓ Supabase buffer flush (每 {config.SUPABASE_BUFFER_INTERVAL} 分鐘)")
 
     # 將歸檔任務回傳給每日報告
     if daily_report_task and archive_task:

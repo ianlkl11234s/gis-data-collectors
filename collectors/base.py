@@ -14,6 +14,23 @@ from storage import get_storage
 from utils.notify import notify_error, notify_success
 
 
+# Supabase writer 單例（所有 collector 共用同一條連線）
+_supabase_writer = None
+
+
+def get_supabase_writer():
+    """取得 SupabaseWriter 單例"""
+    global _supabase_writer
+    if _supabase_writer is None and config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:
+        try:
+            from storage.supabase_writer import SupabaseWriter
+            _supabase_writer = SupabaseWriter(config.SUPABASE_DB_URL)
+            print("✓ Supabase writer 已初始化")
+        except Exception as e:
+            print(f"✗ Supabase writer 初始化失敗: {e}")
+    return _supabase_writer
+
+
 class BaseCollector(ABC):
     """收集器基底類別"""
 
@@ -23,6 +40,7 @@ class BaseCollector(ABC):
 
     def __init__(self):
         self.storage = get_storage()
+        self.supabase_writer = get_supabase_writer()
         self.last_run: Optional[datetime] = None
         self.run_count: int = 0
         self.error_count: int = 0
@@ -52,6 +70,13 @@ class BaseCollector(ABC):
             if 'data' in result:
                 filepath = self.storage.save(self.name, result, timestamp)
                 print(f"[{self.name}] ✓ 已儲存: {filepath}")
+
+                # 旁路寫入 Supabase（不影響本地儲存流程）
+                if self.supabase_writer:
+                    try:
+                        self.supabase_writer.write(self.name, result, timestamp)
+                    except Exception as sb_err:
+                        print(f"[{self.name}] ⚠ Supabase 寫入異常: {sb_err}")
 
             # 統計
             stats = {

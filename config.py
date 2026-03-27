@@ -67,6 +67,14 @@ else:
     LOCAL_DATA_DIR = Path(__file__).parent / 'data'
 
 # ============================================================
+# Supabase 設定
+# ============================================================
+
+SUPABASE_ENABLED = os.getenv('SUPABASE_ENABLED', 'false').lower() in ('true', '1', 'yes')
+SUPABASE_DB_URL = os.getenv('SUPABASE_DB_URL')  # Supavisor Transaction mode (port 6543)
+SUPABASE_BUFFER_INTERVAL = int(os.getenv('SUPABASE_BUFFER_INTERVAL', '5'))  # buffer 重試間隔（分鐘）
+
+# ============================================================
 # API 設定
 # ============================================================
 
@@ -178,6 +186,11 @@ FLIGHT_OPENSKY_PASSWORD = os.getenv('FLIGHT_OPENSKY_PASSWORD', '')
 EARTHQUAKE_ENABLED = os.getenv('EARTHQUAKE_ENABLED', 'true').lower() in ('true', '1', 'yes')
 EARTHQUAKE_INTERVAL = int(os.getenv('EARTHQUAKE_INTERVAL', '1440'))  # 每日一次 (1440 分鐘)
 
+# Mini Taipei 每日時刻表發布
+MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')
+MINI_TAIPEI_PUBLISH_TIME = os.getenv('MINI_TAIPEI_PUBLISH_TIME', '07:00')  # 每日發布時間
+MINI_TAIPEI_S3_PREFIX = os.getenv('MINI_TAIPEI_S3_PREFIX', 'mini-taipei')  # S3 路徑前綴
+
 # ============================================================
 # 全域設定
 # ============================================================
@@ -217,6 +230,7 @@ def print_config():
     print(f"   TDX: {'✓' if TDX_APP_ID else '✗'}")
     print(f"   CWA: {'✓' if CWA_API_KEY else '✗'}")
     print(f"   S3:  {'✓ ' + S3_BUCKET if S3_BUCKET else '✗ (使用本地儲存)'}")
+    print(f"   Supabase: {'✓' if SUPABASE_ENABLED and SUPABASE_DB_URL else '✗ (未啟用)'}")
     print(f"   API: {'✓ Port ' + str(API_PORT) if API_KEY else '✗ (未設定 API_KEY)'}")
     print(f"   通知: {'✓' if WEBHOOK_URL or LINE_TOKEN or TELEGRAM_BOT_TOKEN else '✗'}")
     if TELEGRAM_BOT_TOKEN:

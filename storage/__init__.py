@@ -5,6 +5,8 @@ from .s3 import S3Storage
 
 __all__ = ['LocalStorage', 'S3Storage', 'get_storage']
 
+# SupabaseWriter 在 collectors/base.py 中延遲載入，不在此匯入
+
 
 def get_storage():
     """取得儲存後端
