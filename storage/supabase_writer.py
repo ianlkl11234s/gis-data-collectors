@@ -160,10 +160,10 @@ class SupabaseWriter:
         if not grid_data or not geo:
             return []
 
-        lat_start = geo.get('lat_start', 0)
-        lng_start = geo.get('lng_start', 0)
-        lat_step = geo.get('lat_step', 0.03)
-        lng_step = geo.get('lng_step', 0.03)
+        lat_start = geo.get('bottom_left_lat', geo.get('lat_start', 0))
+        lng_start = geo.get('bottom_left_lon', geo.get('lng_start', 0))
+        lat_step = geo.get('resolution_deg', geo.get('lat_step', 0.03))
+        lng_step = geo.get('resolution_deg', geo.get('lng_step', 0.03))
         obs_time = result.get('observation_time', ts.isoformat())
 
         records = []
