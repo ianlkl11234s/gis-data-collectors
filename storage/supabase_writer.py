@@ -274,36 +274,45 @@ class SupabaseWriter:
         return records
 
     def _transform_flight_fr24(self, result: dict, ts: datetime) -> list[dict]:
-        """FR24 航班：含 trail 軌跡的航班資料"""
+        """FR24 航班：含 trail 軌跡 → 寫入 flight_trails 表"""
         records = []
         for r in result.get('data', []):
             if not isinstance(r, dict) or not r:
                 continue
-            lat = r.get('lat') or r.get('latitude')
-            lng = r.get('lng') or r.get('longitude')
-            # FR24 有些航班只有 trail 沒有即時位置，取 trail 最後一點
-            if not lat and r.get('trail') and isinstance(r['trail'], list) and r['trail']:
-                last = r['trail'][-1]
-                if isinstance(last, dict):
-                    lat = last.get('lat')
-                    lng = last.get('lng') or last.get('lon')
-                elif isinstance(last, list) and len(last) >= 2:
-                    lat, lng = last[0], last[1]
-            if not lat or not lng:
+            trail = r.get('trail', [])
+            if not trail or not isinstance(trail, list):
                 continue
+
+            # 從 trail 建立 LineString
+            coords = []
+            for pt in trail:
+                if isinstance(pt, dict):
+                    plat, plng = pt.get('lat'), pt.get('lng', pt.get('lon'))
+                elif isinstance(pt, list) and len(pt) >= 2:
+                    plat, plng = pt[0], pt[1]
+                else:
+                    continue
+                if plat and plng:
+                    coords.append((float(plng), float(plat)))
+
+            geom = None
+            if len(coords) >= 2:
+                coord_str = ','.join(f'{lng} {lat}' for lng, lat in coords)
+                geom = f'SRID=4326;LINESTRING({coord_str})'
+
             records.append({
+                '_type': 'trail',
                 'flight_id': r.get('fr24_id', r.get('flight_id', '')),
                 'callsign': r.get('callsign', ''),
                 'aircraft_type': r.get('aircraft_type', ''),
-                'origin': r.get('origin_icao', r.get('origin_iata', r.get('origin', ''))),
-                'destination': r.get('dest_icao', r.get('dest_iata', r.get('destination', ''))),
-                'lat': float(lat),
-                'lng': float(lng),
-                'altitude': r.get('altitude', r.get('altitude_ft')),
-                'speed': r.get('speed', r.get('speed_kts')),
-                'heading': r.get('heading', r.get('track')),
+                'registration': r.get('registration', ''),
+                'origin': r.get('origin_icao', r.get('origin_iata', '')),
+                'destination': r.get('dest_icao', r.get('dest_iata', '')),
+                'status': r.get('status', ''),
+                'trail': json.dumps(trail, default=str),
+                'trail_points': len(trail),
+                'geom': geom,
                 'collected_at': ts.isoformat(),
-                'geom': f'SRID=4326;POINT({lng} {lat})',
             })
         return records
 
@@ -360,11 +369,38 @@ class SupabaseWriter:
         return records
 
     def _transform_freeway_vd(self, result: dict, ts: datetime) -> list[dict]:
-        """國道壅塞 + VD 車流：寫入同一張表，用 JSONB 分別存"""
-        # freeway_vd 的 data 是 dict{sections, vd}，結構特殊
-        # 暫時只寫 sections（壅塞路段），因為沒有獨立的 DB 表
-        # TODO: 未來可建 freeway_sections / freeway_vd 表
-        return []  # 暫不寫入，等建表後再啟用
+        """國道壅塞 + VD 車流：回傳特殊格式，由 _write_to_db 分別處理"""
+        data = result.get('data', {})
+        if isinstance(data, list):
+            return []
+
+        records = []
+        # sections（壅塞路段）
+        for r in data.get('sections', []):
+            records.append({
+                '_type': 'section',
+                'section_id': r.get('SectionID', ''),
+                'travel_speed': r.get('TravelSpeed'),
+                'travel_time': r.get('TravelTime'),
+                'congestion_level': r.get('CongestionLevel'),
+                'collected_at': ts.isoformat(),
+            })
+        # vd（車流偵測器）
+        for r in data.get('vd', []):
+            records.append({
+                '_type': 'vd',
+                'vd_id': r.get('VDID', ''),
+                'total_volume': r.get('TotalVolume'),
+                'avg_speed': r.get('AvgSpeed'),
+                'avg_occupancy': r.get('AvgOccupancy'),
+                'volume_small_car': r.get('VolumeSmallCar'),
+                'volume_large_car': r.get('VolumeLargeCar'),
+                'volume_trailer': r.get('VolumeTrailer'),
+                'lane_count': r.get('LaneCount'),
+                'status': r.get('Status'),
+                'collected_at': ts.isoformat(),
+            })
+        return records
 
     TRANSFORMERS = {
         'youbike': _transform_youbike,
@@ -430,8 +466,7 @@ class SupabaseWriter:
             'is_reference': True,
         },
         'flight_fr24': {
-            'history': 'realtime.flight_positions',
-            'columns': ['flight_id', 'callsign', 'aircraft_type', 'origin', 'destination', 'lat', 'lng', 'altitude', 'speed', 'heading', 'collected_at', 'geom'],
+            'is_multi_table': True,  # 特殊處理：trail 寫入 flight_trails
         },
         'flight_fr24_zone': {
             'history': 'realtime.flight_positions',
@@ -440,6 +475,9 @@ class SupabaseWriter:
         'flight_opensky': {
             'history': 'realtime.flight_positions',
             'columns': ['flight_id', 'callsign', 'aircraft_type', 'origin', 'destination', 'lat', 'lng', 'altitude', 'speed', 'heading', 'collected_at', 'geom'],
+        },
+        'freeway_vd': {
+            'is_multi_table': True,  # 特殊處理：sections + vd 分兩張表
         },
     }
 
@@ -453,6 +491,11 @@ class SupabaseWriter:
         # 特殊處理：時刻表寫入 reference schema
         if table_config.get('is_reference'):
             self._write_schedules(records)
+            return
+
+        # 特殊處理：多表寫入（freeway_vd, flight_fr24）
+        if table_config.get('is_multi_table'):
+            self._write_multi_table(collector_name, records)
             return
 
         columns = table_config['columns']
@@ -498,6 +541,39 @@ class SupabaseWriter:
 
         record_count = len(records)
         logger.info(f"[{collector_name}] ✓ DB 寫入 {record_count} 筆")
+
+    def _write_multi_table(self, collector_name: str, records: list[dict]):
+        """freeway_vd 和 flight_fr24 的多表寫入"""
+        self._ensure_conn()
+
+        if collector_name == 'freeway_vd':
+            sections = [r for r in records if r.get('_type') == 'section']
+            vds = [r for r in records if r.get('_type') == 'vd']
+
+            with self.conn.cursor() as cur:
+                if sections:
+                    cols = ['section_id', 'travel_speed', 'travel_time', 'congestion_level', 'collected_at']
+                    values = [tuple(r.get(c) for c in cols) for r in sections]
+                    execute_values(cur, f"INSERT INTO realtime.freeway_sections ({','.join(cols)}) VALUES %s", values, page_size=1000)
+                    # current 表
+                    update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in cols if c != 'section_id')
+                    execute_values(cur, f"INSERT INTO realtime.freeway_sections_current ({','.join(cols)}) VALUES %s ON CONFLICT (section_id) DO UPDATE SET {update_set}", values, page_size=1000)
+
+                if vds:
+                    cols = ['vd_id', 'total_volume', 'avg_speed', 'avg_occupancy', 'volume_small_car', 'volume_large_car', 'volume_trailer', 'lane_count', 'status', 'collected_at']
+                    values = [tuple(r.get(c) for c in cols) for r in vds]
+                    execute_values(cur, f"INSERT INTO realtime.freeway_vd_traffic ({','.join(cols)}) VALUES %s", values, page_size=1000)
+
+            logger.info(f"[freeway_vd] ✓ sections {len(sections)} + vd {len(vds)} 筆寫入")
+
+        elif collector_name == 'flight_fr24':
+            trails = [r for r in records if r.get('_type') == 'trail']
+            with self.conn.cursor() as cur:
+                if trails:
+                    cols = ['flight_id', 'callsign', 'aircraft_type', 'registration', 'origin', 'destination', 'status', 'trail', 'trail_points', 'geom', 'collected_at']
+                    values = [tuple(r.get(c) for c in cols) for r in trails]
+                    execute_values(cur, f"INSERT INTO realtime.flight_trails ({','.join(cols)}) VALUES %s", values, page_size=100)
+            logger.info(f"[flight_fr24] ✓ {len(trails)} 筆航跡寫入")
 
     def _write_schedules(self, records: list[dict]):
         """寫入每日時刻表到 reference.daily_schedules"""
