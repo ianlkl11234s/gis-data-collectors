@@ -28,12 +28,14 @@ CELESTRAK_GP_URL = "https://celestrak.org/NORAD/elements/gp.php"
 # CelesTrak 對 GROUP=active / starlink 有速率限制（403），改用分組拉取
 # 涵蓋主要衛星類型，可依需求增減
 CELESTRAK_GROUPS = [
+    # 大型星座（3LE 格式可正常取得，JSON 格式會 403）
+    'starlink',
     # 導航
     'gps-ops', 'galileo', 'beidou', 'glonass-operational',
     # 大型通訊星座
     'oneweb', 'iridium-NEXT', 'orbcomm', 'globalstar',
     # 氣象與地球觀測
-    'weather', 'noaa', 'goes', 'planet', 'spire',
+    'weather', 'noaa', 'goes', 'resource', 'planet', 'spire',
     # 同步軌道通訊
     'geo', 'ses',
     # 太空站與科學
