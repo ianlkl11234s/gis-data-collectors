@@ -4,7 +4,7 @@
 
 ## 收集器總覽
 
-共 16 個收集器，每個都可獨立啟停。
+共 17 個收集器，每個都可獨立啟停。
 
 | 收集器 | `_ENABLED` 環境變數 | 預設 | 頻率 | 來源 | 說明 |
 |--------|---------------------|------|------|------|------|
@@ -23,6 +23,7 @@
 | Flight FR24 | `FLIGHT_FR24_ENABLED` | **false** | 5 min | FR24 | 台灣機場航班完整軌跡 |
 | FR24 Zone | `FLIGHT_FR24_ZONE_ENABLED` | **false** | 5 min | FR24 | 空域快照（最多飛機+起降機場） |
 | OpenSky | `FLIGHT_OPENSKY_ENABLED` | **false** | 5 min | OpenSky | 空域快照（精確高度+垂直速率） |
+| Satellite | `SATELLITE_ENABLED` | **false** | 120 min | CelesTrak | 全球衛星軌道追蹤（SGP4） |
 
 > 預設 **false** 的收集器需手動啟用（設定環境變數為 `true`）。
 
@@ -70,7 +71,8 @@ data-collectors/
 │   ├── ship_ais.py        # 航港局 AIS 船位
 │   ├── flight_fr24.py     # FlightRadar24 航班軌跡
 │   ├── flight_fr24_zone.py # FR24 Zone 空域快照
-│   └── flight_opensky.py  # OpenSky 空域快照
+│   ├── flight_opensky.py  # OpenSky 空域快照
+│   └── satellite.py       # 全球衛星軌道追蹤（CelesTrak + SGP4）
 │
 ├── storage/                # 儲存後端
 │   ├── __init__.py
@@ -213,6 +215,13 @@ python main.py
 | `FLIGHT_OPENSKY_USERNAME` | | Basic Auth 帳號（二擇一） |
 | `FLIGHT_OPENSKY_PASSWORD` | | Basic Auth 密碼 |
 
+#### 衛星
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `SATELLITE_ENABLED` | `false` | 衛星軌道追蹤（CelesTrak + SGP4） |
+| `SATELLITE_INTERVAL` | `120` | 間隔（分鐘，配合 CelesTrak 2hr 更新） |
+
 #### 氣象
 
 | 變數 | 預設值 | 說明 |
@@ -303,6 +312,15 @@ python main.py
 - **資料類型**: state vectors（位置、高度、垂直速率、squawk 等）
 - **認證**: OAuth2 > Basic Auth > 匿名（匿名 400 credits/天）
 
+### 衛星軌道追蹤
+- **來源**: CelesTrak GP 3LE（免註冊）
+- **範圍**: 全球活躍衛星（~2,000 顆，不含 Starlink）
+- **資料類型**: SGP4 計算的即時位置（經緯度、高度、速度）+ TLE 軌道參數
+- **軌道分佈**: LEO ~1,200 / GEO ~600 / MEO ~140 / HEO ~12
+- **Supabase 表**: `satellite_positions`（分區歷史）、`satellite_current`（最新狀態）、`satellite_tle`（前端計算用）
+- **前端應用**: 載入 `satellite_tle` 表的 TLE 參數，用 JS 版 `satellite.js` 在瀏覽器即時計算位置與軌道預測線
+- **擴充**: 如需 Starlink ~10,000 顆，需註冊 Space-Track.org 帳號
+
 ## 資料儲存與歸檔
 
 ### 本地優先 + tar.gz 歸檔
@@ -332,7 +350,8 @@ data/                           # 本地 (最近 7 天，個別 JSON)
 ├── ship_ais/
 ├── flight_fr24/
 ├── flight_fr24_zone/
-└── flight_opensky/
+├── flight_opensky/
+└── satellite/
 
 s3://bucket/                   # S3 (永久歸檔，tar.gz)
 └── {collector}/
