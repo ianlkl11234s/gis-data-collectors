@@ -186,6 +186,10 @@ FLIGHT_OPENSKY_PASSWORD = os.getenv('FLIGHT_OPENSKY_PASSWORD', '')
 EARTHQUAKE_ENABLED = os.getenv('EARTHQUAKE_ENABLED', 'true').lower() in ('true', '1', 'yes')
 EARTHQUAKE_INTERVAL = int(os.getenv('EARTHQUAKE_INTERVAL', '1440'))  # 每日一次 (1440 分鐘)
 
+# 衛星軌道追蹤 (CelesTrak GP + SGP4，免註冊)
+SATELLITE_ENABLED = os.getenv('SATELLITE_ENABLED', 'false').lower() in ('true', '1', 'yes')
+SATELLITE_INTERVAL = int(os.getenv('SATELLITE_INTERVAL', '120'))  # 每 2 小時（配合 CelesTrak 更新頻率）
+
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')
 MINI_TAIPEI_PUBLISH_TIME = os.getenv('MINI_TAIPEI_PUBLISH_TIME', '07:00')  # 每日發布時間

@@ -16,6 +16,9 @@ psycopg2-binary>=2.9.0
 FlightRadarAPI>=1.3.0
 beautifulsoup4>=4.12.0
 
+# 衛星軌道計算（SGP4）
+sgp4>=2.22
+
 # 未來擴充
 # pandas>=2.0.0
 # aiohttp>=3.8.0

@@ -57,6 +57,11 @@ class SupabaseWriter:
                 return
 
             self._write_to_db(collector_name, records, timestamp)
+
+            # 衛星：額外更新 TLE 參數表（供前端 satellite.js 使用）
+            if collector_name == 'satellite':
+                self._write_satellite_tle(result, timestamp)
+
             self._report_heartbeat(collector_name, True, len(records))
 
         except Exception as e:
@@ -402,6 +407,29 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_satellite(self, result: dict, ts: datetime) -> list[dict]:
+        """衛星位置：GP + SGP4 計算結果"""
+        records = []
+        for r in result.get('data', []):
+            lat = r.get('lat')
+            lng = r.get('lng')
+            records.append({
+                'norad_id': r.get('norad_id'),
+                'name': r.get('name', ''),
+                'constellation': r.get('constellation', ''),
+                'orbit_type': r.get('orbit_type', ''),
+                'lat': lat,
+                'lng': lng,
+                'altitude_km': r.get('altitude_km'),
+                'velocity_kms': r.get('velocity_kms'),
+                'inclination': r.get('inclination'),
+                'period_min': r.get('period_min'),
+                'tle_epoch': r.get('tle_epoch', ''),
+                'collected_at': ts.isoformat(),
+                'geom': f'SRID=4326;POINT({lng} {lat})' if lat and lng else None,
+            })
+        return records
+
     TRANSFORMERS = {
         'youbike': _transform_youbike,
         'bus': _transform_bus,
@@ -415,6 +443,7 @@ class SupabaseWriter:
         'flight_fr24_zone': _transform_flight_fr24_zone,
         'flight_opensky': _transform_flight_opensky,
         'freeway_vd': _transform_freeway_vd,
+        'satellite': _transform_satellite,
     }
 
     # ============================================================
@@ -478,6 +507,13 @@ class SupabaseWriter:
         },
         'freeway_vd': {
             'is_multi_table': True,  # 特殊處理：sections + vd 分兩張表
+        },
+        'satellite': {
+            'history': 'realtime.satellite_positions',
+            'current': 'realtime.satellite_current',
+            'current_key': 'norad_id',
+            'columns': ['norad_id', 'name', 'constellation', 'orbit_type', 'lat', 'lng', 'altitude_km', 'velocity_kms', 'inclination', 'period_min', 'tle_epoch', 'collected_at', 'geom'],
+            'current_columns': ['norad_id', 'name', 'constellation', 'orbit_type', 'lat', 'lng', 'altitude_km', 'velocity_kms', 'inclination', 'period_min', 'tle_epoch', 'collected_at', 'geom'],
         },
     }
 
@@ -574,6 +610,43 @@ class SupabaseWriter:
                     values = [tuple(r.get(c) for c in cols) for r in trails]
                     execute_values(cur, f"INSERT INTO realtime.flight_trails ({','.join(cols)}) VALUES %s", values, page_size=100)
             logger.info(f"[flight_fr24] ✓ {len(trails)} 筆航跡寫入")
+
+    def _write_satellite_tle(self, result: dict, timestamp: datetime):
+        """更新衛星 TLE 參數表（全量 UPSERT，供前�� SGP4 計算用）"""
+        self._ensure_conn()
+        data = result.get('data', [])
+        if not data:
+            return
+
+        cols = ['norad_id', 'name', 'intl_designator', 'constellation', 'orbit_type',
+                'tle_line1', 'tle_line2', 'tle_epoch', 'inclination', 'eccentricity', 'period_min', 'updated_at']
+        update_cols = [c for c in cols if c != 'norad_id']
+        update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
+
+        values = []
+        for r in data:
+            if not r.get('tle_line1') or not r.get('tle_line2'):
+                continue
+            values.append((
+                r.get('norad_id'),
+                r.get('name', ''),
+                r.get('intl_designator', ''),
+                r.get('constellation', ''),
+                r.get('orbit_type', ''),
+                r['tle_line1'],
+                r['tle_line2'],
+                r.get('tle_epoch', ''),
+                r.get('inclination'),
+                r.get('eccentricity'),
+                r.get('period_min'),
+                timestamp.isoformat(),
+            ))
+
+        if values:
+            with self.conn.cursor() as cur:
+                sql = f"INSERT INTO realtime.satellite_tle ({','.join(cols)}) VALUES %s ON CONFLICT (norad_id) DO UPDATE SET {update_set}"
+                execute_values(cur, sql, values, page_size=1000)
+            logger.info(f"[satellite] ✓ TLE 表已更新 {len(values)} 筆")
 
     def _write_schedules(self, records: list[dict]):
         """寫入每日時刻表到 reference.daily_schedules"""

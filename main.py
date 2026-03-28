@@ -32,6 +32,7 @@ from collectors import (
     BusCollector,
     FreewayVDCollector,
     EarthquakeCollector,
+    SatelliteCollector,
 )
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -221,6 +222,17 @@ def run_collectors():
             print(f"✗ OpenSky 收集器初始化失敗: {e}")
     else:
         print("⏸️  OpenSky 收集器已停用 (FLIGHT_OPENSKY_ENABLED=false)")
+
+    # 衛星軌道追蹤收集器（CelesTrak GP + SGP4，免註冊）
+    if config.SATELLITE_ENABLED:
+        try:
+            satellite = SatelliteCollector()
+            collectors.append(satellite)
+            print(f"✓ Satellite 收集器 (每 {satellite.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Satellite 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Satellite 收集器已停用 (SATELLITE_ENABLED=false)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")
