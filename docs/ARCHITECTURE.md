@@ -71,6 +71,7 @@ CWA API ────┼──► Collectors ──► Local Storage (/data)
 - VD: 每 5 分鐘
 - Temperature: 每 60 分鐘
 - Parking: 每 15 分鐘
+- Satellite: 每 120 分鐘（CelesTrak 3LE + SGP4 計算）
 
 ### 2. 儲存格式
 
@@ -90,7 +91,9 @@ CWA API ────┼──► Collectors ──► Local Storage (/data)
 │   └── ...
 ├── temperature/
 │   └── ...
-└── parking/
+├── parking/
+│   └── ...
+└── satellite/
     └── ...
 ```
 
@@ -154,7 +157,9 @@ migu-gis-data-collector/
 │   └── ...
 ├── temperature/
 │   └── ...
-└── parking/
+├── parking/
+│   └── ...
+└── satellite/
     └── ...
 ```
 
