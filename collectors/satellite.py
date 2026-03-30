@@ -28,12 +28,11 @@ CELESTRAK_GP_URL = "https://celestrak.org/NORAD/elements/gp.php"
 # CelesTrak 對 GROUP=active / starlink 有速率限制（403），改用分組拉取
 # 涵蓋主要衛星類型，可依需求增減
 CELESTRAK_GROUPS = [
-    # 大型星座
-    'starlink', 'qianfan',
-    # 導航（glonass-operational 已失效，改用 glo-ops）
+    # ── 小群組先拉（讓 rate limit 計數器保持低壓） ──
+    # 導航
     'gps-ops', 'galileo', 'beidou', 'glo-ops',
-    # 大型通訊星座
-    'oneweb', 'iridium-NEXT', 'orbcomm', 'globalstar',
+    # 通訊星座
+    'iridium-NEXT', 'orbcomm', 'globalstar',
     # 氣象與地球觀測
     'weather', 'noaa', 'goes', 'resource', 'planet', 'spire',
     # 同步軌道通訊
@@ -48,8 +47,14 @@ CELESTRAK_GROUPS = [
     'cubesat', 'education', 'dmc',
     # 業餘、社群追蹤、肉眼可見（含 FORMOSAT 7 / COSMIC-2）
     'amateur', 'satnogs', 'visual',
+    # 千帆
+    'qianfan',
+    # ── 大群組放最後（rate limit 冷卻後再拉） ──
+    'oneweb',
     # 太空碎片（三大碎片事件）
     'fengyun-1c-debris', 'cosmos-2251-debris', 'iridium-33-debris',
+    # Starlink 放最後，最大群組 (~10,000)，最容易觸發 rate limit
+    'starlink',
 ]
 
 # 軌道類型分類閾值（km）
@@ -194,29 +199,52 @@ class SatelliteCollector(BaseCollector):
         _time.sleep(delay)
         return result
 
+    def _add_entries(self, entries: list, seen: set, all_sats: list) -> int:
+        """將 3LE entries 去重後加入 all_sats，回傳新增數量"""
+        new_count = 0
+        for name, l1, l2 in entries:
+            try:
+                norad_id = int(l1[2:7].strip())
+            except ValueError:
+                continue
+            if norad_id not in seen:
+                seen.add(norad_id)
+                all_sats.append((name, l1, l2))
+                new_count += 1
+        return new_count
+
     def _fetch_all_groups(self) -> list[tuple[str, str, str]]:
-        """分組拉取 3LE 並以 NORAD ID 去重"""
+        """分組拉取 3LE 並以 NORAD ID 去重，失敗群組自動重試"""
         seen = set()
         all_sats = []
+        failed_groups = []
 
         for group in CELESTRAK_GROUPS:
             try:
                 entries = self._fetch_group_3le(group)
-                new_count = 0
-                for name, l1, l2 in entries:
-                    # NORAD ID 在 line1 的 col 2-7
-                    try:
-                        norad_id = int(l1[2:7].strip())
-                    except ValueError:
-                        continue
-                    if norad_id not in seen:
-                        seen.add(norad_id)
-                        all_sats.append((name, l1, l2))
-                        new_count += 1
                 if entries:
+                    new_count = self._add_entries(entries, seen, all_sats)
                     print(f"[{self.name}]   {group}: {len(entries)} 顆（新增 {new_count}）")
+                else:
+                    failed_groups.append(group)
             except Exception as e:
                 print(f"[{self.name}]   {group}: 拉取失敗 ({e})")
+                failed_groups.append(group)
+
+        # 失敗群組重試（等 10 秒讓 rate limit 冷卻）
+        if failed_groups:
+            print(f"[{self.name}] ⏳ {len(failed_groups)} 個群組失敗，等 10 秒後重試: {', '.join(failed_groups)}")
+            _time.sleep(10)
+            for group in failed_groups:
+                try:
+                    entries = self._fetch_group_3le(group)
+                    if entries:
+                        new_count = self._add_entries(entries, seen, all_sats)
+                        print(f"[{self.name}]   ✓ 重試成功 {group}: {len(entries)} 顆（新增 {new_count}）")
+                    else:
+                        print(f"[{self.name}]   ✗ 重試仍失敗 {group}")
+                except Exception as e:
+                    print(f"[{self.name}]   ✗ 重試失敗 {group}: {e}")
 
         return all_sats
 
