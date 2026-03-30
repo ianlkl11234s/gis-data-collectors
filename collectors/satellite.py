@@ -28,10 +28,10 @@ CELESTRAK_GP_URL = "https://celestrak.org/NORAD/elements/gp.php"
 # CelesTrak 對 GROUP=active / starlink 有速率限制（403），改用分組拉取
 # 涵蓋主要衛星類型，可依需求增減
 CELESTRAK_GROUPS = [
-    # 大型星座（3LE 格式可正常取得，JSON 格式會 403）
-    'starlink',
-    # 導航
-    'gps-ops', 'galileo', 'beidou', 'glonass-operational',
+    # 大型星座
+    'starlink', 'qianfan',
+    # 導航（glonass-operational 已失效，改用 glo-ops）
+    'gps-ops', 'galileo', 'beidou', 'glo-ops',
     # 大型通訊星座
     'oneweb', 'iridium-NEXT', 'orbcomm', 'globalstar',
     # 氣象與地球觀測
@@ -40,8 +40,16 @@ CELESTRAK_GROUPS = [
     'geo', 'ses',
     # 太空站與科學
     'stations', 'science',
-    # 業餘無線電與社群追蹤（含 FORMOSAT 7 / COSMIC-2）
-    'amateur', 'satnogs',
+    # 搜救、環境監測、中繼
+    'sarsat', 'argos', 'tdrss',
+    # 特殊軌道與軍事
+    'molniya', 'military', 'radar', 'analyst',
+    # 小型衛星與教育
+    'cubesat', 'education', 'dmc',
+    # 業餘、社群追蹤、肉眼可見（含 FORMOSAT 7 / COSMIC-2）
+    'amateur', 'satnogs', 'visual',
+    # 太空碎片（三大碎片事件）
+    'fengyun-1c-debris', 'cosmos-2251-debris', 'iridium-33-debris',
 ]
 
 # 軌道類型分類閾值（km）
@@ -68,6 +76,10 @@ CONSTELLATION_PATTERNS = {
     'NAVSTAR': 'GPS',
     'QIANFAN': 'Qianfan',
     'FORMOSAT': 'FORMOSAT',
+    'COSPAS': 'COSPAS-SARSAT',
+    'TDRS': 'TDRS',
+    'MOLNIYA': 'Molniya',
+    'DMC': 'DMC',
 }
 
 
