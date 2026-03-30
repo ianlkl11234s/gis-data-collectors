@@ -184,11 +184,14 @@ class SatelliteCollector(BaseCollector):
             timeout=config.REQUEST_TIMEOUT * 2,
         )
         if resp.status_code in (404, 403):
+            print(f"[satellite]   ⚠️ {group}: HTTP {resp.status_code}，跳過")
             return []
         resp.raise_for_status()
 
         result = _parse_3le(resp.text)
-        _time.sleep(config.REQUEST_INTERVAL)
+        # 大群組（>500 顆）拉完後多等一下，避免 CelesTrak rate limit
+        delay = 2.0 if len(result) > 500 else config.REQUEST_INTERVAL
+        _time.sleep(delay)
         return result
 
     def _fetch_all_groups(self) -> list[tuple[str, str, str]]:
