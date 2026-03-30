@@ -40,8 +40,8 @@ CELESTRAK_GROUPS = [
     'geo', 'ses',
     # 太空站與科學
     'stations', 'science',
-    # 業餘無線電
-    'amateur',
+    # 業餘無線電與社群追蹤（含 FORMOSAT 7 / COSMIC-2）
+    'amateur', 'satnogs',
 ]
 
 # 軌道類型分類閾值（km）
@@ -67,6 +67,7 @@ CONSTELLATION_PATTERNS = {
     'COSMOS': 'COSMOS',
     'NAVSTAR': 'GPS',
     'QIANFAN': 'Qianfan',
+    'FORMOSAT': 'FORMOSAT',
 }
 
 
