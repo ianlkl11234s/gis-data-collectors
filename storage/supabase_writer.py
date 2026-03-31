@@ -650,17 +650,23 @@ class SupabaseWriter:
                 execute_values(cur, sql, values, page_size=1000)
 
             # 2. UPSERT INTO current 表（最新狀態）
+            # 同一批次內可能有重複 PK（例如同一輛公車出現兩次），
+            # ON CONFLICT 無法在同一 INSERT 中更新同一行兩次，因此先去重（保留最後一筆）
             if 'current' in table_config:
                 current_cols = table_config.get('current_columns', columns)
                 key = table_config['current_key']
+                key_idx = current_cols.index(key) if key in current_cols else 0
                 update_cols = [c for c in current_cols if c != key]
                 update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
                 col_names = ','.join(current_cols)
 
-                current_values = []
+                # 去重：同一 key 只保留最後出現的那筆
+                seen = {}
                 for r in records:
-                    row = tuple(r.get(c) for c in current_cols)
-                    current_values.append(row)
+                    k = r.get(key)
+                    if k is not None:
+                        seen[k] = tuple(r.get(c) for c in current_cols)
+                current_values = list(seen.values())
 
                 if current_values:
                     sql = f"INSERT INTO {table_config['current']} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
