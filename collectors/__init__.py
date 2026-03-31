@@ -18,6 +18,7 @@ from .bus import BusCollector
 from .freeway_vd import FreewayVDCollector
 from .earthquake import EarthquakeCollector
 from .satellite import SatelliteCollector
+from .launch import LaunchCollector
 
 __all__ = [
     'BaseCollector',
@@ -38,4 +39,5 @@ __all__ = [
     'FreewayVDCollector',
     'EarthquakeCollector',
     'SatelliteCollector',
+    'LaunchCollector',
 ]

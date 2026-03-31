@@ -430,6 +430,93 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_launch(self, result: dict, ts: datetime) -> list[dict]:
+        """太空發射：launches + pads + events 三合一"""
+        data = result.get('data', {})
+        if isinstance(data, list):
+            return []
+
+        records = []
+
+        # launches
+        for r in data.get('launches', []):
+            lat = r.get('pad_latitude')
+            lng = r.get('pad_longitude')
+            records.append({
+                '_type': 'launch',
+                'id': r.get('id', ''),
+                'name': r.get('name', ''),
+                'slug': r.get('slug', ''),
+                'net': r.get('net'),
+                'window_start': r.get('window_start'),
+                'window_end': r.get('window_end'),
+                'status': r.get('status', ''),
+                'status_name': r.get('status_name', ''),
+                'rocket_name': r.get('rocket_name', ''),
+                'rocket_family': r.get('rocket_family', ''),
+                'rocket_full_name': r.get('rocket_full_name', ''),
+                'mission_name': r.get('mission_name', ''),
+                'mission_type': r.get('mission_type', ''),
+                'mission_description': r.get('mission_description', ''),
+                'orbit_name': r.get('orbit_name', ''),
+                'orbit_abbrev': r.get('orbit_abbrev', ''),
+                'agency_name': r.get('agency_name', ''),
+                'agency_type': r.get('agency_type', ''),
+                'pad_id': r.get('pad_id'),
+                'pad_name': r.get('pad_name', ''),
+                'location_name': r.get('location_name', ''),
+                'country_code': r.get('country_code', ''),
+                'probability': r.get('probability'),
+                'weather_concerns': r.get('weather_concerns', ''),
+                'webcast_live': r.get('webcast_live', False),
+                'image_url': r.get('image_url', ''),
+                'infographic_url': r.get('infographic_url', ''),
+                'program_names': r.get('program_names', ''),
+                'last_updated': r.get('last_updated'),
+                'collected_at': ts.isoformat(),
+                'geom': f'SRID=4326;POINT({lng} {lat})' if lat and lng else None,
+            })
+
+        # pads
+        for r in data.get('pads', []):
+            lat = r.get('latitude')
+            lng = r.get('longitude')
+            records.append({
+                '_type': 'pad',
+                'id': r.get('id', ''),
+                'name': r.get('name', ''),
+                'latitude': lat,
+                'longitude': lng,
+                'location_name': r.get('location_name', ''),
+                'country_code': r.get('country_code', ''),
+                'total_launch_count': r.get('total_launch_count', 0),
+                'orbital_launch_attempt_count': r.get('orbital_launch_attempt_count', 0),
+                'map_url': r.get('map_url', ''),
+                'collected_at': ts.isoformat(),
+                'geom': f'SRID=4326;POINT({lng} {lat})' if lat and lng else None,
+            })
+
+        # events
+        for r in data.get('events', []):
+            records.append({
+                '_type': 'event',
+                'id': r.get('id', ''),
+                'name': r.get('name', ''),
+                'description': r.get('description', ''),
+                'type_name': r.get('type_name', ''),
+                'date': r.get('date'),
+                'location': r.get('location', ''),
+                'news_url': r.get('news_url', ''),
+                'video_url': r.get('video_url', ''),
+                'image_url': r.get('image_url', ''),
+                'program_names': r.get('program_names', ''),
+                'launch_ids': r.get('launch_ids', ''),
+                'last_updated': r.get('last_updated'),
+                'collected_at': ts.isoformat(),
+            })
+
+        return records
+
     TRANSFORMERS = {
         'youbike': _transform_youbike,
         'bus': _transform_bus,
@@ -444,6 +531,7 @@ class SupabaseWriter:
         'flight_opensky': _transform_flight_opensky,
         'freeway_vd': _transform_freeway_vd,
         'satellite': _transform_satellite,
+        'launch': _transform_launch,
     }
 
     # ============================================================
@@ -514,6 +602,9 @@ class SupabaseWriter:
             'current_key': 'norad_id',
             'columns': ['norad_id', 'name', 'constellation', 'orbit_type', 'lat', 'lng', 'altitude_km', 'velocity_kms', 'inclination', 'period_min', 'tle_epoch', 'collected_at', 'geom'],
             'current_columns': ['norad_id', 'name', 'constellation', 'orbit_type', 'lat', 'lng', 'altitude_km', 'velocity_kms', 'inclination', 'period_min', 'tle_epoch', 'collected_at', 'geom'],
+        },
+        'launch': {
+            'is_multi_table': True,  # 特殊處理：launches + pads + events 分三張表
         },
     }
 
@@ -610,6 +701,58 @@ class SupabaseWriter:
                     values = [tuple(r.get(c) for c in cols) for r in trails]
                     execute_values(cur, f"INSERT INTO realtime.flight_trails ({','.join(cols)}) VALUES %s", values, page_size=100)
             logger.info(f"[flight_fr24] ✓ {len(trails)} 筆航跡寫入")
+
+        elif collector_name == 'launch':
+            launches = [r for r in records if r.get('_type') == 'launch']
+            pads = [r for r in records if r.get('_type') == 'pad']
+            events = [r for r in records if r.get('_type') == 'event']
+
+            with self.conn.cursor() as cur:
+                # launches — UPSERT（id 為 PK）
+                if launches:
+                    cols = ['id', 'name', 'slug', 'net', 'window_start', 'window_end',
+                            'status', 'status_name', 'rocket_name', 'rocket_family', 'rocket_full_name',
+                            'mission_name', 'mission_type', 'mission_description',
+                            'orbit_name', 'orbit_abbrev', 'agency_name', 'agency_type',
+                            'pad_id', 'pad_name', 'location_name', 'country_code',
+                            'probability', 'weather_concerns', 'webcast_live',
+                            'image_url', 'infographic_url', 'program_names',
+                            'last_updated', 'collected_at', 'geom']
+                    values = [tuple(r.get(c) for c in cols) for r in launches]
+                    update_cols = [c for c in cols if c != 'id']
+                    update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
+                    execute_values(cur,
+                        f"INSERT INTO realtime.launches ({','.join(cols)}) VALUES %s "
+                        f"ON CONFLICT (id) DO UPDATE SET {update_set}",
+                        values, page_size=500)
+
+                # pads — UPSERT（id 為 PK）
+                if pads:
+                    cols = ['id', 'name', 'latitude', 'longitude', 'location_name',
+                            'country_code', 'total_launch_count', 'orbital_launch_attempt_count',
+                            'map_url', 'collected_at', 'geom']
+                    values = [tuple(r.get(c) for c in cols) for r in pads]
+                    update_cols = [c for c in cols if c != 'id']
+                    update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
+                    execute_values(cur,
+                        f"INSERT INTO realtime.launch_pads ({','.join(cols)}) VALUES %s "
+                        f"ON CONFLICT (id) DO UPDATE SET {update_set}",
+                        values, page_size=500)
+
+                # events — UPSERT（id 為 PK）
+                if events:
+                    cols = ['id', 'name', 'description', 'type_name', 'date',
+                            'location', 'news_url', 'video_url', 'image_url',
+                            'program_names', 'launch_ids', 'last_updated', 'collected_at']
+                    values = [tuple(r.get(c) for c in cols) for r in events]
+                    update_cols = [c for c in cols if c != 'id']
+                    update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
+                    execute_values(cur,
+                        f"INSERT INTO realtime.launch_events ({','.join(cols)}) VALUES %s "
+                        f"ON CONFLICT (id) DO UPDATE SET {update_set}",
+                        values, page_size=500)
+
+            logger.info(f"[launch] ✓ {len(launches)} launches + {len(pads)} pads + {len(events)} events 寫入")
 
     def _write_satellite_tle(self, result: dict, timestamp: datetime):
         """更新衛星 TLE 參數表（全量 UPSERT，供前�� SGP4 計算用）"""

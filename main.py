@@ -33,6 +33,7 @@ from collectors import (
     FreewayVDCollector,
     EarthquakeCollector,
     SatelliteCollector,
+    LaunchCollector,
 )
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -233,6 +234,17 @@ def run_collectors():
             print(f"✗ Satellite 收集器初始化失敗: {e}")
     else:
         print("⏸️  Satellite 收集器已停用 (SATELLITE_ENABLED=false)")
+
+    # 太空發射收集器（Launch Library 2，免費 API）
+    if config.LAUNCH_ENABLED:
+        try:
+            launch = LaunchCollector()
+            collectors.append(launch)
+            print(f"✓ Launch 收集器 (每 {launch.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Launch 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Launch 收集器已停用 (LAUNCH_ENABLED=false)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")
