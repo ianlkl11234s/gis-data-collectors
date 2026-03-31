@@ -29,8 +29,8 @@ LL2_BASE = "https://ll.thespacedevs.com/2.2.0"
 # 歷史回溯停止點：5 年前
 BACKFILL_CUTOFF_YEARS = 5
 
-# Rate limit 安全間隔（秒）— 免費 15 次/小時 → 每 4 分鐘一次
-RATE_LIMIT_INTERVAL = 240
+# Rate limit 安全間隔（秒）— 付費 token 才縮短
+RATE_LIMIT_PAID_INTERVAL = 2
 
 
 def _parse_launch(raw: dict) -> dict:
@@ -145,14 +145,20 @@ class LaunchCollector(BaseCollector):
             self._session.headers['Authorization'] = f'Token {config.LAUNCH_API_TOKEN}'
 
         self._backfill_complete = False
+        self._backfill_offset = 0
         self._pads_synced = False
+        # 狀態機：每次 collect() 只做一個任務，輪流執行
+        # upcoming → backfill → pads → events → upcoming → backfill → ...
+        self._next_task = 'upcoming'
 
     def _api_get(self, endpoint: str, params: dict = None) -> dict:
-        """呼叫 LL2 API，含 rate limit 等待"""
+        """呼叫 LL2 API（不 sleep，由排程間隔控制頻率）"""
         url = f"{LL2_BASE}{endpoint}"
         resp = self._session.get(url, params=params, timeout=config.REQUEST_TIMEOUT * 2)
         resp.raise_for_status()
-        _time.sleep(RATE_LIMIT_INTERVAL if not config.LAUNCH_API_TOKEN else 2)
+        # 付費 token 才加短間隔（用於 pads 多頁抓取）
+        if config.LAUNCH_API_TOKEN:
+            _time.sleep(RATE_LIMIT_PAID_INTERVAL)
         return resp.json()
 
     def _fetch_upcoming_launches(self) -> list[dict]:
@@ -220,8 +226,7 @@ class LaunchCollector(BaseCollector):
         # 計算截止日期
         cutoff = datetime.now(timezone.utc) - timedelta(days=BACKFILL_CUTOFF_YEARS * 365)
 
-        # 查看已回溯到哪裡（從 Supabase 讀取最舊紀錄）
-        offset = self._get_backfill_offset()
+        offset = self._backfill_offset
 
         print(f"[{self.name}] 歷史回溯: offset={offset}, 截止 {cutoff.strftime('%Y-%m-%d')}")
         launches, total = self._fetch_previous_launches(offset)
@@ -253,64 +258,79 @@ class LaunchCollector(BaseCollector):
 
         return launches
 
-    def _get_backfill_offset(self) -> int:
-        """取得目前的回溯 offset"""
-        return getattr(self, '_backfill_offset', 0)
-
     def collect(self) -> dict:
+        """每次只做一個 API call，不 sleep，不阻塞其他收集器。
+
+        狀態機輪轉：upcoming → backfill → pads → events → upcoming → ...
+        由排程間隔（LAUNCH_INTERVAL，建議 5 分鐘）控制頻率。
+        """
         fetch_time = datetime.now(timezone.utc)
         all_launches = []
         all_pads = []
         all_events = []
+        task = self._next_task
 
-        # 1. 每日同步：upcoming launches（UPSERT）
-        upcoming = self._fetch_upcoming_launches()
-        all_launches.extend(upcoming)
+        if task == 'upcoming':
+            all_launches = self._fetch_upcoming_launches()
+            # 下一步：回溯歷史（如果還沒完成）或 events
+            self._next_task = 'backfill' if not self._backfill_complete else 'events'
 
-        # 2. 歷史回溯（每次一批，直到完成）
-        history = self._backfill_history()
-        all_launches.extend(history)
+        elif task == 'backfill':
+            all_launches = self._backfill_history()
+            # 下一步：pads（如果還沒同步）或 events
+            if not self._pads_synced:
+                self._next_task = 'pads'
+            else:
+                self._next_task = 'events'
 
-        # 3. 發射台（首次同步）
-        if not self._pads_synced:
-            all_pads = self._fetch_pads()
-            self._pads_synced = True
+        elif task == 'pads':
+            # pads 有多頁，付費 token 一次抓完；免費一次只抓一頁
+            if config.LAUNCH_API_TOKEN:
+                all_pads = self._fetch_pads()
+                self._pads_synced = True
+            else:
+                all_pads = self._fetch_pads_page()
+            self._next_task = 'events'
 
-        # 4. 太空事件
-        all_events = self._fetch_upcoming_events()
+        elif task == 'events':
+            all_events = self._fetch_upcoming_events()
+            # 回到 upcoming，完成一輪
+            self._next_task = 'upcoming'
 
         # 統計
-        status_stats = {}
-        for l in all_launches:
-            s = l.get('status', 'Unknown')
-            status_stats[s] = status_stats.get(s, 0) + 1
-
-        rocket_stats = {}
-        for l in all_launches:
-            r = l.get('rocket_family', 'Unknown')
-            rocket_stats[r] = rocket_stats.get(r, 0) + 1
-
-        top_rockets = dict(sorted(rocket_stats.items(), key=lambda x: -x[1])[:5])
-
-        print(f"[{self.name}] 總計: {len(all_launches)} launches, "
-              f"{len(all_pads)} pads, {len(all_events)} events")
-        print(f"[{self.name}] 狀態分佈: {status_stats}")
-        print(f"[{self.name}] Top 火箭: {top_rockets}")
-        print(f"[{self.name}] 歷史回溯: {'完成' if self._backfill_complete else '進行中'}")
+        print(f"[{self.name}] task={task}: "
+              f"{len(all_launches)} launches, {len(all_pads)} pads, {len(all_events)} events"
+              f"{' | backfill: ' + ('完成' if self._backfill_complete else f'offset={self._backfill_offset}') if task == 'backfill' else ''}")
 
         return {
             'fetch_time': fetch_time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'task': task,
             'launch_count': len(all_launches),
-            'upcoming_count': len(upcoming),
-            'history_count': len(history),
             'pad_count': len(all_pads),
             'event_count': len(all_events),
             'backfill_complete': self._backfill_complete,
-            'status_stats': status_stats,
-            'top_rockets': top_rockets,
             'data': {
                 'launches': all_launches,
                 'pads': all_pads,
                 'events': all_events,
             },
         }
+
+    def _fetch_pads_page(self) -> list[dict]:
+        """免費模式：每次只抓一頁 pads（100 個），多次呼叫完成全部"""
+        offset = getattr(self, '_pads_offset', 0)
+        print(f"[{self.name}] 抓取發射台 (offset={offset})...")
+        result = self._api_get('/pad/', {
+            'limit': 100,
+            'offset': offset,
+            'format': 'json',
+        })
+        pads = [_parse_pad(r) for r in result.get('results', [])]
+        if not result.get('next'):
+            self._pads_synced = True
+            self._pads_offset = 0
+            print(f"[{self.name}]   發射台同步完成（本頁 {len(pads)} 個）")
+        else:
+            self._pads_offset = offset + 100
+            print(f"[{self.name}]   發射台: {len(pads)} 個 (offset {offset}, 還有下一頁)")
+        return pads

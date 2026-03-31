@@ -192,7 +192,7 @@ SATELLITE_INTERVAL = int(os.getenv('SATELLITE_INTERVAL', '120'))  # 每 2 小時
 
 # 太空發射 (Launch Library 2，免費 15 req/hr，付費可提升)
 LAUNCH_ENABLED = os.getenv('LAUNCH_ENABLED', 'false').lower() in ('true', '1', 'yes')
-LAUNCH_INTERVAL = int(os.getenv('LAUNCH_INTERVAL', '1440'))  # 每日一次（1440 分鐘）
+LAUNCH_INTERVAL = int(os.getenv('LAUNCH_INTERVAL', '5'))  # 每 5 分鐘一次（每次只做 1 個 API call，不阻塞其他收集器）
 LAUNCH_API_TOKEN = os.getenv('LAUNCH_API_TOKEN', '')  # Patreon 付費 token（可選）
 
 # Mini Taipei 每日時刻表發布
