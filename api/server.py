@@ -559,6 +559,88 @@ def create_app():
 
         return jsonify({'error': f'File not found: {date}/{filename}'}), 404
 
+    # ========== Mini Taipei 公開 API（不需要 API Key）==========
+
+    @app.after_request
+    def add_cors_for_mini_taipei(response):
+        """對 /api/mini-taipei/* 路由加 CORS headers"""
+        if request.path.startswith('/api/mini-taipei/'):
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
+
+    @app.route('/api/mini-taipei/<system>/index.json')
+    def mini_taipei_index(system):
+        """取得每日時刻表可用日期清單
+
+        GET /api/mini-taipei/tra/index.json
+        GET /api/mini-taipei/thsr/index.json
+        """
+        if system not in ('tra', 'thsr'):
+            return jsonify({'error': 'Invalid system, use tra or thsr'}), 400
+
+        s3_prefix = getattr(config, 'MINI_TAIPEI_S3_PREFIX', 'mini-taipei')
+        s3_key = f"{s3_prefix}/{system}/index.json"
+
+        s3 = get_s3_storage()
+        if s3:
+            data = s3.get_json(s3_key)
+            if data:
+                return jsonify(data)
+
+        return jsonify({'dates': [], 'latest': None}), 200
+
+    @app.route('/api/mini-taipei/<system>/daily/<date>.json')
+    def mini_taipei_daily(system, date):
+        """取得指定日期的轉換後時刻表
+
+        GET /api/mini-taipei/tra/daily/2026-03-21.json
+        GET /api/mini-taipei/thsr/daily/2026-03-21.json
+        """
+        if system not in ('tra', 'thsr'):
+            return jsonify({'error': 'Invalid system'}), 400
+
+        # 驗證日期格式
+        import re
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+            return jsonify({'error': 'Invalid date format, use YYYY-MM-DD'}), 400
+
+        s3_prefix = getattr(config, 'MINI_TAIPEI_S3_PREFIX', 'mini-taipei')
+        s3_key = f"{s3_prefix}/{system}/daily/{date}.json"
+
+        s3 = get_s3_storage()
+        if s3:
+            data = s3.get_json(s3_key)
+            if data:
+                return jsonify(data)
+
+        return jsonify({'error': f'Schedule not found for {date}'}), 404
+
+    @app.route('/api/mini-taipei/<system>/coverage/<date>.json')
+    def mini_taipei_coverage(system, date):
+        """取得指定日期的覆蓋率報告
+
+        GET /api/mini-taipei/tra/coverage/2026-03-21.json
+        """
+        if system not in ('tra',):
+            return jsonify({'error': 'Coverage only available for tra'}), 400
+
+        import re
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+            return jsonify({'error': 'Invalid date format'}), 400
+
+        s3_prefix = getattr(config, 'MINI_TAIPEI_S3_PREFIX', 'mini-taipei')
+        s3_key = f"{s3_prefix}/{system}/coverage/{date}.json"
+
+        s3 = get_s3_storage()
+        if s3:
+            data = s3.get_json(s3_key)
+            if data:
+                return jsonify(data)
+
+        return jsonify({'error': f'Coverage report not found for {date}'}), 404
+
     @app.route('/api/archive/status')
     @require_api_key
     def archive_status():

@@ -15,6 +15,11 @@ import psycopg2
 from psycopg2.extras import execute_values
 
 import config
+from tasks.mini_taipei_publish import (
+    build_track_index,
+    convert_tra_timetable,
+    convert_thsr_timetable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -259,23 +264,109 @@ class SupabaseWriter:
             })
         return records
 
+    # OD progress 快取（類別層級，所有實例共用）
+    _od_progress_cache = None
+    _track_index_cache = None
+
+    def _load_od_progress(self):
+        """載入 OD station progress（帶快取）"""
+        if SupabaseWriter._od_progress_cache is not None:
+            return SupabaseWriter._od_progress_cache, SupabaseWriter._track_index_cache
+
+        # 嘗試從 S3 載入
+        s3_prefix = getattr(config, 'MINI_TAIPEI_S3_PREFIX', 'mini-taipei')
+        s3_key = f"{s3_prefix}/tra/od_station_progress.json"
+        try:
+            from storage.s3 import S3Storage
+            s3 = S3Storage()
+            data = s3.get_json(s3_key)
+            if data:
+                SupabaseWriter._od_progress_cache = data
+                SupabaseWriter._track_index_cache = build_track_index(data)
+                logger.info(f"從 S3 載入 od_station_progress: {len(data)} 條軌道")
+                return data, SupabaseWriter._track_index_cache
+        except Exception as e:
+            logger.warning(f"從 S3 載入 od_station_progress 失敗: {e}")
+
+        # 嘗試從本地 cache 載入
+        cache_path = config.LOCAL_DATA_DIR / 'mini_taipei_cache' / 'od_station_progress.json'
+        if cache_path.exists():
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            SupabaseWriter._od_progress_cache = data
+            SupabaseWriter._track_index_cache = build_track_index(data)
+            logger.info(f"從本地 cache 載入 od_station_progress: {len(data)} 條軌道")
+            return data, SupabaseWriter._track_index_cache
+
+        raise RuntimeError(
+            f"找不到 od_station_progress.json。"
+            f"請上傳到 S3: {s3_key}，"
+            f"或放置到: {cache_path}"
+        )
+
     def _transform_rail_timetable(self, result: dict, ts: datetime) -> list[dict]:
-        """時刻表：寫入 reference.daily_schedules（非 realtime）"""
+        """時刻表：轉換為 mini-taipei 格式後寫入 reference.daily_schedules"""
         data = result.get('data', {})
         if isinstance(data, list):
             return []
 
         today = ts.strftime('%Y-%m-%d')
         records = []
-        for system in ('tra', 'thsr'):
-            sys_data = data.get(system, {})
-            if sys_data and sys_data.get('data'):
+
+        # --- TRA：轉換為 mini-taipei 格式 ---
+        tra_data = data.get('tra', {})
+        if tra_data and tra_data.get('data'):
+            tra_raw = tra_data['data']
+            try:
+                od_progress, track_index = self._load_od_progress()
+                tra_output, _coverage = convert_tra_timetable(
+                    tra_raw, today, track_index, od_progress
+                )
                 records.append({
-                    '_system': system,
+                    '_system': 'tra_daily',
                     '_schedule_date': today,
-                    '_train_count': sys_data.get('train_count', len(sys_data['data'])),
-                    '_data': json.dumps(sys_data['data'], ensure_ascii=False, default=str),
+                    '_train_count': tra_output['metadata']['total_trains'],
+                    '_data': json.dumps(tra_output, ensure_ascii=False, default=str),
                 })
+                logger.info(
+                    f"[rail_timetable] TRA 轉換成功: "
+                    f"{tra_output['metadata']['total_trains']} 班 "
+                    f"(失敗 {tra_output['metadata']['failed']})"
+                )
+            except Exception as e:
+                logger.warning(f"[rail_timetable] TRA 轉換失敗，fallback 原始格式: {e}")
+                records.append({
+                    '_system': 'tra',
+                    '_schedule_date': today,
+                    '_train_count': tra_data.get('train_count', len(tra_raw)),
+                    '_data': json.dumps(tra_raw, ensure_ascii=False, default=str),
+                })
+
+        # --- THSR：轉換為 mini-taipei 格式 ---
+        thsr_data = data.get('thsr', {})
+        if thsr_data and thsr_data.get('data'):
+            thsr_raw = thsr_data['data']
+            try:
+                thsr_output = convert_thsr_timetable(thsr_raw, today)
+                records.append({
+                    '_system': 'thsr_daily',
+                    '_schedule_date': today,
+                    '_train_count': thsr_output['_metadata']['total_trains'],
+                    '_data': json.dumps(thsr_output, ensure_ascii=False, default=str),
+                })
+                logger.info(
+                    f"[rail_timetable] THSR 轉換成功: "
+                    f"{thsr_output['_metadata']['total_trains']} 班"
+                )
+            except Exception as e:
+                logger.warning(f"[rail_timetable] THSR 轉換失敗，fallback 原始格式: {e}")
+                records.append({
+                    '_system': 'thsr',
+                    '_schedule_date': today,
+                    '_train_count': thsr_data.get('train_count', len(thsr_raw)),
+                    '_data': json.dumps(thsr_raw, ensure_ascii=False, default=str),
+                })
+
         return records
 
     def _transform_flight_fr24(self, result: dict, ts: datetime) -> list[dict]:
