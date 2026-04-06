@@ -15,6 +15,7 @@ import psycopg2
 from psycopg2.extras import execute_values
 
 import config
+from utils.notify import send_telegram, _escape_md, _instance_tag
 from tasks.mini_taipei_publish import (
     build_track_index,
     convert_tra_timetable,
@@ -28,6 +29,10 @@ BUFFER_DIR = config.LOCAL_DATA_DIR / 'buffer'
 
 class SupabaseWriter:
     """統一的 Supabase 寫入介面"""
+
+    # DB 寫入連續錯誤追蹤（跨 collector 共用）
+    _db_consecutive_errors: dict[str, int] = {}
+    _DB_ERROR_ALERT_THRESHOLD = 3  # 連續 N 次失敗才告警（避免瞬時錯誤洗版）
 
     def __init__(self, database_url: str):
         self.database_url = database_url
@@ -69,10 +74,35 @@ class SupabaseWriter:
 
             self._report_heartbeat(collector_name, True, len(records))
 
+            # 寫入成功：重置連續錯誤計數，恢復時通知
+            prev_errors = self._db_consecutive_errors.get(collector_name, 0)
+            if prev_errors >= self._DB_ERROR_ALERT_THRESHOLD:
+                tag = _instance_tag()
+                send_telegram(
+                    f"✅ *DB 寫入恢復*{tag}\n\n"
+                    f"收集器: `{collector_name}`\n"
+                    f"之前連續失敗: {prev_errors} 次"
+                )
+            self._db_consecutive_errors[collector_name] = 0
+
         except Exception as e:
             logger.warning(f"[{collector_name}] DB 寫入失敗，暫存 buffer: {e}")
             self._write_to_buffer(collector_name, result, timestamp)
             self._report_heartbeat(collector_name, False, 0, str(e))
+
+            # DB 寫入連續錯誤追蹤 + Telegram 告警
+            self._db_consecutive_errors[collector_name] = self._db_consecutive_errors.get(collector_name, 0) + 1
+            count = self._db_consecutive_errors[collector_name]
+            if count == self._DB_ERROR_ALERT_THRESHOLD:
+                tag = _instance_tag()
+                tg_msg = (
+                    f"🗄️ *DB 寫入連續失敗*{tag}\n\n"
+                    f"收集器: `{collector_name}`\n"
+                    f"連續失敗: *{count} 次*\n"
+                    f"錯誤: {_escape_md(str(e)[:200])}\n\n"
+                    f"資料已暫存 buffer，待問題修復後自動補回"
+                )
+                send_telegram(tg_msg)
 
     def flush_buffer(self):
         """重試 buffer 中的資料"""
@@ -887,6 +917,31 @@ class SupabaseWriter:
                 sql = f"INSERT INTO realtime.satellite_tle ({','.join(cols)}) VALUES %s ON CONFLICT (norad_id) DO UPDATE SET {update_set}"
                 execute_values(cur, sql, values, page_size=1000)
             logger.info(f"[satellite] ✓ TLE 表已更新 {len(values)} 筆")
+
+            # 同步寫入 TLE 歷史表（用於變軌偵測）
+            self._write_satellite_tle_history(values, timestamp)
+
+    def _write_satellite_tle_history(self, tle_values: list, timestamp: datetime):
+        """追加 TLE 歷史紀錄，同一 norad_id + tle_epoch 不重複寫入"""
+        hist_cols = ['norad_id', 'name', 'constellation', 'orbit_type',
+                     'tle_line1', 'tle_line2', 'tle_epoch',
+                     'inclination', 'eccentricity', 'period_min', 'fetched_at']
+
+        # 從 tle_values 重新組合（原始順序：norad_id, name, intl_designator, constellation, orbit_type,
+        #   tle_line1, tle_line2, tle_epoch, inclination, eccentricity, period_min, updated_at）
+        hist_values = [
+            (v[0], v[1], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], timestamp.isoformat())
+            for v in tle_values
+        ]
+
+        try:
+            with self.conn.cursor() as cur:
+                sql = (f"INSERT INTO realtime.satellite_tle_history ({','.join(hist_cols)}) "
+                       f"VALUES %s ON CONFLICT (norad_id, tle_epoch) DO NOTHING")
+                execute_values(cur, sql, hist_values, page_size=1000)
+            logger.info(f"[satellite] ✓ TLE 歷史已追加（新 epoch 才寫入）")
+        except Exception as e:
+            logger.warning(f"[satellite] TLE 歷史寫入失敗（表可能尚未建立）: {e}")
 
     def _write_schedules(self, records: list[dict]):
         """寫入每日時刻表到 reference.daily_schedules"""
