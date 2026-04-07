@@ -42,7 +42,7 @@ class NCDRAlertsCollector(BaseCollector):
         self._session = requests.Session()
         self._session.headers.update({
             'User-Agent': 'taipei-gis-analytics/ncdr-collector',
-            'Accept': 'application/json',
+            'Accept': '*/*',
         })
 
     # ------------------------------------------------------------
