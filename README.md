@@ -4,7 +4,7 @@
 
 ## 收集器總覽
 
-共 17 個收集器，每個都可獨立啟停。
+共 20 個收集器，每個都可獨立啟停。
 
 | 收集器 | `_ENABLED` 環境變數 | 預設 | 頻率 | 來源 | 說明 |
 |--------|---------------------|------|------|------|------|
@@ -20,12 +20,46 @@
 | Rail Timetable | `RAIL_TIMETABLE_ENABLED` | `true` | 1440 min | TDX | 台鐵+高鐵每日時刻表歸檔 |
 | Ship TDX | `SHIP_TDX_ENABLED` | **false** | 2 min | TDX | 國內航線船位 |
 | Ship AIS | `SHIP_AIS_ENABLED` | `true` | 10 min | 航港局 | AIS 船位追蹤 |
-| Flight FR24 | `FLIGHT_FR24_ENABLED` | **false** | 5 min | FR24 | 台灣機場航班完整軌跡 |
+| Flight FR24 ⚙️ | `FLIGHT_FR24_ENABLED` | **false** | 5 min | FR24 | 台灣機場航班完整軌跡（背景 thread） |
 | FR24 Zone | `FLIGHT_FR24_ZONE_ENABLED` | **false** | 5 min | FR24 | 空域快照（最多飛機+起降機場） |
 | OpenSky | `FLIGHT_OPENSKY_ENABLED` | **false** | 5 min | OpenSky | 空域快照（精確高度+垂直速率） |
+| Earthquake | `EARTHQUAKE_ENABLED` | `true` | 1440 min | CWA | 有感地震 + 完整地震目錄（每日） |
 | Satellite | `SATELLITE_ENABLED` | **false** | 120 min | CelesTrak | 全球衛星軌道追蹤（SGP4） |
+| Launch | `LAUNCH_ENABLED` | **false** | 5 min | Launch Library 2 | 全球太空發射任務 |
+| CWA Satellite | `CWA_SATELLITE_ENABLED` | `true` | 10 min | CWA | 衛星雲圖 + 雷達回波 PNG |
+| **NCDR Alerts** | `NCDR_ALERTS_ENABLED` | `true` | 15 min | NCDR | **災害示警 CAP（颱風/豪雨/強風/枯旱/水庫等）** |
 
 > 預設 **false** 的收集器需手動啟用（設定環境變數為 `true`）。
+> ⚙️ 標記的收集器跑時間較長，已切換為**背景 thread 模式**（見下方「執行架構」）。
+
+## 執行架構
+
+### 主排程 + 背景 thread 雙軌
+
+收集器有兩種執行模式：
+
+| 模式 | 適用收集器 | 機制 |
+|------|------------|------|
+| **主排程** (預設) | 大多數 collector | `schedule` 套件單執行緒，依序執行 |
+| **背景 thread** | `flight_fr24` | 獨立 daemon thread，自己 sleep + run 迴圈 |
+
+**為何需要背景 thread？** `flight_fr24` 因為刻意慢打 (`FLIGHT_FR24_TRAIL_DELAY=3` 秒/請求) 防 anti-bot，單次收集動輒數分鐘。若放在主排程會阻塞 `bus`(1 min)、`ncdr_alerts`(15 min) 等其他高頻 collector。
+
+要將某個 collector 切到背景 thread，只需在 `main.py` 的 `BACKGROUND_COLLECTORS` 集合內加上它的 `name`：
+
+```python
+BACKGROUND_COLLECTORS = {'flight_fr24'}  # 加新成員即可
+```
+
+### Supabase 旁路寫入
+
+每次 collector 完成後，除了寫入本地檔案，還會旁路寫一份到 Supabase（PostGIS）：
+
+- **不影響本地儲存流程**：DB 寫入失敗時 collector 仍視為成功
+- **失敗自動 buffer**：寫入失敗的資料會暫存到 `data/buffer/*.json`
+- **定期重試**：每 `SUPABASE_BUFFER_INTERVAL`（預設 5 分鐘）排程 flush buffer
+- **連續錯誤告警**：DB 連續失敗 3 次後 Telegram 通知
+- **Thread-safe**：`SupabaseWriter` 內部用 `RLock` 保護，背景 thread 與主 thread 共用安全
 
 ### 飛機三源互補
 
@@ -72,12 +106,17 @@ data-collectors/
 │   ├── flight_fr24.py     # FlightRadar24 航班軌跡
 │   ├── flight_fr24_zone.py # FR24 Zone 空域快照
 │   ├── flight_opensky.py  # OpenSky 空域快照
-│   └── satellite.py       # 全球衛星軌道追蹤（CelesTrak + SGP4）
+│   ├── earthquake.py      # CWA 地震報告 + 完整目錄
+│   ├── satellite.py       # 全球衛星軌道追蹤（CelesTrak + SGP4）
+│   ├── launch.py          # 太空發射任務（Launch Library 2）
+│   ├── cwa_satellite.py   # CWA 衛星雲圖 + 雷達回波 PNG
+│   └── ncdr_alerts.py     # NCDR 災害示警 CAP feed
 │
 ├── storage/                # 儲存後端
 │   ├── __init__.py
 │   ├── local.py           # 本地檔案儲存
-│   └── s3.py              # AWS S3 儲存與歸檔
+│   ├── s3.py              # AWS S3 儲存與歸檔
+│   └── supabase_writer.py # Supabase 旁路寫入（thread-safe + buffer）
 │
 ├── tasks/                  # 排程任務
 │   ├── __init__.py
@@ -142,6 +181,11 @@ python main.py
 | `S3_ENDPOINT` | | S3 相容 endpoint（MinIO 等） |
 | `WEBHOOK_URL` | | 通知 Webhook（Discord、Slack） |
 | `LINE_TOKEN` | | LINE Notify Token |
+| `TELEGRAM_BOT_TOKEN` | | Telegram Bot Token（每日報告 + 連續錯誤告警） |
+| `TELEGRAM_CHAT_ID` | | Telegram Chat ID |
+| `SUPABASE_ENABLED` | `false` | 啟用 Supabase 旁路寫入 |
+| `SUPABASE_DB_URL` | | Supavisor Transaction mode (port 6543) |
+| `SUPABASE_BUFFER_INTERVAL` | `5` | Buffer flush 間隔（分鐘） |
 
 ### 歸檔設定
 
@@ -215,12 +259,15 @@ python main.py
 | `FLIGHT_OPENSKY_USERNAME` | | Basic Auth 帳號（二擇一） |
 | `FLIGHT_OPENSKY_PASSWORD` | | Basic Auth 密碼 |
 
-#### 衛星
+#### 衛星與太空
 
 | 變數 | 預設值 | 說明 |
 |------|--------|------|
 | `SATELLITE_ENABLED` | `false` | 衛星軌道追蹤（CelesTrak + SGP4） |
 | `SATELLITE_INTERVAL` | `120` | 間隔（分鐘，配合 CelesTrak 2hr 更新） |
+| `LAUNCH_ENABLED` | `false` | 太空發射任務（Launch Library 2） |
+| `LAUNCH_INTERVAL` | `5` | 間隔（分鐘，每次只 1 個 API call） |
+| `LAUNCH_API_TOKEN` | | Patreon 付費 token（可選） |
 
 #### 氣象
 
@@ -230,6 +277,18 @@ python main.py
 | `WEATHER_INTERVAL` | `60` | 間隔（分鐘） |
 | `TEMPERATURE_ENABLED` | `true` | 溫度網格 |
 | `TEMPERATURE_INTERVAL` | `60` | 間隔（分鐘） |
+| `CWA_SATELLITE_ENABLED` | `true` | 衛星雲圖 + 雷達回波 PNG |
+| `CWA_SATELLITE_INTERVAL` | `10` | 間隔（分鐘） |
+| `CWA_SATELLITE_DATASETS` | | 自訂 dataset id 清單（逗號分隔），空值用內建預設 |
+
+#### 災害與安全
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `EARTHQUAKE_ENABLED` | `true` | CWA 有感地震 + 完整地震目錄 |
+| `EARTHQUAKE_INTERVAL` | `1440` | 間隔（分鐘，每日一次） |
+| `NCDR_ALERTS_ENABLED` | `true` | NCDR 災害示警 CAP feed（無需 API key） |
+| `NCDR_ALERTS_INTERVAL` | `15` | 間隔（分鐘） |
 
 ## 收集器說明
 
@@ -320,6 +379,31 @@ python main.py
 - **Supabase 表**: `satellite_positions`（分區歷史）、`satellite_current`（最新狀態）、`satellite_tle`（前端計算用）
 - **前端應用**: 載入 `satellite_tle` 表的 TLE 參數，用 JS 版 `satellite.js` 在瀏覽器即時計算位置與軌道預測線
 - **擴充**: 如需 Starlink ~10,000 顆，需註冊 Space-Track.org 帳號
+
+### 太空發射任務
+- **來源**: Launch Library 2 (`thespacedevs.com`)
+- **資料類型**: 即將/歷史發射任務（火箭、發射台、機構、軌道、影像）
+- **Supabase 表**: `launches` / `launch_pads` / `launch_events`
+- **歷史回溯**: 啟動時自動分批 backfill，每次抓 100 筆（避免 rate limit）
+
+### 地震報告
+- **來源**: CWA `E-A0015-001` (顯著有感) + `E-A0016-001` (小區域有感) + `E-A0073-001` (完整目錄含無感)
+- **資料類型**: 震央、深度、規模、各測站震度、報告影像
+- **Supabase 表**: `earthquake_events`（依 `event_id` UPSERT）
+
+### CWA 衛星雲圖 + 雷達回波
+- **來源**: CWA File API（衛星 `O-C0042-*`、雷達 `O-A0058-*` 等）
+- **資料類型**: PNG 圖檔 + metadata
+- **預設 datasets**: 由 collector 內 `DEFAULT_DATASETS` 控制，可用 `CWA_SATELLITE_DATASETS` 覆寫
+
+### NCDR 災害示警 (CAP)
+- **來源**: NCDR 災害示警公開資料平台 `https://alerts.ncdr.nat.gov.tw/JSONAtomFeeds.ashx`（無需 API key）
+- **資料類型**: 颱風、地震、豪大雨、強風、低溫、土石流、淹水、水庫放流、枯旱等示警
+- **格式**: CAP (Common Alerting Protocol) v1.2 → 解析 polygon → MULTIPOLYGON (WGS84)
+- **時效欄位**: `sent / effective / onset / expires`
+- **Supabase 表**: `realtime.disaster_alerts`（PK = `identifier`，UPSERT 模式，過期不刪除以累積歷史）
+- **便利視圖**: `realtime.disaster_alerts_active` 過濾出生效中示警
+- **特性**: feed 只列「目前生效」示警，過期會從 feed 消失 → 收集器持續累積即建立完整歷史庫
 
 ## 資料儲存與歸檔
 
