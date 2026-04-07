@@ -195,6 +195,14 @@ LAUNCH_ENABLED = os.getenv('LAUNCH_ENABLED', 'false').lower() in ('true', '1', '
 LAUNCH_INTERVAL = int(os.getenv('LAUNCH_INTERVAL', '5'))  # 每 5 分鐘一次（每次只做 1 個 API call，不阻塞其他收集器）
 LAUNCH_API_TOKEN = os.getenv('LAUNCH_API_TOKEN', '')  # Patreon 付費 token（可選）
 
+# CWA 衛星雲圖 + 雷達回波 PNG (O-C0042-004 / O-A0058-005，需 CWA API Key)
+CWA_SATELLITE_ENABLED = os.getenv('CWA_SATELLITE_ENABLED', 'true').lower() in ('true', '1', 'yes')
+CWA_SATELLITE_INTERVAL = int(os.getenv('CWA_SATELLITE_INTERVAL', '10'))  # 每 10 分鐘
+CWA_SATELLITE_DATASETS = (
+    os.getenv('CWA_SATELLITE_DATASETS', '').split(',')
+    if os.getenv('CWA_SATELLITE_DATASETS') else []
+)  # 空 list = 使用 collector 內的 DEFAULT_DATASETS
+
 # NCDR 災害示警 (CAP feed，無需 API key)
 NCDR_ALERTS_ENABLED = os.getenv('NCDR_ALERTS_ENABLED', 'true').lower() in ('true', '1', 'yes')
 NCDR_ALERTS_INTERVAL = int(os.getenv('NCDR_ALERTS_INTERVAL', '15'))  # 每 15 分鐘

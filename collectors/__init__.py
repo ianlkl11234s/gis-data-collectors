@@ -20,6 +20,7 @@ from .earthquake import EarthquakeCollector
 from .satellite import SatelliteCollector
 from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
+from .cwa_satellite import CWASatelliteCollector
 
 __all__ = [
     'BaseCollector',
@@ -42,4 +43,5 @@ __all__ = [
     'SatelliteCollector',
     'LaunchCollector',
     'NCDRAlertsCollector',
+    'CWASatelliteCollector',
 ]

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import psycopg2
+from psycopg2 import Binary as PgBinary
 from psycopg2.extras import execute_values
 
 import config
@@ -685,6 +686,36 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_cwa_satellite(self, result: dict, ts: datetime) -> list[dict]:
+        """CWA 衛星雲圖 / 雷達影像
+        每筆 record = 一張影像。collector 用 base64 傳輸（JSON-safe），
+        這邊 decode 回 bytes。PRIMARY KEY (dataset_id, observed_at) 天然去重。
+        """
+        import base64 as _b64
+        records = []
+        for f in result.get('data', []):
+            b64 = f.get('image_b64')
+            if not b64:
+                continue
+            png = _b64.b64decode(b64)
+            records.append({
+                'dataset_id': f.get('dataset_id'),
+                'observed_at': f.get('observed_at'),
+                'image_bytes': PgBinary(png),
+                'mime_type': f.get('mime_type', 'image/png'),
+                'lon_min': f.get('lon_min'),
+                'lon_max': f.get('lon_max'),
+                'lat_min': f.get('lat_min'),
+                'lat_max': f.get('lat_max'),
+                'width': f.get('width'),
+                'height': f.get('height'),
+                'image_size': f.get('image_size'),
+                'product_url': f.get('product_url'),
+                'resource_desc': f.get('resource_desc'),
+                'collected_at': ts.isoformat(),
+            })
+        return records
+
     TRANSFORMERS = {
         'youbike': _transform_youbike,
         'bus': _transform_bus,
@@ -701,6 +732,7 @@ class SupabaseWriter:
         'satellite': _transform_satellite,
         'launch': _transform_launch,
         'ncdr_alerts': _transform_ncdr_alerts,
+        'cwa_satellite': _transform_cwa_satellite,
     }
 
     # ============================================================
@@ -786,6 +818,19 @@ class SupabaseWriter:
             ],
             'upsert_key': 'identifier',
         },
+        'cwa_satellite': {
+            'history': 'realtime.cwa_imagery_frames',
+            'columns': [
+                'dataset_id', 'observed_at', 'image_bytes', 'mime_type',
+                'lon_min', 'lon_max', 'lat_min', 'lat_max',
+                'width', 'height', 'image_size', 'product_url', 'resource_desc',
+                'collected_at',
+            ],
+            # 複合 PK (dataset_id, observed_at)：用 ON CONFLICT DO NOTHING
+            # 因為同一觀測時間的 PNG 內容固定，重複抓不需更新
+            'upsert_key': 'dataset_id,observed_at',
+            'upsert_strategy': 'do_nothing',
+        },
     }
 
     def _write_to_db(self, collector_name: str, records: list[dict], timestamp: datetime):
@@ -820,10 +865,14 @@ class SupabaseWriter:
 
                 # 地震用 UPSERT（避免重複）
                 if table_config.get('upsert_key'):
-                    key = table_config['upsert_key']
-                    update_cols = [c for c in columns if c != key]
-                    update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
-                    sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
+                    key = table_config['upsert_key']  # 支援複合鍵 'a,b'
+                    if table_config.get('upsert_strategy') == 'do_nothing':
+                        sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s ON CONFLICT ({key}) DO NOTHING"
+                    else:
+                        key_set = {k.strip() for k in key.split(',')}
+                        update_cols = [c for c in columns if c not in key_set]
+                        update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
+                        sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
                 else:
                     sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s"
 

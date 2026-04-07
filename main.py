@@ -35,6 +35,7 @@ from collectors import (
     SatelliteCollector,
     LaunchCollector,
     NCDRAlertsCollector,
+    CWASatelliteCollector,
 )
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -246,6 +247,19 @@ def run_collectors():
             print(f"✗ Launch 收集器初始化失敗: {e}")
     else:
         print("⏸️  Launch 收集器已停用 (LAUNCH_ENABLED=false)")
+
+    # CWA 衛星雲圖 + 雷達 PNG 收集器（需 CWA API Key）
+    if config.CWA_SATELLITE_ENABLED and config.CWA_API_KEY:
+        try:
+            cwa_sat = CWASatelliteCollector()
+            collectors.append(cwa_sat)
+            print(f"✓ CWA Satellite 影像收集器 (每 {cwa_sat.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ CWA Satellite 收集器初始化失敗: {e}")
+    elif not config.CWA_SATELLITE_ENABLED:
+        print("⏸️  CWA Satellite 收集器已停用 (CWA_SATELLITE_ENABLED=false)")
+    else:
+        print("⚠️  CWA_API_KEY 未設定，跳過 CWA Satellite 收集器")
 
     # NCDR 災害示警收集器（CAP feed，無需 API key）
     if config.NCDR_ALERTS_ENABLED:
