@@ -6,8 +6,12 @@
 
 import gc
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+# 台灣時區（無 DST），確保 datetime 為 timezone-aware
+# 避免 naive datetime 在 PostgreSQL UTC session 被誤判為 UTC（造成 +8h 偏移）
+TAIPEI_TZ = timezone(timedelta(hours=8))
 
 import config
 from storage import get_storage
@@ -58,7 +62,8 @@ class BaseCollector(ABC):
     def run(self) -> dict:
         """執行收集並儲存"""
         self.run_count += 1
-        timestamp = datetime.now()
+        # 用 timezone-aware 台灣時間，確保寫入 Supabase 時能正確轉 UTC
+        timestamp = datetime.now(TAIPEI_TZ)
 
         print(f"\n[{self.name}] 開始收集 ({timestamp.strftime('%H:%M:%S')})")
 

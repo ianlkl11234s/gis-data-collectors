@@ -13,6 +13,8 @@ from datetime import datetime
 
 import requests
 
+from .base import TAIPEI_TZ
+
 import config
 from .base import BaseCollector
 
@@ -50,7 +52,8 @@ class ShipAISCollector(BaseCollector):
 
     def collect(self) -> dict:
         """收集即時 AIS 船位資料"""
-        fetch_time = datetime.now()
+        # timezone-aware 台灣時間，isoformat() 會包含 +08:00 後綴
+        fetch_time = datetime.now(TAIPEI_TZ)
 
         try:
             geojson = self._fetch_ais_realtime()
