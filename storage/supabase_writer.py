@@ -638,6 +638,41 @@ class SupabaseWriter:
 
         return records
 
+    def _transform_ncdr_alerts(self, result: dict, ts: datetime) -> list[dict]:
+        """NCDR 災害示警：直接展平，identifier 為 PK"""
+        records = []
+        for r in result.get('data', []):
+            records.append({
+                'identifier': r.get('identifier'),
+                'sender': r.get('sender'),
+                'sender_name': r.get('sender_name'),
+                'author': r.get('author'),
+                'category': r.get('category'),
+                'event': r.get('event'),
+                'event_term': r.get('event_term'),
+                'urgency': r.get('urgency'),
+                'severity': r.get('severity'),
+                'certainty': r.get('certainty'),
+                'status': r.get('status'),
+                'msg_type': r.get('msg_type'),
+                'scope': r.get('scope'),
+                'headline': r.get('headline'),
+                'description': r.get('description'),
+                'instruction': r.get('instruction'),
+                'area_desc': r.get('area_desc'),
+                'geocodes': r.get('geocodes'),
+                'sent': r.get('sent'),
+                'effective': r.get('effective'),
+                'onset': r.get('onset'),
+                'expires': r.get('expires'),
+                'cap_url': r.get('cap_url'),
+                'feed_title': r.get('feed_title'),
+                'feed_summary': r.get('feed_summary'),
+                'geom': r.get('geom'),
+                'collected_at': ts.isoformat(),
+            })
+        return records
+
     TRANSFORMERS = {
         'youbike': _transform_youbike,
         'bus': _transform_bus,
@@ -653,6 +688,7 @@ class SupabaseWriter:
         'freeway_vd': _transform_freeway_vd,
         'satellite': _transform_satellite,
         'launch': _transform_launch,
+        'ncdr_alerts': _transform_ncdr_alerts,
     }
 
     # ============================================================
@@ -726,6 +762,17 @@ class SupabaseWriter:
         },
         'launch': {
             'is_multi_table': True,  # 特殊處理：launches + pads + events 分三張表
+        },
+        'ncdr_alerts': {
+            'history': 'realtime.disaster_alerts',
+            'columns': [
+                'identifier', 'sender', 'sender_name', 'author', 'category', 'event', 'event_term',
+                'urgency', 'severity', 'certainty', 'status', 'msg_type', 'scope',
+                'headline', 'description', 'instruction', 'area_desc', 'geocodes',
+                'sent', 'effective', 'onset', 'expires', 'cap_url',
+                'feed_title', 'feed_summary', 'geom', 'collected_at',
+            ],
+            'upsert_key': 'identifier',
         },
     }
 

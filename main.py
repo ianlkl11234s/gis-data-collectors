@@ -34,6 +34,7 @@ from collectors import (
     EarthquakeCollector,
     SatelliteCollector,
     LaunchCollector,
+    NCDRAlertsCollector,
 )
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -245,6 +246,17 @@ def run_collectors():
             print(f"✗ Launch 收集器初始化失敗: {e}")
     else:
         print("⏸️  Launch 收集器已停用 (LAUNCH_ENABLED=false)")
+
+    # NCDR 災害示警收集器（CAP feed，無需 API key）
+    if config.NCDR_ALERTS_ENABLED:
+        try:
+            ncdr = NCDRAlertsCollector()
+            collectors.append(ncdr)
+            print(f"✓ NCDR Alerts 收集器 (每 {ncdr.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ NCDR Alerts 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  NCDR Alerts 收集器已停用 (NCDR_ALERTS_ENABLED=false)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")

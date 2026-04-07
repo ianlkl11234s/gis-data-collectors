@@ -19,6 +19,7 @@ from .freeway_vd import FreewayVDCollector
 from .earthquake import EarthquakeCollector
 from .satellite import SatelliteCollector
 from .launch import LaunchCollector
+from .ncdr_alerts import NCDRAlertsCollector
 
 __all__ = [
     'BaseCollector',
@@ -40,4 +41,5 @@ __all__ = [
     'EarthquakeCollector',
     'SatelliteCollector',
     'LaunchCollector',
+    'NCDRAlertsCollector',
 ]
