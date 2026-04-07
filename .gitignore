@@ -33,3 +33,10 @@ logs/
 # 暫存
 *.tmp
 *.bak
+
+# Claude Code 內部儲存（不 commit）
+.claude/projects/
+.claude/worktrees/
+.claude/todos/
+.claude/settings.local.json
+.claude/.cache/
