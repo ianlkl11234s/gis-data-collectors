@@ -7,6 +7,7 @@ Supabase 即時資料寫入模組
 
 import json
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -37,6 +38,9 @@ class SupabaseWriter:
     def __init__(self, database_url: str):
         self.database_url = database_url
         self.conn = None
+        # 跨 thread 序列化 DB 操作（psycopg2 連線非 thread-safe）
+        # 給背景 thread collector（flight_fr24）與主 schedule thread 共用 writer
+        self._lock = threading.RLock()
         self._connect()
         BUFFER_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -60,7 +64,11 @@ class SupabaseWriter:
     # ============================================================
 
     def write(self, collector_name: str, result: dict, timestamp: datetime):
-        """主路徑寫 DB，失敗時暫存 buffer"""
+        """主路徑寫 DB，失敗時暫存 buffer（thread-safe）"""
+        with self._lock:
+            return self._write_locked(collector_name, result, timestamp)
+
+    def _write_locked(self, collector_name: str, result: dict, timestamp: datetime):
         try:
             records = self._transform(collector_name, result, timestamp)
             if not records:
@@ -105,7 +113,11 @@ class SupabaseWriter:
                 send_telegram(tg_msg)
 
     def flush_buffer(self):
-        """重試 buffer 中的資料"""
+        """重試 buffer 中的資料（thread-safe）"""
+        with self._lock:
+            return self._flush_buffer_locked()
+
+    def _flush_buffer_locked(self):
         buffer_files = sorted(BUFFER_DIR.glob("*.json"))
         if not buffer_files:
             return

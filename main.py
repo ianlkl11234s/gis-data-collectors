@@ -262,17 +262,47 @@ def run_collectors():
         print("\n❌ 沒有可用的收集器")
         return []
 
-    # 立即執行一次所有收集器
+    # ============================================================
+    # 背景 thread collector：跑時間較長，不阻塞主排程
+    # 與主 schedule loop 共用 SupabaseWriter（writer 內部已加鎖）
+    # ============================================================
+    BACKGROUND_COLLECTORS = {'flight_fr24'}
+
+    bg_collectors = [c for c in collectors if c.name in BACKGROUND_COLLECTORS]
+    fg_collectors = [c for c in collectors if c.name not in BACKGROUND_COLLECTORS]
+
+    # 立即執行一次（前景 collector 在主 thread 依序跑）
     print("\n" + "=" * 60)
     print("🚀 初始執行")
     print("=" * 60)
 
-    for collector in collectors:
+    for collector in fg_collectors:
         collector.run()
 
-    # 設定排程
-    for collector in collectors:
+    # 設定前景排程
+    for collector in fg_collectors:
         schedule.every(collector.interval_minutes).minutes.do(collector.run)
+
+    # 啟動背景 thread collector（各跑各的 interval）
+    def _bg_loop(collector):
+        print(f"[{collector.name}] 背景 thread 啟動 (每 {collector.interval_minutes} 分鐘)")
+        # 啟動時先跑一次
+        try:
+            collector.run()
+        except Exception as e:
+            print(f"[{collector.name}] 背景初次執行錯誤: {e}")
+        interval_sec = collector.interval_minutes * 60
+        while True:
+            time.sleep(interval_sec)
+            try:
+                collector.run()
+            except Exception as e:
+                print(f"[{collector.name}] 背景執行錯誤: {e}")
+
+    for collector in bg_collectors:
+        t = threading.Thread(target=_bg_loop, args=(collector,), daemon=True, name=f"bg-{collector.name}")
+        t.start()
+        print(f"✓ {collector.name} 已切換為背景 thread 模式（不阻塞主排程）")
 
     # 顯示下次執行時間
     next_run = schedule.next_run()
