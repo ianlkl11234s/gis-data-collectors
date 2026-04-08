@@ -118,24 +118,61 @@ class SupabaseWriter:
         with self._lock:
             return self._flush_buffer_locked()
 
+    # Buffer 檔最大保留天數：超過則直接丟棄
+    # 因為分區表 retention 會自動刪舊分區，過期 buffer 已無處可寫，且會永久卡住其他檔案
+    BUFFER_MAX_AGE_DAYS = 3
+
+    # 連續失敗多少筆後判定 DB 仍不可用、放棄本輪
+    BUFFER_FAIL_THRESHOLD = 5
+
     def _flush_buffer_locked(self):
+        from datetime import timezone, timedelta as _td
+
         buffer_files = sorted(BUFFER_DIR.glob("*.json"))
         if not buffer_files:
             return
 
         logger.info(f"Buffer 重試：{len(buffer_files)} 個待補寫檔案")
+        now = datetime.now(timezone.utc)
+        max_age = _td(days=self.BUFFER_MAX_AGE_DAYS)
+
+        success = 0
+        skipped_old = 0
+        consecutive_failures = 0
+
         for f in buffer_files:
             try:
                 payload = json.loads(f.read_text())
                 ts = datetime.fromisoformat(payload['timestamp'])
+                if ts.tzinfo is None:
+                    ts_cmp = ts.replace(tzinfo=timezone.utc)
+                else:
+                    ts_cmp = ts
+
+                # 過期 buffer 直接丟棄（分區可能已被 retention 清掉）
+                if now - ts_cmp > max_age:
+                    f.unlink()
+                    skipped_old += 1
+                    logger.info(f"Buffer 過期丟棄：{f.name} (age={now - ts_cmp})")
+                    continue
+
                 records = self._transform(payload['collector'], payload['result'], ts)
                 if records:
                     self._write_to_db(payload['collector'], records, ts)
                 f.unlink()
+                success += 1
+                consecutive_failures = 0
                 logger.info(f"Buffer 補寫成功：{f.name}")
             except Exception as e:
+                consecutive_failures += 1
                 logger.warning(f"Buffer 重試失敗：{f.name}: {e}")
-                break  # DB 仍不可用，等下次
+                # 不再 break — 改為連續多筆失敗才放棄，避免單一爛檔卡住其他
+                if consecutive_failures >= self.BUFFER_FAIL_THRESHOLD:
+                    logger.warning(f"Buffer 連續 {consecutive_failures} 筆失敗，放棄本輪重試")
+                    break
+
+        if success or skipped_old:
+            logger.info(f"Buffer 重試完成：補寫 {success} 筆 / 過期丟棄 {skipped_old} 筆")
 
     # ============================================================
     # 資料轉換：Collector 原始格式 → DB 欄位
