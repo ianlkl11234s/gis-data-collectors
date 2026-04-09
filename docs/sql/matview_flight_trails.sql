@@ -114,3 +114,21 @@ AS $function$
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.get_flight_trails(date) TO anon, authenticated;
+
+-- ------------------------------------------------------------
+-- 5) get_flight_dates 改從 flight_trails_daily 聚合
+--     （原本走 mv_flight_dates，定義是全掃 flight_positions GROUP BY date，
+--      REFRESH 會撞 pooler timeout → cron 失敗 → 前端日期清單停更）
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_flight_dates()
+RETURNS TABLE(date text, records bigint, flights bigint)
+LANGUAGE sql
+STABLE
+AS $function$
+    SELECT day::text, sum(point_count)::bigint, count(*)::bigint
+    FROM realtime.flight_trails_daily
+    GROUP BY day
+    ORDER BY day
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.get_flight_dates() TO anon, authenticated;

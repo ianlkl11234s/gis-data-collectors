@@ -120,3 +120,26 @@ AS $function$
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.get_ship_trails(date) TO anon, authenticated;
+
+-- ------------------------------------------------------------
+-- 5) get_ship_dates 改從 ship_trails_daily 聚合
+--
+-- 原本從 mv_ship_dates 讀，但 mv_ship_dates 定義是全掃 ship_positions
+-- GROUP BY date，REFRESH 會撞 2 分鐘 pooler timeout → cron 持續失敗
+-- → 前端看到的最新 date 永遠停在最後一次成功 refresh 的時間點。
+--
+-- 改從 ship_trails_daily 聚合：毫秒級、跟 trail 資料同步（cron 10 分鐘更新）、
+-- 只回傳最近 7 天（但這正是前端能回放的範圍，多的 date 也無用）。
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_ship_dates()
+RETURNS TABLE(date text, records bigint, ships bigint)
+LANGUAGE sql
+STABLE
+AS $function$
+    SELECT day::text, sum(point_count)::bigint, count(*)::bigint
+    FROM realtime.ship_trails_daily
+    GROUP BY day
+    ORDER BY day
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.get_ship_dates() TO anon, authenticated;
