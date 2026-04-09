@@ -452,6 +452,26 @@ s3://bucket/                   # S3 (永久歸檔，tar.gz)
 4. 刪除超過保留天數且 S3 已有歸檔的日期目錄
 5. 清理空目錄
 
+## Supabase RPC 預聚合（docs/sql/）
+
+為避開 Supabase Supavisor pooler 強制的 2 分鐘 statement_timeout，以及讓前端讀取穩定落在百毫秒級，所有高頻時序 RPC 都採「普通 table + per-day refresh function + pg_cron + 薄 SELECT RPC」pattern：
+
+| RPC | SQL 檔 | Cron | Before → After |
+|---|---|---|---|
+| `get_ship_trails` | `matview_ship_trails.sql` | `*/10` | timeout → 123ms |
+| `get_flight_trails` | `matview_flight_trails.sql` | `*/10` | timeout → 126ms |
+| `get_freeway_congestion_day` | `matview_freeway_congestion.sql` | `*/10` | 60s → 302ms |
+| `get_youbike_h3_snapshots` | `matview_youbike_h3.sql` | `*/10` | 6.4s → 82ms |
+| `get_temperature_frames` | `matview_temperature_frames.sql` | `*/30` | 551ms → 107ms |
+| `get_temperature_dates` | `matview_temperature_dates.sql` | `*/15` | 1.9s → 72ms |
+| `get_temperature_grid_info` | `reference_temperature_grid.sql`（靜態） | — | 1.08s → 269ms |
+| `get_disaster_alerts_day` | `matview_disaster_alerts.sql` | `*/10` | **13.2s → 110ms** |
+| `get_cwa_imagery_frames_batch` | `cwa_imagery_rpcs.sql` | — | `Failed to fetch` → 57MB/1.7s |
+
+每個 refresh function 內含 `pg_advisory_xact_lock` 避免 cron 與手動呼叫 race condition，cleanup function 每日 18:00 UTC 清超過 7 天的舊 row。檔名叫 `matview_*` 是歷史包袱，實際是普通 table。
+
+套用方式：`psql "$SUPABASE_DB_URL" -f docs/sql/matview_xxx.sql`，之後 `SELECT public.refresh_xxx(d::date) FROM generate_series(current_date - 6, current_date, '1 day') d;` backfill。
+
 詳細架構說明請參閱 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 首次設定 S3 請參閱 [docs/S3_SETUP.md](./docs/S3_SETUP.md)
