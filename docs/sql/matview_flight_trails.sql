@@ -37,6 +37,14 @@ CREATE INDEX flight_trails_daily_day_idx
 COMMENT ON TABLE realtime.flight_trails_daily IS
     '每日航班軌跡預聚合（最近 7 天，含 ±1h overlap）。由 refresh_flight_trails_daily(date) 維護。';
 
+-- 小 summary table：詳見 matview_ship_trails.sql 說明
+CREATE TABLE IF NOT EXISTS realtime.flight_trails_days_summary (
+    day          date PRIMARY KEY,
+    records      bigint NOT NULL,
+    flights      bigint NOT NULL,
+    refreshed_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- ------------------------------------------------------------
 -- 2) Refresh function
 -- ------------------------------------------------------------

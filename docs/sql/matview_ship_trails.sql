@@ -49,6 +49,16 @@ CREATE INDEX ship_trails_daily_day_idx
 COMMENT ON TABLE realtime.ship_trails_daily IS
     '每日船舶軌跡預聚合（最近 7 天，含 ±1h overlap）。由 refresh_ship_trails_daily(date) 維護，pg_cron 每 15 分鐘 refresh today + yesterday。';
 
+-- 小 summary table：get_ship_dates 不能 GROUP BY 整個 ship_trails_daily
+-- （trail 欄位 KB 級，125k rows × 1KB ≈ 125MB IO → 4 秒撞 anon timeout）
+-- refresh function 順手 upsert 這張表，get_ship_dates 直接讀即可。
+CREATE TABLE IF NOT EXISTS realtime.ship_trails_days_summary (
+    day          date PRIMARY KEY,
+    records      bigint NOT NULL,
+    ships        bigint NOT NULL,
+    refreshed_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- ------------------------------------------------------------
 -- 2) Refresh function（per-day upsert）
 -- ------------------------------------------------------------
