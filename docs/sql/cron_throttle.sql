@@ -28,6 +28,15 @@ SELECT cron.unschedule('refresh-disaster-alerts')   WHERE EXISTS (SELECT 1 FROM 
 SELECT cron.unschedule('refresh-temperature-dates') WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='refresh-temperature-dates');
 SELECT cron.unschedule('refresh-temperature-frames')WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='refresh-temperature-frames');
 
+-- ⚠️ 移除 5 個廢棄的 MV refresh cron（命名用底線，容易漏看）
+-- 這些是早期用 MATERIALIZED VIEW 時的遺留，已被 *_days_summary 表取代
+-- */30 REFRESH MATERIALIZED VIEW CONCURRENTLY 會全掃大表，是 IO 爆表的主因之一
+SELECT cron.unschedule('refresh_mv_ship_dates')           WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='refresh_mv_ship_dates');
+SELECT cron.unschedule('refresh_mv_flight_dates')         WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='refresh_mv_flight_dates');
+SELECT cron.unschedule('refresh_mv_youbike_h3_dates')     WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='refresh_mv_youbike_h3_dates');
+SELECT cron.unschedule('refresh_mv_freeway_dates')        WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='refresh_mv_freeway_dates');
+SELECT cron.unschedule('refresh_mv_disaster_alert_dates') WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='refresh_mv_disaster_alert_dates');
+
 -- ------------------------------------------------------------
 -- 新排程：錯開分鐘，降低頻率
 -- ------------------------------------------------------------
@@ -63,8 +72,9 @@ SELECT cron.schedule('refresh-disaster-alerts', '12,32,52 * * * *', $$
 $$);
 
 -- Temperature dates cache：20 分鐘一次（CWA 本來 1hr 更新，不急）
+-- 注意：函式名是 refresh_temperature_dates()，不是 _cache 後綴
 SELECT cron.schedule('refresh-temperature-dates', '*/20 * * * *', $$
-    SELECT public.refresh_temperature_dates_cache();
+    SELECT public.refresh_temperature_dates();
 $$);
 
 -- Temperature frames：60 分鐘一次（CWA 每小時才更新一次，不需要每 30 分）
