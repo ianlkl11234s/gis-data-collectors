@@ -50,19 +50,23 @@ def send_line_notify(message: str):
         print(f"⚠️  LINE Notify 發送失敗: {e}")
 
 
-def send_telegram(message: str, parse_mode: str = 'Markdown'):
+def send_telegram(message: str, parse_mode: str = 'Markdown') -> bool:
     """發送 Telegram 訊息
 
     Args:
         message: 訊息內容（支援 Markdown）
         parse_mode: 解析模式（Markdown 或 HTML）
+
+    Returns:
+        True 代表發送成功；False 代表未設定或失敗（會 print 明顯錯誤）
     """
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
-        return
+        print("❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）")
+        return False
 
+    url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(
+        resp = requests.post(
             url,
             json={
                 'chat_id': config.TELEGRAM_CHAT_ID,
@@ -72,7 +76,28 @@ def send_telegram(message: str, parse_mode: str = 'Markdown'):
             timeout=10
         )
     except Exception as e:
-        print(f"⚠️  Telegram 發送失敗: {e}")
+        print(f"❌ Telegram 網路/連線失敗: {type(e).__name__}: {e}")
+        return False
+
+    if resp.status_code != 200:
+        # 常見：Markdown parse error 會 400。降級成純文字重試一次。
+        print(f"❌ Telegram API {resp.status_code}: {resp.text[:300]}")
+        if parse_mode and resp.status_code == 400:
+            try:
+                resp2 = requests.post(
+                    url,
+                    json={'chat_id': config.TELEGRAM_CHAT_ID, 'text': message},
+                    timeout=10,
+                )
+                if resp2.status_code == 200:
+                    print("✓ Telegram 以純文字模式重送成功")
+                    return True
+                print(f"❌ 純文字重送仍失敗 {resp2.status_code}: {resp2.text[:300]}")
+            except Exception as e:
+                print(f"❌ 純文字重送例外: {e}")
+        return False
+
+    return True
 
 
 def notify_error(collector_name: str, error: str, consecutive_errors: int = 0):

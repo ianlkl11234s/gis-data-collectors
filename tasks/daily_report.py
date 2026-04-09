@@ -36,13 +36,36 @@ class DailyReportTask:
         print(f"📊 產生每日報告")
         print(f"{'=' * 60}")
 
-        report = self._build_report()
-        send_telegram(report)
-        print(f"✓ 每日報告已發送")
+        # 組報告 — 任何子區塊掛掉都不能讓整個任務靜默死亡
+        try:
+            report = self._build_report()
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            print(f"❌ _build_report 失敗: {e}\n{tb}")
+            # 用純文字回報失敗，避免 Markdown 再出錯
+            send_telegram(
+                f"🚨 每日報告產生失敗\n\n{type(e).__name__}: {e}\n\n{tb[-500:]}",
+                parse_mode=None,
+            )
+            report = None
 
-        # 順帶執行健康檢查
-        self._check_silence()
-        self._check_disk_usage()
+        if report:
+            ok = send_telegram(report)
+            if ok:
+                print("✓ 每日報告已發送")
+            else:
+                print("❌ 每日報告發送失敗（見上方錯誤）")
+
+        # 健康檢查不能被日報失敗擋住
+        try:
+            self._check_silence()
+        except Exception as e:
+            print(f"⚠️ _check_silence 失敗: {e}")
+        try:
+            self._check_disk_usage()
+        except Exception as e:
+            print(f"⚠️ _check_disk_usage 失敗: {e}")
 
     def _build_report(self) -> str:
         """組裝報告訊息"""
