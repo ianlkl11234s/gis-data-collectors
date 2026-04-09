@@ -81,6 +81,17 @@ BEGIN
     HAVING COUNT(*) >= 2;
 
     GET DIAGNOSTICS inserted_count = ROW_COUNT;
+
+    -- 順手更新小 summary table，讓 get_ship_dates 毫秒級
+    INSERT INTO realtime.ship_trails_days_summary (day, records, ships, refreshed_at)
+    SELECT target_day, COALESCE(sum(point_count), 0), COUNT(*), now()
+    FROM realtime.ship_trails_daily
+    WHERE day = target_day
+    ON CONFLICT (day) DO UPDATE
+        SET records = EXCLUDED.records,
+            ships   = EXCLUDED.ships,
+            refreshed_at = now();
+
     RETURN inserted_count;
 END;
 $function$;
@@ -122,23 +133,23 @@ $function$;
 GRANT EXECUTE ON FUNCTION public.get_ship_trails(date) TO anon, authenticated;
 
 -- ------------------------------------------------------------
--- 5) get_ship_dates 改從 ship_trails_daily 聚合
+-- 5) get_ship_dates 讀 summary table
 --
 -- 原本從 mv_ship_dates 讀，但 mv_ship_dates 定義是全掃 ship_positions
 -- GROUP BY date，REFRESH 會撞 2 分鐘 pooler timeout → cron 持續失敗
 -- → 前端看到的最新 date 永遠停在最後一次成功 refresh 的時間點。
 --
--- 改從 ship_trails_daily 聚合：毫秒級、跟 trail 資料同步（cron 10 分鐘更新）、
--- 只回傳最近 7 天（但這正是前端能回放的範圍，多的 date 也無用）。
+-- 不能直接 GROUP BY ship_trails_daily（trail 欄位 KB 級，125k rows × 1KB = 125MB IO → 4 秒）
+-- 改讀 ship_trails_days_summary，refresh function 順手 upsert 維護。
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.get_ship_dates()
 RETURNS TABLE(date text, records bigint, ships bigint)
 LANGUAGE sql
 STABLE
+SET statement_timeout TO '60s'
 AS $function$
-    SELECT day::text, sum(point_count)::bigint, count(*)::bigint
-    FROM realtime.ship_trails_daily
-    GROUP BY day
+    SELECT day::text, records, ships
+    FROM realtime.ship_trails_days_summary
     ORDER BY day
 $function$;
 

@@ -75,6 +75,17 @@ BEGIN
     HAVING COUNT(*) >= 2;
 
     GET DIAGNOSTICS inserted_count = ROW_COUNT;
+
+    -- 順手更新小 summary table
+    INSERT INTO realtime.flight_trails_days_summary (day, records, flights, refreshed_at)
+    SELECT target_day, COALESCE(sum(point_count), 0), COUNT(*), now()
+    FROM realtime.flight_trails_daily
+    WHERE day = target_day
+    ON CONFLICT (day) DO UPDATE
+        SET records = EXCLUDED.records,
+            flights = EXCLUDED.flights,
+            refreshed_at = now();
+
     RETURN inserted_count;
 END;
 $function$;
@@ -116,18 +127,16 @@ $function$;
 GRANT EXECUTE ON FUNCTION public.get_flight_trails(date) TO anon, authenticated;
 
 -- ------------------------------------------------------------
--- 5) get_flight_dates 改從 flight_trails_daily 聚合
---     （原本走 mv_flight_dates，定義是全掃 flight_positions GROUP BY date，
---      REFRESH 會撞 pooler timeout → cron 失敗 → 前端日期清單停更）
+-- 5) get_flight_dates 讀 summary table
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.get_flight_dates()
 RETURNS TABLE(date text, records bigint, flights bigint)
 LANGUAGE sql
 STABLE
+SET statement_timeout TO '60s'
 AS $function$
-    SELECT day::text, sum(point_count)::bigint, count(*)::bigint
-    FROM realtime.flight_trails_daily
-    GROUP BY day
+    SELECT day::text, records, flights
+    FROM realtime.flight_trails_days_summary
     ORDER BY day
 $function$;
 
