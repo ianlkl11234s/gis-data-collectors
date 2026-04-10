@@ -36,6 +36,7 @@ from collectors import (
     LaunchCollector,
     NCDRAlertsCollector,
     CWASatelliteCollector,
+    FoursquarePOICollector,
 )
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -272,6 +273,19 @@ def run_collectors():
     else:
         print("⏸️  NCDR Alerts 收集器已停用 (NCDR_ALERTS_ENABLED=false)")
 
+    # Foursquare OS Places POI 收集器（每月一次，背景 thread 執行）
+    if config.FOURSQUARE_POI_ENABLED and config.HF_TOKEN:
+        try:
+            foursquare_poi = FoursquarePOICollector()
+            collectors.append(foursquare_poi)
+            print(f"✓ Foursquare POI 收集器 (每 {foursquare_poi.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Foursquare POI 收集器初始化失敗: {e}")
+    elif not config.FOURSQUARE_POI_ENABLED:
+        print("⏸️  Foursquare POI 收集器已停用 (FOURSQUARE_POI_ENABLED=false)")
+    else:
+        print("⚠️  HF_TOKEN 未設定，跳過 Foursquare POI 收集器")
+
     if not collectors:
         print("\n❌ 沒有可用的收集器")
         return []
@@ -280,7 +294,7 @@ def run_collectors():
     # 背景 thread collector：跑時間較長，不阻塞主排程
     # 與主 schedule loop 共用 SupabaseWriter（writer 內部已加鎖）
     # ============================================================
-    BACKGROUND_COLLECTORS = {'flight_fr24'}
+    BACKGROUND_COLLECTORS = {'flight_fr24', 'foursquare_poi', 'satellite'}
 
     bg_collectors = [c for c in collectors if c.name in BACKGROUND_COLLECTORS]
     fg_collectors = [c for c in collectors if c.name not in BACKGROUND_COLLECTORS]

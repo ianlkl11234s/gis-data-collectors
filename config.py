@@ -203,6 +203,12 @@ CWA_SATELLITE_DATASETS = (
     if os.getenv('CWA_SATELLITE_DATASETS') else []
 )  # 空 list = 使用 collector 內的 DEFAULT_DATASETS
 
+# Foursquare OS Places POI (HuggingFace gated dataset，需 HF_TOKEN)
+FOURSQUARE_POI_ENABLED = os.getenv('FOURSQUARE_POI_ENABLED', 'false').lower() in ('true', '1', 'yes')
+FOURSQUARE_POI_INTERVAL = int(os.getenv('FOURSQUARE_POI_INTERVAL', '43200'))  # 每 30 天 (43200 分鐘)
+FOURSQUARE_POI_RELEASE_DT = os.getenv('FOURSQUARE_POI_RELEASE_DT', '')  # 指定 release 日期，如 2026-03-18
+HF_TOKEN = os.getenv('HF_TOKEN', '')  # HuggingFace access token
+
 # NCDR 災害示警 (CAP feed，無需 API key)
 NCDR_ALERTS_ENABLED = os.getenv('NCDR_ALERTS_ENABLED', 'true').lower() in ('true', '1', 'yes')
 NCDR_ALERTS_INTERVAL = int(os.getenv('NCDR_ALERTS_INTERVAL', '15'))  # 每 15 分鐘

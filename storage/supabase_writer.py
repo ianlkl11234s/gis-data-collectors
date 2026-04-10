@@ -753,6 +753,40 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_foursquare_poi(self, result: dict, ts: datetime) -> list[dict]:
+        """Foursquare OS Places POI（collect 已完成清洗，直接映射欄位）"""
+        records = []
+        for r in result.get('data', []):
+            lat = r.get('latitude')
+            lng = r.get('longitude')
+            geom = f'SRID=4326;POINT({lng} {lat})' if lat and lng else None
+
+            # fsq_category_ids 轉 PostgreSQL array 格式
+            cat_ids = r.get('fsq_category_ids', [])
+            pg_array = '{' + ','.join(f'"{c}"' for c in cat_ids) + '}' if cat_ids else None
+
+            props = r.get('properties', {})
+            props_json = json.dumps(props, ensure_ascii=False) if props else '{}'
+
+            records.append({
+                'fsq_place_id': r['fsq_place_id'],
+                'name': r.get('name'),
+                'category': r.get('category', '其他'),
+                'subcategory': r.get('subcategory'),
+                'city': r.get('city'),
+                'district': r.get('district'),
+                'address': r.get('address'),
+                'geom': geom,
+                'tel': r.get('tel'),
+                'website': r.get('website'),
+                'fsq_category_ids': pg_array,
+                'date_refreshed': r.get('date_refreshed'),
+                'date_closed': r.get('date_closed'),
+                'properties': props_json,
+                'imported_at': ts.isoformat(),
+            })
+        return records
+
     TRANSFORMERS = {
         'youbike': _transform_youbike,
         'bus': _transform_bus,
@@ -770,6 +804,7 @@ class SupabaseWriter:
         'launch': _transform_launch,
         'ncdr_alerts': _transform_ncdr_alerts,
         'cwa_satellite': _transform_cwa_satellite,
+        'foursquare_poi': _transform_foursquare_poi,
     }
 
     # ============================================================
@@ -867,6 +902,16 @@ class SupabaseWriter:
             # 因為同一觀測時間的 PNG 內容固定，重複抓不需更新
             'upsert_key': 'dataset_id,observed_at',
             'upsert_strategy': 'do_nothing',
+        },
+        'foursquare_poi': {
+            'history': 'reference.foursquare_poi',
+            'columns': [
+                'fsq_place_id', 'name', 'category', 'subcategory',
+                'city', 'district', 'address', 'geom',
+                'tel', 'website', 'fsq_category_ids',
+                'date_refreshed', 'date_closed', 'properties', 'imported_at',
+            ],
+            'upsert_key': 'fsq_place_id',
         },
     }
 

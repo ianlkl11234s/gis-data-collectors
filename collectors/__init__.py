@@ -21,6 +21,7 @@ from .satellite import SatelliteCollector
 from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
 from .cwa_satellite import CWASatelliteCollector
+from .foursquare_poi import FoursquarePOICollector
 
 __all__ = [
     'BaseCollector',
@@ -44,4 +45,5 @@ __all__ = [
     'LaunchCollector',
     'NCDRAlertsCollector',
     'CWASatelliteCollector',
+    'FoursquarePOICollector',
 ]
