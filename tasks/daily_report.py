@@ -33,17 +33,20 @@ class DailyReportTask:
     def run(self):
         """產生並發送每日報告"""
         print(f"\n{'=' * 60}")
-        print(f"📊 產生每日報告")
+        print(f"📊 產生每日報告 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
+        print(f"   collectors: {len(self.collectors)} 個")
+        print(f"   archive_task: {'有' if self.archive_task else '無'}")
+        print(f"   last_archive_result: {'有' if self.last_archive_result else '無'}")
         print(f"{'=' * 60}")
 
-        # 組報告 — 任何子區塊掛掉都不能讓整個任務靜默死亡
+        # 組報告 — 每個區塊都有獨立防護，不應該整個掛掉
         try:
             report = self._build_report()
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
             print(f"❌ _build_report 失敗: {e}\n{tb}")
-            # 用純文字回報失敗，避免 Markdown 再出錯
+            # 用純文字回報失敗，不帶 parse_mode 避免 Markdown 再出錯
             send_telegram(
                 f"🚨 每日報告產生失敗\n\n{type(e).__name__}: {e}\n\n{tb[-500:]}",
                 parse_mode=None,
@@ -51,11 +54,18 @@ class DailyReportTask:
             report = None
 
         if report:
+            print(f"   報告長度: {len(report)} 字元")
             ok = send_telegram(report)
             if ok:
-                print("✓ 每日報告已發送")
+                print("✓ 每日報告已發送到 Telegram")
             else:
-                print("❌ 每日報告發送失敗（見上方錯誤）")
+                print("❌ Telegram Markdown 發送失敗，嘗試純文字...")
+                # Markdown 失敗時，主動用純文字再試一次
+                ok2 = send_telegram(report, parse_mode=None)
+                if ok2:
+                    print("✓ 每日報告已以純文字發送")
+                else:
+                    print("❌ 每日報告純文字發送也失敗")
 
         # 健康檢查不能被日報失敗擋住
         try:
@@ -68,26 +78,29 @@ class DailyReportTask:
             print(f"⚠️ _check_disk_usage 失敗: {e}")
 
     def _build_report(self) -> str:
-        """組裝報告訊息"""
+        """組裝報告訊息（每個區塊獨立 try/except，避免一個掛全掛）"""
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         tag = f" [{config.INSTANCE_NAME}]" if config.INSTANCE_NAME else ""
         lines = [f"📊 *資料收集日報{tag} — {yesterday}*\n"]
 
-        # 收集狀態
-        lines.append(self._section_collector_status())
+        sections = [
+            ("收集狀態", self._section_collector_status),
+            ("檔案統計", self._section_file_stats),
+            ("S3 統計", self._section_s3_stats),
+        ]
 
-        # 檔案統計（本地）
-        lines.append(self._section_file_stats())
-
-        # S3 統計
-        lines.append(self._section_s3_stats())
-
-        # 歸檔結果
+        # 歸檔結果（有設定才加）
         if self.archive_task:
-            lines.append(self._section_archive())
+            sections.append(("歸檔結果", self._section_archive))
 
-        # 系統資訊
-        lines.append(self._section_system_info())
+        sections.append(("系統資訊", self._section_system_info))
+
+        for name, fn in sections:
+            try:
+                lines.append(fn())
+            except Exception as e:
+                print(f"⚠️ 日報區塊 [{name}] 失敗: {e}")
+                lines.append(f"\n⚠️ *{name}*\n  產生失敗: {e}")
 
         return '\n'.join(lines)
 

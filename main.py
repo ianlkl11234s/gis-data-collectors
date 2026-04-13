@@ -424,13 +424,16 @@ def run_daily_report_task(collectors: list, archive_task=None):
 
     try:
         daily_report = DailyReportTask(collectors, archive_task)
+        job = schedule.every().day.at(config.DAILY_REPORT_TIME).do(daily_report.run)
         print(f"✓ 每日報告已設定 (每日 {config.DAILY_REPORT_TIME})")
-
-        schedule.every().day.at(config.DAILY_REPORT_TIME).do(daily_report.run)
+        print(f"   下次觸發: {job.next_run}")
+        print(f"   收集器數量: {len(collectors)}")
 
         return daily_report
     except Exception as e:
         print(f"\n✗ 每日報告初始化失敗: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 

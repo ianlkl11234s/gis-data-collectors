@@ -65,16 +65,17 @@ def send_telegram(message: str, parse_mode: str = 'Markdown') -> bool:
         return False
 
     url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    # 組裝 payload — parse_mode 為 None 時不送此欄位，避免 null 被 API 拒絕
+    payload = {
+        'chat_id': config.TELEGRAM_CHAT_ID,
+        'text': message,
+    }
+    if parse_mode:
+        payload['parse_mode'] = parse_mode
+
     try:
-        resp = requests.post(
-            url,
-            json={
-                'chat_id': config.TELEGRAM_CHAT_ID,
-                'text': message,
-                'parse_mode': parse_mode,
-            },
-            timeout=10
-        )
+        resp = requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"❌ Telegram 網路/連線失敗: {type(e).__name__}: {e}")
         return False
@@ -82,7 +83,7 @@ def send_telegram(message: str, parse_mode: str = 'Markdown') -> bool:
     if resp.status_code != 200:
         # 常見：Markdown parse error 會 400。降級成純文字重試一次。
         print(f"❌ Telegram API {resp.status_code}: {resp.text[:300]}")
-        if parse_mode and resp.status_code == 400:
+        if resp.status_code == 400 and parse_mode:
             try:
                 resp2 = requests.post(
                     url,
