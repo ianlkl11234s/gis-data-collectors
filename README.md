@@ -4,7 +4,7 @@
 
 ## 收集器總覽
 
-共 20 個收集器，每個都可獨立啟停。
+共 21 個收集器，每個都可獨立啟停。
 
 | 收集器 | `_ENABLED` 環境變數 | 預設 | 頻率 | 來源 | 說明 |
 |--------|---------------------|------|------|------|------|
@@ -14,7 +14,8 @@
 | Freeway VD | `FREEWAY_VD_ENABLED` | `true` | 10 min | TDX | 國道即時車流+壅塞 |
 | Temperature | `TEMPERATURE_ENABLED` | `true` | 60 min | CWA | 溫度網格 |
 | Parking | `PARKING_ENABLED` | **false** | 15 min | TDX | 路邊停車即時可用性 |
-| Bus | `BUS_ENABLED` | `true` | 1 min | TDX | 公車即時位置 |
+| Bus | `BUS_ENABLED` | `true` | 1 min | TDX | 市區公車即時位置（六都） |
+| Bus InterCity | `BUS_INTERCITY_ENABLED` | **false** | 2 min | TDX | 公路客運 / 國道客運（跨縣市） |
 | TRA Train | `TRA_TRAIN_ENABLED` | `true` | 2 min | TDX | 台鐵即時列車位置 |
 | TRA Static | `TRA_STATIC_ENABLED` | `true` | 1440 min | TDX | 台鐵靜態資料（每日） |
 | Rail Timetable | `RAIL_TIMETABLE_ENABLED` | `true` | 1440 min | TDX | 台鐵+高鐵每日時刻表歸檔 |
@@ -215,9 +216,11 @@ python main.py
 | `PARKING_ENABLED` | `false` | 路邊停車即時可用性 |
 | `PARKING_CITIES` | `Taipei,NewTaipei,Taichung` | 收集城市 |
 | `PARKING_INTERVAL` | `15` | 間隔（分鐘） |
-| `BUS_ENABLED` | `true` | 公車即時位置 |
-| `BUS_CITIES` | `Taipei,NewTaipei,Taoyuan` | 收集城市 |
+| `BUS_ENABLED` | `true` | 市區公車即時位置 |
+| `BUS_CITIES` | `Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung` | 收集城市（預設六都） |
 | `BUS_INTERVAL` | `1` | 間隔（分鐘） |
+| `BUS_INTERCITY_ENABLED` | `false` | 公路客運 / 國道客運即時位置 |
+| `BUS_INTERCITY_INTERVAL` | `2` | 間隔（分鐘，全台單一 endpoint，不需指定城市） |
 
 #### 鐵路
 
@@ -323,10 +326,23 @@ python main.py
 - **範圍**: 臺北市、新北市、臺中市
 - **資料量**: ~4,600 路段
 
-### 公車即時位置
-- **來源**: TDX API `/v2/Bus/RealTimeByFrequency/{City}`
-- **範圍**: 依 `BUS_CITIES` 設定
-- **資料類型**: 公車即時 GPS 座標、速度、方位角
+### 市區公車即時位置
+- **來源**: TDX API `/v2/Bus/RealTimeByFrequency/City/{City}`
+- **範圍**: 依 `BUS_CITIES` 設定（預設六都）
+- **資料類型**: 公車即時 GPS 座標、速度、方位角、路線、方向
+- **過濾條件**: 以「有 BusPosition 經緯度」為準，不依賴 `DutyStatus` / `BusStatus`（各縣市業者填寫習慣不一致，桃中高將 `DutyStatus=0` 當執勤中，與 TDX 官方定義相反）
+- **Supabase 表**: `realtime.bus_positions`（分區歷史，保留 3 天）+ `realtime.bus_current`（依 `plate_numb` UPSERT）
+- **RPC**: `public.get_bus_current(cities text[])` / `public.get_bus_trails(date, cities text[])`
+
+### 公路客運 / 國道客運即時位置
+- **來源**: TDX API `/v2/Bus/RealTimeByFrequency/InterCity`（全台單一 endpoint，不需指定城市）
+- **範圍**: 跨縣市公路客運、國道客運（統聯、國光、和欣等 40+ 家業者）
+- **資料類型**: 同市區公車，欄位結構一致
+- **`city` 欄位語意**: 存業者代號（`OperatorID`），而非城市
+- **過濾條件**: 同市區公車，以 GPS 位置為準
+- **Supabase 表**: `realtime.bus_intercity_positions`（分區歷史）+ `realtime.bus_intercity_current`
+- **RPC**: `public.get_bus_intercity_current(sub_authorities text[])`
+- **資料量**: ~1,700 台執勤中（全台即時）
 
 ### 台鐵即時列車位置
 - **來源**: TDX API
@@ -428,6 +444,7 @@ data/                           # 本地 (最近 7 天，個別 JSON)
 ├── temperature/
 ├── parking/
 ├── bus/
+├── bus_intercity/
 ├── tra_train/
 ├── tra_static/
 ├── rail_timetable/
