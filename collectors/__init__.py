@@ -23,6 +23,9 @@ from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
 from .cwa_satellite import CWASatelliteCollector
 from .foursquare_poi import FoursquarePOICollector
+from .air_quality_imagery import AirQualityImageryCollector
+from .air_quality import AirQualityCollector
+from .air_quality_microsensors import AirQualityMicroSensorCollector
 
 __all__ = [
     'BaseCollector',
@@ -48,4 +51,7 @@ __all__ = [
     'NCDRAlertsCollector',
     'CWASatelliteCollector',
     'FoursquarePOICollector',
+    'AirQualityImageryCollector',
+    'AirQualityCollector',
+    'AirQualityMicroSensorCollector',
 ]

@@ -16,6 +16,33 @@
     "CWA_API_KEY": {
       "description": "氣象局 API Key（選填）"
     },
+    "MOENV_API_KEY": {
+      "description": "環境部開放資料 API Key（空氣品質用；data.gov.tw 頁面上的公開 key 亦可）"
+    },
+    "AIR_QUALITY_IMAGERY_ENABLED": {
+      "description": "airtw 全台空品色階圖 PNG 收集（每小時）；多實例部署時只在指定實例設 true",
+      "default": "false"
+    },
+    "AIR_QUALITY_IMAGERY_INTERVAL": {
+      "description": "airtw 色階圖收集間隔（分鐘）",
+      "default": "60"
+    },
+    "AIR_QUALITY_ENABLED": {
+      "description": "環境部 77 站即時 AQI 觀測（每小時，需 MOENV_API_KEY）",
+      "default": "false"
+    },
+    "AIR_QUALITY_INTERVAL": {
+      "description": "77 站觀測收集間隔（分鐘）",
+      "default": "60"
+    },
+    "AIR_QUALITY_MICROSENSORS_ENABLED": {
+      "description": "LASS AirBox 微型感測器（每 5 分鐘）",
+      "default": "false"
+    },
+    "AIR_QUALITY_MICROSENSORS_INTERVAL": {
+      "description": "LASS 微型感測器收集間隔（分鐘）",
+      "default": "5"
+    },
     "YOUBIKE_CITIES": {
       "description": "YouBike 城市（逗號分隔）",
       "default": "Taipei,NewTaipei,Taoyuan"

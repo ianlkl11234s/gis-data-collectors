@@ -42,6 +42,12 @@ CWA_API_BASE = "https://opendata.cwa.gov.tw/api"
 CWA_FILE_API_BASE = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi"
 
 # ============================================================
+# 環境部 MOENV API 設定 (空氣品質)
+# ============================================================
+# 公開 key 已發布於 data.gov.tw 各資料集頁面，專屬申請：https://data.moenv.gov.tw/
+MOENV_API_KEY = os.getenv('MOENV_API_KEY')
+
+# ============================================================
 # 儲存設定
 # ============================================================
 
@@ -220,6 +226,24 @@ HF_TOKEN = os.getenv('HF_TOKEN', '')  # HuggingFace access token
 # NCDR 災害示警 (CAP feed，無需 API key)
 NCDR_ALERTS_ENABLED = os.getenv('NCDR_ALERTS_ENABLED', 'true').lower() in ('true', '1', 'yes')
 NCDR_ALERTS_INTERVAL = int(os.getenv('NCDR_ALERTS_INTERVAL', '15'))  # 每 15 分鐘
+
+# 空氣品質 - airtw 全台色階圖 PNG (每小時，無需 API key)
+# 預設 false：多實例部署時只在指定實例開啟，避免重複寫入
+AIR_QUALITY_IMAGERY_ENABLED = os.getenv('AIR_QUALITY_IMAGERY_ENABLED', 'false').lower() in ('true', '1', 'yes')
+AIR_QUALITY_IMAGERY_INTERVAL = int(os.getenv('AIR_QUALITY_IMAGERY_INTERVAL', '60'))  # 每 60 分鐘
+AIR_QUALITY_IMAGERY_PRODUCTS = (
+    os.getenv('AIR_QUALITY_IMAGERY_PRODUCTS', '').split(',')
+    if os.getenv('AIR_QUALITY_IMAGERY_PRODUCTS') else []
+)  # 空 list = 使用 DEFAULT_PRODUCTS (AQI/PM25/PM10/O3/NO2)
+
+# 空氣品質 - 環境部 77 站觀測 AQX_P_432 (每小時，需 MOENV_API_KEY)
+AIR_QUALITY_ENABLED = os.getenv('AIR_QUALITY_ENABLED', 'false').lower() in ('true', '1', 'yes')
+AIR_QUALITY_INTERVAL = int(os.getenv('AIR_QUALITY_INTERVAL', '60'))
+
+# 空氣品質 - LASS AirBox 微型感測器 (每 5 分鐘，無需 API key)
+AIR_QUALITY_MICROSENSORS_ENABLED = os.getenv('AIR_QUALITY_MICROSENSORS_ENABLED', 'false').lower() in ('true', '1', 'yes')
+AIR_QUALITY_MICROSENSORS_INTERVAL = int(os.getenv('AIR_QUALITY_MICROSENSORS_INTERVAL', '5'))
+AIR_QUALITY_MICROSENSORS_PM25_OUTLIER = float(os.getenv('AIR_QUALITY_MICROSENSORS_PM25_OUTLIER', '500'))  # μg/m³ 超過此值視為異常
 
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')

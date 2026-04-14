@@ -806,6 +806,103 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_air_quality_imagery(self, result: dict, ts: datetime) -> list[dict]:
+        """airtw 空氣品質色階圖 PNG
+        每筆 record = 一張影像；collector 用 base64 傳輸 JSON-safe。
+        PRIMARY KEY (product_type, observed_at) 天然去重。
+        """
+        import base64 as _b64
+        records = []
+        for f in result.get('data', []):
+            b64 = f.get('image_b64')
+            if not b64:
+                continue
+            png = _b64.b64decode(b64)
+            records.append({
+                'product_type': f.get('product_type'),
+                'observed_at': f.get('observed_at'),
+                'image_bytes': PgBinary(png),
+                'mime_type': f.get('mime_type', 'image/png'),
+                'image_size': f.get('image_size'),
+                'product_url': f.get('product_url'),
+                'collected_at': ts.isoformat(),
+            })
+        return records
+
+    def _transform_air_quality(self, result: dict, ts: datetime) -> list[dict]:
+        """環境部 77 站即時空氣品質 (AQX_P_432)。"""
+        records = []
+        observed_at = result.get('observed_at') or ts.isoformat()
+        for r in result.get('data', []):
+            try:
+                lat = float(r['latitude']) if r.get('latitude') is not None else None
+                lng = float(r['longitude']) if r.get('longitude') is not None else None
+            except (ValueError, TypeError):
+                lat, lng = None, None
+            station_id = r.get('siteid')
+            if not station_id:
+                continue
+            # AQI 轉 smallint
+            try:
+                aqi = int(r['aqi']) if r.get('aqi') is not None else None
+            except (ValueError, TypeError):
+                aqi = None
+            records.append({
+                'station_id': str(station_id),
+                'station_name': r.get('sitename'),
+                'county': r.get('county'),
+                'aqi': aqi,
+                'pollutant': r.get('pollutant') or None,
+                'status': r.get('status') or None,
+                'pm25': r.get('pm25'),
+                'pm10': r.get('pm10'),
+                'o3': r.get('o3'),
+                'o3_8hr': r.get('o3_8hr'),
+                'no2': r.get('no2'),
+                'so2': r.get('so2'),
+                'co': r.get('co'),
+                'co_8hr': r.get('co_8hr'),
+                'nox': r.get('nox'),
+                'no': r.get('no'),
+                'pm25_avg': r.get('pm25_avg'),
+                'pm10_avg': r.get('pm10_avg'),
+                'so2_avg': r.get('so2_avg'),
+                'wind_speed': r.get('wind_speed'),
+                'wind_direction': r.get('wind_direc'),
+                'observed_at': observed_at,
+                'collected_at': ts.isoformat(),
+                'geom': f'SRID=4326;POINT({lng} {lat})' if lat and lng else None,
+            })
+        return records
+
+    def _transform_air_quality_microsensors(self, result: dict, ts: datetime) -> list[dict]:
+        """LASS AirBox / 微型感測器讀值。"""
+        records = []
+        for r in result.get('data', []):
+            lat = r.get('latitude')
+            lng = r.get('longitude')
+            if not (lat and lng):
+                continue
+            device_id = r.get('device_id')
+            if not device_id:
+                continue
+            records.append({
+                'device_id': str(device_id),
+                'source': r.get('source', 'lass_airbox'),
+                'site_name': r.get('site_name'),
+                'area': r.get('area'),
+                'app': r.get('app'),
+                'pm25': r.get('pm25'),
+                'pm10': r.get('pm10'),
+                'pm1': r.get('pm1'),
+                'temperature': r.get('temperature'),
+                'humidity': r.get('humidity'),
+                'observed_at': r.get('observed_at') or ts.isoformat(),
+                'collected_at': ts.isoformat(),
+                'geom': f'SRID=4326;POINT({lng} {lat})',
+            })
+        return records
+
     TRANSFORMERS = {
         'youbike': _transform_youbike,
         'bus': _transform_bus,
@@ -825,6 +922,9 @@ class SupabaseWriter:
         'ncdr_alerts': _transform_ncdr_alerts,
         'cwa_satellite': _transform_cwa_satellite,
         'foursquare_poi': _transform_foursquare_poi,
+        'air_quality_imagery': _transform_air_quality_imagery,
+        'air_quality': _transform_air_quality,
+        'air_quality_microsensors': _transform_air_quality_microsensors,
     }
 
     # ============================================================
@@ -940,6 +1040,43 @@ class SupabaseWriter:
                 'date_refreshed', 'date_closed', 'properties', 'imported_at',
             ],
             'upsert_key': 'fsq_place_id',
+        },
+        'air_quality_imagery': {
+            'history': 'realtime.aqi_imagery_frames',
+            'columns': [
+                'product_type', 'observed_at', 'image_bytes', 'mime_type',
+                'image_size', 'product_url', 'collected_at',
+            ],
+            # PK (product_type, observed_at)：同小時同產品重複抓不寫入
+            'upsert_key': 'product_type,observed_at',
+            'upsert_strategy': 'do_nothing',
+        },
+        'air_quality': {
+            'history': 'realtime.air_quality_observations',
+            'current': 'realtime.air_quality_current',
+            'current_key': 'station_id',
+            'columns': [
+                'station_id', 'station_name', 'county', 'aqi', 'pollutant', 'status',
+                'pm25', 'pm10', 'o3', 'o3_8hr', 'no2', 'so2', 'co', 'co_8hr',
+                'nox', 'no', 'pm25_avg', 'pm10_avg', 'so2_avg',
+                'wind_speed', 'wind_direction',
+                'observed_at', 'collected_at', 'geom',
+            ],
+            'current_columns': [
+                'station_id', 'station_name', 'county', 'aqi', 'pollutant', 'status',
+                'pm25', 'pm10', 'o3', 'o3_8hr', 'no2', 'so2', 'co', 'co_8hr',
+                'nox', 'no', 'pm25_avg', 'pm10_avg', 'so2_avg',
+                'wind_speed', 'wind_direction',
+                'observed_at', 'geom',
+            ],
+        },
+        'air_quality_microsensors': {
+            'history': 'realtime.micro_sensor_readings',
+            'columns': [
+                'device_id', 'source', 'site_name', 'area', 'app',
+                'pm25', 'pm10', 'pm1', 'temperature', 'humidity',
+                'observed_at', 'collected_at', 'geom',
+            ],
         },
     }
 

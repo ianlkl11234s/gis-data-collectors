@@ -38,6 +38,9 @@ from collectors import (
     NCDRAlertsCollector,
     CWASatelliteCollector,
     FoursquarePOICollector,
+    AirQualityImageryCollector,
+    AirQualityCollector,
+    AirQualityMicroSensorCollector,
 )
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -297,6 +300,41 @@ def run_collectors():
         print("⏸️  Foursquare POI 收集器已停用 (FOURSQUARE_POI_ENABLED=false)")
     else:
         print("⚠️  HF_TOKEN 未設定，跳過 Foursquare POI 收集器")
+
+    # 空氣品質 - airtw 全台色階圖 PNG 收集器（無需 API key）
+    if config.AIR_QUALITY_IMAGERY_ENABLED:
+        try:
+            aqi_img = AirQualityImageryCollector()
+            collectors.append(aqi_img)
+            print(f"✓ Air Quality Imagery 收集器 (每 {aqi_img.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Air Quality Imagery 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Air Quality Imagery 收集器已停用 (AIR_QUALITY_IMAGERY_ENABLED=false)")
+
+    # 空氣品質 - 環境部 77 站即時觀測 AQX_P_432（需 MOENV_API_KEY）
+    if config.AIR_QUALITY_ENABLED and config.MOENV_API_KEY:
+        try:
+            aqi_obs = AirQualityCollector()
+            collectors.append(aqi_obs)
+            print(f"✓ Air Quality 觀測收集器 (每 {aqi_obs.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Air Quality 觀測收集器初始化失敗: {e}")
+    elif not config.AIR_QUALITY_ENABLED:
+        print("⏸️  Air Quality 觀測收集器已停用 (AIR_QUALITY_ENABLED=false)")
+    else:
+        print("⚠️  MOENV_API_KEY 未設定，跳過 Air Quality 觀測收集器")
+
+    # 空氣品質 - LASS AirBox 微型感測器（無需 API key）
+    if config.AIR_QUALITY_MICROSENSORS_ENABLED:
+        try:
+            aqi_micro = AirQualityMicroSensorCollector()
+            collectors.append(aqi_micro)
+            print(f"✓ Air Quality MicroSensors 收集器 (每 {aqi_micro.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Air Quality MicroSensors 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Air Quality MicroSensors 收集器已停用 (AIR_QUALITY_MICROSENSORS_ENABLED=false)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")
