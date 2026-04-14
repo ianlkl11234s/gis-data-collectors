@@ -190,9 +190,13 @@ FLIGHT_OPENSKY_PASSWORD = os.getenv('FLIGHT_OPENSKY_PASSWORD', '')
 EARTHQUAKE_ENABLED = os.getenv('EARTHQUAKE_ENABLED', 'true').lower() in ('true', '1', 'yes')
 EARTHQUAKE_INTERVAL = int(os.getenv('EARTHQUAKE_INTERVAL', '1440'))  # 每日一次 (1440 分鐘)
 
-# 衛星軌道追蹤 (CelesTrak GP + SGP4，免註冊)
+# 衛星軌道追蹤 (Space-Track.org GP + SGP4，需免費帳號)
+# 註冊：https://www.space-track.org/
+# 改用 Space-Track 原因：Zeabur 出口 IP 被 CelesTrak 封鎖（2026-04 起），切換到源頭資料供應者
 SATELLITE_ENABLED = os.getenv('SATELLITE_ENABLED', 'false').lower() in ('true', '1', 'yes')
-SATELLITE_INTERVAL = int(os.getenv('SATELLITE_INTERVAL', '120'))  # 每 2 小時（配合 CelesTrak 更新頻率）
+SATELLITE_INTERVAL = int(os.getenv('SATELLITE_INTERVAL', '120'))  # 每 2 小時（TLE 每 8-24 小時更新，2 小時足夠）
+SPACETRACK_USERNAME = os.getenv('SPACETRACK_USERNAME', '')
+SPACETRACK_PASSWORD = os.getenv('SPACETRACK_PASSWORD', '')
 
 # 太空發射 (Launch Library 2，免費 15 req/hr，付費可提升)
 LAUNCH_ENABLED = os.getenv('LAUNCH_ENABLED', 'false').lower() in ('true', '1', 'yes')

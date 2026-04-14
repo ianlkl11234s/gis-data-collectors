@@ -901,6 +901,8 @@ class SupabaseWriter:
             'current_key': 'norad_id',
             'columns': ['norad_id', 'name', 'constellation', 'orbit_type', 'lat', 'lng', 'altitude_km', 'velocity_kms', 'inclination', 'period_min', 'tle_epoch', 'collected_at', 'geom'],
             'current_columns': ['norad_id', 'name', 'constellation', 'orbit_type', 'lat', 'lng', 'altitude_km', 'velocity_kms', 'inclination', 'period_min', 'tle_epoch', 'collected_at', 'geom'],
+            # 寫完 current 後把本批次沒更新到的 stale rows 刪掉，維持 current 語意為「最新快照」
+            'current_prune_by': 'collected_at',
         },
         'launch': {
             'is_multi_table': True,  # 特殊處理：launches + pads + events 分三張表
@@ -1009,6 +1011,17 @@ class SupabaseWriter:
                     sql = f"INSERT INTO {table_config['current']} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
                     execute_values(cur, sql, current_values, page_size=1000)
 
+                # 清除 stale rows：本批次沒 upsert 到、欄位值 < 本次 timestamp 的 row
+                # （同 transaction 內 DELETE，讀端不會看到空表）
+                prune_col = table_config.get('current_prune_by')
+                if prune_col and current_values:
+                    cur.execute(
+                        f"DELETE FROM {table_config['current']} WHERE {prune_col} < %s",
+                        (timestamp,),
+                    )
+                    if cur.rowcount:
+                        logger.info(f"[{collector_name}] ✓ current 表清除 {cur.rowcount} 筆 stale rows")
+
         record_count = len(records)
         logger.info(f"[{collector_name}] ✓ DB 寫入 {record_count} 筆")
 
@@ -1100,12 +1113,14 @@ class SupabaseWriter:
     def _write_satellite_tle(self, result: dict, timestamp: datetime):
         """更新衛星 TLE 參數表（全量 UPSERT，供前�� SGP4 計算用）"""
         self._ensure_conn()
-        data = result.get('data', [])
+        # Space-Track 版：data_all 含全部衛星（活躍+失效）；舊格式 fallback 用 data
+        data = result.get('data_all') or result.get('data', [])
         if not data:
             return
 
         cols = ['norad_id', 'name', 'intl_designator', 'constellation', 'orbit_type',
-                'tle_line1', 'tle_line2', 'tle_epoch', 'inclination', 'eccentricity', 'period_min', 'updated_at']
+                'tle_line1', 'tle_line2', 'tle_epoch', 'inclination', 'eccentricity', 'period_min',
+                'decay_date', 'is_decayed', 'object_type', 'updated_at']
         update_cols = [c for c in cols if c != 'norad_id']
         update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
 
@@ -1125,6 +1140,9 @@ class SupabaseWriter:
                 r.get('inclination'),
                 r.get('eccentricity'),
                 r.get('period_min'),
+                r.get('decay_date'),
+                bool(r.get('is_decayed', False)),
+                r.get('object_type') or None,
                 timestamp.isoformat(),
             ))
 
@@ -1132,7 +1150,8 @@ class SupabaseWriter:
             with self.conn.cursor() as cur:
                 sql = f"INSERT INTO realtime.satellite_tle ({','.join(cols)}) VALUES %s ON CONFLICT (norad_id) DO UPDATE SET {update_set}"
                 execute_values(cur, sql, values, page_size=1000)
-            logger.info(f"[satellite] ✓ TLE 表已更新 {len(values)} 筆")
+            decayed = sum(1 for v in values if v[12])
+            logger.info(f"[satellite] ✓ TLE 表已更新 {len(values)} 筆（其中失效 {decayed} 筆）")
 
             # 同步寫入 TLE 歷史表（用於變軌偵測）
             self._write_satellite_tle_history(values, timestamp)
@@ -1141,12 +1160,15 @@ class SupabaseWriter:
         """追加 TLE 歷史紀錄，同一 norad_id + tle_epoch 不重複寫入"""
         hist_cols = ['norad_id', 'name', 'constellation', 'orbit_type',
                      'tle_line1', 'tle_line2', 'tle_epoch',
-                     'inclination', 'eccentricity', 'period_min', 'fetched_at']
+                     'inclination', 'eccentricity', 'period_min',
+                     'decay_date', 'is_decayed', 'object_type', 'fetched_at']
 
-        # 從 tle_values 重新組合（原始順序：norad_id, name, intl_designator, constellation, orbit_type,
-        #   tle_line1, tle_line2, tle_epoch, inclination, eccentricity, period_min, updated_at）
+        # tle_values 欄位順序：norad_id(0), name(1), intl_des(2), constellation(3), orbit_type(4),
+        #   tle_line1(5), tle_line2(6), tle_epoch(7), inclination(8), eccentricity(9),
+        #   period_min(10), decay_date(11), is_decayed(12), object_type(13), updated_at(14)
         hist_values = [
-            (v[0], v[1], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], timestamp.isoformat())
+            (v[0], v[1], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10],
+             v[11], v[12], v[13], timestamp.isoformat())
             for v in tle_values
         ]
 

@@ -1,20 +1,25 @@
 """
-衛星軌道追蹤收集器
+衛星軌道追蹤收集器（Space-Track 版）
 
-每 2 小時從 CelesTrak 分組拉取 3LE + GP JSON，
-用 sgp4 計算即時位置（經緯度、高度、速度），
+從 Space-Track.org GP class 一次拉取完整 satellite catalog（含已失效衛星），
+用 sgp4 計算活躍衛星的即時位置（經緯度、高度、速度），
 自動辨識星座與軌道類型後寫入。
 
 資料來源：
-- CelesTrak 3LE + GP JSON（免註冊）: https://celestrak.org/NORAD/elements/
+- Space-Track.org GP class（需免費帳號）: https://www.space-track.org/
 - SGP4 軌道傳播：sgp4 Python 套件
 
-TLE 每 2 小時更新，更頻繁拉取沒有意義。
-前端如需即時動畫，應用 JS 版 satellite.js 在瀏覽器計算。
+寫入策略：
+- satellite_current / satellite_positions：只寫「活躍衛星」（保持顯示乾淨）
+- satellite_tle：寫「全部」（含已失效），作為完整 TLE 知識庫
+
+改用 Space-Track 原因：Zeabur 出口 IP 被 CelesTrak 封鎖（2026-04 起）。
+Space-Track 是 CelesTrak 的上游資料源，資料更完整、API 穩定。
+
+TLE 每 8-24 小時更新，每 2 小時拉一次足夠。
 """
 
 import math
-import time as _time
 from datetime import datetime, timezone
 
 import requests
@@ -22,40 +27,12 @@ import requests
 import config
 from collectors.base import BaseCollector
 
-# CelesTrak endpoint
-CELESTRAK_GP_URL = "https://celestrak.org/NORAD/elements/gp.php"
-
-# CelesTrak 對 GROUP=active / starlink 有速率限制（403），改用分組拉取
-# 涵蓋主要衛星類型，可依需求增減
-CELESTRAK_GROUPS = [
-    # ── 小群組先拉（讓 rate limit 計數器保持低壓） ──
-    # 導航
-    'gps-ops', 'galileo', 'beidou', 'glo-ops',
-    # 通訊星座
-    'iridium-NEXT', 'orbcomm', 'globalstar',
-    # 氣象與地球觀測
-    'weather', 'noaa', 'goes', 'resource', 'planet', 'spire',
-    # 同步軌道通訊
-    'geo', 'ses',
-    # 太空站與科學
-    'stations', 'science',
-    # 搜救、環境監測、中繼
-    'sarsat', 'argos', 'tdrss',
-    # 特殊軌道與軍事
-    'molniya', 'military', 'radar', 'analyst',
-    # 小型衛星與教育
-    'cubesat', 'education', 'dmc',
-    # 業餘、社群追蹤、肉眼可見（含 FORMOSAT 7 / COSMIC-2）
-    'amateur', 'satnogs', 'visual',
-    # 千帆
-    'qianfan',
-    # ── 大群組放最後（rate limit 冷卻後再拉） ──
-    'oneweb',
-    # 太空碎片（三大碎片事件）
-    'fengyun-1c-debris', 'cosmos-2251-debris', 'iridium-33-debris',
-    # Starlink 放最後，最大群組 (~10,000)，最容易觸發 rate limit
-    'starlink',
-]
+SPACETRACK_LOGIN_URL = "https://www.space-track.org/ajaxauth/login"
+# GP class = 每顆衛星最新一筆 TLE（含已 decay 的，附 DECAY_DATE 欄位）
+SPACETRACK_GP_URL = (
+    "https://www.space-track.org/basicspacedata/query/class/gp"
+    "/orderby/NORAD_CAT_ID/format/json"
+)
 
 # 軌道類型分類閾值（km）
 ORBIT_THRESHOLDS = {
@@ -153,23 +130,15 @@ def _sgp4_propagate(sat, ts: datetime) -> dict | None:
     }
 
 
-def _parse_3le(text: str) -> list[tuple[str, str, str]]:
-    """解析 3LE 格式文字，回傳 [(name, line1, line2), ...]"""
-    lines = [l for l in text.strip().split('\r\n') if l.strip()]
-    results = []
-    i = 0
-    while i < len(lines) - 2:
-        # 3LE: name / line1 / line2
-        if lines[i + 1].startswith('1 ') and lines[i + 2].startswith('2 '):
-            results.append((lines[i].strip(), lines[i + 1].strip(), lines[i + 2].strip()))
-            i += 3
-        else:
-            i += 1
-    return results
+def _parse_decay_date(raw: str | None) -> str | None:
+    """Space-Track DECAY_DATE 格式為 'YYYY-MM-DD HH:MM:SS' 或 None，只保留日期部分"""
+    if not raw:
+        return None
+    return raw.split(' ')[0] if ' ' in raw else raw[:10]
 
 
 class SatelliteCollector(BaseCollector):
-    """CelesTrak 衛星軌道追蹤收集器"""
+    """Space-Track 衛星軌道追蹤收集器"""
 
     name = "satellite"
     interval_minutes = config.SATELLITE_INTERVAL
@@ -181,97 +150,64 @@ class SatelliteCollector(BaseCollector):
             'User-Agent': 'GIS-DataCollectors/1.0 (satellite-tracker)',
         })
 
-    def _fetch_group_3le(self, group: str) -> list[tuple[str, str, str]]:
-        """從 CelesTrak 拉取單一群組的 3LE 格式"""
-        resp = self._session.get(
-            CELESTRAK_GP_URL,
-            params={'GROUP': group, 'FORMAT': '3le'},
-            timeout=config.REQUEST_TIMEOUT * 2,
+    def _login(self):
+        if not config.SPACETRACK_USERNAME or not config.SPACETRACK_PASSWORD:
+            raise RuntimeError("SPACETRACK_USERNAME / SPACETRACK_PASSWORD 未設定")
+
+        resp = self._session.post(
+            SPACETRACK_LOGIN_URL,
+            data={
+                'identity': config.SPACETRACK_USERNAME,
+                'password': config.SPACETRACK_PASSWORD,
+            },
+            timeout=config.REQUEST_TIMEOUT,
         )
-        if resp.status_code in (404, 403):
-            print(f"[satellite]   ⚠️ {group}: HTTP {resp.status_code}，跳過")
-            return []
         resp.raise_for_status()
 
-        result = _parse_3le(resp.text)
-        # 大群組（>500 顆）拉完後多等一下，避免 CelesTrak rate limit
-        delay = 2.0 if len(result) > 500 else config.REQUEST_INTERVAL
-        _time.sleep(delay)
-        return result
+        if 'chocolatechip' not in self._session.cookies:
+            raise RuntimeError(f"Space-Track 登入失敗（無 session cookie，帳密可能錯誤）")
 
-    def _add_entries(self, entries: list, seen: set, all_sats: list) -> int:
-        """將 3LE entries 去重後加入 all_sats，回傳新增數量"""
-        new_count = 0
-        for name, l1, l2 in entries:
-            try:
-                norad_id = int(l1[2:7].strip())
-            except ValueError:
-                continue
-            if norad_id not in seen:
-                seen.add(norad_id)
-                all_sats.append((name, l1, l2))
-                new_count += 1
-        return new_count
+        print(f"[{self.name}] Space-Track 登入成功")
 
-    def _fetch_all_groups(self) -> list[tuple[str, str, str]]:
-        """分組拉取 3LE 並以 NORAD ID 去重，失敗群組自動重試"""
-        seen = set()
-        all_sats = []
-        failed_groups = []
-
-        for group in CELESTRAK_GROUPS:
-            try:
-                entries = self._fetch_group_3le(group)
-                if entries:
-                    new_count = self._add_entries(entries, seen, all_sats)
-                    print(f"[{self.name}]   {group}: {len(entries)} 顆（新增 {new_count}）")
-                else:
-                    failed_groups.append(group)
-            except Exception as e:
-                print(f"[{self.name}]   {group}: 拉取失敗 ({e})")
-                failed_groups.append(group)
-
-        # 失敗群組重試（等 10 秒讓 rate limit 冷卻）
-        if failed_groups:
-            print(f"[{self.name}] ⏳ {len(failed_groups)} 個群組失敗，等 10 秒後重試: {', '.join(failed_groups)}")
-            _time.sleep(10)
-            for group in failed_groups:
-                try:
-                    entries = self._fetch_group_3le(group)
-                    if entries:
-                        new_count = self._add_entries(entries, seen, all_sats)
-                        print(f"[{self.name}]   ✓ 重試成功 {group}: {len(entries)} 顆（新增 {new_count}）")
-                    else:
-                        print(f"[{self.name}]   ✗ 重試仍失敗 {group}")
-                except Exception as e:
-                    print(f"[{self.name}]   ✗ 重試失敗 {group}: {e}")
-
-        return all_sats
+    def _fetch_all_gp(self) -> list[dict]:
+        """一次拉取完整 GP class（~30,000 筆，含已 decay 衛星）"""
+        resp = self._session.get(SPACETRACK_GP_URL, timeout=config.REQUEST_TIMEOUT * 4)
+        resp.raise_for_status()
+        return resp.json()
 
     def collect(self) -> dict:
         from sgp4.api import Satrec
 
         fetch_time = datetime.now(timezone.utc)
 
-        # 1. 分組拉取 3LE 並去重
-        print(f"[{self.name}] 開始分組拉取 {len(CELESTRAK_GROUPS)} 個群組...")
-        tle_list = self._fetch_all_groups()
-        total_fetched = len(tle_list)
-        print(f"[{self.name}] 去重後共 {total_fetched} 顆衛星")
+        # 1. 登入 + 拉取全部 GP
+        self._login()
+        print(f"[{self.name}] 從 Space-Track 拉取完整 GP class...")
+        gp_list = self._fetch_all_gp()
+        total_fetched = len(gp_list)
+        print(f"[{self.name}] 收到 {total_fetched} 筆 GP 記錄")
 
-        # 2. 逐顆用 SGP4 計算即時位置
-        satellites = []
-        error_count = 0
+        # 2. 解析 + SGP4 計算
+        all_satellites = []        # 全部（寫 satellite_tle）
+        active_satellites = []     # 活躍（寫 satellite_current / positions）
+        sgp4_errors = 0
+        parse_errors = 0
 
-        for name, line1, line2 in tle_list:
+        for gp in gp_list:
             try:
-                sat = Satrec.twoline2rv(line1, line2)
-                pos = _sgp4_propagate(sat, fetch_time)
-                if not pos:
-                    error_count += 1
+                line1 = gp.get('TLE_LINE1') or ''
+                line2 = gp.get('TLE_LINE2') or ''
+                name = (gp.get('OBJECT_NAME') or '').strip()
+
+                if not line1 or not line2:
+                    parse_errors += 1
                     continue
 
-                # 從 TLE 提取軌道參數
+                decay_date = _parse_decay_date(gp.get('DECAY_DATE'))
+                is_decayed = bool(decay_date)
+                object_type = (gp.get('OBJECT_TYPE') or '').strip().upper()
+
+                sat = Satrec.twoline2rv(line1, line2)
                 norad_id = sat.satnum
                 inclination = math.degrees(sat.inclo)
                 eccentricity = sat.ecco
@@ -280,46 +216,59 @@ class SatelliteCollector(BaseCollector):
 
                 orbit_type = _classify_orbit(period_min, eccentricity)
                 constellation = _identify_constellation(name)
-
-                # intl designator 在 line1 col 9-17
-                intl_des = line1[9:17].strip()
-
-                # epoch 在 line1 col 18-32
+                intl_des = (gp.get('OBJECT_ID') or line1[9:17]).strip()
                 epoch_str = line1[18:32].strip()
 
-                satellites.append({
+                base = {
                     'norad_id': norad_id,
                     'name': name,
                     'intl_designator': intl_des,
                     'constellation': constellation,
                     'orbit_type': orbit_type,
-                    'lat': pos['lat'],
-                    'lng': pos['lng'],
-                    'altitude_km': pos['altitude_km'],
-                    'velocity_kms': pos['velocity_kms'],
                     'inclination': round(inclination, 2),
                     'eccentricity': round(eccentricity, 6),
                     'period_min': round(period_min, 2),
                     'tle_line1': line1,
                     'tle_line2': line2,
                     'tle_epoch': epoch_str,
-                })
+                    'decay_date': decay_date,
+                    'is_decayed': is_decayed,
+                    'object_type': object_type,
+                }
+
+                # 只有「活躍 + PAYLOAD（衛星本體）」才算位置 + 寫 current/positions
+                # ROCKET BODY / DEBRIS / UNKNOWN / TBA 只寫入 satellite_tle 作為完整目錄
+                if not is_decayed and object_type == 'PAYLOAD':
+                    pos = _sgp4_propagate(sat, fetch_time)
+                    if pos:
+                        active_satellites.append({**base, **pos})
+                    else:
+                        sgp4_errors += 1
+
+                all_satellites.append(base)
 
             except Exception:
-                error_count += 1
+                parse_errors += 1
                 continue
 
         # 統計
         orbit_stats = {}
         constellation_stats = {}
-        for s in satellites:
+        for s in active_satellites:
             ot = s['orbit_type']
             orbit_stats[ot] = orbit_stats.get(ot, 0) + 1
             cs = s['constellation'] or 'Other'
             constellation_stats[cs] = constellation_stats.get(cs, 0) + 1
 
-        print(f"[{self.name}] 成功計算 {len(satellites)} 顆位置"
-              f"（{error_count} 個計算失敗）")
+        decayed_count = sum(1 for s in all_satellites if s['is_decayed'])
+        type_stats = {}
+        for s in all_satellites:
+            t = s.get('object_type') or 'UNKNOWN'
+            type_stats[t] = type_stats.get(t, 0) + 1
+
+        print(f"[{self.name}] 活躍 PAYLOAD {len(active_satellites)} 顆（寫 current/positions）"
+              f" / 失效 {decayed_count} 顆 / SGP4 錯誤 {sgp4_errors} / 解析失敗 {parse_errors}")
+        print(f"[{self.name}] 物件分類: {type_stats}")
         print(f"[{self.name}] 軌道分佈: {orbit_stats}")
 
         top_constellations = sorted(constellation_stats.items(),
@@ -329,9 +278,12 @@ class SatelliteCollector(BaseCollector):
         return {
             'fetch_time': fetch_time.strftime('%Y-%m-%dT%H:%M:%S'),
             'total_fetched': total_fetched,
-            'satellite_count': len(satellites),
-            'sgp4_errors': error_count,
+            'satellite_count': len(active_satellites),
+            'decayed_count': decayed_count,
+            'sgp4_errors': sgp4_errors,
+            'parse_errors': parse_errors,
             'orbit_stats': orbit_stats,
             'top_constellations': dict(top_constellations),
-            'data': satellites,
+            'data': active_satellites,       # 寫 current / positions 用（只含活躍）
+            'data_all': all_satellites,      # 寫 satellite_tle 用（含失效）
         }
