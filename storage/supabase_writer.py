@@ -219,6 +219,25 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_bus_intercity(self, result: dict, ts: datetime) -> list[dict]:
+        # 欄位結構與 _transform_bus 一致，僅資料來源不同（InterCity API）
+        records = []
+        for r in result.get('data', []):
+            pos = r.get('BusPosition', {})
+            route = r.get('RouteName', {})
+            records.append({
+                'plate_numb': r.get('PlateNumb', ''),
+                'route_uid': r.get('RouteUID', ''),
+                'route_name': route.get('Zh_tw', '') if isinstance(route, dict) else str(route),
+                'direction': r.get('Direction', 0),
+                'bus_lat': pos.get('PositionLat', None) if isinstance(pos, dict) else None,
+                'bus_lng': pos.get('PositionLon', None) if isinstance(pos, dict) else None,
+                'speed': r.get('Speed', None),
+                'city': r.get('_city', ''),
+                'collected_at': ts.isoformat(),
+            })
+        return records
+
     def _transform_weather(self, result: dict, ts: datetime) -> list[dict]:
         records = []
         for r in result.get('data', []):
@@ -790,6 +809,7 @@ class SupabaseWriter:
     TRANSFORMERS = {
         'youbike': _transform_youbike,
         'bus': _transform_bus,
+        'bus_intercity': _transform_bus_intercity,
         'weather': _transform_weather,
         'temperature': _transform_temperature,
         'tra_train': _transform_tra_train,
@@ -822,6 +842,12 @@ class SupabaseWriter:
         'bus': {
             'history': 'realtime.bus_positions',
             'current': 'realtime.bus_current',
+            'current_key': 'plate_numb',
+            'columns': ['plate_numb', 'route_uid', 'route_name', 'direction', 'bus_lat', 'bus_lng', 'speed', 'city', 'collected_at'],
+        },
+        'bus_intercity': {
+            'history': 'realtime.bus_intercity_positions',
+            'current': 'realtime.bus_intercity_current',
             'current_key': 'plate_numb',
             'columns': ['plate_numb', 'route_uid', 'route_name', 'direction', 'bus_lat', 'bus_lng', 'speed', 'city', 'collected_at'],
         },

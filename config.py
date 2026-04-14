@@ -141,8 +141,12 @@ PARKING_INTERVAL = int(os.getenv('PARKING_INTERVAL', '15'))
 
 # 公車即時位置 (TDX Bus RealTimeByFrequency)
 BUS_ENABLED = os.getenv('BUS_ENABLED', 'true').lower() in ('true', '1', 'yes')
-BUS_CITIES = os.getenv('BUS_CITIES', 'Taipei,NewTaipei,Taoyuan').split(',')
+BUS_CITIES = os.getenv('BUS_CITIES', 'Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung').split(',')
 BUS_INTERVAL = int(os.getenv('BUS_INTERVAL', '1'))  # 每 1 分鐘
+
+# 公路客運 / 國道客運 (TDX Bus RealTimeByFrequency/InterCity)
+BUS_INTERCITY_ENABLED = os.getenv('BUS_INTERCITY_ENABLED', 'false').lower() in ('true', '1', 'yes')
+BUS_INTERCITY_INTERVAL = int(os.getenv('BUS_INTERCITY_INTERVAL', '2'))  # 每 2 分鐘
 
 # 台鐵 (TDX TRA API)
 TRA_TRAIN_ENABLED = os.getenv('TRA_TRAIN_ENABLED', 'true').lower() in ('true', '1', 'yes')

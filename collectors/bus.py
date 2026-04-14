@@ -40,16 +40,18 @@ class BusCollector(BaseCollector):
         return response.json()
 
     @staticmethod
-    def _filter_active(buses: list) -> list:
-        """過濾出執勤中且正常營運的車輛
+    def _has_gps(buses: list) -> list:
+        """保留有經緯度的車輛。
 
-        - DutyStatus 1 = 執勤中
-        - BusStatus 0 = 正常
+        不再依賴 DutyStatus / BusStatus — 北中南業者填寫習慣不一致
+        （桃中高把 0 當執勤中，很多 BusStatus 為 null），實際以 GPS 回報為準。
         """
-        return [
-            b for b in buses
-            if b.get('DutyStatus') == 1 and b.get('BusStatus') == 0
-        ]
+        result = []
+        for b in buses:
+            pos = b.get('BusPosition') or {}
+            if isinstance(pos, dict) and pos.get('PositionLat') and pos.get('PositionLon'):
+                result.append(b)
+        return result
 
     def collect(self) -> dict:
         """收集各城市公車即時位置資料"""
@@ -60,7 +62,7 @@ class BusCollector(BaseCollector):
         for city in config.BUS_CITIES:
             try:
                 raw = self._fetch_realtime_by_frequency(city)
-                active = self._filter_active(raw)
+                active = self._has_gps(raw)
 
                 # 標記城市與抓取時間
                 for bus in active:
@@ -73,7 +75,7 @@ class BusCollector(BaseCollector):
                 }
                 all_buses.extend(active)
 
-                print(f"   {city}: {len(active)}/{len(raw)} 台執勤中")
+                print(f"   {city}: {len(active)}/{len(raw)} 台有 GPS")
 
             except requests.exceptions.HTTPError as e:
                 print(f"   {city}: HTTP 錯誤 {e.response.status_code}")
@@ -83,7 +85,7 @@ class BusCollector(BaseCollector):
                 city_stats[city] = {'error': str(e)}
 
         total = len(all_buses)
-        print(f"   ✓ 合計: {total} 台公車")
+        print(f"   ✓ 合計: {total} 台公車（有 GPS 回報）")
 
         return {
             'fetch_time': fetch_time.isoformat(),

@@ -15,6 +15,7 @@ from .flight_fr24 import FlightFR24Collector
 from .flight_fr24_zone import FlightFR24ZoneCollector
 from .flight_opensky import FlightOpenSkyCollector
 from .bus import BusCollector
+from .bus_intercity import BusIntercityCollector
 from .freeway_vd import FreewayVDCollector
 from .earthquake import EarthquakeCollector
 from .satellite import SatelliteCollector
@@ -39,6 +40,7 @@ __all__ = [
     'FlightFR24ZoneCollector',
     'FlightOpenSkyCollector',
     'BusCollector',
+    'BusIntercityCollector',
     'FreewayVDCollector',
     'EarthquakeCollector',
     'SatelliteCollector',

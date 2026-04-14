@@ -30,6 +30,7 @@ from collectors import (
     FlightFR24ZoneCollector,
     FlightOpenSkyCollector,
     BusCollector,
+    BusIntercityCollector,
     FreewayVDCollector,
     EarthquakeCollector,
     SatelliteCollector,
@@ -125,6 +126,17 @@ def run_collectors():
             print(f"✗ Bus 收集器初始化失敗: {e}")
     else:
         print("⏸️  Bus 收集器已停用 (BUS_ENABLED=false)")
+
+    # 公路客運 / 國道客運收集器 (需要 TDX API)
+    if config.BUS_INTERCITY_ENABLED:
+        try:
+            bus_intercity = BusIntercityCollector()
+            collectors.append(bus_intercity)
+            print(f"✓ Bus InterCity 收集器 (每 {bus_intercity.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ Bus InterCity 收集器初始化失敗: {e}")
+    else:
+        print("⏸️  Bus InterCity 收集器已停用 (BUS_INTERCITY_ENABLED=false)")
 
     # 台鐵即時列車位置收集器 (需要 TDX API)
     if config.TRA_TRAIN_ENABLED:
