@@ -97,7 +97,8 @@ data-collectors/
 │   ├── freeway_vd.py      # 國道即時車流+壅塞（TDX）
 │   ├── temperature.py     # 溫度網格資料（CWA）
 │   ├── parking.py         # 路邊停車即時可用性
-│   ├── bus.py             # 公車即時位置（TDX）
+│   ├── bus.py             # 市區公車即時位置（TDX，六都）
+│   ├── bus_intercity.py   # 公路客運/國道客運即時位置（TDX InterCity）
 │   ├── tra_train.py       # 台鐵即時列車位置（TDX）
 │   ├── tra_static.py      # 台鐵靜態資料（TDX）
 │   ├── rail_timetable.py  # 台鐵+高鐵每日時刻表歸檔（TDX）
