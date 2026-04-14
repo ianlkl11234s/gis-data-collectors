@@ -5,7 +5,7 @@
 同時執行靜默檢測與磁碟空間檢查。
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import config
@@ -14,6 +14,10 @@ from utils.notify import (
     notify_disk_alert,
     notify_silence_alert,
 )
+
+# 與 collectors/base.py 保持一致的 Taipei 時區
+# 避免和 tz-aware 的 last_run 比較時爆出 offset-naive/aware 錯誤
+TAIPEI_TZ = timezone(timedelta(hours=8))
 
 
 class DailyReportTask:
@@ -110,7 +114,8 @@ class DailyReportTask:
         has_errors = []
         silent = []
 
-        now = datetime.now()
+        # 使用 tz-aware now，因 collector.last_run 是 tz-aware（Asia/Taipei）
+        now = datetime.now(TAIPEI_TZ)
 
         for c in self.collectors:
             status = c.get_status()
@@ -279,7 +284,8 @@ class DailyReportTask:
 
     def _check_silence(self):
         """檢查收集器是否靜默（即時告警）"""
-        now = datetime.now()
+        # tz-aware now，對齊 collector.last_run
+        now = datetime.now(TAIPEI_TZ)
 
         for c in self.collectors:
             status = c.get_status()
