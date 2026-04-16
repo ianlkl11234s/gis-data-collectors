@@ -12,6 +12,7 @@ import requests
 
 import config
 from utils.auth import TDXAuth
+from utils.tdx_session import TDXSession
 from .base import BaseCollector
 
 
@@ -23,7 +24,7 @@ class BusIntercityCollector(BaseCollector):
 
     def __init__(self):
         super().__init__()
-        self._session = requests.Session()
+        self._session = TDXSession()
         self.auth = TDXAuth(session=self._session)
 
     def _fetch_realtime_intercity(self) -> list:

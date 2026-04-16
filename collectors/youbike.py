@@ -11,6 +11,7 @@ import requests
 
 import config
 from utils.auth import TDXAuth
+from utils.tdx_session import TDXSession
 from .base import BaseCollector
 
 
@@ -36,8 +37,8 @@ class YouBikeCollector(BaseCollector):
     def __init__(self, cities: list = None):
         super().__init__()
         self.cities = cities or config.YOUBIKE_CITIES
-        # 建立共用 Session，重用 TCP 連線以節省記憶體
-        self._session = requests.Session()
+        # 建立共用 Session（TDXSession 會自動通過全域 TDX rate limiter）
+        self._session = TDXSession()
         self.auth = TDXAuth(session=self._session)
 
     def _fetch_city(self, city: str) -> list:

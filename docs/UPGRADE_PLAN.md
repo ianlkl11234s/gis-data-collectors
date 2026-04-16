@@ -203,6 +203,19 @@ def collect(self) -> dict:
 
 ---
 
+## 九、Phase 1 補充：TDX Rate Limiter（2026-04-16 事後加入）
+
+Phase 1 首次部署後發現 **22 城市公車 17 個被 TDX 429** 擋下。
+根本原因：多 collector 共用出口 IP，TDX 對單金鑰 5 req/sec 限制。
+
+**解法**：全域 `TDXSession` + `RateLimiter`（4 req/sec 預設）。
+
+詳細規則與新增 TDX collector 的 checklist：**[docs/TDX_RATE_LIMITING.md](./TDX_RATE_LIMITING.md)** ⭐
+
+> **新增 TDX collector 前必讀該文件**，避免重蹈覆轍。
+
+---
+
 ## 九、執行順序
 
 1. [ ] 建立 `scheduler.py`

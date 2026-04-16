@@ -16,6 +16,7 @@ import requests
 
 import config
 from utils.auth import TDXAuth
+from utils.tdx_session import TDXSession
 from .base import BaseCollector
 
 logger = logging.getLogger(__name__)
@@ -32,9 +33,9 @@ class BusCollector(BaseCollector):
 
     def __init__(self):
         super().__init__()
-        # 注意：requests.Session 是 thread-safe 的（底層 urllib3 PoolManager 自己有鎖）
-        # 但 TDXAuth 的 token refresh 邏輯需要觀察是否需要額外保護
-        self._session = requests.Session()
+        # TDXSession 會自動通過全域 TDX rate limiter（4 req/sec 預設）
+        # 所以即使 BUS_FETCH_WORKERS=5 平行呼叫 _fetch_city，實際送出仍被節流
+        self._session = TDXSession()
         self.auth = TDXAuth(session=self._session)
 
     def _fetch_city(self, city: str) -> dict:

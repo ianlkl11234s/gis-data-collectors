@@ -7,16 +7,23 @@ API 認證模組
 import time
 import requests
 import config
+from .tdx_session import TDXSession
 
 
 class TDXAuth:
-    """TDX API 認證管理器（使用 Session 重用連線）"""
+    """TDX API 認證管理器（使用 Session 重用連線）
+
+    預設使用 TDXSession，讓 token refresh 也自動經過 TDX rate limiter，
+    避免在 burst 場景下 auth 端點被 429 擋住（token refresh 失敗會連鎖影響所有 TDX 請求）。
+
+    若 caller 傳入自己的 session，建議也使用 TDXSession 以保證節流生效。
+    """
 
     def __init__(self, session: requests.Session = None):
         if not config.TDX_APP_ID or not config.TDX_APP_KEY:
             raise ValueError("TDX_APP_ID 和 TDX_APP_KEY 未設定")
 
-        self._session = session or requests.Session()
+        self._session = session or TDXSession()
         self._access_token = None
         self._token_expiry = 0
 
