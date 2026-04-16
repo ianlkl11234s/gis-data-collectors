@@ -1,0 +1,5 @@
+# 開發/測試依賴（生產不需要）
+-r requirements.txt
+
+pytest>=7.4.0
+pytest-timeout>=2.2.0

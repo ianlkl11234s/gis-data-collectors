@@ -5,6 +5,7 @@
 """
 
 import gc
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -42,10 +43,20 @@ class BaseCollector(ABC):
     name: str = "base"
     interval_minutes: int = 60
 
+    # 預期執行時間上限（秒），超過由 scheduler 層記 warning
+    # 子類別可依實際情況調整（例如 foursquare_poi、satellite 可設更長）
+    # 注意：這只是觀察指標，Python 無法強制中斷線程，實際保護靠各 HTTP 呼叫的 timeout
+    COLLECT_TIMEOUT: int = 300
+
+    # 條件式 gc.collect() 的門檻（秒）
+    # 跑超過這個時間才觸發 GC，避免短任務頻繁觸發 stop-the-world GC
+    GC_THRESHOLD_SEC: int = 30
+
     def __init__(self):
         self.storage = get_storage()
         self.supabase_writer = get_supabase_writer()
         self.last_run: Optional[datetime] = None
+        self.last_success_at: Optional[datetime] = None
         self.run_count: int = 0
         self.error_count: int = 0
         self.consecutive_errors: int = 0
@@ -64,6 +75,7 @@ class BaseCollector(ABC):
         self.run_count += 1
         # 用 timezone-aware 台灣時間，確保寫入 Supabase 時能正確轉 UTC
         timestamp = datetime.now(TAIPEI_TZ)
+        run_start = time.monotonic()
 
         print(f"\n[{self.name}] 開始收集 ({timestamp.strftime('%H:%M:%S')})")
 
@@ -91,6 +103,7 @@ class BaseCollector(ABC):
             }
 
             self.last_run = timestamp
+            self.last_success_at = timestamp
             self.consecutive_errors = 0  # 成功則重置連續錯誤
             notify_success(self.name, stats)
 
@@ -110,8 +123,11 @@ class BaseCollector(ABC):
             }
 
         finally:
-            # 每次收集後觸發 GC，避免記憶體累積
-            gc.collect()
+            # 條件式 GC：只有跑超過 GC_THRESHOLD_SEC 的任務才觸發
+            # 避免 1 分鐘頻率的小任務每次都 stop-the-world GC
+            elapsed = time.monotonic() - run_start
+            if elapsed > self.GC_THRESHOLD_SEC:
+                gc.collect()
 
     def get_status(self) -> dict:
         """取得收集器狀態"""
@@ -122,4 +138,5 @@ class BaseCollector(ABC):
             'error_count': self.error_count,
             'consecutive_errors': self.consecutive_errors,
             'last_run': self.last_run.isoformat() if self.last_run else None,
+            'last_success_at': self.last_success_at.isoformat() if self.last_success_at else None,
         }

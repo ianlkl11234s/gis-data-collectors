@@ -6,6 +6,7 @@ Data Collectors 主程式
 支援 S3 歸檔與資料生命週期管理。
 """
 
+import logging
 import signal
 import sys
 import time
@@ -15,6 +16,7 @@ from datetime import datetime
 import schedule
 
 import config
+from scheduler import get_scheduler
 from collectors import (
     YouBikeCollector,
     WeatherCollector,
@@ -341,51 +343,31 @@ def run_collectors():
         return []
 
     # ============================================================
-    # 背景 thread collector：跑時間較長，不阻塞主排程
-    # 與主 schedule loop 共用 SupabaseWriter（writer 內部已加鎖）
+    # 統一透過 CollectorScheduler 調度（Phase 1 升級）
+    # 每個 collector 在獨立線程執行，互不阻塞
+    # Skip-if-running 保護避免同 collector 疊加
     # ============================================================
-    BACKGROUND_COLLECTORS = {'flight_fr24', 'foursquare_poi', 'satellite'}
+    # max_workers 預設為 collector 數量 + 緩衝（避免所有 collector 都撞同一 tick 時排隊）
+    max_workers = max(10, len(collectors) + 2)
+    sched = get_scheduler(max_workers=max_workers)
 
-    bg_collectors = [c for c in collectors if c.name in BACKGROUND_COLLECTORS]
-    fg_collectors = [c for c in collectors if c.name not in BACKGROUND_COLLECTORS]
-
-    # 立即執行一次（前景 collector 在主 thread 依序跑）
     print("\n" + "=" * 60)
-    print("🚀 初始執行")
+    print(f"🚀 初始執行（共 {len(collectors)} 個 collector，pool max_workers={max_workers}）")
     print("=" * 60)
 
-    for collector in fg_collectors:
-        collector.run()
+    # 註冊並立即提交一次（異步執行，不阻塞啟動流程）
+    for collector in collectors:
+        sched.register(collector)
+        sched.submit(collector)
 
-    # 設定前景排程
-    for collector in fg_collectors:
-        schedule.every(collector.interval_minutes).minutes.do(collector.run)
-
-    # 啟動背景 thread collector（各跑各的 interval）
-    def _bg_loop(collector):
-        print(f"[{collector.name}] 背景 thread 啟動 (每 {collector.interval_minutes} 分鐘)")
-        # 啟動時先跑一次
-        try:
-            collector.run()
-        except Exception as e:
-            print(f"[{collector.name}] 背景初次執行錯誤: {e}")
-        interval_sec = collector.interval_minutes * 60
-        while True:
-            time.sleep(interval_sec)
-            try:
-                collector.run()
-            except Exception as e:
-                print(f"[{collector.name}] 背景執行錯誤: {e}")
-
-    for collector in bg_collectors:
-        t = threading.Thread(target=_bg_loop, args=(collector,), daemon=True, name=f"bg-{collector.name}")
-        t.start()
-        print(f"✓ {collector.name} 已切換為背景 thread 模式（不阻塞主排程）")
+    # 設定排程（schedule 庫只負責觸發，實際執行交給 CollectorScheduler）
+    for collector in collectors:
+        schedule.every(collector.interval_minutes).minutes.do(sched.submit, collector)
 
     # 顯示下次執行時間
     next_run = schedule.next_run()
     if next_run:
-        print(f"\n⏰ 下次執行: {next_run.strftime('%H:%M:%S')}")
+        print(f"\n⏰ 下次排程觸發: {next_run.strftime('%H:%M:%S')}")
 
     return collectors
 
@@ -510,8 +492,22 @@ def run_mini_taipei_publish_task():
         return None
 
 
+def _setup_logging():
+    """初始化 logging（讓 scheduler 與其他模組的 logger 輸出）"""
+    level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s [%(threadName)s] %(levelname)s %(name)s: %(message)s',
+        datefmt='%H:%M:%S',
+    )
+    # werkzeug 預設 INFO 太吵
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
+
 def main():
     """主程式"""
+    _setup_logging()
+
     print("=" * 60)
     print("📡 Data Collectors")
     print("=" * 60)
