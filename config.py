@@ -146,9 +146,26 @@ PARKING_CITIES = os.getenv('PARKING_CITIES', 'Taipei,NewTaipei,Taichung').split(
 PARKING_INTERVAL = int(os.getenv('PARKING_INTERVAL', '15'))
 
 # 公車即時位置 (TDX Bus RealTimeByFrequency)
+# 預設涵蓋全台 22 縣市（6 直轄市 + 3 省轄市 + 10 縣 + 3 離島縣）
+# 調整配額：22 城 × 2 分鐘間隔 = 15,840 req/日，超過 TDX 免費 10k 日配額
+#   - 若使用免費 key：調高 BUS_INTERVAL 至 3-5 分鐘，或縮減 BUS_CITIES
+#   - 若已申請付費 key（1M/日）：預設即可
 BUS_ENABLED = os.getenv('BUS_ENABLED', 'true').lower() in ('true', '1', 'yes')
-BUS_CITIES = os.getenv('BUS_CITIES', 'Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung').split(',')
-BUS_INTERVAL = int(os.getenv('BUS_INTERVAL', '1'))  # 每 1 分鐘
+BUS_CITIES_DEFAULT = (
+    # 直轄市 (6)
+    'Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung,'
+    # 省轄市 (3)
+    'Keelung,Hsinchu,Chiayi,'
+    # 縣 (10)
+    'HsinchuCounty,MiaoliCounty,ChanghuaCounty,NantouCounty,YunlinCounty,'
+    'ChiayiCounty,PingtungCounty,YilanCounty,HualienCounty,TaitungCounty,'
+    # 離島 (3)
+    'PenghuCounty,KinmenCounty,LienchiangCounty'
+)
+BUS_CITIES = os.getenv('BUS_CITIES', BUS_CITIES_DEFAULT).split(',')
+BUS_INTERVAL = int(os.getenv('BUS_INTERVAL', '2'))  # 每 2 分鐘（22 城擴充後預設值）
+# 單一 collector 內部並行抓取的城市數上限（避免超出 TDX rate limit）
+BUS_FETCH_WORKERS = int(os.getenv('BUS_FETCH_WORKERS', '5'))
 
 # 公路客運 / 國道客運 (TDX Bus RealTimeByFrequency/InterCity)
 BUS_INTERCITY_ENABLED = os.getenv('BUS_INTERCITY_ENABLED', 'false').lower() in ('true', '1', 'yes')
