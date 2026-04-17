@@ -26,6 +26,7 @@ from .foursquare_poi import FoursquarePOICollector
 from .air_quality_imagery import AirQualityImageryCollector
 from .air_quality import AirQualityCollector
 from .air_quality_microsensors import AirQualityMicroSensorCollector
+from .water_reservoir import WaterReservoirCollector
 
 __all__ = [
     'BaseCollector',
@@ -54,4 +55,5 @@ __all__ = [
     'AirQualityImageryCollector',
     'AirQualityCollector',
     'AirQualityMicroSensorCollector',
+    'WaterReservoirCollector',
 ]

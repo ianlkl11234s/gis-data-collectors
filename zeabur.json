@@ -69,6 +69,14 @@
     },
     "LINE_TOKEN": {
       "description": "LINE Notify Token"
+    },
+    "WATER_RESERVOIR_ENABLED": {
+      "description": "水庫水情收集器（WRA 水利署，無需 API Key）；AIS 專屬實例設 false，其他實例設 true",
+      "default": "false"
+    },
+    "WATER_RESERVOIR_INTERVAL": {
+      "description": "水庫水情收集間隔（分鐘），對應 WRA 每小時更新頻率",
+      "default": "60"
     }
   }
 }

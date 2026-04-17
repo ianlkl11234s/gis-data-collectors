@@ -43,6 +43,7 @@ from collectors import (
     AirQualityImageryCollector,
     AirQualityCollector,
     AirQualityMicroSensorCollector,
+    WaterReservoirCollector,
 )
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -337,6 +338,16 @@ def run_collectors():
             print(f"✗ Air Quality MicroSensors 收集器初始化失敗: {e}")
     else:
         print("⏸️  Air Quality MicroSensors 收集器已停用 (AIR_QUALITY_MICROSENSORS_ENABLED=false)")
+
+    if config.WATER_RESERVOIR_ENABLED:
+        try:
+            water = WaterReservoirCollector()
+            collectors.append(water)
+            print(f"✓ 水庫水情收集器 (每 {water.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ 水庫水情收集器初始化失敗: {e}")
+    else:
+        print("⏸️  水庫水情收集器已停用 (WATER_RESERVOIR_ENABLED=false)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")

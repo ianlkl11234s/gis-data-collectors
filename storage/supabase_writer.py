@@ -875,6 +875,33 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_water_reservoir(self, result: dict, ts: datetime) -> list[dict]:
+        """WRA 水庫即時水情。"""
+        return result.get('status_rows', [])
+
+    def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
+        """upsert 靜態水庫基本資料到 public.water_reservoirs"""
+        if not rows:
+            return
+        self._ensure_conn()
+        cols = [
+            'id', 'name', 'region', 'river_name', 'lat', 'lng', 'township',
+            'dam_type', 'design_capacity_wan', 'effective_capacity_wan',
+            'current_capacity_wan', 'catchment_area_km2', 'function_type',
+            'agency', 'updated_at',
+        ]
+        values = [tuple(r.get(c) for c in cols) for r in rows]
+        update_set = ', '.join(
+            f"{c} = EXCLUDED.{c}" for c in cols if c != 'id'
+        )
+        sql = (
+            f"INSERT INTO public.water_reservoirs ({','.join(cols)}) VALUES %s "
+            f"ON CONFLICT (id) DO UPDATE SET {update_set}"
+        )
+        with self._conn.cursor() as cur:
+            execute_values(cur, sql, values, page_size=100)
+        self._conn.commit()
+
     def _transform_air_quality_microsensors(self, result: dict, ts: datetime) -> list[dict]:
         """LASS AirBox / 微型感測器讀值。"""
         records = []
@@ -925,6 +952,7 @@ class SupabaseWriter:
         'air_quality_imagery': _transform_air_quality_imagery,
         'air_quality': _transform_air_quality,
         'air_quality_microsensors': _transform_air_quality_microsensors,
+        'water_reservoir': _transform_water_reservoir,
     }
 
     # ============================================================
@@ -1077,6 +1105,18 @@ class SupabaseWriter:
                 'pm25', 'pm10', 'pm1', 'temperature', 'humidity',
                 'observed_at', 'collected_at', 'geom',
             ],
+        },
+        'water_reservoir': {
+            'history': 'realtime.reservoir_status',
+            'columns': [
+                'reservoir_id', 'snapshot_at',
+                'water_level_m', 'effective_storage_wan_m3',
+                'inflow_cms', 'total_outflow_cms', 'spillway_outflow_cms',
+                'basin_rainfall_mm', 'hourly_rainfall_mm',
+                'status_type', 'collected_at',
+            ],
+            'upsert_key': 'reservoir_id,snapshot_at',
+            'upsert_strategy': 'do_nothing',
         },
     }
 
