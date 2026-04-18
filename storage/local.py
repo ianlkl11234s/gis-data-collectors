@@ -5,8 +5,15 @@
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
+
+
+class _DatetimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        return super().default(obj)
 
 import config
 
@@ -42,13 +49,13 @@ class LocalStorage:
         filepath = output_dir / filename
 
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2, cls=_DatetimeEncoder)
 
         # 更新 latest
         latest_dir = self.base_dir / collector_name
         latest_file = latest_dir / 'latest.json'
         with open(latest_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2, cls=_DatetimeEncoder)
 
         return filepath
 
@@ -76,7 +83,7 @@ class LocalStorage:
 
         with open(filepath, 'a', encoding='utf-8') as f:
             for record in records:
-                f.write(json.dumps(record, ensure_ascii=False) + '\n')
+                f.write(json.dumps(record, ensure_ascii=False, cls=_DatetimeEncoder) + '\n')
 
         return filepath
 
