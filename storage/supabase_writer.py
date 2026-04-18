@@ -898,9 +898,9 @@ class SupabaseWriter:
             f"INSERT INTO public.water_reservoirs ({','.join(cols)}) VALUES %s "
             f"ON CONFLICT (id) DO UPDATE SET {update_set}"
         )
-        with self._conn.cursor() as cur:
+        with self.conn.cursor() as cur:
             execute_values(cur, sql, values, page_size=100)
-        self._conn.commit()
+        self.conn.commit()
 
     def _transform_air_quality_microsensors(self, result: dict, ts: datetime) -> list[dict]:
         """LASS AirBox / 微型感測器讀值。"""
