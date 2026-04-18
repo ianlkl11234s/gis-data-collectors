@@ -182,10 +182,16 @@ class WaterReservoirCollector(BaseCollector):
     # ------------------------------------------------------------------
 
     def _fetch_status(self) -> list[dict]:
-        resp = self._session.get(WRA_STATUS_URL, timeout=config.REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
-        return data if isinstance(data, list) else []
+        try:
+            resp = self._session.get(WRA_STATUS_URL, timeout=config.REQUEST_TIMEOUT)
+            print(f"[water_reservoir] WRA status HTTP {resp.status_code}")
+            resp.raise_for_status()
+            data = resp.json()
+            print(f"[water_reservoir] WRA status 回傳 {type(data).__name__}, count={len(data) if isinstance(data, list) else 'N/A'}")
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            print(f"[water_reservoir] _fetch_status 失敗: {type(e).__name__}: {e}")
+            raise
 
     def _normalize_status(self, r: dict, collected_at: datetime) -> dict | None:
         rid = str(r.get("reservoiridentifier", "")).strip()
