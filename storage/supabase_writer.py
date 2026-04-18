@@ -877,7 +877,7 @@ class SupabaseWriter:
 
     def _transform_water_reservoir(self, result: dict, ts: datetime) -> list[dict]:
         """WRA 水庫即時水情。"""
-        return result.get('status_rows', [])
+        return result.get('data', [])
 
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
         """upsert 靜態水庫基本資料到 public.water_reservoirs"""

@@ -233,7 +233,7 @@ class WaterReservoirCollector(BaseCollector):
         ]
 
         return {
-            "status_rows":   status_rows,
+            "data":          status_rows,
             "basic_synced":  basic_count,
             "collected_at":  now.isoformat(),
         }
