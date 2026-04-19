@@ -44,6 +44,8 @@ from collectors import (
     AirQualityCollector,
     AirQualityMicroSensorCollector,
     WaterReservoirCollector,
+    RiverWaterLevelCollector,
+    RainGaugeRealtimeCollector,
 )
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -348,6 +350,28 @@ def run_collectors():
             print(f"✗ 水庫水情收集器初始化失敗: {e}")
     else:
         print("⏸️  水庫水情收集器已停用 (WATER_RESERVOIR_ENABLED=false)")
+
+    if config.RIVER_WATER_LEVEL_ENABLED:
+        try:
+            rwl = RiverWaterLevelCollector()
+            collectors.append(rwl)
+            print(f"✓ 河川水位收集器 (每 {rwl.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ 河川水位收集器初始化失敗: {e}")
+    else:
+        print("⏸️  河川水位收集器已停用 (RIVER_WATER_LEVEL_ENABLED=false)")
+
+    if config.RAIN_GAUGE_REALTIME_ENABLED and config.CWA_API_KEY:
+        try:
+            rg = RainGaugeRealtimeCollector()
+            collectors.append(rg)
+            print(f"✓ 即時雨量站收集器 (每 {rg.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ 即時雨量站收集器初始化失敗: {e}")
+    elif not config.RAIN_GAUGE_REALTIME_ENABLED:
+        print("⏸️  即時雨量站收集器已停用 (RAIN_GAUGE_REALTIME_ENABLED=false)")
+    else:
+        print("⏸️  即時雨量站收集器已停用 (CWA_API_KEY 未設定)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")

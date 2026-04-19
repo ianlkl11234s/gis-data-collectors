@@ -272,6 +272,14 @@ AIR_QUALITY_MICROSENSORS_PM25_OUTLIER = float(os.getenv('AIR_QUALITY_MICROSENSOR
 WATER_RESERVOIR_ENABLED = os.getenv('WATER_RESERVOIR_ENABLED', 'false').lower() in ('true', '1', 'yes')
 WATER_RESERVOIR_INTERVAL = int(os.getenv('WATER_RESERVOIR_INTERVAL', '60'))  # 每 60 分鐘
 
+# 河川即時水位 (WRA OpenData UUID: 73c4c3de-..., 無需 API Key)
+RIVER_WATER_LEVEL_ENABLED = os.getenv('RIVER_WATER_LEVEL_ENABLED', 'false').lower() in ('true', '1', 'yes')
+RIVER_WATER_LEVEL_INTERVAL = int(os.getenv('RIVER_WATER_LEVEL_INTERVAL', '10'))  # 每 10 分鐘
+
+# CWA 即時雨量站 (O-A0002-001，需 CWA_API_KEY)
+RAIN_GAUGE_REALTIME_ENABLED = os.getenv('RAIN_GAUGE_REALTIME_ENABLED', 'false').lower() in ('true', '1', 'yes')
+RAIN_GAUGE_REALTIME_INTERVAL = int(os.getenv('RAIN_GAUGE_REALTIME_INTERVAL', '10'))  # 每 10 分鐘
+
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')
 MINI_TAIPEI_PUBLISH_TIME = os.getenv('MINI_TAIPEI_PUBLISH_TIME', '07:00')  # 每日發布時間

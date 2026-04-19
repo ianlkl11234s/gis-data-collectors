@@ -879,6 +879,14 @@ class SupabaseWriter:
         """WRA 水庫即時水情。"""
         return result.get('data', [])
 
+    def _transform_river_water_level(self, result: dict, ts: datetime) -> list[dict]:
+        """WRA 河川即時水位（每 10 分鐘）。"""
+        return result.get('data', [])
+
+    def _transform_rain_gauge_realtime(self, result: dict, ts: datetime) -> list[dict]:
+        """CWA 即時雨量站讀值（O-A0002-001，每 10 分鐘）。"""
+        return result.get('data', [])
+
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
         """upsert 靜態水庫基本資料到 public.water_reservoirs"""
         if not rows:
@@ -953,6 +961,8 @@ class SupabaseWriter:
         'air_quality': _transform_air_quality,
         'air_quality_microsensors': _transform_air_quality_microsensors,
         'water_reservoir': _transform_water_reservoir,
+        'river_water_level': _transform_river_water_level,
+        'rain_gauge_realtime': _transform_rain_gauge_realtime,
     }
 
     # ============================================================
@@ -1116,6 +1126,23 @@ class SupabaseWriter:
                 'status_type', 'collected_at',
             ],
             'upsert_key': 'reservoir_id,snapshot_at',
+            'upsert_strategy': 'do_nothing',
+        },
+        'river_water_level': {
+            'history': 'realtime.river_water_level',
+            'columns': ['station_id', 'observed_at', 'water_level_m', 'check_result', 'collected_at'],
+            'upsert_key': 'station_id,observed_at',
+            'upsert_strategy': 'do_nothing',
+        },
+        'rain_gauge_realtime': {
+            'history': 'realtime.rain_gauge_readings',
+            'columns': [
+                'station_id', 'station_name', 'county', 'town', 'lat', 'lng',
+                'precipitation_10min', 'precipitation_1hr', 'precipitation_3hr',
+                'precipitation_6hr', 'precipitation_12hr', 'precipitation_24hr',
+                'observed_at', 'collected_at', 'geom',
+            ],
+            'upsert_key': 'station_id,observed_at',
             'upsert_strategy': 'do_nothing',
         },
     }
