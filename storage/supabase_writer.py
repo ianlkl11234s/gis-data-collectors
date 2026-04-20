@@ -887,6 +887,10 @@ class SupabaseWriter:
         """CWA 即時雨量站讀值（O-A0002-001，每 10 分鐘）。"""
         return result.get('data', [])
 
+    def _transform_groundwater_level(self, result: dict, ts: datetime) -> list[dict]:
+        """WRA 即時地下水水位（每 60 分鐘）。"""
+        return result.get('data', [])
+
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
         """upsert 靜態水庫基本資料到 public.water_reservoirs"""
         if not rows:
@@ -939,6 +943,7 @@ class SupabaseWriter:
         return records
 
     TRANSFORMERS = {
+        'groundwater_level': _transform_groundwater_level,
         'youbike': _transform_youbike,
         'bus': _transform_bus,
         'bus_intercity': _transform_bus_intercity,
@@ -1141,6 +1146,16 @@ class SupabaseWriter:
                 'precipitation_10min', 'precipitation_1hr', 'precipitation_3hr',
                 'precipitation_6hr', 'precipitation_12hr', 'precipitation_24hr',
                 'observed_at', 'collected_at', 'geom',
+            ],
+            'upsert_key': 'station_id,observed_at',
+            'upsert_strategy': 'do_nothing',
+        },
+        'groundwater_level': {
+            'history': 'realtime.groundwater_level_readings',
+            'columns': [
+                'station_id', 'well_name', 'agency_unit',
+                'water_level_m', 'voltage',
+                'observed_at', 'collected_at',
             ],
             'upsert_key': 'station_id,observed_at',
             'upsert_strategy': 'do_nothing',

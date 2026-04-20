@@ -46,6 +46,7 @@ from collectors import (
     WaterReservoirCollector,
     RiverWaterLevelCollector,
     RainGaugeRealtimeCollector,
+    GroundwaterLevelCollector,
 )
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -372,6 +373,16 @@ def run_collectors():
         print("⏸️  即時雨量站收集器已停用 (RAIN_GAUGE_REALTIME_ENABLED=false)")
     else:
         print("⏸️  即時雨量站收集器已停用 (CWA_API_KEY 未設定)")
+
+    if config.GROUNDWATER_LEVEL_ENABLED:
+        try:
+            gwl = GroundwaterLevelCollector()
+            collectors.append(gwl)
+            print(f"✓ 地下水水位收集器 (每 {gwl.interval_minutes} 分鐘)")
+        except Exception as e:
+            print(f"✗ 地下水水位收集器初始化失敗: {e}")
+    else:
+        print("⏸️  地下水水位收集器已停用 (GROUNDWATER_LEVEL_ENABLED=false)")
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")

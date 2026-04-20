@@ -29,6 +29,7 @@ from .air_quality_microsensors import AirQualityMicroSensorCollector
 from .water_reservoir import WaterReservoirCollector
 from .river_water_level import RiverWaterLevelCollector
 from .rain_gauge_realtime import RainGaugeRealtimeCollector
+from .groundwater_level import GroundwaterLevelCollector
 
 __all__ = [
     'BaseCollector',
@@ -60,4 +61,5 @@ __all__ = [
     'WaterReservoirCollector',
     'RiverWaterLevelCollector',
     'RainGaugeRealtimeCollector',
+    'GroundwaterLevelCollector',
 ]
