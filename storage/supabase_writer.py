@@ -892,12 +892,17 @@ class SupabaseWriter:
         return result.get('data', [])
 
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
-        """upsert 靜態水庫基本資料到 public.water_reservoirs"""
+        """upsert 靜態水庫基本資料到 public.water_reservoirs
+
+        ⚠️ lat/lng 刻意不在此 upsert：由 reference.reservoir_geometry
+        （gis-platform migration 048）權威提供，避免原硬編碼字典的 id 錯位。
+        upsert 完成後自動 JOIN reference 表同步 lat/lng。
+        """
         if not rows:
             return
         self._ensure_conn()
         cols = [
-            'id', 'name', 'region', 'river_name', 'lat', 'lng', 'township',
+            'id', 'name', 'region', 'river_name', 'township',
             'dam_type', 'design_capacity_wan', 'effective_capacity_wan',
             'current_capacity_wan', 'catchment_area_km2', 'function_type',
             'agency', 'updated_at',
@@ -910,8 +915,18 @@ class SupabaseWriter:
             f"INSERT INTO public.water_reservoirs ({','.join(cols)}) VALUES %s "
             f"ON CONFLICT (id) DO UPDATE SET {update_set}"
         )
+        sync_lat_lng_sql = r"""
+            UPDATE public.water_reservoirs AS w
+            SET lat = g.lat, lng = g.lng, updated_at = now()
+            FROM reference.reservoir_geometry g
+            WHERE w.id ~ '^\d+$'
+              AND w.id::INTEGER = g.compare_id
+              AND g.compare_id > 0
+              AND (w.lat IS DISTINCT FROM g.lat OR w.lng IS DISTINCT FROM g.lng)
+        """
         with self.conn.cursor() as cur:
             execute_values(cur, sql, values, page_size=100)
+            cur.execute(sync_lat_lng_sql)
         self.conn.commit()
 
     def _transform_air_quality_microsensors(self, result: dict, ts: datetime) -> list[dict]:
