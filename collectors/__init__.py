@@ -30,6 +30,7 @@ from .water_reservoir import WaterReservoirCollector
 from .river_water_level import RiverWaterLevelCollector
 from .rain_gauge_realtime import RainGaugeRealtimeCollector
 from .groundwater_level import GroundwaterLevelCollector
+from .water_reservoir_daily_ops import WaterReservoirDailyOpsCollector
 
 __all__ = [
     'BaseCollector',
@@ -62,4 +63,5 @@ __all__ = [
     'RiverWaterLevelCollector',
     'RainGaugeRealtimeCollector',
     'GroundwaterLevelCollector',
+    'WaterReservoirDailyOpsCollector',
 ]

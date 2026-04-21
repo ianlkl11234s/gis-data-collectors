@@ -891,6 +891,10 @@ class SupabaseWriter:
         """WRA 即時地下水水位（每 60 分鐘）。"""
         return result.get('data', [])
 
+    def _transform_water_reservoir_daily_ops(self, result: dict, ts: datetime) -> list[dict]:
+        """WRA 水庫每日營運狀況（41568，每日）。"""
+        return result.get('data', [])
+
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
         """upsert 靜態水庫基本資料到 public.water_reservoirs
 
@@ -959,6 +963,7 @@ class SupabaseWriter:
 
     TRANSFORMERS = {
         'groundwater_level': _transform_groundwater_level,
+        'water_reservoir_daily_ops': _transform_water_reservoir_daily_ops,
         'youbike': _transform_youbike,
         'bus': _transform_bus,
         'bus_intercity': _transform_bus_intercity,
@@ -1173,6 +1178,19 @@ class SupabaseWriter:
                 'observed_at', 'collected_at',
             ],
             'upsert_key': 'station_id,observed_at',
+            'upsert_strategy': 'do_nothing',
+        },
+        'water_reservoir_daily_ops': {
+            'history': 'realtime.reservoir_daily_ops',
+            'columns': [
+                'reservoir_id', 'reservoir_name', 'observed_at',
+                'effective_capacity_wan', 'dead_water_level_m', 'normal_water_level_max',
+                'basin_rainfall_mm', 'inflow_wan_m3', 'crossflow_wan_m3',
+                'outflow_discharge_wan', 'outflow_total_wan',
+                'regulatory_discharge_wan', 'outflow_wan',
+                'collected_at',
+            ],
+            'upsert_key': 'reservoir_id,observed_at',
             'upsert_strategy': 'do_nothing',
         },
     }

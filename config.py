@@ -284,6 +284,10 @@ RAIN_GAUGE_REALTIME_INTERVAL = int(os.getenv('RAIN_GAUGE_REALTIME_INTERVAL', '10
 GROUNDWATER_LEVEL_ENABLED = os.getenv('GROUNDWATER_LEVEL_ENABLED', 'false').lower() in ('true', '1', 'yes')
 GROUNDWATER_LEVEL_INTERVAL = int(os.getenv('GROUNDWATER_LEVEL_INTERVAL', '60'))  # 每 60 分鐘（原始每10分鐘更新，但資料量大）
 
+# 水庫每日營運狀況 (WRA OpenData 41568 UUID: 51023e88-..., 無需 API Key)
+WATER_RESERVOIR_DAILY_OPS_ENABLED = os.getenv('WATER_RESERVOIR_DAILY_OPS_ENABLED', 'false').lower() in ('true', '1', 'yes')
+WATER_RESERVOIR_DAILY_OPS_INTERVAL = int(os.getenv('WATER_RESERVOIR_DAILY_OPS_INTERVAL', '1440'))  # 每日一次（官方 09:30 前更新）
+
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')
 MINI_TAIPEI_PUBLISH_TIME = os.getenv('MINI_TAIPEI_PUBLISH_TIME', '07:00')  # 每日發布時間
