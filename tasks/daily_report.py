@@ -217,13 +217,36 @@ class DailyReportTask:
 
         total_objects = stats['total_objects']
         total_gb = stats['total_size_bytes'] / (1024 ** 3)
-        estimated_cost = total_gb * config.S3_PRICE_PER_GB
+
+        # 費用估算：若有 by_storage_class 就分層估，否則 fallback 成 Standard 單一價
+        price_table = getattr(config, 'S3_PRICE_BY_STORAGE_CLASS', None) or {}
+        by_sc = stats.get('by_storage_class') or {}
+        if by_sc and price_table:
+            estimated_cost = sum(
+                (info['size_bytes'] / (1024 ** 3))
+                * price_table.get(sc, config.S3_PRICE_PER_GB)
+                for sc, info in by_sc.items()
+            )
+        else:
+            estimated_cost = total_gb * config.S3_PRICE_PER_GB
 
         parts = [
             f"\n☁️ *S3 儲存* ({config.S3_BUCKET})",
             f"  總計: *{total_objects}* 個物件 ({total_gb:.2f} GB)",
-            f"  估算月費: *${estimated_cost:.2f}* USD",
+            f"  估算月費: *${estimated_cost:.2f}* USD（含 Lifecycle 分層折扣）",
         ]
+
+        # 若有 lifecycle 分層，顯示各 class 的佔比
+        if by_sc and len(by_sc) > 1:
+            sc_items = sorted(by_sc.items(), key=lambda x: x[1]['size_bytes'], reverse=True)
+            tiers = []
+            for sc, info in sc_items:
+                sc_gb = info['size_bytes'] / (1024 ** 3)
+                if sc_gb < 0.01:
+                    continue
+                tiers.append(f"{sc} {sc_gb:.2f}GB")
+            if tiers:
+                parts.append(f"  分層: {' | '.join(tiers)}")
 
         # 按收集器顯示（只顯示前幾大的）
         by_collector = stats['by_collector']

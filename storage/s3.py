@@ -216,13 +216,15 @@ class S3Storage:
             dict: {
                 'total_objects': int,
                 'total_size_bytes': int,
-                'by_collector': {name: {'objects': int, 'size_bytes': int}}
+                'by_collector': {name: {'objects': int, 'size_bytes': int}},
+                'by_storage_class': {class_name: {'objects': int, 'size_bytes': int}}
             }
         """
         stats = {
             'total_objects': 0,
             'total_size_bytes': 0,
-            'by_collector': {}
+            'by_collector': {},
+            'by_storage_class': {},
         }
 
         paginator = self.s3.get_paginator('list_objects_v2')
@@ -237,6 +239,12 @@ class S3Storage:
                     stats['by_collector'][collector] = {'objects': 0, 'size_bytes': 0}
                 stats['by_collector'][collector]['objects'] += 1
                 stats['by_collector'][collector]['size_bytes'] += obj['Size']
+
+                # 按 storage class 分組（供費用估算考慮 lifecycle 折扣）
+                sc = obj.get('StorageClass', 'STANDARD')
+                bucket = stats['by_storage_class'].setdefault(sc, {'objects': 0, 'size_bytes': 0})
+                bucket['objects'] += 1
+                bucket['size_bytes'] += obj['Size']
 
         return stats
 

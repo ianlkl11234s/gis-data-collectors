@@ -195,38 +195,86 @@ curl -H "X-API-Key: your_key" https://your-app.zeabur.app/api/archive/status
 
 ---
 
-## 5. S3 Lifecycle 規則 (進階)
+## 5. S3 Lifecycle 規則
 
-設定 Lifecycle 規則可進一步降低儲存成本。
+> **狀態**：生產 bucket `migu-gis-data-collector` 已套用 rule `tiered-cold-storage`（2026-04-20 啟用）。資料**只分層、不刪除**。
 
-### 建議規則
+### 已套用規則
 
-| 天數 | 儲存類別 | 成本 (相對) |
-|------|----------|-------------|
-| 0-30 天 | S3 Standard | 100% |
-| 30-90 天 | S3 Standard-IA | 60% |
-| 90+ 天 | S3 Glacier Instant | 20% |
+| 物件年齡 | Storage Class | 相對成本 | 動作 |
+|---------|---------------|---------|------|
+| 0–30 天 | `STANDARD` | 100% | 新進資料 |
+| 30–90 天 | `STANDARD_IA` | ~60% | 自動轉 IA |
+| 90+ 天 | `GLACIER_IR` | ~25% | 自動轉 Glacier Instant Retrieval（毫秒存取） |
 
-### 設定步驟
+額外動作：
+- **Abort incomplete multipart uploads**：超過 7 天自動清理（不影響正式資料）
 
-1. 進入 S3 Bucket
-2. 選擇 **Management** 分頁
-3. 點擊 **Create lifecycle rule**
-4. 設定：
-   - **Rule name**: `archive-lifecycle`
-   - **Rule scope**: Apply to all objects
-5. 加入 Lifecycle rule actions：
-   - **Transition current versions**:
-     - 30 天 → Standard-IA
-     - 90 天 → Glacier Instant Retrieval
-6. 點擊 **Create rule**
+### 程式化套用（已使用此方法）
 
-### 成本估算 (100GB 資料)
+於任意服務容器（需有 `S3_*` env vars 與 `boto3`）執行：
 
-| 方案 | 月費 |
-|------|------|
-| 全部 S3 Standard | ~$2.30 |
-| 含 Lifecycle 規則 | ~$1.20 |
+```python
+import boto3, os
+s3 = boto3.client('s3',
+    region_name=os.environ['S3_REGION'],
+    aws_access_key_id=os.environ['S3_ACCESS_KEY'],
+    aws_secret_access_key=os.environ['S3_SECRET_KEY'])
+
+s3.put_bucket_lifecycle_configuration(
+    Bucket=os.environ['S3_BUCKET'],
+    LifecycleConfiguration={
+        'Rules': [{
+            'ID': 'tiered-cold-storage',
+            'Status': 'Enabled',
+            'Filter': {'Prefix': ''},
+            'Transitions': [
+                {'Days': 30, 'StorageClass': 'STANDARD_IA'},
+                {'Days': 90, 'StorageClass': 'GLACIER_IR'},
+            ],
+            'AbortIncompleteMultipartUpload': {'DaysAfterInitiation': 7},
+        }]
+    },
+)
+
+# 驗證
+print(s3.get_bucket_lifecycle_configuration(Bucket=os.environ['S3_BUCKET']))
+```
+
+### AWS Console 替代方案
+
+1. 登入 AWS Console → S3 → `migu-gis-data-collector`
+2. Management 分頁 → **Create lifecycle rule**
+3. Rule name `tiered-cold-storage`、Scope: Apply to all objects
+4. Transitions: 30 天 → Standard-IA、90 天 → Glacier Instant Retrieval
+5. **不要**加 Expiration action（本專案要永久保留）
+6. Create rule
+
+### 成本估算
+
+| 方案 | 100 GB 月費 | 80 GB 實際月費 |
+|------|------------|--------------|
+| 全部 Standard | ~$2.30 | ~$1.84 |
+| 含 tiered-cold-storage | ~$0.58 | ~$0.47 |
+
+**一次性 transition 費用**：每千物件約 $0.01（80k 物件 ≈ $0.80，只發生一次）。
+
+### 驗證實際分層進度
+
+```python
+from collections import Counter
+import boto3, os
+s3 = boto3.client('s3', region_name=os.environ['S3_REGION'],
+    aws_access_key_id=os.environ['S3_ACCESS_KEY'],
+    aws_secret_access_key=os.environ['S3_SECRET_KEY'])
+sc = Counter()
+for p in s3.get_paginator('list_objects_v2').paginate(Bucket=os.environ['S3_BUCKET']):
+    for o in p.get('Contents', []):
+        sc[o.get('StorageClass', 'STANDARD')] += 1
+print(sc)
+```
+
+> AWS 背景作業通常 24–48 小時後才會開始執行首次轉換。
 
 ---
 
