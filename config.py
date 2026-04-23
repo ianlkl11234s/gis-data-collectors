@@ -115,48 +115,97 @@ CONSECUTIVE_ERROR_THRESHOLD = int(os.getenv('CONSECUTIVE_ERROR_THRESHOLD', '3'))
 # 磁碟空間告警門檻（MB）
 DISK_ALERT_THRESHOLD_MB = int(os.getenv('DISK_ALERT_THRESHOLD_MB', '35000'))  # 預設 35GB
 
-# S3 費用估算（USD/GB/月，預設 S3 Standard ap-southeast-2）
+# S3 費用估算（USD/GB/月，ap-southeast-2 2026 定價）
+# S3_PRICE_PER_GB 保留為舊介面（=Standard 價），供 fallback
 S3_PRICE_PER_GB = float(os.getenv('S3_PRICE_PER_GB', '0.025'))
+# 按 storage class 分級估算；未列出的 class 會 fallback 到 STANDARD 價
+# 對應 bucket lifecycle：0-30d STANDARD → 30-90d STANDARD_IA → 90+ GLACIER_IR
+S3_PRICE_BY_STORAGE_CLASS = {
+    'STANDARD': float(os.getenv('S3_PRICE_STANDARD', '0.025')),
+    'STANDARD_IA': float(os.getenv('S3_PRICE_STANDARD_IA', '0.0138')),
+    'ONEZONE_IA': float(os.getenv('S3_PRICE_ONEZONE_IA', '0.011')),
+    'INTELLIGENT_TIERING': float(os.getenv('S3_PRICE_INTELLIGENT_TIERING', '0.025')),
+    'GLACIER_IR': float(os.getenv('S3_PRICE_GLACIER_IR', '0.005')),
+    'GLACIER': float(os.getenv('S3_PRICE_GLACIER', '0.0045')),
+    'DEEP_ARCHIVE': float(os.getenv('S3_PRICE_DEEP_ARCHIVE', '0.002')),
+    'REDUCED_REDUNDANCY': float(os.getenv('S3_PRICE_REDUCED_REDUNDANCY', '0.024')),
+}
 
 # ============================================================
 # 收集器設定
 # ============================================================
+# 每個 collector 的 {PREFIX}_ENABLED / {PREFIX}_INTERVAL 改由 _COLLECTOR_TOGGLES
+# 迴圈生成，降低重複樣板。新增 collector 時：
+#   1. 在 _COLLECTOR_TOGGLES 加一筆 (prefix, default_enabled, default_interval)
+#   2. 對照的 class / required_env 在 collectors/registry.py 定義
+# 特殊變數（*_CITIES、*_AIRPORTS、bbox、憑證等）仍保留個別宣告。
+
+def _env_bool(key: str, default: bool) -> bool:
+    return os.getenv(key, 'true' if default else 'false').lower() in ('true', '1', 'yes')
+
+
+# (prefix, enabled_default, interval_default_minutes)
+_COLLECTOR_TOGGLES = (
+    ('YOUBIKE',                      True,  15),
+    ('WEATHER',                      True,  60),
+    ('VD',                           False, 5),
+    ('FREEWAY_VD',                   True,  10),
+    ('TEMPERATURE',                  True,  60),
+    ('PARKING',                      False, 15),
+    ('BUS',                          True,  2),    # 22 城擴充後預設 2 分鐘
+    ('BUS_INTERCITY',                False, 2),
+    ('TRA_TRAIN',                    True,  2),
+    ('TRA_STATIC',                   True,  1440),
+    ('RAIL_TIMETABLE',               True,  1440),
+    ('SHIP_TDX',                     False, 2),
+    ('SHIP_AIS',                     True,  10),
+    ('FLIGHT_FR24',                  False, 5),
+    ('FLIGHT_FR24_ZONE',             False, 5),
+    ('FLIGHT_OPENSKY',               False, 5),
+    ('EARTHQUAKE',                   True,  1440),
+    ('SATELLITE',                    False, 120),  # TLE 每 8-24h 更新，2 小時足夠
+    ('LAUNCH',                       False, 5),
+    ('CWA_SATELLITE',                True,  10),
+    ('NCDR_ALERTS',                  True,  15),
+    ('FOURSQUARE_POI',               False, 43200),  # 每 30 天
+    ('AIR_QUALITY_IMAGERY',          False, 60),
+    ('AIR_QUALITY',                  False, 60),
+    ('AIR_QUALITY_MICROSENSORS',     False, 5),
+    ('WATER_RESERVOIR',              False, 60),
+    ('RIVER_WATER_LEVEL',            False, 10),
+    ('RAIN_GAUGE_REALTIME',          False, 10),
+    ('GROUNDWATER_LEVEL',            False, 60),  # 原始每 10 分鐘更新，但資料量大
+    ('WATER_RESERVOIR_DAILY_OPS',    False, 1440),  # 官方 09:30 前更新
+)
+
+for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
+    globals()[f'{_prefix}_ENABLED'] = _env_bool(f'{_prefix}_ENABLED', _en_default)
+    globals()[f'{_prefix}_INTERVAL'] = int(os.getenv(f'{_prefix}_INTERVAL', str(_intv_default)))
+
+# ------------------------------------------------------------
+# 各 collector 的「額外設定」（city list、API 金鑰、參數）
+# ------------------------------------------------------------
 
 # YouBike
-YOUBIKE_ENABLED = os.getenv('YOUBIKE_ENABLED', 'true').lower() in ('true', '1', 'yes')
 YOUBIKE_CITIES = os.getenv('YOUBIKE_CITIES', 'Taipei,NewTaipei,Taoyuan').split(',')
-YOUBIKE_INTERVAL = int(os.getenv('YOUBIKE_INTERVAL', '15'))
 
-# 氣象
-WEATHER_ENABLED = os.getenv('WEATHER_ENABLED', 'true').lower() in ('true', '1', 'yes')
-WEATHER_INTERVAL = int(os.getenv('WEATHER_INTERVAL', '60'))
+# Weather
 WEATHER_STATIONS = os.getenv('WEATHER_STATIONS', '').split(',') if os.getenv('WEATHER_STATIONS') else []
 
 # VD 車輛偵測器（縣市道路）
-VD_ENABLED = os.getenv('VD_ENABLED', 'false').lower() in ('true', '1', 'yes')  # 預設停用
 VD_CITIES = os.getenv('VD_CITIES', 'Taipei,NewTaipei').split(',')
-VD_INTERVAL = int(os.getenv('VD_INTERVAL', '5'))
 
-# 國道即時車流 + 壅塞 (TDX Freeway VD/Live)
-FREEWAY_VD_ENABLED = os.getenv('FREEWAY_VD_ENABLED', 'true').lower() in ('true', '1', 'yes')
-FREEWAY_VD_INTERVAL = int(os.getenv('FREEWAY_VD_INTERVAL', '10'))  # 每 10 分鐘
-
-# 溫度網格 (CWA O-A0038-003)
-TEMPERATURE_ENABLED = os.getenv('TEMPERATURE_ENABLED', 'true').lower() in ('true', '1', 'yes')
-TEMPERATURE_INTERVAL = int(os.getenv('TEMPERATURE_INTERVAL', '60'))
+# 溫度網格資料集編號（CWA）
 TEMPERATURE_DATASET = 'O-A0038-003'  # 小時溫度觀測分析格點資料
 
-# 路邊停車 (TDX Parking API)
-PARKING_ENABLED = os.getenv('PARKING_ENABLED', 'false').lower() in ('true', '1', 'yes')  # 預設停用
+# 路邊停車
 PARKING_CITIES = os.getenv('PARKING_CITIES', 'Taipei,NewTaipei,Taichung').split(',')
-PARKING_INTERVAL = int(os.getenv('PARKING_INTERVAL', '15'))
 
-# 公車即時位置 (TDX Bus RealTimeByFrequency)
+# 公車即時位置（TDX Bus RealTimeByFrequency）
 # 預設涵蓋全台 22 縣市（6 直轄市 + 3 省轄市 + 10 縣 + 3 離島縣）
-# 調整配額：22 城 × 2 分鐘間隔 = 15,840 req/日，超過 TDX 免費 10k 日配額
-#   - 若使用免費 key：調高 BUS_INTERVAL 至 3-5 分鐘，或縮減 BUS_CITIES
-#   - 若已申請付費 key（1M/日）：預設即可
-BUS_ENABLED = os.getenv('BUS_ENABLED', 'true').lower() in ('true', '1', 'yes')
+# 調整配額：22 城 × 2 分鐘 = 15,840 req/日，超過 TDX 免費 10k 日配額
+#   - 免費 key：調高 BUS_INTERVAL 至 3-5 分鐘，或縮減 BUS_CITIES
+#   - 付費 key（1M/日）：預設即可
 BUS_CITIES_DEFAULT = (
     # 直轄市 (6)
     'Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung,'
@@ -169,124 +218,52 @@ BUS_CITIES_DEFAULT = (
     'PenghuCounty,KinmenCounty,LienchiangCounty'
 )
 BUS_CITIES = os.getenv('BUS_CITIES', BUS_CITIES_DEFAULT).split(',')
-BUS_INTERVAL = int(os.getenv('BUS_INTERVAL', '2'))  # 每 2 分鐘（22 城擴充後預設值）
 # 單一 collector 內部並行抓取的城市數上限（避免超出 TDX rate limit）
 BUS_FETCH_WORKERS = int(os.getenv('BUS_FETCH_WORKERS', '5'))
 
-# 公路客運 / 國道客運 (TDX Bus RealTimeByFrequency/InterCity)
-BUS_INTERCITY_ENABLED = os.getenv('BUS_INTERCITY_ENABLED', 'false').lower() in ('true', '1', 'yes')
-BUS_INTERCITY_INTERVAL = int(os.getenv('BUS_INTERCITY_INTERVAL', '2'))  # 每 2 分鐘
-
-# 台鐵 (TDX TRA API)
-TRA_TRAIN_ENABLED = os.getenv('TRA_TRAIN_ENABLED', 'true').lower() in ('true', '1', 'yes')
-TRA_TRAIN_INTERVAL = int(os.getenv('TRA_TRAIN_INTERVAL', '2'))  # 即時列車位置，每 2 分鐘
-TRA_STATIC_ENABLED = os.getenv('TRA_STATIC_ENABLED', 'true').lower() in ('true', '1', 'yes')
-TRA_STATIC_INTERVAL = int(os.getenv('TRA_STATIC_INTERVAL', '1440'))  # 靜態資料，每日一次
-
-# 台鐵 + 高鐵每日時刻表歸檔（DailyTimetable，含停駛/加班車）
-RAIL_TIMETABLE_ENABLED = os.getenv('RAIL_TIMETABLE_ENABLED', 'true').lower() in ('true', '1', 'yes')
-RAIL_TIMETABLE_INTERVAL = int(os.getenv('RAIL_TIMETABLE_INTERVAL', '1440'))  # 每日一次
-
-# 航運 (Ship)
-SHIP_TDX_ENABLED = os.getenv('SHIP_TDX_ENABLED', 'false').lower() in ('true', '1', 'yes')  # TDX 國內航線
-SHIP_TDX_INTERVAL = int(os.getenv('SHIP_TDX_INTERVAL', '2'))  # 每 2 分鐘
-SHIP_AIS_ENABLED = os.getenv('SHIP_AIS_ENABLED', 'true').lower() in ('true', '1', 'yes')  # 航港局 AIS
-SHIP_AIS_INTERVAL = int(os.getenv('SHIP_AIS_INTERVAL', '10'))  # 每 10 分鐘
-
 # FlightRadar24 航班軌跡
-FLIGHT_FR24_ENABLED = os.getenv('FLIGHT_FR24_ENABLED', 'false').lower() in ('true', '1', 'yes')
-FLIGHT_FR24_INTERVAL = int(os.getenv('FLIGHT_FR24_INTERVAL', '5'))  # 每 5 分鐘
 FLIGHT_FR24_AIRPORTS = os.getenv('FLIGHT_FR24_AIRPORTS', 'RCTP,RCSS,RCKH,RCMQ,RCNN,RCYU,RCBS,RCFN,RCQC,RCFG,RCMT,RCLY,RCKU,RCKW,RCGI,RCCM,RCWA').split(',')
 FLIGHT_FR24_TRAIL_DELAY = float(os.getenv('FLIGHT_FR24_TRAIL_DELAY', '3'))  # trail 請求間隔秒數
 
-# FR24 Zone 空域快照（公開 feed，無需 API key）
-FLIGHT_FR24_ZONE_ENABLED = os.getenv('FLIGHT_FR24_ZONE_ENABLED', 'false').lower() in ('true', '1', 'yes')
-FLIGHT_FR24_ZONE_INTERVAL = int(os.getenv('FLIGHT_FR24_ZONE_INTERVAL', '5'))
+# FR24 Zone 空域快照 bbox（台灣周邊）
 FLIGHT_FR24_ZONE_LAMIN = float(os.getenv('FLIGHT_FR24_ZONE_LAMIN', '20.8'))
 FLIGHT_FR24_ZONE_LAMAX = float(os.getenv('FLIGHT_FR24_ZONE_LAMAX', '27.5'))
 FLIGHT_FR24_ZONE_LOMIN = float(os.getenv('FLIGHT_FR24_ZONE_LOMIN', '116.2'))
 FLIGHT_FR24_ZONE_LOMAX = float(os.getenv('FLIGHT_FR24_ZONE_LOMAX', '124.5'))
 
 # OpenSky 空域快照
-FLIGHT_OPENSKY_ENABLED = os.getenv('FLIGHT_OPENSKY_ENABLED', 'false').lower() in ('true', '1', 'yes')
-FLIGHT_OPENSKY_INTERVAL = int(os.getenv('FLIGHT_OPENSKY_INTERVAL', '5'))  # 每 5 分鐘
 FLIGHT_OPENSKY_CLIENT_ID = os.getenv('FLIGHT_OPENSKY_CLIENT_ID', '')      # OAuth2（新帳號）
 FLIGHT_OPENSKY_CLIENT_SECRET = os.getenv('FLIGHT_OPENSKY_CLIENT_SECRET', '')
 FLIGHT_OPENSKY_USERNAME = os.getenv('FLIGHT_OPENSKY_USERNAME', '')        # Basic Auth（舊帳號）
 FLIGHT_OPENSKY_PASSWORD = os.getenv('FLIGHT_OPENSKY_PASSWORD', '')
 
-# 地震報告 (CWA Earthquake API)
-EARTHQUAKE_ENABLED = os.getenv('EARTHQUAKE_ENABLED', 'true').lower() in ('true', '1', 'yes')
-EARTHQUAKE_INTERVAL = int(os.getenv('EARTHQUAKE_INTERVAL', '1440'))  # 每日一次 (1440 分鐘)
-
-# 衛星軌道追蹤 (Space-Track.org GP + SGP4，需免費帳號)
-# 註冊：https://www.space-track.org/
+# 衛星軌道追蹤 — Space-Track 憑證
 # 改用 Space-Track 原因：Zeabur 出口 IP 被 CelesTrak 封鎖（2026-04 起），切換到源頭資料供應者
-SATELLITE_ENABLED = os.getenv('SATELLITE_ENABLED', 'false').lower() in ('true', '1', 'yes')
-SATELLITE_INTERVAL = int(os.getenv('SATELLITE_INTERVAL', '120'))  # 每 2 小時（TLE 每 8-24 小時更新，2 小時足夠）
+# 註冊：https://www.space-track.org/
 SPACETRACK_USERNAME = os.getenv('SPACETRACK_USERNAME', '')
 SPACETRACK_PASSWORD = os.getenv('SPACETRACK_PASSWORD', '')
 
-# 太空發射 (Launch Library 2，免費 15 req/hr，付費可提升)
-LAUNCH_ENABLED = os.getenv('LAUNCH_ENABLED', 'false').lower() in ('true', '1', 'yes')
-LAUNCH_INTERVAL = int(os.getenv('LAUNCH_INTERVAL', '5'))  # 每 5 分鐘一次（每次只做 1 個 API call，不阻塞其他收集器）
+# 太空發射 (Launch Library 2)
 LAUNCH_API_TOKEN = os.getenv('LAUNCH_API_TOKEN', '')  # Patreon 付費 token（可選）
 
-# CWA 衛星雲圖 + 雷達回波 PNG (O-C0042-004 / O-A0058-005，需 CWA API Key)
-CWA_SATELLITE_ENABLED = os.getenv('CWA_SATELLITE_ENABLED', 'true').lower() in ('true', '1', 'yes')
-CWA_SATELLITE_INTERVAL = int(os.getenv('CWA_SATELLITE_INTERVAL', '10'))  # 每 10 分鐘
+# CWA 衛星雲圖 + 雷達回波 PNG
 CWA_SATELLITE_DATASETS = (
     os.getenv('CWA_SATELLITE_DATASETS', '').split(',')
     if os.getenv('CWA_SATELLITE_DATASETS') else []
 )  # 空 list = 使用 collector 內的 DEFAULT_DATASETS
 
-# Foursquare OS Places POI (HuggingFace gated dataset，需 HF_TOKEN)
-FOURSQUARE_POI_ENABLED = os.getenv('FOURSQUARE_POI_ENABLED', 'false').lower() in ('true', '1', 'yes')
-FOURSQUARE_POI_INTERVAL = int(os.getenv('FOURSQUARE_POI_INTERVAL', '43200'))  # 每 30 天 (43200 分鐘)
+# Foursquare OS Places POI
 FOURSQUARE_POI_RELEASE_DT = os.getenv('FOURSQUARE_POI_RELEASE_DT', '')  # 指定 release 日期，如 2026-03-18
 HF_TOKEN = os.getenv('HF_TOKEN', '')  # HuggingFace access token
 
-# NCDR 災害示警 (CAP feed，無需 API key)
-NCDR_ALERTS_ENABLED = os.getenv('NCDR_ALERTS_ENABLED', 'true').lower() in ('true', '1', 'yes')
-NCDR_ALERTS_INTERVAL = int(os.getenv('NCDR_ALERTS_INTERVAL', '15'))  # 每 15 分鐘
-
-# 空氣品質 - airtw 全台色階圖 PNG (每小時，無需 API key)
-# 預設 false：多實例部署時只在指定實例開啟，避免重複寫入
-AIR_QUALITY_IMAGERY_ENABLED = os.getenv('AIR_QUALITY_IMAGERY_ENABLED', 'false').lower() in ('true', '1', 'yes')
-AIR_QUALITY_IMAGERY_INTERVAL = int(os.getenv('AIR_QUALITY_IMAGERY_INTERVAL', '60'))  # 每 60 分鐘
+# 空氣品質 - airtw 全台色階圖 PNG
 AIR_QUALITY_IMAGERY_PRODUCTS = (
     os.getenv('AIR_QUALITY_IMAGERY_PRODUCTS', '').split(',')
     if os.getenv('AIR_QUALITY_IMAGERY_PRODUCTS') else []
 )  # 空 list = 使用 DEFAULT_PRODUCTS (AQI/PM25/PM10/O3/NO2)
 
-# 空氣品質 - 環境部 77 站觀測 AQX_P_432 (每小時，需 MOENV_API_KEY)
-AIR_QUALITY_ENABLED = os.getenv('AIR_QUALITY_ENABLED', 'false').lower() in ('true', '1', 'yes')
-AIR_QUALITY_INTERVAL = int(os.getenv('AIR_QUALITY_INTERVAL', '60'))
-
-# 空氣品質 - LASS AirBox 微型感測器 (每 5 分鐘，無需 API key)
-AIR_QUALITY_MICROSENSORS_ENABLED = os.getenv('AIR_QUALITY_MICROSENSORS_ENABLED', 'false').lower() in ('true', '1', 'yes')
-AIR_QUALITY_MICROSENSORS_INTERVAL = int(os.getenv('AIR_QUALITY_MICROSENSORS_INTERVAL', '5'))
+# 空氣品質 - LASS AirBox 微型感測器
 AIR_QUALITY_MICROSENSORS_PM25_OUTLIER = float(os.getenv('AIR_QUALITY_MICROSENSORS_PM25_OUTLIER', '500'))  # μg/m³ 超過此值視為異常
-
-# 水庫水情 (WRA 水利署 OpenData，無需 API Key)
-WATER_RESERVOIR_ENABLED = os.getenv('WATER_RESERVOIR_ENABLED', 'false').lower() in ('true', '1', 'yes')
-WATER_RESERVOIR_INTERVAL = int(os.getenv('WATER_RESERVOIR_INTERVAL', '60'))  # 每 60 分鐘
-
-# 河川即時水位 (WRA OpenData UUID: 73c4c3de-..., 無需 API Key)
-RIVER_WATER_LEVEL_ENABLED = os.getenv('RIVER_WATER_LEVEL_ENABLED', 'false').lower() in ('true', '1', 'yes')
-RIVER_WATER_LEVEL_INTERVAL = int(os.getenv('RIVER_WATER_LEVEL_INTERVAL', '10'))  # 每 10 分鐘
-
-# CWA 即時雨量站 (O-A0002-001，需 CWA_API_KEY)
-RAIN_GAUGE_REALTIME_ENABLED = os.getenv('RAIN_GAUGE_REALTIME_ENABLED', 'false').lower() in ('true', '1', 'yes')
-RAIN_GAUGE_REALTIME_INTERVAL = int(os.getenv('RAIN_GAUGE_REALTIME_INTERVAL', '10'))  # 每 10 分鐘
-
-# 地下水水位即時 (WRA OpenData UUID: 58a7aa39-..., 無需 API Key)
-GROUNDWATER_LEVEL_ENABLED = os.getenv('GROUNDWATER_LEVEL_ENABLED', 'false').lower() in ('true', '1', 'yes')
-GROUNDWATER_LEVEL_INTERVAL = int(os.getenv('GROUNDWATER_LEVEL_INTERVAL', '60'))  # 每 60 分鐘（原始每10分鐘更新，但資料量大）
-
-# 水庫每日營運狀況 (WRA OpenData 41568 UUID: 51023e88-..., 無需 API Key)
-WATER_RESERVOIR_DAILY_OPS_ENABLED = os.getenv('WATER_RESERVOIR_DAILY_OPS_ENABLED', 'false').lower() in ('true', '1', 'yes')
-WATER_RESERVOIR_DAILY_OPS_INTERVAL = int(os.getenv('WATER_RESERVOIR_DAILY_OPS_INTERVAL', '1440'))  # 每日一次（官方 09:30 前更新）
 
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')
