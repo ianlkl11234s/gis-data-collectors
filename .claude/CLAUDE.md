@@ -25,18 +25,25 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 ### 新增 Collector 的必要步驟（跨 repo）
 
-每次新增一個 collector，**必須同步修改以下檔案**：
+重構後（registry + config dataclass + TABLE_MAP 拆出），每次新增需改以下檔案：
 
 | 步驟 | Repo | 檔案 | 說明 |
 |------|------|------|------|
 | 1 | gis-platform | `migrations/NNN_{name}.sql` | 建 Supabase 表 |
 | 2 | data-collectors | `collectors/{name}.py` | Collector 實作（繼承 BaseCollector） |
-| 3 | data-collectors | `collectors/__init__.py` | 註冊 import + __all__ |
-| 4 | data-collectors | `config.py` | `{NAME}_ENABLED` + `{NAME}_INTERVAL` + API keys |
-| 5 | data-collectors | `main.py` | 排程註冊區段 + BACKGROUND_COLLECTORS（若耗時） |
-| 6 | data-collectors | `storage/supabase_writer.py` | `_transform_{name}` + `TRANSFORMERS` + `TABLE_MAP` |
+| 3 | data-collectors | `collectors/registry.py` | `COLLECTOR_REGISTRY` 加一筆（class + display_name + config_prefix + required_env） |
+| 4 | data-collectors | `config.py` | `_COLLECTOR_TOGGLES` 加一筆 (prefix, enabled_default, interval_default)；如需額外變數（CITIES/AIRPORTS/API Key）另外宣告 |
+| 5 | data-collectors | `storage/supabase_tables.py` | 若需寫 Supabase，加一筆 `TABLE_MAP[name]` |
+| 6 | data-collectors | `storage/supabase_writer.py` | 若需寫 Supabase，加 `_transform_{name}` 並註冊到 `TRANSFORMERS` |
 | 7 | gis-platform | `docs/data-inventory.md` | 更新資料清冊 |
 | 8 | taipei-gis-analytics | `docs/data-sources.md` | 更新 pipeline 狀態 |
+
+Registry + toggle list 自動處理：
+- `config.XXX_ENABLED` / `config.XXX_INTERVAL` 變數（來自 `_COLLECTOR_TOGGLES`）
+- `collectors/__init__.py` 的 import / `__all__`（來自 `COLLECTOR_REGISTRY`）
+- `main.py` 的啟動迴圈（走 registry）
+
+**Transform 邏輯仍在 `storage/supabase_writer.py` 內**（下放到 collector 尚未實作）。
 
 **漏掉任何一步都會造成斷鏈。**
 
@@ -56,23 +63,27 @@ class MyCollector(BaseCollector):
         return {'data': [...], 'count': N}
 ```
 
-### 排程模型
+### 排程模型（Phase 1 後統一）
 
-| 類型 | 方式 | 範例 |
-|------|------|------|
-| 前景（預設） | 主 thread `schedule` 庫輪詢 | youbike, bus, weather |
-| 背景 | 獨立 daemon thread | flight_fr24, foursquare_poi, satellite |
+所有 collector 都交由 `CollectorScheduler`（`scheduler.py`）以 `ThreadPoolExecutor` 平行執行：
 
-**耗時超過 1 分鐘的 collector 必須放到 `BACKGROUND_COLLECTORS`**，否則會阻塞公車等高頻 collector。
+- **`schedule` 套件只負責觸發**（cron-like 時間排程）
+- **CollectorScheduler 負責執行**：每個 collector 獨立線程、不互相阻塞
+- **Skip-if-running**：同一 collector 上一輪還沒跑完，下個 tick 自動 skip 並記錄 warning
+- **Pool 大小**：`max(10, collector 數量 + 2)`
+
+舊的「前景主 thread + 背景 daemon thread」雙軌模型、以及 `BACKGROUND_COLLECTORS` 集合已淘汰。耗時的 collector（如 `flight_fr24`, `foursquare_poi`, `satellite`, `cwa_satellite`）會在 pool 內自己一條 thread 跑完，不影響其他人。
 
 ### Supabase 寫入流程
 
 ```
 collect() → BaseCollector.run() → supabase_writer.write()
-                                    ├─ _transform_{name}()  → records
-                                    └─ _write_to_db()       → INSERT/UPSERT
+                                    ├─ _transform_{name}()                          → records
+                                    │    （在 SupabaseWriter class 內，TRANSFORMERS dispatch）
+                                    └─ _write_to_db()                               → INSERT/UPSERT
                                          ├─ TABLE_MAP['history']  → 歷史分區表
                                          └─ TABLE_MAP['current']  → 最新狀態表
+                                           （TABLE_MAP 在 storage/supabase_tables.py）
 ```
 
 ### 特殊 TABLE_MAP 模式
@@ -98,7 +109,7 @@ collect() → BaseCollector.run() → supabase_writer.write()
 ## 開發注意事項
 
 1. **新 collector 預設 ENABLED=false**，避免部署後立即啟動
-2. **背景 thread**：長時間執行的 collector 必須加入 `BACKGROUND_COLLECTORS`
+2. **排程**：無須特別標記，pool 內每個 collector 都獨立一條 thread；耗時 collector 記得設 `COLLECT_TIMEOUT`（只是觀察值，不強制中斷）
 3. **SupabaseWriter 是單例**，所有 collector 共用，內部有 `RLock` 保護
 4. **Buffer 機制**：DB 寫入失敗會暫存到 `data/buffer/`，每 5 分鐘重試
 5. **測試**：本地 `python3 main.py` 可執行，只要有 `.env`
