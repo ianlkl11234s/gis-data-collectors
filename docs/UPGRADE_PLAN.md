@@ -3,6 +3,9 @@
 > 目標：為即將大量新增的 collector（MOENV 環境資料、各縣市公車等）做好架構準備，
 > 確保互相不阻塞、有超時保護、資料收集狀況可追溯。
 
+**狀態：✅ 已完成（2026-04-16 規劃，2026-04-16 落地；後續於 2026-04-23 再做 registry / config / TABLE_MAP 拆出）**
+本文件保留為歷史紀錄，勿依此判斷當前架構（以 `README.md` 與 `.claude/CLAUDE.md` 為準）。
+
 最後更新：2026-04-16
 
 ---
@@ -218,11 +221,21 @@ Phase 1 首次部署後發現 **22 城市公車 17 個被 TDX 429** 擋下。
 
 ## 九、執行順序
 
-1. [ ] 建立 `scheduler.py`
-2. [ ] 改 `collectors/base.py` 加 timeout class attribute
-3. [ ] 改 `collectors/bus.py` 加城市內部平行抓取
-4. [ ] 改 `config.py` 擴充 BUS_CITIES、新增 BUS_FETCH_WORKERS
-5. [ ] 改 `main.py` 移除 BACKGROUND_COLLECTORS、改用 scheduler.submit
-6. [ ] 改 `.env.example` 補完 BUS_* 說明
-7. [ ] 本地驗證
-8. [ ] 部署
+1. [x] 建立 `scheduler.py`
+2. [x] 改 `collectors/base.py` 加 timeout class attribute（`COLLECT_TIMEOUT`）
+3. [x] 改 `collectors/bus.py` 加城市內部平行抓取
+4. [x] 改 `config.py` 擴充 BUS_CITIES、新增 BUS_FETCH_WORKERS
+5. [x] 改 `main.py` 移除 BACKGROUND_COLLECTORS、改用 scheduler.submit
+6. [x] 改 `.env.example` 補完 BUS_* 說明
+7. [x] 本地驗證
+8. [x] 部署
+
+## 十、Phase 2（2026-04-23 完成）
+
+Phase 1 之後的延伸重構，進一步降低樣板：
+
+1. [x] `collectors/registry.py` — `COLLECTOR_REGISTRY` 集中註冊 30 個 collector 的 class / display_name / config_prefix / required_env
+2. [x] `main.py` 的 `run_collectors()` 改為 registry 迴圈（644 → 309 行）
+3. [x] `config.py` 的 `_COLLECTOR_TOGGLES` 迴圈生成 `*_ENABLED/_INTERVAL`，砍掉 30 組樣板
+4. [x] `storage/supabase_tables.py` 拆出 `TABLE_MAP`（writer 1477 → 1278 行）
+5. [x] `tasks/daily_report.py` S3 費用估算按 Lifecycle storage class 分層
