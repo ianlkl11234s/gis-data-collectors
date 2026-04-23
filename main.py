@@ -17,383 +17,48 @@ import schedule
 
 import config
 from scheduler import get_scheduler
-from collectors import (
-    YouBikeCollector,
-    WeatherCollector,
-    VDCollector,
-    TemperatureGridCollector,
-    ParkingCollector,
-    TRATrainCollector,
-    TRAStaticCollector,
-    RailTimetableCollector,
-    ShipTDXCollector,
-    ShipAISCollector,
-    FlightFR24Collector,
-    FlightFR24ZoneCollector,
-    FlightOpenSkyCollector,
-    BusCollector,
-    BusIntercityCollector,
-    FreewayVDCollector,
-    EarthquakeCollector,
-    SatelliteCollector,
-    LaunchCollector,
-    NCDRAlertsCollector,
-    CWASatelliteCollector,
-    FoursquarePOICollector,
-    AirQualityImageryCollector,
-    AirQualityCollector,
-    AirQualityMicroSensorCollector,
-    WaterReservoirCollector,
-    RiverWaterLevelCollector,
-    RainGaugeRealtimeCollector,
-    GroundwaterLevelCollector,
-    WaterReservoirDailyOpsCollector,
-)
+from collectors.registry import COLLECTOR_REGISTRY
 from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
 
 
+def _init_collector_from_entry(entry, first: bool) -> "BaseCollector | None":
+    """依 registry entry 初始化單一 collector，並沿用原本 main.py 的啟動訊息格式。
+
+    Returns:
+        collector 實例（成功時）或 None（停用、缺 key、初始化失敗）
+    """
+    prefix = entry.config_prefix
+    display = entry.display_name
+    enabled = getattr(config, f"{prefix}_ENABLED", False)
+    lead = "\n" if first else ""
+
+    if not enabled:
+        print(f"{lead}⏸️  {display}已停用 ({prefix}_ENABLED=false)")
+        return None
+
+    missing = [k for k in entry.required_env if not getattr(config, k, None)]
+    if missing:
+        # 目前所有 entry 只會有 1 個 required_env，但保留逗號串接以利擴充
+        print(f"{lead}⚠️  {', '.join(missing)} 未設定，跳過 {display}")
+        return None
+
+    try:
+        c = entry.cls()
+        print(f"{lead}✓ {display} (每 {c.interval_minutes} 分鐘)")
+        return c
+    except Exception as e:
+        print(f"{lead}✗ {display}初始化失敗: {e}")
+        return None
+
+
 def run_collectors():
-    """執行收集器排程"""
-    # 初始化收集器
+    """依 COLLECTOR_REGISTRY 初始化所有 collector，並交給 CollectorScheduler 排程"""
     collectors = []
-
-    # YouBike 收集器
-    if config.YOUBIKE_ENABLED:
-        try:
-            youbike = YouBikeCollector()
-            collectors.append(youbike)
-            print(f"\n✓ YouBike 收集器 (每 {youbike.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"\n✗ YouBike 收集器初始化失敗: {e}")
-    else:
-        print("\n⏸️  YouBike 收集器已停用 (YOUBIKE_ENABLED=false)")
-
-    # Weather 收集器
-    if config.WEATHER_ENABLED and config.CWA_API_KEY:
-        try:
-            weather = WeatherCollector()
-            collectors.append(weather)
-            print(f"✓ Weather 收集器 (每 {weather.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Weather 收集器初始化失敗: {e}")
-    elif not config.WEATHER_ENABLED:
-        print("⏸️  Weather 收集器已停用 (WEATHER_ENABLED=false)")
-    else:
-        print("⚠️  CWA_API_KEY 未設定，跳過 Weather 收集器")
-
-    # VD 車輛偵測器收集器
-    if config.VD_ENABLED:
-        try:
-            vd = VDCollector()
-            collectors.append(vd)
-            print(f"✓ VD 收集器 (每 {vd.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ VD 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  VD 收集器已停用 (VD_ENABLED=false)")
-
-    # 國道即時車流 + 壅塞收集器 (需要 TDX API)
-    if config.FREEWAY_VD_ENABLED:
-        try:
-            freeway_vd = FreewayVDCollector()
-            collectors.append(freeway_vd)
-            print(f"✓ Freeway VD 收集器 (每 {freeway_vd.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Freeway VD 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Freeway VD 收集器已停用 (FREEWAY_VD_ENABLED=false)")
-
-    # 溫度網格收集器 (需要 CWA API Key)
-    if config.TEMPERATURE_ENABLED and config.CWA_API_KEY:
-        try:
-            temperature = TemperatureGridCollector()
-            collectors.append(temperature)
-            print(f"✓ Temperature Grid 收集器 (每 {temperature.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Temperature Grid 收集器初始化失敗: {e}")
-    elif not config.TEMPERATURE_ENABLED:
-        print("⏸️  Temperature Grid 收集器已停用 (TEMPERATURE_ENABLED=false)")
-
-    # 路邊停車收集器 (需要 TDX API)
-    if config.PARKING_ENABLED:
-        try:
-            parking = ParkingCollector()
-            collectors.append(parking)
-            print(f"✓ Parking 收集器 (每 {parking.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Parking 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Parking 收集器已停用 (PARKING_ENABLED=false)")
-
-    # 公車即時位置收集器 (需要 TDX API)
-    if config.BUS_ENABLED:
-        try:
-            bus = BusCollector()
-            collectors.append(bus)
-            print(f"✓ Bus 收集器 (每 {bus.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Bus 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Bus 收集器已停用 (BUS_ENABLED=false)")
-
-    # 公路客運 / 國道客運收集器 (需要 TDX API)
-    if config.BUS_INTERCITY_ENABLED:
-        try:
-            bus_intercity = BusIntercityCollector()
-            collectors.append(bus_intercity)
-            print(f"✓ Bus InterCity 收集器 (每 {bus_intercity.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Bus InterCity 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Bus InterCity 收集器已停用 (BUS_INTERCITY_ENABLED=false)")
-
-    # 台鐵即時列車位置收集器 (需要 TDX API)
-    if config.TRA_TRAIN_ENABLED:
-        try:
-            tra_train = TRATrainCollector()
-            collectors.append(tra_train)
-            print(f"✓ TRA Train 收集器 (每 {tra_train.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ TRA Train 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  TRA Train 收集器已停用 (TRA_TRAIN_ENABLED=false)")
-
-    # 台鐵靜態資料收集器 (需要 TDX API，每日一次)
-    if config.TRA_STATIC_ENABLED:
-        try:
-            tra_static = TRAStaticCollector()
-            collectors.append(tra_static)
-            print(f"✓ TRA Static 收集器 (每 {tra_static.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ TRA Static 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  TRA Static 收集器已停用 (TRA_STATIC_ENABLED=false)")
-
-    # 台鐵 + 高鐵每日時刻表歸檔（需要 TDX API）
-    if config.RAIL_TIMETABLE_ENABLED:
-        try:
-            rail_tt = RailTimetableCollector()
-            collectors.append(rail_tt)
-            print(f"✓ Rail Timetable 收集器 (每 {rail_tt.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Rail Timetable 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Rail Timetable 收集器已停用 (RAIL_TIMETABLE_ENABLED=false)")
-
-    # TDX 國內航線船位收集器 (需要 TDX API)
-    if config.SHIP_TDX_ENABLED:
-        try:
-            ship_tdx = ShipTDXCollector()
-            collectors.append(ship_tdx)
-            print(f"✓ Ship TDX 收集器 (每 {ship_tdx.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Ship TDX 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Ship TDX 收集器已停用 (SHIP_TDX_ENABLED=false)")
-
-    # 航港局 AIS 船位收集器
-    if config.SHIP_AIS_ENABLED:
-        try:
-            ship_ais = ShipAISCollector()
-            collectors.append(ship_ais)
-            print(f"✓ Ship AIS 收集器 (每 {ship_ais.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Ship AIS 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Ship AIS 收集器已停用 (SHIP_AIS_ENABLED=false)")
-
-    # FlightRadar24 航班軌跡收集器
-    if config.FLIGHT_FR24_ENABLED:
-        try:
-            flight_fr24 = FlightFR24Collector()
-            collectors.append(flight_fr24)
-            print(f"✓ Flight FR24 收集器 (每 {flight_fr24.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Flight FR24 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Flight FR24 收集器已停用 (FLIGHT_FR24_ENABLED=false)")
-
-    # FR24 Zone 空域快照收集器
-    if config.FLIGHT_FR24_ZONE_ENABLED:
-        try:
-            fr24_zone = FlightFR24ZoneCollector()
-            collectors.append(fr24_zone)
-            print(f"✓ FR24 Zone 收集器 (每 {fr24_zone.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ FR24 Zone 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  FR24 Zone 收集器已停用 (FLIGHT_FR24_ZONE_ENABLED=false)")
-
-    # 地震報告收集器 (需要 CWA API Key，每日一次)
-    if config.EARTHQUAKE_ENABLED and config.CWA_API_KEY:
-        try:
-            earthquake = EarthquakeCollector()
-            collectors.append(earthquake)
-            print(f"✓ Earthquake 收集器 (每 {earthquake.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Earthquake 收集器初始化失敗: {e}")
-    elif not config.EARTHQUAKE_ENABLED:
-        print("⏸️  Earthquake 收集器已停用 (EARTHQUAKE_ENABLED=false)")
-    else:
-        print("⚠️  CWA_API_KEY 未設定，跳過 Earthquake 收集器")
-
-    # OpenSky 空域快照收集器
-    if config.FLIGHT_OPENSKY_ENABLED:
-        try:
-            opensky_collector = FlightOpenSkyCollector()
-            collectors.append(opensky_collector)
-            print(f"✓ OpenSky 收集器 (每 {opensky_collector.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ OpenSky 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  OpenSky 收集器已停用 (FLIGHT_OPENSKY_ENABLED=false)")
-
-    # 衛星軌道追蹤收集器（CelesTrak GP + SGP4，免註冊）
-    if config.SATELLITE_ENABLED:
-        try:
-            satellite = SatelliteCollector()
-            collectors.append(satellite)
-            print(f"✓ Satellite 收集器 (每 {satellite.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Satellite 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Satellite 收集器已停用 (SATELLITE_ENABLED=false)")
-
-    # 太空發射收集器（Launch Library 2，免費 API）
-    if config.LAUNCH_ENABLED:
-        try:
-            launch = LaunchCollector()
-            collectors.append(launch)
-            print(f"✓ Launch 收集器 (每 {launch.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Launch 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Launch 收集器已停用 (LAUNCH_ENABLED=false)")
-
-    # CWA 衛星雲圖 + 雷達 PNG 收集器（需 CWA API Key）
-    if config.CWA_SATELLITE_ENABLED and config.CWA_API_KEY:
-        try:
-            cwa_sat = CWASatelliteCollector()
-            collectors.append(cwa_sat)
-            print(f"✓ CWA Satellite 影像收集器 (每 {cwa_sat.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ CWA Satellite 收集器初始化失敗: {e}")
-    elif not config.CWA_SATELLITE_ENABLED:
-        print("⏸️  CWA Satellite 收集器已停用 (CWA_SATELLITE_ENABLED=false)")
-    else:
-        print("⚠️  CWA_API_KEY 未設定，跳過 CWA Satellite 收集器")
-
-    # NCDR 災害示警收集器（CAP feed，無需 API key）
-    if config.NCDR_ALERTS_ENABLED:
-        try:
-            ncdr = NCDRAlertsCollector()
-            collectors.append(ncdr)
-            print(f"✓ NCDR Alerts 收集器 (每 {ncdr.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ NCDR Alerts 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  NCDR Alerts 收集器已停用 (NCDR_ALERTS_ENABLED=false)")
-
-    # Foursquare OS Places POI 收集器（每月一次，背景 thread 執行）
-    if config.FOURSQUARE_POI_ENABLED and config.HF_TOKEN:
-        try:
-            foursquare_poi = FoursquarePOICollector()
-            collectors.append(foursquare_poi)
-            print(f"✓ Foursquare POI 收集器 (每 {foursquare_poi.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Foursquare POI 收集器初始化失敗: {e}")
-    elif not config.FOURSQUARE_POI_ENABLED:
-        print("⏸️  Foursquare POI 收集器已停用 (FOURSQUARE_POI_ENABLED=false)")
-    else:
-        print("⚠️  HF_TOKEN 未設定，跳過 Foursquare POI 收集器")
-
-    # 空氣品質 - airtw 全台色階圖 PNG 收集器（無需 API key）
-    if config.AIR_QUALITY_IMAGERY_ENABLED:
-        try:
-            aqi_img = AirQualityImageryCollector()
-            collectors.append(aqi_img)
-            print(f"✓ Air Quality Imagery 收集器 (每 {aqi_img.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Air Quality Imagery 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Air Quality Imagery 收集器已停用 (AIR_QUALITY_IMAGERY_ENABLED=false)")
-
-    # 空氣品質 - 環境部 77 站即時觀測 AQX_P_432（需 MOENV_API_KEY）
-    if config.AIR_QUALITY_ENABLED and config.MOENV_API_KEY:
-        try:
-            aqi_obs = AirQualityCollector()
-            collectors.append(aqi_obs)
-            print(f"✓ Air Quality 觀測收集器 (每 {aqi_obs.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Air Quality 觀測收集器初始化失敗: {e}")
-    elif not config.AIR_QUALITY_ENABLED:
-        print("⏸️  Air Quality 觀測收集器已停用 (AIR_QUALITY_ENABLED=false)")
-    else:
-        print("⚠️  MOENV_API_KEY 未設定，跳過 Air Quality 觀測收集器")
-
-    # 空氣品質 - LASS AirBox 微型感測器（無需 API key）
-    if config.AIR_QUALITY_MICROSENSORS_ENABLED:
-        try:
-            aqi_micro = AirQualityMicroSensorCollector()
-            collectors.append(aqi_micro)
-            print(f"✓ Air Quality MicroSensors 收集器 (每 {aqi_micro.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ Air Quality MicroSensors 收集器初始化失敗: {e}")
-    else:
-        print("⏸️  Air Quality MicroSensors 收集器已停用 (AIR_QUALITY_MICROSENSORS_ENABLED=false)")
-
-    if config.WATER_RESERVOIR_ENABLED:
-        try:
-            water = WaterReservoirCollector()
-            collectors.append(water)
-            print(f"✓ 水庫水情收集器 (每 {water.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ 水庫水情收集器初始化失敗: {e}")
-    else:
-        print("⏸️  水庫水情收集器已停用 (WATER_RESERVOIR_ENABLED=false)")
-
-    if config.RIVER_WATER_LEVEL_ENABLED:
-        try:
-            rwl = RiverWaterLevelCollector()
-            collectors.append(rwl)
-            print(f"✓ 河川水位收集器 (每 {rwl.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ 河川水位收集器初始化失敗: {e}")
-    else:
-        print("⏸️  河川水位收集器已停用 (RIVER_WATER_LEVEL_ENABLED=false)")
-
-    if config.RAIN_GAUGE_REALTIME_ENABLED and config.CWA_API_KEY:
-        try:
-            rg = RainGaugeRealtimeCollector()
-            collectors.append(rg)
-            print(f"✓ 即時雨量站收集器 (每 {rg.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ 即時雨量站收集器初始化失敗: {e}")
-    elif not config.RAIN_GAUGE_REALTIME_ENABLED:
-        print("⏸️  即時雨量站收集器已停用 (RAIN_GAUGE_REALTIME_ENABLED=false)")
-    else:
-        print("⏸️  即時雨量站收集器已停用 (CWA_API_KEY 未設定)")
-
-    if config.GROUNDWATER_LEVEL_ENABLED:
-        try:
-            gwl = GroundwaterLevelCollector()
-            collectors.append(gwl)
-            print(f"✓ 地下水水位收集器 (每 {gwl.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ 地下水水位收集器初始化失敗: {e}")
-    else:
-        print("⏸️  地下水水位收集器已停用 (GROUNDWATER_LEVEL_ENABLED=false)")
-
-    if config.WATER_RESERVOIR_DAILY_OPS_ENABLED:
-        try:
-            wrd = WaterReservoirDailyOpsCollector()
-            collectors.append(wrd)
-            print(f"✓ 水庫每日營運資料收集器 (每 {wrd.interval_minutes} 分鐘)")
-        except Exception as e:
-            print(f"✗ 水庫每日營運資料收集器初始化失敗: {e}")
-    else:
-        print("⏸️  水庫每日營運資料收集器已停用 (WATER_RESERVOIR_DAILY_OPS_ENABLED=false)")
+    for idx, entry in enumerate(COLLECTOR_REGISTRY):
+        c = _init_collector_from_entry(entry, first=(idx == 0))
+        if c is not None:
+            collectors.append(c)
 
     if not collectors:
         print("\n❌ 沒有可用的收集器")
