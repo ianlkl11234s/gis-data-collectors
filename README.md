@@ -4,7 +4,7 @@
 
 ## 收集器總覽
 
-共 21 個收集器，每個都可獨立啟停。
+共 30 個收集器，每個都可獨立啟停。
 
 | 收集器 | `_ENABLED` 環境變數 | 預設 | 頻率 | 來源 | 說明 |
 |--------|---------------------|------|------|------|------|
@@ -14,14 +14,14 @@
 | Freeway VD | `FREEWAY_VD_ENABLED` | `true` | 10 min | TDX | 國道即時車流+壅塞 |
 | Temperature | `TEMPERATURE_ENABLED` | `true` | 60 min | CWA | 溫度網格 |
 | Parking | `PARKING_ENABLED` | **false** | 15 min | TDX | 路邊停車即時可用性 |
-| Bus | `BUS_ENABLED` | `true` | 1 min | TDX | 市區公車即時位置（六都） |
+| Bus | `BUS_ENABLED` | `true` | 2 min | TDX | 市區公車即時位置（22 縣市） |
 | Bus InterCity | `BUS_INTERCITY_ENABLED` | **false** | 2 min | TDX | 公路客運 / 國道客運（跨縣市） |
 | TRA Train | `TRA_TRAIN_ENABLED` | `true` | 2 min | TDX | 台鐵即時列車位置 |
 | TRA Static | `TRA_STATIC_ENABLED` | `true` | 1440 min | TDX | 台鐵靜態資料（每日） |
 | Rail Timetable | `RAIL_TIMETABLE_ENABLED` | `true` | 1440 min | TDX | 台鐵+高鐵每日時刻表歸檔 |
 | Ship TDX | `SHIP_TDX_ENABLED` | **false** | 2 min | TDX | 國內航線船位 |
 | Ship AIS | `SHIP_AIS_ENABLED` | `true` | 10 min | 航港局 | AIS 船位追蹤 |
-| Flight FR24 ⚙️ | `FLIGHT_FR24_ENABLED` | **false** | 5 min | FR24 | 台灣機場航班完整軌跡（背景 thread） |
+| Flight FR24 | `FLIGHT_FR24_ENABLED` | **false** | 5 min | FR24 | 台灣機場航班完整軌跡 |
 | FR24 Zone | `FLIGHT_FR24_ZONE_ENABLED` | **false** | 5 min | FR24 | 空域快照（最多飛機+起降機場） |
 | OpenSky | `FLIGHT_OPENSKY_ENABLED` | **false** | 5 min | OpenSky | 空域快照（精確高度+垂直速率） |
 | Earthquake | `EARTHQUAKE_ENABLED` | `true` | 1440 min | CWA | 有感地震 + 完整地震目錄（每日） |
@@ -29,28 +29,30 @@
 | Launch | `LAUNCH_ENABLED` | **false** | 5 min | Launch Library 2 | 全球太空發射任務 |
 | CWA Satellite | `CWA_SATELLITE_ENABLED` | `true` | 10 min | CWA | 衛星雲圖 + 雷達回波 PNG |
 | **NCDR Alerts** | `NCDR_ALERTS_ENABLED` | `true` | 15 min | NCDR | **災害示警 CAP（颱風/豪雨/強風/枯旱/水庫等）** |
+| Foursquare POI | `FOURSQUARE_POI_ENABLED` | **false** | 43200 min | HuggingFace | Foursquare OS Places POI 全量快照（每月） |
+| Air Quality Imagery | `AIR_QUALITY_IMAGERY_ENABLED` | **false** | 60 min | airtw | 全台空品色階圖 PNG（AQI/PM2.5/PM10/O3/NO2） |
+| Air Quality | `AIR_QUALITY_ENABLED` | **false** | 60 min | MOENV | 環境部 77 站即時 AQI 觀測 |
+| Air Quality MicroSensors | `AIR_QUALITY_MICROSENSORS_ENABLED` | **false** | 5 min | LASS | AirBox 微型感測器網路 |
+| Water Reservoir | `WATER_RESERVOIR_ENABLED` | **false** | 60 min | WRA 水利署 | 全台水庫水情 |
+| River Water Level | `RIVER_WATER_LEVEL_ENABLED` | **false** | 10 min | WRA | 河川水位站即時觀測 |
+| Rain Gauge Realtime | `RAIN_GAUGE_REALTIME_ENABLED` | **false** | 10 min | CWA | 即時雨量站（需 `CWA_API_KEY`） |
+| Groundwater Level | `GROUNDWATER_LEVEL_ENABLED` | **false** | 60 min | WRA | 地下水水位站 |
+| Water Reservoir Daily Ops | `WATER_RESERVOIR_DAILY_OPS_ENABLED` | **false** | 1440 min | WRA | 水庫每日營運狀況（每日 09:30 更新） |
 
 > 預設 **false** 的收集器需手動啟用（設定環境變數為 `true`）。
-> ⚙️ 標記的收集器跑時間較長，已切換為**背景 thread 模式**（見下方「執行架構」）。
 
 ## 執行架構
 
-### 主排程 + 背景 thread 雙軌
+### CollectorScheduler（統一調度，Phase 1 升級）
 
-收集器有兩種執行模式：
+所有 collector 皆透過 `CollectorScheduler` 以 ThreadPoolExecutor 平行執行：
 
-| 模式 | 適用收集器 | 機制 |
-|------|------------|------|
-| **主排程** (預設) | 大多數 collector | `schedule` 套件單執行緒，依序執行 |
-| **背景 thread** | `flight_fr24` | 獨立 daemon thread，自己 sleep + run 迴圈 |
+- **每個 collector 獨立 thread**：互不阻塞（慢打的 `flight_fr24` 不會拖慢 `bus`、`ncdr_alerts`）
+- **Skip-if-running 保護**：同一 collector 仍在跑時，下個 tick 觸發會跳過，避免疊加
+- **`schedule` 套件僅負責觸發**：實際執行統一交給 scheduler pool
+- **Pool 大小**：`max(10, collector 數量 + 2)`
 
-**為何需要背景 thread？** `flight_fr24` 因為刻意慢打 (`FLIGHT_FR24_TRAIL_DELAY=3` 秒/請求) 防 anti-bot，單次收集動輒數分鐘。若放在主排程會阻塞 `bus`(1 min)、`ncdr_alerts`(15 min) 等其他高頻 collector。
-
-要將某個 collector 切到背景 thread，只需在 `main.py` 的 `BACKGROUND_COLLECTORS` 集合內加上它的 `name`：
-
-```python
-BACKGROUND_COLLECTORS = {'flight_fr24'}  # 加新成員即可
-```
+舊的「主排程 + 背景 thread `BACKGROUND_COLLECTORS`」雙軌模型已淘汰，現在全部走 scheduler。
 
 ### Supabase 旁路寫入
 
@@ -112,7 +114,16 @@ data-collectors/
 │   ├── satellite.py       # 全球衛星軌道追蹤（CelesTrak + SGP4）
 │   ├── launch.py          # 太空發射任務（Launch Library 2）
 │   ├── cwa_satellite.py   # CWA 衛星雲圖 + 雷達回波 PNG
-│   └── ncdr_alerts.py     # NCDR 災害示警 CAP feed
+│   ├── ncdr_alerts.py     # NCDR 災害示警 CAP feed
+│   ├── foursquare_poi.py  # Foursquare OS Places POI（HuggingFace parquet）
+│   ├── air_quality_imagery.py      # airtw 全台空品色階圖 PNG
+│   ├── air_quality.py              # 環境部 77 站即時 AQI
+│   ├── air_quality_microsensors.py # LASS AirBox 微型感測器
+│   ├── water_reservoir.py          # 水利署水庫水情
+│   ├── river_water_level.py        # 水利署河川水位
+│   ├── rain_gauge_realtime.py      # CWA 即時雨量站
+│   ├── groundwater_level.py        # 水利署地下水水位
+│   └── water_reservoir_daily_ops.py # 水利署水庫每日營運狀況
 │
 ├── storage/                # 儲存後端
 │   ├── __init__.py
@@ -217,8 +228,9 @@ python main.py
 | `PARKING_CITIES` | `Taipei,NewTaipei,Taichung` | 收集城市 |
 | `PARKING_INTERVAL` | `15` | 間隔（分鐘） |
 | `BUS_ENABLED` | `true` | 市區公車即時位置 |
-| `BUS_CITIES` | `Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung` | 收集城市（預設六都） |
-| `BUS_INTERVAL` | `1` | 間隔（分鐘） |
+| `BUS_CITIES` | 全台 22 縣市 | 收集城市（留空用預設 22 縣市清單） |
+| `BUS_INTERVAL` | `2` | 間隔（分鐘，22 城擴充後預設值） |
+| `BUS_FETCH_WORKERS` | `5` | 並行抓城市的 worker 數 |
 | `BUS_INTERCITY_ENABLED` | `false` | 公路客運 / 國道客運即時位置 |
 | `BUS_INTERCITY_INTERVAL` | `2` | 間隔（分鐘，全台單一 endpoint，不需指定城市） |
 
@@ -293,6 +305,42 @@ python main.py
 | `EARTHQUAKE_INTERVAL` | `1440` | 間隔（分鐘，每日一次） |
 | `NCDR_ALERTS_ENABLED` | `true` | NCDR 災害示警 CAP feed（無需 API key） |
 | `NCDR_ALERTS_INTERVAL` | `15` | 間隔（分鐘） |
+
+#### 空氣品質
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `AIR_QUALITY_IMAGERY_ENABLED` | `false` | airtw 全台色階圖 PNG |
+| `AIR_QUALITY_IMAGERY_INTERVAL` | `60` | 間隔（分鐘） |
+| `AIR_QUALITY_IMAGERY_PRODUCTS` | `AQI,PM25,PM10,O3,NO2` | 色階圖產品清單 |
+| `AIR_QUALITY_ENABLED` | `false` | 環境部 77 站即時 AQI（需 `MOENV_API_KEY`） |
+| `AIR_QUALITY_INTERVAL` | `60` | 間隔（分鐘） |
+| `AIR_QUALITY_MICROSENSORS_ENABLED` | `false` | LASS AirBox 微型感測器 |
+| `AIR_QUALITY_MICROSENSORS_INTERVAL` | `5` | 間隔（分鐘） |
+| `MOENV_API_KEY` | | 環境部 API Key（Air Quality 需要） |
+
+#### 水文
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `WATER_RESERVOIR_ENABLED` | `false` | 水利署水庫水情 |
+| `WATER_RESERVOIR_INTERVAL` | `60` | 間隔（分鐘，對應 WRA 每小時更新） |
+| `RIVER_WATER_LEVEL_ENABLED` | `false` | 水利署河川水位 |
+| `RIVER_WATER_LEVEL_INTERVAL` | `10` | 間隔（分鐘） |
+| `RAIN_GAUGE_REALTIME_ENABLED` | `false` | CWA 即時雨量站（需 `CWA_API_KEY`） |
+| `RAIN_GAUGE_REALTIME_INTERVAL` | `10` | 間隔（分鐘） |
+| `GROUNDWATER_LEVEL_ENABLED` | `false` | 水利署地下水水位 |
+| `GROUNDWATER_LEVEL_INTERVAL` | `60` | 間隔（分鐘） |
+| `WATER_RESERVOIR_DAILY_OPS_ENABLED` | `false` | 水庫每日營運狀況（進流量、放流量、蓄水量等） |
+| `WATER_RESERVOIR_DAILY_OPS_INTERVAL` | `1440` | 間隔（分鐘，每日一次，官方 09:30 前更新） |
+
+#### POI
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `FOURSQUARE_POI_ENABLED` | `false` | Foursquare OS Places POI（HuggingFace parquet，耗時，一次全量） |
+| `FOURSQUARE_POI_INTERVAL` | `43200` | 間隔（分鐘，43200 = 每 30 天） |
+| `HF_TOKEN` | | HuggingFace API Token |
 
 ## 收集器說明
 
@@ -437,28 +485,55 @@ PUT 請求從 ~5,000/天 降至 ~10/天（99.8% 降幅）。
 ### 儲存結構
 ```
 data/                           # 本地 (最近 7 天，個別 JSON)
-├── youbike/
-├── weather/
-├── vd/
-├── freeway_vd/
-├── temperature/
-├── parking/
-├── bus/
-├── bus_intercity/
-├── tra_train/
-├── tra_static/
-├── rail_timetable/
-├── ship_tdx/
-├── ship_ais/
-├── flight_fr24/
-├── flight_fr24_zone/
-├── flight_opensky/
-└── satellite/
+├── youbike/ weather/ vd/ freeway_vd/ temperature/ parking/
+├── bus/ bus_intercity/ tra_train/ tra_static/ rail_timetable/
+├── ship_tdx/ ship_ais/
+├── flight_fr24/ flight_fr24_zone/ flight_opensky/
+├── satellite/ launch/ cwa_satellite/ earthquake/ ncdr_alerts/
+├── foursquare_poi/
+├── air_quality_imagery/ air_quality/ air_quality_microsensors/
+└── water_reservoir/ river_water_level/ rain_gauge_realtime/ groundwater_level/ water_reservoir_daily_ops/
 
 s3://bucket/                   # S3 (永久歸檔，tar.gz)
 └── {collector}/
     └── archives/
         └── YYYY-MM-DD.tar.gz  # 每天 1 個 PUT
+```
+
+### S3 Lifecycle（冷儲存分層）
+
+生產 bucket `migu-gis-data-collector` 已套用 lifecycle rule `tiered-cold-storage`，**資料不刪除、只分層**：
+
+| 物件年齡 | Storage Class | 相對成本 |
+|---------|---------------|---------|
+| 0–30 天 | STANDARD | 100% |
+| 30–90 天 | STANDARD_IA | ~60% |
+| 90+ 天 | GLACIER_IR | ~25% |
+
+- **毫秒存取**：Glacier Instant Retrieval 不需 restore，API / presigned URL 無需改動
+- **不完整 multipart 清理**：超過 7 天自動清除殘片（僅影響失敗的上傳）
+- **驗證**：AWS Console → S3 → `migu-gis-data-collector` → Management 分頁
+
+套用方式（若需複製到其他 bucket）：
+
+```python
+import boto3
+s3 = boto3.client('s3', region_name='ap-southeast-2')
+s3.put_bucket_lifecycle_configuration(
+    Bucket='<bucket-name>',
+    LifecycleConfiguration={
+        'Rules': [{
+            'ID': 'tiered-cold-storage',
+            'Status': 'Enabled',
+            'Filter': {'Prefix': ''},
+            'Transitions': [
+                {'Days': 30, 'StorageClass': 'STANDARD_IA'},
+                {'Days': 90, 'StorageClass': 'GLACIER_IR'},
+            ],
+            'AbortIncompleteMultipartUpload': {'DaysAfterInitiation': 7},
+        }]
+    },
+)
 ```
 
 ### 歸檔流程
