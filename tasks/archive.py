@@ -186,11 +186,19 @@ class ArchiveTask:
         return stats
 
     def _cleanup_local(self) -> dict:
-        """清理過期的本地資料（已歸檔到 S3 的日期目錄）"""
-        print(f"\n🗑️  清理過期資料 (>{config.ARCHIVE_RETENTION_DAYS} 天)...")
+        """清理過期的本地資料（已歸檔到 S3 的日期目錄）
+
+        每個 collector 可透過 {NAME}_ARCHIVE_RETENTION_DAYS 覆寫全域天數。
+        """
+        overrides = config.COLLECTOR_RETENTION_OVERRIDES
+        if overrides:
+            print(f"\n🗑️  清理過期資料 (預設 >{config.ARCHIVE_RETENTION_DAYS} 天；"
+                  f"特例：{overrides}) ...")
+        else:
+            print(f"\n🗑️  清理過期資料 (>{config.ARCHIVE_RETENTION_DAYS} 天)...")
 
         stats = {'deleted': 0}
-        cutoff_date = datetime.now() - timedelta(days=config.ARCHIVE_RETENTION_DAYS)
+        now_ts = datetime.now()
 
         if not config.LOCAL_DATA_DIR.exists():
             return stats
@@ -200,6 +208,9 @@ class ArchiveTask:
                 continue
 
             collector_name = collector_dir.name
+            retention_days = config.get_retention_days(collector_name)
+            cutoff_date = now_ts - timedelta(days=retention_days)
+
             date_dirs = self._find_date_dirs(collector_dir)
             deleted_count = 0
 
@@ -224,7 +235,7 @@ class ArchiveTask:
                 stats['deleted'] += 1
 
             if deleted_count > 0:
-                print(f"   ✓ {collector_name}: 刪除 {deleted_count} 個過期日期目錄")
+                print(f"   ✓ {collector_name} ({retention_days} 天): 刪除 {deleted_count} 個過期日期目錄")
 
                 # 清理空的年/月目錄
                 self._cleanup_empty_dirs(collector_dir)

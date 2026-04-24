@@ -66,8 +66,28 @@ S3_ENDPOINT = os.getenv('S3_ENDPOINT')  # 用於 MinIO 等相容服務
 
 # 歸檔設定
 ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').lower() in ('true', '1', 'yes')
-ARCHIVE_RETENTION_DAYS = int(os.getenv('ARCHIVE_RETENTION_DAYS', '7'))  # 本地保留天數
+ARCHIVE_RETENTION_DAYS = int(os.getenv('ARCHIVE_RETENTION_DAYS', '7'))  # 本地保留天數（預設全域）
 ARCHIVE_TIME = os.getenv('ARCHIVE_TIME', '03:00')  # 每日歸檔時間 (HH:MM)
+
+# 單一 collector 的本地保留天數覆寫（留空則套用 ARCHIVE_RETENTION_DAYS）
+# 環境變數格式：{NAME}_ARCHIVE_RETENTION_DAYS，例如 IOT_WRA_ARCHIVE_RETENTION_DAYS=3
+# 目錄名稱（collector_name）→ retention 天數
+COLLECTOR_RETENTION_OVERRIDES = {
+    name: int(os.environ[f'{name.upper()}_ARCHIVE_RETENTION_DAYS'])
+    for name in ('iot_wra', 'bus', 'bus_intercity', 'youbike', 'train',
+                 'ship_ais', 'flight_fr24', 'flight_fr24_zone', 'freeway_vd',
+                 'satellite', 'cwa_satellite', 'temperature', 'weather',
+                 'air_quality', 'air_quality_microsensors', 'air_quality_imagery',
+                 'foursquare_poi', 'ncdr_alerts', 'rain_gauge_realtime',
+                 'river_water_level', 'groundwater_level', 'water_reservoir',
+                 'water_reservoir_daily_ops')
+    if os.getenv(f'{name.upper()}_ARCHIVE_RETENTION_DAYS')
+}
+
+
+def get_retention_days(collector_name: str) -> int:
+    """回傳特定 collector 的本地保留天數，fallback 到全域設定。"""
+    return COLLECTOR_RETENTION_OVERRIDES.get(collector_name, ARCHIVE_RETENTION_DAYS)
 
 # 本地儲存路徑
 # Zeabur Volume 掛載在 /data，優先使用環境變數 DATA_DIR
