@@ -216,4 +216,14 @@ TABLE_MAP = {
         'upsert_key': 'reservoir_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'iot_wra': {
+        'history': 'realtime.iot_wra_measurements',
+        'columns': [
+            'iow_station_id', 'physical_quantity_id', 'station_type',
+            'observed_at', 'name', 'full_name', 'si_unit', 'value',
+            'collected_at',
+        ],
+        'upsert_key': 'iow_station_id,physical_quantity_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+    },
 }

@@ -176,6 +176,7 @@ _COLLECTOR_TOGGLES = (
     ('RAIN_GAUGE_REALTIME',          False, 10),
     ('GROUNDWATER_LEVEL',            False, 60),  # 原始每 10 分鐘更新，但資料量大
     ('WATER_RESERVOIR_DAILY_OPS',    False, 1440),  # 官方 09:30 前更新
+    ('IOT_WRA',                      False, 60),   # 水利署 IoT 7 類站點整合收集（河川/地下水/閘門/沖刷/流量/堤防/揚塵）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:

@@ -896,6 +896,53 @@ class SupabaseWriter:
         """WRA 水庫每日營運狀況（41568，每日）。"""
         return result.get('data', [])
 
+    def _transform_iot_wra(self, result: dict, ts: datetime) -> list[dict]:
+        """水利署 IoT 7 類站點即時感測讀值（每 60 分鐘）。
+
+        collector 已在 collect() 結束前呼叫 _upsert_iot_wra_stations()
+        將靜態 metadata 寫入 public.iot_wra_stations，
+        這裡只回傳 measurements 以寫入 realtime.iot_wra_measurements。
+        """
+        return result.get('data', [])
+
+    def _upsert_iot_wra_stations(self, rows: list[dict]) -> None:
+        """upsert 靜態站點 metadata 到 public.iot_wra_stations。
+
+        iot.wra 的 7 類站點共用同一張表，同一 UUID 可能出現在多種 station_type
+        （例如河川站兼具閘門），因此 PK 為 (iow_station_id, station_type)。
+        同批內去重防 ON CONFLICT DO UPDATE 的「單一命令不得影響同一行多次」錯誤。
+        """
+        if not rows:
+            return
+        self._ensure_conn()
+        cols = [
+            'iow_station_id', 'station_id', 'station_type', 'name',
+            'county_code', 'county_name', 'town_code', 'town_name',
+            'basin_code', 'basin_name', 'admin_name',
+            'hydro_station_type', 'lat', 'lng', 'updated_at',
+        ]
+
+        # 同批去重：以複合 PK 為 key，保留最後一筆
+        dedup: dict[tuple, dict] = {}
+        for r in rows:
+            key = (r.get('iow_station_id'), r.get('station_type'))
+            if key[0] and key[1]:
+                dedup[key] = r
+
+        values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
+        update_set = ', '.join(
+            f"{c} = EXCLUDED.{c}"
+            for c in cols
+            if c not in ('iow_station_id', 'station_type')
+        )
+        sql = (
+            f"INSERT INTO public.iot_wra_stations ({','.join(cols)}) VALUES %s "
+            f"ON CONFLICT (iow_station_id, station_type) DO UPDATE SET {update_set}"
+        )
+        with self.conn.cursor() as cur:
+            execute_values(cur, sql, values, page_size=500)
+        self.conn.commit()
+
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
         """upsert 靜態水庫基本資料到 public.water_reservoirs
 
@@ -989,6 +1036,7 @@ class SupabaseWriter:
         'water_reservoir': _transform_water_reservoir,
         'river_water_level': _transform_river_water_level,
         'rain_gauge_realtime': _transform_rain_gauge_realtime,
+        'iot_wra': _transform_iot_wra,
     }
 
     # ============================================================

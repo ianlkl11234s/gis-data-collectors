@@ -24,6 +24,7 @@ from .flight_opensky import FlightOpenSkyCollector
 from .foursquare_poi import FoursquarePOICollector
 from .freeway_vd import FreewayVDCollector
 from .groundwater_level import GroundwaterLevelCollector
+from .iot_wra import IotWraCollector
 from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
 from .parking import ParkingCollector
@@ -85,6 +86,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(RainGaugeRealtimeCollector, "即時雨量站收集器", "RAIN_GAUGE_REALTIME", ("CWA_API_KEY",)),
     CollectorEntry(GroundwaterLevelCollector, "地下水水位收集器", "GROUNDWATER_LEVEL"),
     CollectorEntry(WaterReservoirDailyOpsCollector, "水庫每日營運資料收集器", "WATER_RESERVOIR_DAILY_OPS"),
+    CollectorEntry(IotWraCollector, "水利署 IoT 水文感測收集器", "IOT_WRA"),
 )
 
 
