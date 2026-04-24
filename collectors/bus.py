@@ -6,11 +6,19 @@
 
 預設涵蓋全台 22 縣市（6 直轄市 + 3 省轄市 + 10 縣 + 3 離島）。
 城市 API 呼叫採 ThreadPoolExecutor 內部平行化，避免串行累積耗時。
+
+夜間暫停策略（NIGHT_PAUSE_HOURS = 00:00-04:59 台北時間）：
+  依凌晨 01-04 GPS 位移分析（>2km 視為真運行），17 縣市停駛比例 70-100%，
+  絕大多數回傳值為車輛停在車庫、GPS 仍回報假 speed。
+  僅保留 5 都 24hr 抓取（真運行 ≥ 7 台或有深夜公車路線）：
+    Taipei / NewTaipei / Taichung / Tainan / Kaohsiung
+  預計省 ~2,550 call/day（~16%）。
 """
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -20,6 +28,12 @@ from utils.tdx_session import TDXSession
 from .base import BaseCollector
 
 logger = logging.getLogger(__name__)
+
+TAIPEI_TZ = ZoneInfo('Asia/Taipei')
+# 夜間暫停時段（台北時間 00:00-04:59）— 保留組以外的縣市在此時段跳過
+NIGHT_PAUSE_HOURS = frozenset(range(0, 5))
+# 夜間保留組：有深夜公車路線、凌晨真運行台數 ≥ 7 台
+NIGHT_KEEP_CITIES = frozenset({'Taipei', 'NewTaipei', 'Taichung', 'Tainan', 'Kaohsiung'})
 
 
 class BusCollector(BaseCollector):
@@ -86,7 +100,27 @@ class BusCollector(BaseCollector):
         all_buses = []
         city_stats = {}
 
-        cities = config.BUS_CITIES
+        cities = list(config.BUS_CITIES)
+
+        # 夜間暫停：17 縣市凌晨停駛比例 >70%，只保留 5 都
+        hour = datetime.now(TAIPEI_TZ).hour
+        if hour in NIGHT_PAUSE_HOURS:
+            paused = [c for c in cities if c not in NIGHT_KEEP_CITIES]
+            cities = [c for c in cities if c in NIGHT_KEEP_CITIES]
+            for c in paused:
+                city_stats[c] = {'skipped': 'night_pause'}
+            if paused:
+                print(f"   夜間暫停（{hour:02d}時）：跳過 {len(paused)} 縣市，只抓 {len(cities)} 個保留縣市")
+
+        if not cities:
+            print(f"   ✓ 合計: 0 台公車（夜間全暫停，{hour:02d}時）")
+            return {
+                'fetch_time': fetch_iso,
+                'total_active': 0,
+                'by_city': city_stats,
+                'data': [],
+            }
+
         workers = max(1, min(config.BUS_FETCH_WORKERS, len(cities)))
 
         print(f"   平行抓取 {len(cities)} 城市 (workers={workers})")
@@ -126,9 +160,16 @@ class BusCollector(BaseCollector):
                 print(f"   {city}: {active_count}/{raw_count} 台有 GPS")
 
         total = len(all_buses)
-        succeeded = sum(1 for s in city_stats.values() if 'error' not in s)
-        failed = len(city_stats) - succeeded
-        print(f"   ✓ 合計: {total} 台公車（{succeeded}/{len(cities)} 城市成功，{failed} 失敗）")
+        succeeded = sum(1 for s in city_stats.values() if 'error' not in s and 'skipped' not in s)
+        failed = sum(1 for s in city_stats.values() if 'error' in s)
+        skipped = sum(1 for s in city_stats.values() if 'skipped' in s)
+        msg = f"   ✓ 合計: {total} 台公車（{succeeded}/{len(cities)} 城市成功"
+        if failed:
+            msg += f"，{failed} 失敗"
+        if skipped:
+            msg += f"，{skipped} 夜間暫停"
+        msg += "）"
+        print(msg)
 
         return {
             'fetch_time': fetch_iso,
