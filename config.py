@@ -184,7 +184,7 @@ _COLLECTOR_TOGGLES = (
     ('FLIGHT_OPENSKY',               False, 5),
     ('EARTHQUAKE',                   True,  1440),
     ('SATELLITE',                    False, 120),  # TLE 每 8-24h 更新，2 小時足夠
-    ('LAUNCH',                       False, 5),
+    ('LAUNCH',                       False, 15),  # LL2 免費 tier ~15 calls/hr，15min 安全（4 calls/hr）
     ('CWA_SATELLITE',                True,  10),
     ('NCDR_ALERTS',                  True,  15),
     ('FOURSQUARE_POI',               False, 43200),  # 每 30 天

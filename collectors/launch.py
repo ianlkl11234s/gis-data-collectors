@@ -7,9 +7,9 @@
 3. 發射台：首次同步全部 233 個，之後每月更新一次
 4. 太空事件：每日抓取 upcoming events
 
-Rate Limit（免費 15 次/小時）：
-- 歷史回溯：每次 100 筆，間隔 4-5 分鐘
-- 日常同步：每天 2-3 次 API call
+Rate Limit（免費 ~15 次/小時）：
+- interval 15 分鐘：每小時 4 calls，安全餘裕大
+- _api_get 對 Timeout/ConnectionError 做 3 次指數退避 retry (5s, 15s)
 
 資料來源：
 - Launch Library 2 (免費，無需 API key): https://ll.thespacedevs.com/2.2.0/
@@ -152,14 +152,27 @@ class LaunchCollector(BaseCollector):
         self._next_task = 'upcoming'
 
     def _api_get(self, endpoint: str, params: dict = None) -> dict:
-        """呼叫 LL2 API（不 sleep，由排程間隔控制頻率）"""
+        """呼叫 LL2 API（不 sleep，由排程間隔控制頻率）
+
+        LL2 免費 tier 在 PaaS 共用 IP 上偶發慢回應/節流，
+        對 (Timeout / ConnectionError) 做 3 次指數退避 retry。
+        """
         url = f"{LL2_BASE}{endpoint}"
-        resp = self._session.get(url, params=params, timeout=config.REQUEST_TIMEOUT * 2)
-        resp.raise_for_status()
-        # 付費 token 才加短間隔（用於 pads 多頁抓取）
-        if config.LAUNCH_API_TOKEN:
-            _time.sleep(RATE_LIMIT_PAID_INTERVAL)
-        return resp.json()
+        retry_waits = [5, 15]  # attempt 0/1 失敗後分別 sleep 這麼久
+        for attempt in range(3):
+            try:
+                resp = self._session.get(url, params=params, timeout=(10, 120))
+                resp.raise_for_status()
+                if config.LAUNCH_API_TOKEN:
+                    _time.sleep(RATE_LIMIT_PAID_INTERVAL)
+                return resp.json()
+            except (requests.Timeout, requests.ConnectionError) as e:
+                if attempt < len(retry_waits):
+                    wait = retry_waits[attempt]
+                    print(f"[{self.name}] {endpoint} retry {attempt + 1}/3 after {wait}s: {e}")
+                    _time.sleep(wait)
+                    continue
+                raise
 
     def _fetch_upcoming_launches(self) -> list[dict]:
         """抓取未來預計發射的任務"""
