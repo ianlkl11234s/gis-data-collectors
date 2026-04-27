@@ -39,7 +39,10 @@ IOT_WRA_BASE_URL = "https://iot.wra.gov.tw"
 STATION_TYPES: list[tuple[str, str]] = [
     # (station_type, endpoint path)
     ("river",          "/river/stations"),
-    ("groundwater",    "/groundwaterlevel/stations"),
+    # groundwater 跟舊版 groundwater_level.py 完全重複（同一批井，500m 內 95% 配對）。
+    # 舊版多了 voltage（運維健康度）、address、metadata jsonb，資訊更豐富。
+    # 改為只跑舊版，iot 已收的歷史資料保留在 DB。
+    # ("groundwater",    "/groundwaterlevel/stations"),
     ("cumulativeflow", "/cumulativeflow/stations"),
     ("watergate",      "/watergate/stations"),
     ("erosiondepth",   "/erosiondepth/stations"),
