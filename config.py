@@ -197,6 +197,7 @@ _COLLECTOR_TOGGLES = (
     ('GROUNDWATER_LEVEL',            False, 60),  # 原始每 10 分鐘更新，但資料量大
     ('WATER_RESERVOIR_DAILY_OPS',    False, 1440),  # 官方 09:30 前更新
     ('IOT_WRA',                      False, 60),   # 水利署 IoT 7 類站點整合收集（河川/地下水/閘門/沖刷/流量/堤防/揚塵）
+    ('WASTE_POSITIONS',              False, 2),    # 垃圾車 GPS（高雄/新北/台南）— 預設 2 分鐘對齊 NTPC 官方頻率
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
@@ -285,6 +286,13 @@ AIR_QUALITY_IMAGERY_PRODUCTS = (
 
 # 空氣品質 - LASS AirBox 微型感測器
 AIR_QUALITY_MICROSENSORS_PM25_OUTLIER = float(os.getenv('AIR_QUALITY_MICROSENSORS_PM25_OUTLIER', '500'))  # μg/m³ 超過此值視為異常
+
+# 垃圾車 GPS — 城市清單與 quiet hours
+# 已驗證可打的 3 個城市：Kaohsiung / NewTaipei / Tainan（台北無公開 GPS API）
+WASTE_POSITIONS_CITIES = os.getenv('WASTE_POSITIONS_CITIES', 'Kaohsiung,NewTaipei,Tainan').split(',')
+# 凌晨幾乎零信號 → 預設 01-06 跳過此 tick；可設 'none' / 'off' / '' 關閉
+# 格式 'HH-HH'（前閉後開，可跨午夜，例 '22-06'）
+WASTE_POSITIONS_QUIET_HOURS = os.getenv('WASTE_POSITIONS_QUIET_HOURS', '01-06')
 
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')

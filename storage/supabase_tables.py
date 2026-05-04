@@ -226,4 +226,14 @@ TABLE_MAP = {
         'upsert_key': 'iow_station_id,physical_quantity_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'waste_positions': {
+        # 表 schema 見 gis-platform/migrations/065_waste_management.sql §5.5
+        # 純 append-only history（無 UNIQUE constraint）；前端用
+        # DISTINCT ON (vehicle_no) ORDER BY observed_at DESC 取最新位置
+        'history': 'spatial.waste_positions_realtime',
+        'columns': [
+            'city', 'vehicle_no', 'route_id', 'status',
+            'geometry', 'observed_at', 'source_url',
+        ],
+    },
 }

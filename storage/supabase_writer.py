@@ -981,6 +981,31 @@ class SupabaseWriter:
             cur.execute(sync_lat_lng_sql)
         self.conn.commit()
 
+    def _transform_waste_positions(self, result: dict, ts: datetime) -> list[dict]:
+        """垃圾車即時 GPS（高雄 / 新北 / 台南，by waste_positions collector）
+
+        collector 已正規化為統一 dict（lat/lng/vehicle_no/route_id/status/observed_at），
+        這裡只做 PostGIS WKT 字串組裝與欄位過濾。
+        無座標或 vehicle_no 為空者跳過。
+        """
+        records = []
+        for r in result.get('data', []):
+            lat = r.get('lat')
+            lng = r.get('lng')
+            vehicle_no = (r.get('vehicle_no') or '').strip()
+            if lat is None or lng is None or not vehicle_no:
+                continue
+            records.append({
+                'city': r.get('city'),
+                'vehicle_no': vehicle_no,
+                'route_id': r.get('route_id'),
+                'status': r.get('status') or 'unknown',
+                'geometry': f'SRID=4326;POINT({lng} {lat})',
+                'observed_at': r.get('observed_at'),
+                'source_url': r.get('source_url'),
+            })
+        return records
+
     def _transform_air_quality_microsensors(self, result: dict, ts: datetime) -> list[dict]:
         """LASS AirBox / 微型感測器讀值。"""
         records = []
@@ -1033,6 +1058,7 @@ class SupabaseWriter:
         'air_quality_imagery': _transform_air_quality_imagery,
         'air_quality': _transform_air_quality,
         'air_quality_microsensors': _transform_air_quality_microsensors,
+        'waste_positions': _transform_waste_positions,
         'water_reservoir': _transform_water_reservoir,
         'river_water_level': _transform_river_water_level,
         'rain_gauge_realtime': _transform_rain_gauge_realtime,
