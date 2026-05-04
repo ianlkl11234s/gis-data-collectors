@@ -4,7 +4,7 @@
 
 ## 收集器總覽
 
-共 30 個收集器，每個都可獨立啟停。
+共 32 個收集器，每個都可獨立啟停。
 
 | 收集器 | `_ENABLED` 環境變數 | 預設 | 頻率 | 來源 | 說明 |
 |--------|---------------------|------|------|------|------|
@@ -38,6 +38,8 @@
 | Rain Gauge Realtime | `RAIN_GAUGE_REALTIME_ENABLED` | **false** | 10 min | CWA | 即時雨量站（需 `CWA_API_KEY`） |
 | Groundwater Level | `GROUNDWATER_LEVEL_ENABLED` | **false** | 60 min | WRA | 地下水水位站 |
 | Water Reservoir Daily Ops | `WATER_RESERVOIR_DAILY_OPS_ENABLED` | **false** | 1440 min | WRA | 水庫每日營運狀況（每日 09:30 更新） |
+| IoT WRA | `IOT_WRA_ENABLED` | **false** | 60 min | WRA | 水利署 IoT 7 類站點（河川/地下水/閘門/沖刷/流量/堤防/揚塵） |
+| Waste Positions | `WASTE_POSITIONS_ENABLED` | **false** | 2 min | 地方環保局 | 垃圾車即時 GPS（高雄/新北/台南） |
 
 > 預設 **false** 的收集器需手動啟用（設定環境變數為 `true`）。
 
@@ -123,7 +125,9 @@ data-collectors/
 │   ├── river_water_level.py        # 水利署河川水位
 │   ├── rain_gauge_realtime.py      # CWA 即時雨量站
 │   ├── groundwater_level.py        # 水利署地下水水位
-│   └── water_reservoir_daily_ops.py # 水利署水庫每日營運狀況
+│   ├── water_reservoir_daily_ops.py # 水利署水庫每日營運狀況
+│   ├── iot_wra.py                  # 水利署 IoT 7 類站點（河川/地下水/閘門/沖刷/流量/堤防/揚塵）
+│   └── waste_positions.py          # 垃圾車即時 GPS（高雄/新北/台南）
 │
 ├── storage/                # 儲存後端
 │   ├── __init__.py
@@ -333,6 +337,17 @@ python main.py
 | `GROUNDWATER_LEVEL_INTERVAL` | `60` | 間隔（分鐘） |
 | `WATER_RESERVOIR_DAILY_OPS_ENABLED` | `false` | 水庫每日營運狀況（進流量、放流量、蓄水量等） |
 | `WATER_RESERVOIR_DAILY_OPS_INTERVAL` | `1440` | 間隔（分鐘，每日一次，官方 09:30 前更新） |
+| `IOT_WRA_ENABLED` | `false` | 水利署 IoT 7 類站點整合（河川/地下水/閘門/沖刷/流量/堤防/揚塵） |
+| `IOT_WRA_INTERVAL` | `60` | 間隔（分鐘，原始每 10 分更新但資料量大） |
+
+#### 環境衛生
+
+| 變數 | 預設值 | 說明 |
+|------|--------|------|
+| `WASTE_POSITIONS_ENABLED` | `false` | 垃圾車即時 GPS（高雄/新北/台南）|
+| `WASTE_POSITIONS_INTERVAL` | `2` | 間隔（分鐘，對齊 NTPC 官方更新頻率）|
+| `WASTE_POSITIONS_CITIES` | `Kaohsiung,NewTaipei,Tainan` | 收集城市（用 city code，逗號分隔）|
+| `WASTE_POSITIONS_QUIET_HOURS` | `01-06` | 凌晨零信號跳過時段（`HH-HH` 前閉後開；`none`/`off` 關閉；可跨午夜如 `22-06`）|
 
 #### POI
 
@@ -470,6 +485,27 @@ python main.py
 - **便利視圖**: `realtime.disaster_alerts_active` 過濾出生效中示警
 - **特性**: feed 只列「目前生效」示警，過期會從 feed 消失 → 收集器持續累積即建立完整歷史庫
 
+### 水利署 IoT 7 類站點
+- **來源**: WRA IoT API（河川水位 / 地下水 / 閘門 / 沖刷監測 / 流量 / 堤防 / 揚塵）
+- **資料類型**: 7 類站點即時感測讀值，整合到 `realtime.iot_wra_measurements`
+- **靜態 metadata**: 寫入 `public.iot_wra_stations`（PK = `iow_station_id, station_type`，因同一 UUID 可能跨多種 station_type）
+- **去重**: history 表 PK = `(iow_station_id, physical_quantity_id, observed_at)`，DO NOTHING
+
+### 垃圾車即時 GPS
+- **來源**: 三家政府開放資料平台
+  - 高雄 `openapi.kcg.gov.tw`（JSON wrapper, x/y）
+  - 新北 `data.ntpc.gov.tw`（CSV with BOM, longitude/latitude）
+  - 台南 `soa.tainan.gov.tw`（JSON wrapper, x/y，與高雄共用 SOA 框架）
+- **資料量**: 平日午班/晚班尖峰 ~600 筆/輪（高雄 ~60 / 新北 ~150-200 / 台南 ~120）
+- **特性**:
+  - API 只回傳「**目前出勤中**」車輛 → 凌晨/離峰時段筆數會大幅下降甚至為零（為設計如此非故障）
+  - 新北「分區 + 三班次」：早班 06-12 / 午班 12-18 / 晚班 18-24，每班次只有部分行政區出勤
+  - 預設 `WASTE_POSITIONS_QUIET_HOURS=01-06` 跳過凌晨零信號時段
+- **status 推測**: 從 `location` 字串若含「停車場/區隊/清潔隊/車隊」標 `parked`，否則 `collecting`
+- **Supabase 表**: `spatial.waste_positions_realtime`（純 append-only history，無 UNIQUE constraint）
+- **前端用法**: `SELECT DISTINCT ON (vehicle_no) ... ORDER BY vehicle_no, observed_at DESC` 取每輛車最新位置
+- **未含**: 台北市無公開 GPS API（dep-trash-can.gov.taipei DNS 不通 / garbage.gov.taipei timeout）
+
 ## 資料儲存與歸檔
 
 ### 本地優先 + tar.gz 歸檔
@@ -492,7 +528,9 @@ data/                           # 本地 (最近 7 天，個別 JSON)
 ├── satellite/ launch/ cwa_satellite/ earthquake/ ncdr_alerts/
 ├── foursquare_poi/
 ├── air_quality_imagery/ air_quality/ air_quality_microsensors/
-└── water_reservoir/ river_water_level/ rain_gauge_realtime/ groundwater_level/ water_reservoir_daily_ops/
+├── water_reservoir/ river_water_level/ rain_gauge_realtime/ groundwater_level/ water_reservoir_daily_ops/
+├── iot_wra/
+└── waste_positions/
 
 s3://bucket/                   # S3 (永久歸檔，tar.gz)
 └── {collector}/
