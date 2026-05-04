@@ -16,6 +16,7 @@ Quiet hours：垃圾車收運時段為早班 06-12 / 午班 12-18 / 晚班 18-24
 
 import csv
 import io
+import time as _time
 from datetime import datetime
 from typing import Optional
 
@@ -23,6 +24,13 @@ import requests
 
 import config
 from .base import BaseCollector, TAIPEI_TZ
+
+
+# Zeabur 出口 IP 在 openapi.kcg.gov.tw / soa.tainan.gov.tw 偶發 ConnectTimeout
+# （本機正常，PaaS 機房有時握手慢或被 WAF 排隊）→ 加 retry。
+# 與 launch collector 8376de4 同 pattern。
+RETRY_WAITS = [5, 15]  # attempt 0/1 失敗後分別 sleep 這麼久 (3 次嘗試)
+HTTP_TIMEOUT = (10, 60)  # (connect 10s, read 60s)
 
 
 CITY_NAMES = {
@@ -116,6 +124,23 @@ class WastePositionsCollector(BaseCollector):
             'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
         })
 
+    def _get_with_retry(self, url: str, city_label: str) -> requests.Response:
+        """對 (Timeout / ConnectionError) 做 3 次指數退避 retry。
+        Zeabur 出口在政府 API 偶發 ConnectTimeout，本機 first-try 即成功不走 retry。
+        """
+        for attempt in range(3):
+            try:
+                resp = self._session.get(url, timeout=HTTP_TIMEOUT)
+                resp.raise_for_status()
+                return resp
+            except (requests.Timeout, requests.ConnectionError) as e:
+                if attempt < len(RETRY_WAITS):
+                    wait = RETRY_WAITS[attempt]
+                    print(f"   ⟳ {city_label} retry {attempt + 1}/3 after {wait}s: {type(e).__name__}")
+                    _time.sleep(wait)
+                    continue
+                raise
+
     # ------------------------------------------------------------
     # quiet hours
     # ------------------------------------------------------------
@@ -133,8 +158,7 @@ class WastePositionsCollector(BaseCollector):
 
     def _fetch_kaohsiung(self, fetch_time: datetime) -> list[dict]:
         url = ENDPOINTS['Kaohsiung']
-        r = self._session.get(url, timeout=config.REQUEST_TIMEOUT)
-        r.raise_for_status()
+        r = self._get_with_retry(url, '高雄市')
         body = r.json()
         if not body.get('success'):
             raise RuntimeError(f"Kaohsiung API rejected: {body.get('message')}")
@@ -142,8 +166,7 @@ class WastePositionsCollector(BaseCollector):
 
     def _fetch_tainan(self, fetch_time: datetime) -> list[dict]:
         url = ENDPOINTS['Tainan']
-        r = self._session.get(url, timeout=config.REQUEST_TIMEOUT)
-        r.raise_for_status()
+        r = self._get_with_retry(url, '臺南市')
         body = r.json()
         if not body.get('success'):
             raise RuntimeError(f"Tainan API rejected: {body.get('message')}")
@@ -173,8 +196,7 @@ class WastePositionsCollector(BaseCollector):
 
     def _fetch_new_taipei(self, fetch_time: datetime) -> list[dict]:
         url = ENDPOINTS['NewTaipei']
-        r = self._session.get(url, timeout=config.REQUEST_TIMEOUT)
-        r.raise_for_status()
+        r = self._get_with_retry(url, '新北市')
         # CSV 有 UTF-8 BOM
         text = r.content.decode('utf-8-sig')
         reader = csv.DictReader(io.StringIO(text))
