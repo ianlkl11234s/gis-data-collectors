@@ -40,6 +40,7 @@
 | Water Reservoir Daily Ops | `WATER_RESERVOIR_DAILY_OPS_ENABLED` | **false** | 1440 min | WRA | 水庫每日營運狀況（每日 09:30 更新） |
 | IoT WRA | `IOT_WRA_ENABLED` | **false** | 60 min | WRA | 水利署 IoT 7 類站點（河川/地下水/閘門/沖刷/流量/堤防/揚塵） |
 | Waste Positions | `WASTE_POSITIONS_ENABLED` | **false** | 2 min | 地方環保局 | 垃圾車即時 GPS（高雄/新北/台南） |
+| Waste Match | `WASTE_MATCH_ENABLED` | **false** | 5 min | OSRM | 垃圾車 GPS map-matching，輸出沿路網 progress trail |
 
 > 預設 **false** 的收集器需手動啟用（設定環境變數為 `true`）。
 
@@ -348,6 +349,15 @@ python main.py
 | `WASTE_POSITIONS_INTERVAL` | `2` | 間隔（分鐘，對齊 NTPC 官方更新頻率）|
 | `WASTE_POSITIONS_CITIES` | `Kaohsiung,NewTaipei,Tainan` | 收集城市（用 city code，逗號分隔）|
 | `WASTE_POSITIONS_QUIET_HOURS` | `01-06` | 凌晨零信號跳過時段（`HH-HH` 前閉後開；`none`/`off` 關閉；可跨午夜如 `22-06`）|
+| `WASTE_MATCH_ENABLED` | `false` | 垃圾車 OSRM map-matching（輸出 `realtime.waste_trails_matched_daily`）|
+| `WASTE_MATCH_INTERVAL` | `5` | map-matching 間隔（分鐘）|
+| `OSRM_URL` | `http://localhost:5000` | OSRM Taiwan service base URL |
+| `WASTE_MATCH_CITIES` | `高雄市` | map-matching 城市（中文 city name，逗號分隔）|
+| `WASTE_MATCH_TARGET_DAYS` | `2` | 每輪處理天數（預設 today + yesterday）|
+| `WASTE_MATCH_MAX_TRIPS` | `80` | 每日每輪最多處理未 match trip 數 |
+| `WASTE_MATCH_MAX_POINTS` | `100` | 每次 OSRM `/match` 最多 GPS 點數 |
+| `WASTE_MATCH_RADIUS_M` | `50` | OSRM matching radius（公尺） |
+| `WASTE_MATCH_MIN_CONFIDENCE` | `0.35` | 低於此 OSRM confidence 的 segment 跳過 |
 
 #### POI
 

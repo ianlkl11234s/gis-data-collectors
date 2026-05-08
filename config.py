@@ -198,6 +198,7 @@ _COLLECTOR_TOGGLES = (
     ('WATER_RESERVOIR_DAILY_OPS',    False, 1440),  # 官方 09:30 前更新
     ('IOT_WRA',                      False, 60),   # 水利署 IoT 7 類站點整合收集（河川/地下水/閘門/沖刷/流量/堤防/揚塵）
     ('WASTE_POSITIONS',              False, 2),    # 垃圾車 GPS（高雄/新北/台南）— 預設 2 分鐘對齊 NTPC 官方頻率
+    ('WASTE_MATCH',                  False, 5),    # 垃圾車 OSRM map-matching，輸出 matched daily pre-aggregate
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
@@ -293,6 +294,17 @@ WASTE_POSITIONS_CITIES = os.getenv('WASTE_POSITIONS_CITIES', 'Kaohsiung,NewTaipe
 # 凌晨幾乎零信號 → 預設 01-06 跳過此 tick；可設 'none' / 'off' / '' 關閉
 # 格式 'HH-HH'（前閉後開，可跨午夜，例 '22-06'）
 WASTE_POSITIONS_QUIET_HOURS = os.getenv('WASTE_POSITIONS_QUIET_HOURS', '01-06')
+
+# 垃圾車 OSRM map-matching
+OSRM_URL = os.getenv('OSRM_URL', 'http://localhost:5000').rstrip('/')
+# 若走 osrm-proxy 跨 project 對外 endpoint，需帶 Bearer token；同 project 內網直連可空
+OSRM_TOKEN = os.getenv('OSRM_TOKEN', '').strip()
+WASTE_MATCH_CITIES = os.getenv('WASTE_MATCH_CITIES', '高雄市').split(',')
+WASTE_MATCH_TARGET_DAYS = int(os.getenv('WASTE_MATCH_TARGET_DAYS', '2'))  # today + yesterday
+WASTE_MATCH_MAX_TRIPS = int(os.getenv('WASTE_MATCH_MAX_TRIPS', '80'))
+WASTE_MATCH_MAX_POINTS = int(os.getenv('WASTE_MATCH_MAX_POINTS', '100'))  # OSRM default max matching size
+WASTE_MATCH_RADIUS_M = int(os.getenv('WASTE_MATCH_RADIUS_M', '50'))
+WASTE_MATCH_MIN_CONFIDENCE = float(os.getenv('WASTE_MATCH_MIN_CONFIDENCE', '0.35'))
 
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')

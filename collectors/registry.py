@@ -39,6 +39,7 @@ from .tra_static import TRAStaticCollector
 from .tra_train import TRATrainCollector
 from .vd import VDCollector
 from .waste_positions import WastePositionsCollector
+from .waste_match import WasteMatchCollector
 from .water_reservoir import WaterReservoirCollector
 from .water_reservoir_daily_ops import WaterReservoirDailyOpsCollector
 from .weather import WeatherCollector
@@ -89,6 +90,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(WaterReservoirDailyOpsCollector, "水庫每日營運資料收集器", "WATER_RESERVOIR_DAILY_OPS"),
     CollectorEntry(IotWraCollector, "水利署 IoT 水文感測收集器", "IOT_WRA"),
     CollectorEntry(WastePositionsCollector, "垃圾車 GPS 收集器", "WASTE_POSITIONS"),
+    CollectorEntry(WasteMatchCollector, "垃圾車 OSRM map-matching 收集器", "WASTE_MATCH"),
 )
 
 
