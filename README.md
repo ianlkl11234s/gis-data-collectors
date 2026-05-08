@@ -662,3 +662,5 @@ class MyCollector(BaseCollector):
 ## 授權
 
 MIT License
+
+# OSRM map-matching pipeline 啟用日期：2026-05-09
