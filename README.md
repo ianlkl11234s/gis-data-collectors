@@ -668,3 +668,5 @@ MIT License
 # MAX_TRIPS bumped to 500 on 2026-05-09 to drain stuck attempts
 
 # 2026-05-09 10:35: drain finished, MAX_TRIPS reset to 80, TARGET_DAYS to 2
+
+# 2026-05-09: extend WASTE_MATCH_CITIES to include 臺南市 (Tainan rollout)
