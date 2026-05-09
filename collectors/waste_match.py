@@ -271,9 +271,12 @@ class WasteMatchCollector(BaseCollector):
         with_trip AS (
             SELECT
                 vehicle_no, city, route_id, status, observed_at, lat, lng,
+                -- trip-gap 15 min（900s）：高雄 5-10min gap 僅 1%、台南 8%
+                -- 太緊（10 min）會把台南「車短暫停車 6-9 min」誤切成新 trip
+                -- 切碎後 trip 只剩 2 點，OSRM 無法 segment → 0% success
                 SUM(CASE
                     WHEN prev_t2 IS NULL THEN 0
-                    WHEN EXTRACT(EPOCH FROM (observed_at - prev_t2)) > 600 THEN 1
+                    WHEN EXTRACT(EPOCH FROM (observed_at - prev_t2)) > 900 THEN 1
                     ELSE 0
                 END) OVER (PARTITION BY city, vehicle_no ORDER BY observed_at) AS trip_id
             FROM with_gap
