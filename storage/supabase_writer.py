@@ -1257,6 +1257,12 @@ class SupabaseWriter:
 
         elif collector_name in ('road_event_live', 'road_event_planned'):
             # TDX RoadEvent：同表 history append + current upsert (PK: event_id, source)
+            #
+            # Dedup（方案 B）：history 只寫 LastUpdateTime 變動的事件。
+            # 大部分事件持續多輪抓取（道路施工常常 1-3 個月），如果每 5 min 都
+            # append 一筆完全相同的 row → history 會暴增 ~95%+。
+            # 改：寫入前先撈 current.last_updated，過濾未變動的事件不寫 history；
+            # current 仍全部 UPSERT 維持最新狀態。
             cols = [
                 'event_id', 'source', 'event_type', 'event_subtype', 'event_step', 'severity',
                 'road_name', 'road_class', 'direction', 'start_km', 'end_km',
@@ -1277,31 +1283,71 @@ class SupabaseWriter:
                 seen[(r['event_id'], r['source'])] = r
             dedup = list(seen.values())
 
-            values = [tuple(r.get(c) for c in cols) for r in dedup]
             update_cols = [c for c in cols if c not in ('event_id', 'source')]
             update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
 
             with self.conn.cursor() as cur:
-                # 1. history (append-only partition table)
-                execute_values(
-                    cur,
-                    f"INSERT INTO realtime.road_events ({','.join(cols)}) VALUES %s",
-                    values, page_size=500,
+                # 1. 撈 current 既有 last_updated，過濾未變動的不寫 history
+                ev_ids = list({r['event_id'] for r in dedup})
+                src_set = list({r['source'] for r in dedup})
+                cur.execute(
+                    "SELECT event_id, source, last_updated "
+                    "FROM realtime.road_events_current "
+                    "WHERE event_id = ANY(%s) AND source = ANY(%s)",
+                    (ev_ids, src_set),
                 )
-                # 2. current (UPSERT on (event_id, source))
+                prev_lu: dict = {(row[0], row[1]): row[2] for row in cur.fetchall()}
+
+                def _to_dt(v):
+                    """ISO string / datetime / None → datetime | None"""
+                    if not v:
+                        return None
+                    if isinstance(v, datetime):
+                        return v
+                    try:
+                        return datetime.fromisoformat(v)
+                    except (ValueError, TypeError):
+                        return None
+
+                new_records = []
+                for r in dedup:
+                    key = (r['event_id'], r['source'])
+                    cur_lu = _to_dt(r.get('last_updated'))
+                    prev = prev_lu.get(key)
+                    # 首次出現 OR LastUpdateTime 變動 → 寫 history
+                    if key not in prev_lu or cur_lu != prev:
+                        new_records.append(r)
+
+                # 2. history 只寫變動的（首次出現 / LastUpdateTime 變過）
+                if new_records:
+                    new_values = [tuple(r.get(c) for c in cols) for r in new_records]
+                    execute_values(
+                        cur,
+                        f"INSERT INTO realtime.road_events ({','.join(cols)}) VALUES %s",
+                        new_values, page_size=500,
+                    )
+
+                # 3. current 全部 UPSERT（即使欄位未變也 noop，無副作用）
+                all_values = [tuple(r.get(c) for c in cols) for r in dedup]
                 execute_values(
                     cur,
                     f"INSERT INTO realtime.road_events_current ({','.join(cols)}) VALUES %s "
                     f"ON CONFLICT (event_id, source) DO UPDATE SET {update_set}",
-                    values, page_size=500,
+                    all_values, page_size=500,
                 )
-                # 3. cleanup current — 過期事件移除
+
+                # 4. cleanup current — 過期事件移除
                 cur.execute(
                     "DELETE FROM realtime.road_events_current "
                     "WHERE expire_time IS NOT NULL AND expire_time < now()"
                 )
                 expired = cur.rowcount
-            logger.info(f"[{collector_name}] ✓ history+current 各 {len(dedup)} 筆，cleanup {expired} 過期")
+
+            skipped = len(dedup) - len(new_records)
+            logger.info(
+                f"[{collector_name}] ✓ history {len(new_records)} 新 / skip {skipped} 未變 "
+                f"/ current {len(dedup)} / cleanup {expired} 過期"
+            )
 
         elif collector_name == 'launch':
             launches = [r for r in records if r.get('_type') == 'launch']
