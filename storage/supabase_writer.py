@@ -1287,35 +1287,34 @@ class SupabaseWriter:
             update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
 
             with self.conn.cursor() as cur:
-                # 1. 撈 current 既有 last_updated，過濾未變動的不寫 history
+                # 1. 撈 current 實質欄位，過濾「內容未變」的事件
+                #
+                # 注意：TDX LastUpdateTime 每 5 min 都會刷新（即使事件實質沒變），
+                # 實測 71% 事件 last_updated 變但 description 不變。所以 dedup
+                # 必須比對「實質內容欄位」而非 last_updated。
+                CONTENT_COLS = (
+                    'description', 'event_step', 'severity',
+                    'blocked_lanes', 'impact_description',
+                )
                 ev_ids = list({r['event_id'] for r in dedup})
                 src_set = list({r['source'] for r in dedup})
                 cur.execute(
-                    "SELECT event_id, source, last_updated "
-                    "FROM realtime.road_events_current "
-                    "WHERE event_id = ANY(%s) AND source = ANY(%s)",
+                    f"SELECT event_id, source, {','.join(CONTENT_COLS)} "
+                    f"FROM realtime.road_events_current "
+                    f"WHERE event_id = ANY(%s) AND source = ANY(%s)",
                     (ev_ids, src_set),
                 )
-                prev_lu: dict = {(row[0], row[1]): row[2] for row in cur.fetchall()}
-
-                def _to_dt(v):
-                    """ISO string / datetime / None → datetime | None"""
-                    if not v:
-                        return None
-                    if isinstance(v, datetime):
-                        return v
-                    try:
-                        return datetime.fromisoformat(v)
-                    except (ValueError, TypeError):
-                        return None
+                prev_content: dict = {
+                    (row[0], row[1]): row[2:] for row in cur.fetchall()
+                }
 
                 new_records = []
                 for r in dedup:
                     key = (r['event_id'], r['source'])
-                    cur_lu = _to_dt(r.get('last_updated'))
-                    prev = prev_lu.get(key)
-                    # 首次出現 OR LastUpdateTime 變動 → 寫 history
-                    if key not in prev_lu or cur_lu != prev:
+                    cur_content = tuple(r.get(c) for c in CONTENT_COLS)
+                    prev = prev_content.get(key)
+                    # 首次出現 OR 實質內容變動 → 寫 history
+                    if prev is None or cur_content != prev:
                         new_records.append(r)
 
                 # 2. history 只寫變動的（首次出現 / LastUpdateTime 變過）
