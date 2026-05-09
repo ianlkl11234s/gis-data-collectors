@@ -192,7 +192,12 @@ class WasteMatchCollector(BaseCollector):
                 ((%(target_day)s::date + 1)::timestamp AT TIME ZONE 'Asia/Taipei') AS end_at
         ),
         raw AS (
-            SELECT
+            -- DISTINCT ON 去掉 (city, vehicle_no, observed_at) 重複 row
+            -- 台南 / 新北 polling 每 ~2 min 重疊抓 endpoint 最近 N 分鐘 GPS
+            -- → 同 timestamp 同座標被 append 2-4 次（無 UNIQUE constraint）
+            -- → OSRM /match HMM 收到「相鄰兩點時間差為 0」直接 400 Bad Request
+            -- 高雄走 SSE 推送無 dup，DISTINCT ON 對它無感
+            SELECT DISTINCT ON (w.city, w.vehicle_no, w.observed_at)
                 w.vehicle_no,
                 w.city,
                 w.route_id,
@@ -206,6 +211,7 @@ class WasteMatchCollector(BaseCollector):
             WHERE w.city = ANY(%(cities)s)
               AND w.observed_at >= b.start_at
               AND w.observed_at < b.end_at
+            ORDER BY w.city, w.vehicle_no, w.observed_at, w.ingested_at
         ),
         snapped AS (
             SELECT
