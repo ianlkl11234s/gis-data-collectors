@@ -236,4 +236,13 @@ TABLE_MAP = {
             'geometry', 'observed_at', 'source_url',
         ],
     },
+    'road_event_live': {
+        # 表 schema 見 gis-platform/migrations/078_road_events.sql
+        # 同表 history append + current upsert (PK: event_id, source)
+        # 走 is_multi_table 自訂寫入（既有 current_key 不支援複合 PK）
+        'is_multi_table': True,
+    },
+    'road_event_planned': {
+        'is_multi_table': True,
+    },
 }

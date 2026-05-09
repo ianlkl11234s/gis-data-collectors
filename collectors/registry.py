@@ -31,6 +31,8 @@ from .parking import ParkingCollector
 from .rail_timetable import RailTimetableCollector
 from .rain_gauge_realtime import RainGaugeRealtimeCollector
 from .river_water_level import RiverWaterLevelCollector
+from .road_event_live import RoadEventLiveCollector
+from .road_event_planned import RoadEventPlannedCollector
 from .satellite import SatelliteCollector
 from .ship_ais import ShipAISCollector
 from .ship_tdx import ShipTDXCollector
@@ -91,6 +93,8 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(IotWraCollector, "水利署 IoT 水文感測收集器", "IOT_WRA"),
     CollectorEntry(WastePositionsCollector, "垃圾車 GPS 收集器", "WASTE_POSITIONS"),
     CollectorEntry(WasteMatchCollector, "垃圾車 OSRM map-matching 收集器", "WASTE_MATCH"),
+    CollectorEntry(RoadEventLiveCollector, "Road Event Live 收集器", "ROAD_EVENT_LIVE"),
+    CollectorEntry(RoadEventPlannedCollector, "Road Event Planned 收集器", "ROAD_EVENT_PLANNED"),
 )
 
 

@@ -199,6 +199,8 @@ _COLLECTOR_TOGGLES = (
     ('IOT_WRA',                      False, 60),   # 水利署 IoT 7 類站點整合收集（河川/地下水/閘門/沖刷/流量/堤防/揚塵）
     ('WASTE_POSITIONS',              False, 2),    # 垃圾車 GPS（高雄/新北/台南）— 預設 2 分鐘對齊 NTPC 官方頻率
     ('WASTE_MATCH',                  False, 5),    # 垃圾車 OSRM map-matching，輸出 matched daily pre-aggregate
+    ('ROAD_EVENT_LIVE',              False, 5),    # TDX RoadEvent LiveEvent (freeway+highway+city)
+    ('ROAD_EVENT_PLANNED',           False, 720),  # TDX RoadEvent Event/City（預告型，12 hr）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
@@ -217,6 +219,12 @@ WEATHER_STATIONS = os.getenv('WEATHER_STATIONS', '').split(',') if os.getenv('WE
 
 # VD 車輛偵測器（縣市道路）
 VD_CITIES = os.getenv('VD_CITIES', 'Taipei,NewTaipei').split(',')
+
+# Road Event 縣市清單（Phase 1 EDA 驗證有資料的 10 縣市）
+ROAD_EVENT_CITIES = os.getenv(
+    'ROAD_EVENT_CITIES',
+    'Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung,Keelung,ChiayiCounty,YilanCounty,KinmenCounty'
+).split(',')
 
 # 溫度網格資料集編號（CWA）
 TEMPERATURE_DATASET = 'O-A0038-003'  # 小時溫度觀測分析格點資料

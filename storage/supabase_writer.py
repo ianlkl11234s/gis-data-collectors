@@ -598,6 +598,74 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_road_event(self, result: dict, ts: datetime) -> list[dict]:
+        """TDX RoadEvent → road_events 列（共用於 live + planned）
+
+        Schema 對齊 gis-platform/migrations/078_road_events.sql。
+        幾何處理：優先用 Geometry（多邊形/活動範圍），否則用 Positions（POINT）。
+        """
+        from shapely import wkt as shp_wkt
+        from shapely.errors import GEOSException
+        import json
+
+        records = []
+        for ev in result.get('data', []):
+            # 幾何 — Positions (POINT) / Geometry (MULTIPOLYGON) 二選一
+            wkt_str = ev.get('Geometry') or ev.get('Positions')
+            geom = None
+            if wkt_str:
+                try:
+                    g = shp_wkt.loads(wkt_str)
+                    if g and not g.is_empty:
+                        geom = f'SRID=4326;{g.wkt}'
+                except (GEOSException, Exception):
+                    geom = None
+
+            # Location 拆解
+            loc = ev.get('Location') or {}
+            feh = loc.get('FreeExpressHighway') or {}
+            # Impact (僅 live_freeway 有完整)
+            impact = ev.get('Impact') or {}
+            regulations = impact.get('Regulations')
+            if regulations is not None and not isinstance(regulations, str):
+                regulations = json.dumps(regulations, ensure_ascii=False)
+
+            # Enrich 結果（collector 端寫進 _enrich）
+            enrich = ev.get('_enrich') or {}
+
+            records.append({
+                'event_id': ev.get('EventID'),
+                'source': ev.get('_source'),
+                'event_type': ev.get('EventType'),
+                'event_subtype': ev.get('EventSubType'),
+                'event_step': ev.get('EventStep'),
+                'severity': impact.get('Severity'),
+                'road_name': feh.get('Road'),
+                'road_class': ev.get('LocationType'),
+                'direction': feh.get('Direction'),
+                'start_km': enrich.get('start_km'),
+                'end_km': enrich.get('end_km'),
+                'blocked_lanes': impact.get('BlockedLanes'),
+                'regulations': regulations,
+                'block_way': impact.get('BlockWay'),
+                'impact_description': impact.get('Description'),
+                'title': ev.get('EventTitle'),
+                'description': ev.get('Description'),
+                'location_other': loc.get('Other'),
+                'geom': geom,
+                'effective_time': ev.get('EffectiveTime') or None,
+                'expire_time': ev.get('ExpireTime') or None,
+                'published_at': ev.get('PublishTime') or None,
+                'last_updated': ev.get('LastUpdateTime') or None,
+                'collected_at': ts.isoformat(),
+                'matched_section_id': enrich.get('matched_section_id'),
+                'matched_section_name': enrich.get('matched_section_name'),
+                'matched_road_id': enrich.get('matched_road_id'),
+                'enrich_status': enrich.get('enrich_status'),
+                'raw_json': json.dumps(ev, ensure_ascii=False),
+            })
+        return records
+
     def _transform_satellite(self, result: dict, ts: datetime) -> list[dict]:
         """衛星位置：GP + SGP4 計算結果"""
         records = []
@@ -1063,6 +1131,8 @@ class SupabaseWriter:
         'river_water_level': _transform_river_water_level,
         'rain_gauge_realtime': _transform_rain_gauge_realtime,
         'iot_wra': _transform_iot_wra,
+        'road_event_live': _transform_road_event,
+        'road_event_planned': _transform_road_event,
     }
 
     # ============================================================
@@ -1184,6 +1254,54 @@ class SupabaseWriter:
                     values = [tuple(r.get(c) for c in cols) for r in trails]
                     execute_values(cur, f"INSERT INTO realtime.flight_trails ({','.join(cols)}) VALUES %s", values, page_size=100)
             logger.info(f"[flight_fr24] ✓ {len(trails)} 筆航跡寫入")
+
+        elif collector_name in ('road_event_live', 'road_event_planned'):
+            # TDX RoadEvent：同表 history append + current upsert (PK: event_id, source)
+            cols = [
+                'event_id', 'source', 'event_type', 'event_subtype', 'event_step', 'severity',
+                'road_name', 'road_class', 'direction', 'start_km', 'end_km',
+                'blocked_lanes', 'regulations', 'block_way', 'impact_description',
+                'title', 'description', 'location_other', 'geom',
+                'effective_time', 'expire_time', 'published_at', 'last_updated', 'collected_at',
+                'matched_section_id', 'matched_section_name', 'matched_road_id',
+                'enrich_status', 'raw_json',
+            ]
+            valid = [r for r in records if r.get('event_id') and r.get('source')]
+            if not valid:
+                logger.info(f"[{collector_name}] ✓ 0 筆寫入")
+                return
+
+            # 同批次去重：(event_id, source) 取最後一筆（避免 ON CONFLICT 撞同列兩次）
+            seen: dict = {}
+            for r in valid:
+                seen[(r['event_id'], r['source'])] = r
+            dedup = list(seen.values())
+
+            values = [tuple(r.get(c) for c in cols) for r in dedup]
+            update_cols = [c for c in cols if c not in ('event_id', 'source')]
+            update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
+
+            with self.conn.cursor() as cur:
+                # 1. history (append-only partition table)
+                execute_values(
+                    cur,
+                    f"INSERT INTO realtime.road_events ({','.join(cols)}) VALUES %s",
+                    values, page_size=500,
+                )
+                # 2. current (UPSERT on (event_id, source))
+                execute_values(
+                    cur,
+                    f"INSERT INTO realtime.road_events_current ({','.join(cols)}) VALUES %s "
+                    f"ON CONFLICT (event_id, source) DO UPDATE SET {update_set}",
+                    values, page_size=500,
+                )
+                # 3. cleanup current — 過期事件移除
+                cur.execute(
+                    "DELETE FROM realtime.road_events_current "
+                    "WHERE expire_time IS NOT NULL AND expire_time < now()"
+                )
+                expired = cur.rowcount
+            logger.info(f"[{collector_name}] ✓ history+current 各 {len(dedup)} 筆，cleanup {expired} 過期")
 
         elif collector_name == 'launch':
             launches = [r for r in records if r.get('_type') == 'launch']
