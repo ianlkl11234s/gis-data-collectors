@@ -666,3 +666,5 @@ MIT License
 # OSRM map-matching pipeline 啟用日期：2026-05-09
 
 # MAX_TRIPS bumped to 500 on 2026-05-09 to drain stuck attempts
+
+# 2026-05-09 10:35: drain finished, MAX_TRIPS reset to 80, TARGET_DAYS to 2
