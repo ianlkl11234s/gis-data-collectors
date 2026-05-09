@@ -307,6 +307,14 @@ class WasteMatchCollector(BaseCollector):
               AND m.vehicle_no = g.vehicle_no
               AND m.trip_id = g.trip_id
         )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM realtime.waste_match_attempts a
+            WHERE a.day = %(target_day)s::date
+              AND a.city = g.city
+              AND a.vehicle_no = g.vehicle_no
+              AND a.trip_id = g.trip_id
+        )
         ORDER BY g.started_at
         LIMIT %(max_trips)s;
         """
@@ -458,6 +466,41 @@ class WasteMatchCollector(BaseCollector):
         conn.commit()
         return len(segments)
 
+    def _record_attempt(
+        self,
+        conn,
+        target_day: date,
+        trip: Trip,
+        success: bool,
+        reason: Optional[str] = None,
+    ) -> None:
+        """紀錄一筆 OSRM match 嘗試結果，避免下輪重試。
+
+        - success=True: 至少寫進一筆 segment
+        - success=False: OSRM NoMatch / low-confidence / HTTP error / chunk 全 skip
+        ON CONFLICT 更新 attempted_at + reason，保留最新狀態。
+        """
+        sql = """
+        INSERT INTO realtime.waste_match_attempts
+            (day, city, vehicle_no, trip_id, attempted_at, success, reason)
+        VALUES (%s, %s, %s, %s, NOW(), %s, %s)
+        ON CONFLICT (day, city, vehicle_no, trip_id)
+        DO UPDATE SET
+            attempted_at = NOW(),
+            success = EXCLUDED.success,
+            reason = EXCLUDED.reason;
+        """
+        with conn.cursor() as cur:
+            cur.execute(sql, (
+                target_day,
+                trip.city,
+                trip.vehicle_no,
+                trip.trip_id,
+                success,
+                reason,
+            ))
+        conn.commit()
+
     def _match_trip(self, trip: Trip) -> Iterable[tuple[list[MatchedSegment], bool]]:
         for chunk_seq, chunk in _chunks_with_overlap(trip.points, config.WASTE_MATCH_MAX_POINTS):
             try:
@@ -498,6 +541,17 @@ class WasteMatchCollector(BaseCollector):
                     if day_stats['segments'] == before and trip_skipped == 0:
                         trip_skipped += 1
                     day_stats['skipped_chunks'] += trip_skipped
+
+                    # 不論成功失敗都寫 attempt，避免下輪 NoMatch / low-confidence trip 重複跑
+                    success = day_stats['segments'] > before
+                    reason = None if success else (
+                        'no_segments_or_low_confidence' if trip_skipped > 0 else 'no_match_attempt_made'
+                    )
+                    try:
+                        self._record_attempt(conn, target_day, trip, success, reason)
+                    except Exception as exc:
+                        # attempt marker 失敗不該擋住 collector 繼續跑
+                        print(f"   ⚠ attempt marker failed {trip.city}/{trip.vehicle_no}/{trip.trip_id}: {exc}")
 
                 totals['matched_segments'] += day_stats['segments']
                 totals['failed_or_skipped_chunks'] += day_stats['skipped_chunks']
