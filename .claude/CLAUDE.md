@@ -113,6 +113,7 @@ collect() → BaseCollector.run() → supabase_writer.write()
 3. **SupabaseWriter 是單例**，所有 collector 共用，內部有 `RLock` 保護
 4. **Buffer 機制**：DB 寫入失敗會暫存到 `data/buffer/`，每 5 分鐘重試
 5. **測試**：本地 `python3 main.py` 可執行，只要有 `.env`
+6. **AWS 變動同步**：動到 S3 storage class / lifecycle / prefix 增刪後，**務必更新 [docs/AWS_INVENTORY.md](../docs/AWS_INVENTORY.md)**（避免日後忘記哪些資料在哪個 tier、為何而存）
 
 ---
 
@@ -121,3 +122,4 @@ collect() → BaseCollector.run() → supabase_writer.write()
 - [.claude/principles.md](principles.md) — 開發慣例
 - [.claude/pitfalls/](pitfalls/) — 踩坑紀錄
 - [../gis-platform/docs/data-inventory.md](../../gis-platform/docs/data-inventory.md) — 資料清冊
+- [docs/AWS_INVENTORY.md](../docs/AWS_INVENTORY.md) — AWS S3 用量清冊（改 AWS 後必更新）
