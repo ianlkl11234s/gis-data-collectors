@@ -45,6 +45,7 @@ from .waste_match import WasteMatchCollector
 from .water_reservoir import WaterReservoirCollector
 from .water_reservoir_daily_ops import WaterReservoirDailyOpsCollector
 from .weather import WeatherCollector
+from .wra_drought_alert import WraDroughtAlertCollector
 from .youbike import YouBikeCollector
 
 
@@ -90,6 +91,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(RainGaugeRealtimeCollector, "即時雨量站收集器", "RAIN_GAUGE_REALTIME", ("CWA_API_KEY",)),
     CollectorEntry(GroundwaterLevelCollector, "地下水水位收集器", "GROUNDWATER_LEVEL"),
     CollectorEntry(WaterReservoirDailyOpsCollector, "水庫每日營運資料收集器", "WATER_RESERVOIR_DAILY_OPS"),
+    CollectorEntry(WraDroughtAlertCollector, "水情燈號 daily 收集器", "WRA_DROUGHT_ALERT"),
     CollectorEntry(IotWraCollector, "水利署 IoT 水文感測收集器", "IOT_WRA"),
     CollectorEntry(WastePositionsCollector, "垃圾車 GPS 收集器", "WASTE_POSITIONS"),
     CollectorEntry(WasteMatchCollector, "垃圾車 OSRM map-matching 收集器", "WASTE_MATCH"),

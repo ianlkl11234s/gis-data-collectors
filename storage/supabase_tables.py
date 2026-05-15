@@ -216,6 +216,19 @@ TABLE_MAP = {
         'upsert_key': 'reservoir_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'wra_drought_alert': {
+        # history: ON CONFLICT (region_name, published_date) DO NOTHING（同公告日去重）
+        # current: UPSERT by region_name（每縣市最新狀態）
+        'history': 'public.drought_alert_history',
+        'current': 'public.drought_alert_current',
+        'current_key': 'region_name',
+        'columns': [
+            'region_name', 'alert_level', 'alert_label', 'alert_color',
+            'published_date', 'source_hash', 'source_url', 'fetched_at',
+        ],
+        'upsert_key': 'region_name,published_date',
+        'upsert_strategy': 'do_nothing',
+    },
     'iot_wra': {
         'history': 'realtime.iot_wra_measurements',
         'columns': [

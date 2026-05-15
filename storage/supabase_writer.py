@@ -964,6 +964,13 @@ class SupabaseWriter:
         """WRA 水庫每日營運狀況（41568，每日）。"""
         return result.get('data', [])
 
+    def _transform_wra_drought_alert(self, result: dict, ts: datetime) -> list[dict]:
+        """水情燈號 daily（HTML scrape，hash 去重後上來）。
+
+        若 collector 偵測到上游未變動，records 會是空 list → 自然 skip。
+        """
+        return result.get('data', [])
+
     def _transform_iot_wra(self, result: dict, ts: datetime) -> list[dict]:
         """水利署 IoT 7 類站點即時感測讀值（每 60 分鐘）。
 
@@ -1133,6 +1140,7 @@ class SupabaseWriter:
         'iot_wra': _transform_iot_wra,
         'road_event_live': _transform_road_event,
         'road_event_planned': _transform_road_event,
+        'wra_drought_alert': _transform_wra_drought_alert,
     }
 
     # ============================================================

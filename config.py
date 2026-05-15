@@ -196,6 +196,7 @@ _COLLECTOR_TOGGLES = (
     ('RAIN_GAUGE_REALTIME',          False, 10),
     ('GROUNDWATER_LEVEL',            False, 60),  # 原始每 10 分鐘更新，但資料量大
     ('WATER_RESERVOIR_DAILY_OPS',    False, 1440),  # 官方 09:30 前更新
+    ('WRA_DROUGHT_ALERT',            False, 1440),  # 水情燈號 daily（上游不定期，hash 比對去重）
     ('IOT_WRA',                      False, 60),   # 水利署 IoT 7 類站點整合收集（河川/地下水/閘門/沖刷/流量/堤防/揚塵）
     ('WASTE_POSITIONS',              False, 2),    # 垃圾車 GPS（高雄/新北/台南）— 預設 2 分鐘對齊 NTPC 官方頻率
     ('WASTE_MATCH',                  False, 5),    # 垃圾車 OSRM map-matching，輸出 matched daily pre-aggregate
