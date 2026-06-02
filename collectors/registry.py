@@ -18,6 +18,7 @@ from .bus import BusCollector
 from .bus_intercity import BusIntercityCollector
 from .cwa_satellite import CWASatelliteCollector
 from .earthquake import EarthquakeCollector
+from .er_hospital_realtime import ERHospitalRealtimeCollector
 from .flight_fr24 import FlightFR24Collector
 from .flight_fr24_zone import FlightFR24ZoneCollector
 from .flight_opensky import FlightOpenSkyCollector
@@ -97,6 +98,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(WasteMatchCollector, "垃圾車 OSRM map-matching 收集器", "WASTE_MATCH"),
     CollectorEntry(RoadEventLiveCollector, "Road Event Live 收集器", "ROAD_EVENT_LIVE"),
     CollectorEntry(RoadEventPlannedCollector, "Road Event Planned 收集器", "ROAD_EVENT_PLANNED"),
+    CollectorEntry(ERHospitalRealtimeCollector, "急診即時量能收集器", "ER_HOSPITAL_REALTIME"),
 )
 
 

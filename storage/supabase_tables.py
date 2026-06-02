@@ -193,6 +193,23 @@ TABLE_MAP = {
         'upsert_key': 'station_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'er_hospital_realtime': {
+        'history': 'realtime.er_hospital_status',
+        'current': 'realtime.er_hospital_current',
+        'current_key': 'hosp_id',
+        'columns': [
+            'hosp_id', 'hosp_name', 'area_no', 'area_name', 'cont_type', 'level_name',
+            'inform', 'wait_see_cnt', 'wait_bed_cnt', 'wait_general_cnt', 'wait_icu_cnt',
+            'source_url', 'observed_at', 'collected_at',
+        ],
+        'current_columns': [
+            'hosp_id', 'hosp_name', 'area_no', 'area_name', 'cont_type', 'level_name',
+            'inform', 'wait_see_cnt', 'wait_bed_cnt', 'wait_general_cnt', 'wait_icu_cnt',
+            'source_url', 'observed_at',
+        ],
+        'upsert_key': 'hosp_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+    },
     'groundwater_level': {
         'history': 'realtime.groundwater_level_readings',
         'columns': [
