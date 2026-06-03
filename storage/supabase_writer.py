@@ -1109,6 +1109,43 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_er_hospital_realtime(self, result: dict, ts: datetime) -> list[dict]:
+        """健保署重度級急救責任醫院急診即時量能。
+
+        collector 的 _normalize 已產出與 TABLE_MAP columns 同名的 dict，
+        唯 observed_at / collected_at 為 datetime（TAIPEI_TZ）物件 → 序列化為 isoformat。
+        buffer fallback（json.dumps default=str）round-trip 後這兩欄會是字串，故兩者皆容忍。
+        observed_at 屬 upsert_key（hosp_id,observed_at），缺值跳過。
+        """
+        def _iso(v):
+            if v is None:
+                return None
+            return v.isoformat() if isinstance(v, datetime) else v
+
+        records = []
+        for r in result.get('data', []):
+            hosp_id = r.get('hosp_id')
+            observed_at = _iso(r.get('observed_at'))
+            if not hosp_id or not observed_at:
+                continue
+            records.append({
+                'hosp_id':          hosp_id,
+                'hosp_name':        r.get('hosp_name'),
+                'area_no':          r.get('area_no'),
+                'area_name':        r.get('area_name'),
+                'cont_type':        r.get('cont_type'),
+                'level_name':       r.get('level_name'),
+                'inform':           r.get('inform'),
+                'wait_see_cnt':     r.get('wait_see_cnt'),
+                'wait_bed_cnt':     r.get('wait_bed_cnt'),
+                'wait_general_cnt': r.get('wait_general_cnt'),
+                'wait_icu_cnt':     r.get('wait_icu_cnt'),
+                'source_url':       r.get('source_url'),
+                'observed_at':      observed_at,
+                'collected_at':     _iso(r.get('collected_at')) or ts.isoformat(),
+            })
+        return records
+
     TRANSFORMERS = {
         'groundwater_level': _transform_groundwater_level,
         'water_reservoir_daily_ops': _transform_water_reservoir_daily_ops,
@@ -1137,6 +1174,7 @@ class SupabaseWriter:
         'water_reservoir': _transform_water_reservoir,
         'river_water_level': _transform_river_water_level,
         'rain_gauge_realtime': _transform_rain_gauge_realtime,
+        'er_hospital_realtime': _transform_er_hospital_realtime,
         'iot_wra': _transform_iot_wra,
         'road_event_live': _transform_road_event,
         'road_event_planned': _transform_road_event,
