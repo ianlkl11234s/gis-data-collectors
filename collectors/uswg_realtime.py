@@ -39,12 +39,10 @@ import requests
 import urllib3
 
 import config
-from collectors.base import BaseCollector
+from collectors.base import BaseCollector, TAIPEI_TZ
 
 # 政府憑證缺 SKI（同 NHI ER 坑）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-TAIPEI_TZ = config.TAIPEI_TZ if hasattr(config, "TAIPEI_TZ") else None
 USWG_BASE_URL  = "https://iot.wra.gov.tw"
 USWG_TOKEN_URL = f"{USWG_BASE_URL}/Oauth2/token"
 USWG_ENDPOINT  = "/uswg/stations"
@@ -181,7 +179,7 @@ class UswgCollector(BaseCollector):
     # collect() — BaseCollector contract
     # ------------------------------------------------------------
     def collect(self) -> dict:
-        now = datetime.now(tz=TAIPEI_TZ) if TAIPEI_TZ else datetime.now()
+        now = datetime.now(tz=TAIPEI_TZ)
         stations: list[dict] = []
         measurements: list[dict] = []
 
@@ -263,7 +261,7 @@ def _dry_run() -> int:
         return 1
 
     print(f"\n[3/4] Parse stations + measurements …")
-    now = datetime.now(tz=TAIPEI_TZ) if TAIPEI_TZ else datetime.now()
+    now = datetime.now(tz=TAIPEI_TZ)
     stations, measurements = [], []
     station_skipped = 0
     for r in raw:
