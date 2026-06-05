@@ -203,6 +203,7 @@ _COLLECTOR_TOGGLES = (
     ('ROAD_EVENT_LIVE',              False, 5),    # TDX RoadEvent LiveEvent (freeway+highway+city)
     ('ROAD_EVENT_PLANNED',           False, 720),  # TDX RoadEvent Event/City（預告型，12 hr）
     ('ER_HOSPITAL_REALTIME',         False, 15),   # 健保署重度級急診即時量能（來源每 15 分更新，無金鑰，無歷史）
+    ('POWER_TAIPOWER',               False, 10),   # 台電即時電力供需（系統供需+各機組+區域用電，來源每 10 分更新，無金鑰）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:

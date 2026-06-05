@@ -276,4 +276,12 @@ TABLE_MAP = {
     'road_event_planned': {
         'is_multi_table': True,
     },
+    'power_taipower': {
+        # 台電即時電力供需：單一 collector 寫 3 張表
+        #   realtime.power_system_status   UNIQUE(observed_at)             DO NOTHING
+        #   realtime.power_generation_unit UNIQUE(unit_name, observed_at)  DO NOTHING
+        #   realtime.power_region_demand   UNIQUE(region, observed_at)     DO NOTHING
+        # 表 schema 見 gis-platform/migrations/145_power_taipower_realtime.sql
+        'is_multi_table': True,
+    },
 }

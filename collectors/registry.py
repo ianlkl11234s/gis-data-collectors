@@ -29,6 +29,7 @@ from .iot_wra import IotWraCollector
 from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
 from .parking import ParkingCollector
+from .power_taipower import PowerTaipowerCollector
 from .rail_timetable import RailTimetableCollector
 from .rain_gauge_realtime import RainGaugeRealtimeCollector
 from .river_water_level import RiverWaterLevelCollector
@@ -99,6 +100,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(RoadEventLiveCollector, "Road Event Live 收集器", "ROAD_EVENT_LIVE"),
     CollectorEntry(RoadEventPlannedCollector, "Road Event Planned 收集器", "ROAD_EVENT_PLANNED"),
     CollectorEntry(ERHospitalRealtimeCollector, "急診即時量能收集器", "ER_HOSPITAL_REALTIME"),
+    CollectorEntry(PowerTaipowerCollector, "台電即時電力供需收集器", "POWER_TAIPOWER"),
 )
 
 

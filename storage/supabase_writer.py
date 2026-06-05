@@ -1146,6 +1146,21 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_power_taipower(self, result: dict, ts: datetime) -> list[dict]:
+        """台電即時電力供需：3 表攤平為單一 records list，由 _write_multi_table 依 _type 分派。
+
+        collector 已在 collect() 把 observed_at / collected_at 序列化為 isoformat，
+        並完成單位換算（萬瓩→MW）與 _num 解析，這裡只貼 _type 標籤。
+        """
+        records: list[dict] = []
+        for r in result.get('system_status', []) or result.get('data', []):
+            records.append({'_type': 'system', **r})
+        for r in result.get('generation_units', []):
+            records.append({'_type': 'unit', **r})
+        for r in result.get('region_demand', []):
+            records.append({'_type': 'region', **r})
+        return records
+
     TRANSFORMERS = {
         'groundwater_level': _transform_groundwater_level,
         'water_reservoir_daily_ops': _transform_water_reservoir_daily_ops,
@@ -1179,6 +1194,7 @@ class SupabaseWriter:
         'road_event_live': _transform_road_event,
         'road_event_planned': _transform_road_event,
         'wra_drought_alert': _transform_wra_drought_alert,
+        'power_taipower': _transform_power_taipower,
     }
 
     # ============================================================
@@ -1447,6 +1463,76 @@ class SupabaseWriter:
                         values, page_size=500)
 
             logger.info(f"[launch] ✓ {len(launches)} launches + {len(pads)} pads + {len(events)} events 寫入")
+
+        elif collector_name == 'power_taipower':
+            # 台電即時電力供需：單一 collector 寫 3 張表，皆 ON CONFLICT DO NOTHING
+            system = [r for r in records if r.get('_type') == 'system']
+            units = [r for r in records if r.get('_type') == 'unit']
+            regions = [r for r in records if r.get('_type') == 'region']
+
+            with self.conn.cursor() as cur:
+                # 1) 系統供需 — UNIQUE(observed_at)
+                if system:
+                    cols = [
+                        'observed_at', 'curr_load_mw', 'curr_util_rate',
+                        'fore_maxi_sply_capacity_mw', 'fore_peak_dema_load_mw',
+                        'fore_peak_resv_capacity_mw', 'fore_peak_resv_rate',
+                        'fore_peak_resv_indicator', 'fore_peak_hour_range',
+                        'yday_peak_resv_rate', 'yday_peak_resv_indicator',
+                        'real_hr_maxi_sply_capacity_mw', 'real_hr_peak_time',
+                        'publish_time', 'collected_at',
+                    ]
+                    # 同批去重：同 observed_at 取最後一筆
+                    seen = {r.get('observed_at'): tuple(r.get(c) for c in cols)
+                            for r in system if r.get('observed_at')}
+                    values = list(seen.values())
+                    if values:
+                        execute_values(
+                            cur,
+                            f"INSERT INTO realtime.power_system_status ({','.join(cols)}) VALUES %s "
+                            f"ON CONFLICT (observed_at) DO NOTHING",
+                            values, page_size=100,
+                        )
+
+                # 2) 各機組 — UNIQUE(fuel_type, unit_name, observed_at)
+                #    通用桶名（如 '其它台電自有'）會跨燃料別重複，自然鍵必含 fuel_type 否則塌列
+                if units:
+                    cols = [
+                        'observed_at', 'fuel_type', 'unit_name', 'capacity_mw',
+                        'net_gen_mw', 'util_rate', 'note', 'collected_at',
+                    ]
+                    seen = {(r.get('fuel_type'), r.get('unit_name'), r.get('observed_at')): tuple(r.get(c) for c in cols)
+                            for r in units if r.get('unit_name') and r.get('observed_at')}
+                    values = list(seen.values())
+                    if values:
+                        execute_values(
+                            cur,
+                            f"INSERT INTO realtime.power_generation_unit ({','.join(cols)}) VALUES %s "
+                            f"ON CONFLICT (fuel_type, unit_name, observed_at) DO NOTHING",
+                            values, page_size=1000,
+                        )
+
+                # 3) 區域用電 — UNIQUE(region, observed_at)
+                if regions:
+                    cols = [
+                        'observed_at', 'region', 'generation_mw',
+                        'consumption_mw', 'collected_at',
+                    ]
+                    seen = {(r.get('region'), r.get('observed_at')): tuple(r.get(c) for c in cols)
+                            for r in regions if r.get('region') and r.get('observed_at')}
+                    values = list(seen.values())
+                    if values:
+                        execute_values(
+                            cur,
+                            f"INSERT INTO realtime.power_region_demand ({','.join(cols)}) VALUES %s "
+                            f"ON CONFLICT (region, observed_at) DO NOTHING",
+                            values, page_size=100,
+                        )
+
+            logger.info(
+                f"[power_taipower] ✓ system {len(system)} + units {len(units)} "
+                f"+ regions {len(regions)} 筆寫入"
+            )
 
     def _write_satellite_tle(self, result: dict, timestamp: datetime):
         """更新衛星 TLE 參數表（全量 UPSERT，供前�� SGP4 計算用）"""
