@@ -209,6 +209,7 @@ TABLE_MAP = {
         ],
         'upsert_key': 'hosp_id,observed_at',
         'upsert_strategy': 'do_nothing',
+        'current_touch_updated_at': True,
     },
     'groundwater_level': {
         'history': 'realtime.groundwater_level_readings',

@@ -1240,6 +1240,8 @@ class SupabaseWriter:
                 key_idx = current_cols.index(key) if key in current_cols else 0
                 update_cols = [c for c in current_cols if c != key]
                 update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
+                if table_config.get('current_touch_updated_at'):
+                    update_set += ',updated_at=now()'
                 col_names = ','.join(current_cols)
 
                 # 去重：同一 key 只保留最後出現的那筆
