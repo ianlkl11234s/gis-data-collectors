@@ -127,6 +127,7 @@ data-collectors/
 │   ├── rain_gauge_realtime.py      # CWA 即時雨量站
 │   ├── groundwater_level.py        # 水利署地下水水位
 │   ├── water_reservoir_daily_ops.py # 水利署水庫每日營運狀況
+│   ├── wra_drought_alert.py        # 水情燈號 daily（HTML scrape + hash 去重，不能標 LIVE）
 │   ├── iot_wra.py                  # 水利署 IoT 7 類站點（河川/地下水/閘門/沖刷/流量/堤防/揚塵）
 │   └── waste_positions.py          # 垃圾車即時 GPS（高雄/新北/台南）
 │
@@ -500,6 +501,20 @@ python main.py
 - **資料類型**: 7 類站點即時感測讀值，整合到 `realtime.iot_wra_measurements`
 - **靜態 metadata**: 寫入 `public.iot_wra_stations`（PK = `iow_station_id, station_type`，因同一 UUID 可能跨多種 station_type）
 - **去重**: history 表 PK = `(iow_station_id, physical_quantity_id, observed_at)`，DO NOTHING
+
+### 水情燈號 daily（drought alert）
+- **來源**: 水利署 EarlyWarning HTML scrape（無 API/CSV）
+  - https://www.wra.gov.tw/EarlyWarning.aspx?n=18804&sms=9114
+- **頻率**: daily (1440 min)，但**上游不定期**（抗旱會議公告後更新，實測 18 天無變動屬常態）
+- **解析**: BeautifulSoup `div.info-list > li > {div.locate, div.current.type-N}`
+  - type-2=綠燈 / type-3=黃 / type-4=橙 / type-5=紅
+- **去重**: canonical JSON SHA256（只看 published_date + alerts，避開 ViewState 動態噪音）
+  - 與資料庫最後一筆 hash 比對，相同則 skip 不寫
+- **雙表寫入**:
+  - `public.drought_alert_current` UPSERT by region_name
+  - `public.drought_alert_history` UNIQUE (region_name, published_date) DO NOTHING
+- **不能標 LIVE**: DataAge UI 顯示「採樣 N 天前」橘色
+- **啟動**: `WRA_DROUGHT_ALERT_ENABLED=true`
 
 ### 垃圾車即時 GPS
 - **來源**: 三家政府開放資料平台
