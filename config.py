@@ -54,6 +54,14 @@ CWA_FILE_API_BASE = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi"
 MOENV_API_KEY = os.getenv('MOENV_API_KEY')
 
 # ============================================================
+# 水利署 IoT 水資源物聯網 OAuth2（都市淹水感知器 USWG）
+# ============================================================
+# 註冊：https://iot.wra.gov.tw/SignUp.jsp
+# Swagger: https://iot.wra.gov.tw/swagger/v1/swagger.json
+IOW_CLIENT_ID     = os.getenv('IOW_CLIENT_ID')
+IOW_CLIENT_SECRET = os.getenv('IOW_CLIENT_SECRET')
+
+# ============================================================
 # 儲存設定
 # ============================================================
 
