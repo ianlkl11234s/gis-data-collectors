@@ -257,6 +257,15 @@ TABLE_MAP = {
         'upsert_key': 'iow_station_id,physical_quantity_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'uswg': {
+        'history': 'realtime.uswg_measurements',
+        'columns': [
+            'iow_station_id', 'physical_quantity_id', 'observed_at',
+            'name', 'si_unit', 'value', 'collected_at',
+        ],
+        'upsert_key': 'iow_station_id,physical_quantity_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+    },
     'waste_positions': {
         # 表 schema 見 gis-platform/migrations/065_waste_management.sql §5.5
         # 純 append-only history（無 UNIQUE constraint）；前端用

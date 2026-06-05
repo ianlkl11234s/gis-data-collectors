@@ -1018,6 +1018,50 @@ class SupabaseWriter:
             execute_values(cur, sql, values, page_size=500)
         self.conn.commit()
 
+    def _transform_uswg(self, result: dict, ts: datetime) -> list[dict]:
+        """都市淹水感知器即時讀值（每 10 分鐘）。
+
+        collector 已在 collect() 結束前呼叫 _upsert_uswg_stations()
+        將靜態 metadata 寫入 public.uswg_stations，
+        這裡只回傳 measurements 以寫入 realtime.uswg_measurements。
+        """
+        return result.get('data', [])
+
+    def _upsert_uswg_stations(self, rows: list[dict]) -> None:
+        """upsert 靜態站點 metadata 到 public.uswg_stations。
+
+        USWG PK 為單一 iow_station_id（不像 iot_wra 還有 station_type）。
+        """
+        if not rows:
+            return
+        self._ensure_conn()
+        cols = [
+            'iow_station_id', 'station_id', 'name',
+            'county_code', 'county_name', 'town_code', 'town_name',
+            'admin_name', 'hydro_station_type', 'lat', 'lng', 'updated_at',
+        ]
+
+        # 同批去重
+        dedup: dict[str, dict] = {}
+        for r in rows:
+            sid = r.get('iow_station_id')
+            if sid:
+                dedup[sid] = r
+
+        values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
+        update_set = ', '.join(
+            f"{c} = EXCLUDED.{c}"
+            for c in cols
+            if c != 'iow_station_id'
+        )
+        sql = (
+            f"INSERT INTO public.uswg_stations ({','.join(cols)}) VALUES %s "
+            f"ON CONFLICT (iow_station_id) DO UPDATE SET {update_set}"
+        )
+        with self.conn.cursor() as cur:
+            execute_values(cur, sql, values, page_size=500)
+        self.conn.commit()
+
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
         """upsert 靜態水庫基本資料到 public.water_reservoirs
 
@@ -1191,6 +1235,7 @@ class SupabaseWriter:
         'rain_gauge_realtime': _transform_rain_gauge_realtime,
         'er_hospital_realtime': _transform_er_hospital_realtime,
         'iot_wra': _transform_iot_wra,
+        'uswg': _transform_uswg,
         'road_event_live': _transform_road_event,
         'road_event_planned': _transform_road_event,
         'wra_drought_alert': _transform_wra_drought_alert,
