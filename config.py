@@ -186,7 +186,7 @@ _COLLECTOR_TOGGLES = (
     ('TRA_STATIC',                   True,  1440),
     ('RAIL_TIMETABLE',               True,  1440),
     ('SHIP_TDX',                     False, 2),
-    ('SHIP_AIS',                     True,  10),
+    ('SHIP_AIS',                     False, 10),  # ⚠️ Taiwan IP required — 跑在 HiCloud VM，Zeabur 端強制關閉，見 docs/EXTERNAL_COLLECTORS.md
     ('FLIGHT_FR24',                  False, 5),
     ('FLIGHT_FR24_ZONE',             False, 5),
     ('FLIGHT_OPENSKY',               False, 5),

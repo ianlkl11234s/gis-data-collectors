@@ -7,6 +7,11 @@ API 端點：geojsonais.ashx
 
 此 API 涵蓋所有船型（漁船、貨船、油輪、客輪等），
 資料量遠大於 TDX 的國內航線船位。
+
+⚠️ Taiwan IP required — 不在 Zeabur 跑，實際部署在 HiCloud VM (HiNet IP)。
+   詳見 docs/EXTERNAL_COLLECTORS.md 與 external/ship_ais_vm/README.md。
+   Zeabur 環境必須維持 SHIP_AIS_ENABLED=false，否則只會無止盡 TCP timeout。
+   此檔保留供 schema/transform 參考（external/ship_ais_vm/ship_ais_collect.py 是其鏡像）。
 """
 
 from datetime import datetime

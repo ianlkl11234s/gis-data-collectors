@@ -4,6 +4,10 @@
 
 Zeabur 雲端持續資料收集服務，定期抓取各來源資料並寫入 Supabase。
 
+部分 collector 因目標 API 對國際雲商 IP 做封鎖（白名單只放台灣 ISP AS），改在中華電信 HiCloud VM 跑，
+單檔鏡像版住在 [`external/`](../external/)。完整 pattern 與 SOP 見 [`docs/EXTERNAL_COLLECTORS.md`](../docs/EXTERNAL_COLLECTORS.md)。
+目前外部清單：`ship_ais`（航港局 AIS）。Zeabur 上對應 `*_ENABLED` 一律設 `false`。
+
 ## GIS 基礎設施三部曲（強綁定）
 
 本專案是 GIS 基礎設施的**持續收集層**，與另外兩個 repo 緊密連動：
