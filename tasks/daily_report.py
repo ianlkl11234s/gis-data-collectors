@@ -89,6 +89,8 @@ class DailyReportTask:
 
         sections = [
             ("收集狀態", self._section_collector_status),
+            ("Supabase realtime 寫入", self._section_supabase_realtime),
+            ("S3 archives 心跳", self._section_s3_archives),
             ("檔案統計", self._section_file_stats),
             ("S3 統計", self._section_s3_stats),
         ]
@@ -158,6 +160,120 @@ class DailyReportTask:
             parts.extend(silent)
 
         return '\n'.join(parts)
+
+    def _section_supabase_realtime(self) -> str:
+        """Supabase realtime 表寫入新鮮度（一次 RPC 撈全表）"""
+        from tasks import monitoring
+
+        tables = monitoring.load_realtime_tables()
+        if not tables:
+            return "\n📦 *Supabase realtime*\n  config/realtime_tables.yaml 為空"
+
+        results = monitoring.query_realtime_health(tables)
+        if not results:
+            return "\n📦 *Supabase realtime*\n  RPC 撈不到資料（檢查 migration 149 是否套用）"
+
+        # join 回 expected_interval
+        meta = {(t["schema"], t["table"]): t for t in tables}
+        now = datetime.now(TAIPEI_TZ)
+        buckets = {"DEAD": [], "STALE": [], "NEVER": [], "OK_CRITICAL": [], "ERR": []}
+        ok_count = 0
+        for r in results:
+            t = meta.get((r["schema"], r["table"]), {})
+            interval = t.get("expected_interval_min", 60)
+            critical = t.get("critical", False)
+            if r.get("error"):
+                buckets["ERR"].append((r, t))
+                continue
+            status, age_min = monitoring.classify_freshness(r["max_time"], interval, now)
+            if status == "OK":
+                ok_count += 1
+                if critical:
+                    buckets["OK_CRITICAL"].append((r, t, age_min))
+            elif status == "NEVER":
+                buckets["NEVER"].append((r, t))
+            else:
+                buckets[status].append((r, t, age_min))
+
+        parts = [f"\n📦 *Supabase realtime* ({len(results)} 表 / {ok_count} OK)"]
+
+        def _fmt(r, t, age_min=None):
+            tag = "⚠️" if t.get("critical") else ""
+            label = f"`{r['schema']}.{r['table']}`{tag}"
+            if age_min is None:
+                return label
+            return f"{label} 落後 {age_min} 分"
+
+        if buckets["DEAD"]:
+            parts.append("  🔴 DEAD（>12x interval）")
+            for r, t, age in buckets["DEAD"][:8]:
+                parts.append(f"    {_fmt(r, t, age)}")
+        if buckets["STALE"]:
+            parts.append("  🟡 STALE（>3x interval）")
+            for r, t, age in buckets["STALE"][:8]:
+                parts.append(f"    {_fmt(r, t, age)}")
+        if buckets["NEVER"]:
+            parts.append("  ⚪ NEVER（無資料）")
+            for r, t in buckets["NEVER"][:8]:
+                parts.append(f"    {_fmt(r, t)}")
+        if buckets["ERR"]:
+            parts.append("  ❌ ERR")
+            for r, t in buckets["ERR"][:5]:
+                parts.append(f"    {_fmt(r, t)}: {r['error'][:60]}")
+
+        if not any(buckets[k] for k in ("DEAD", "STALE", "NEVER", "ERR")):
+            parts.append("  ✅ 全部 OK")
+        return "\n".join(parts)
+
+    def _section_s3_archives(self) -> str:
+        """每 collector S3 archives 心跳 — 解 flight_fr24 silent fail 32 天那種"""
+        from tasks import monitoring
+
+        cmap = monitoring.load_cross_layer_map()
+        if not cmap:
+            return "\n📦 *S3 archives*\n  cross_layer_map.yaml 為空"
+
+        latest_dates = monitoring.list_archive_dates_per_collector()
+        today = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
+        yesterday = (datetime.now(TAIPEI_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        stale = []   # 應有但落後
+        ok = []
+        missing = [] # 應有但完全沒有
+        ignored = 0  # disabled / expected_daily=false
+
+        for name, cfg in cmap.items():
+            if not cfg.get("enabled"):
+                ignored += 1
+                continue
+            for s3p in cfg.get("s3_prefixes", []):
+                if not s3p.get("expected_daily"):
+                    ignored += 1
+                    continue
+                last = latest_dates.get(name)
+                if last is None:
+                    missing.append((name, cfg))
+                elif last < yesterday:
+                    days_behind = (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(last, "%Y-%m-%d")).days
+                    stale.append((name, cfg, last, days_behind))
+                else:
+                    ok.append(name)
+                break  # 一個 collector 只看第一個 expected_daily prefix
+
+        parts = [f"\n☁️ *S3 archives* ({len(ok)} OK / {len(stale) + len(missing)} 異常)"]
+        if missing:
+            parts.append("  ⚪ 從未歸檔")
+            for name, cfg in missing[:8]:
+                tag = " ⚠️" if cfg.get("critical") else ""
+                parts.append(f"    `{name}`{tag}")
+        if stale:
+            parts.append("  🔴 落後")
+            for name, cfg, last, days in sorted(stale, key=lambda x: -x[3])[:8]:
+                tag = " ⚠️" if cfg.get("critical") else ""
+                parts.append(f"    `{name}`{tag} 最新 {last}（落後 {days} 天）")
+        if not stale and not missing:
+            parts.append("  ✅ 全部 enabled+expected_daily 的 collector 都有昨日歸檔")
+        return "\n".join(parts)
 
     def _section_file_stats(self) -> str:
         """本地檔案統計區塊"""

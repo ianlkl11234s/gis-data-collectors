@@ -22,6 +22,9 @@ sgp4>=2.22
 # WKT 幾何 parse（road_event collector 用）
 shapely>=2.0.0
 
+# YAML 設定檔（監控系統 config/ 資料夾用）
+PyYAML>=6.0
+
 # 未來擴充
 # pandas>=2.0.0
 # aiohttp>=3.8.0
