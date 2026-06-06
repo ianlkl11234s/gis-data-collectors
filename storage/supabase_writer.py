@@ -1018,6 +1018,35 @@ class SupabaseWriter:
             execute_values(cur, sql, values, page_size=500)
         self.conn.commit()
 
+    def _transform_precipitation_raster(self, result: dict, ts: datetime) -> list[dict]:
+        """水利署累積雨量柵格圖（PNG → bytea 經 base64 transit）
+
+        PK (cumulative_hours, observed_at) 天然去重；同 ts × ch 不重寫。
+        Empty raster（API 未生成）仍存一筆 metadata，image_bytes = NULL。
+        """
+        import base64 as _b64
+        records = []
+        for f in result.get('data', []):
+            b64 = f.get('image_bytes_b64')
+            png = _b64.b64decode(b64) if b64 else None
+            records.append({
+                'cumulative_hours': f.get('cumulative_hours'),
+                'observed_at':      f.get('observed_at'),
+                'image_bytes':      PgBinary(png) if png else None,
+                'mime_type':        'image/png',
+                'image_size':       f.get('image_size'),
+                'ul_lat':           f.get('ul_lat'),
+                'ul_lng':           f.get('ul_lng'),
+                'br_lat':           f.get('br_lat'),
+                'br_lng':           f.get('br_lng'),
+                'width_m':          f.get('width_m'),
+                'height_m':         f.get('height_m'),
+                'is_empty':         f.get('is_empty', False),
+                'source_url':       f.get('source_url'),
+                'collected_at':     ts.isoformat(),
+            })
+        return records
+
     def _transform_uswg(self, result: dict, ts: datetime) -> list[dict]:
         """都市淹水感知器即時讀值（每 10 分鐘）。
 
@@ -1236,6 +1265,7 @@ class SupabaseWriter:
         'er_hospital_realtime': _transform_er_hospital_realtime,
         'iot_wra': _transform_iot_wra,
         'uswg': _transform_uswg,
+        'precipitation_raster': _transform_precipitation_raster,
         'road_event_live': _transform_road_event,
         'road_event_planned': _transform_road_event,
         'wra_drought_alert': _transform_wra_drought_alert,

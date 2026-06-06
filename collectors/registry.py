@@ -44,6 +44,7 @@ from .tra_train import TRATrainCollector
 from .vd import VDCollector
 from .waste_positions import WastePositionsCollector
 from .waste_match import WasteMatchCollector
+from .precipitation_raster import PrecipitationRasterCollector
 from .uswg_realtime import UswgCollector
 from .water_reservoir import WaterReservoirCollector
 from .water_reservoir_daily_ops import WaterReservoirDailyOpsCollector
@@ -97,6 +98,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(WraDroughtAlertCollector, "水情燈號 daily 收集器", "WRA_DROUGHT_ALERT"),
     CollectorEntry(IotWraCollector, "水利署 IoT 水文感測收集器", "IOT_WRA"),
     CollectorEntry(UswgCollector, "都市淹水感知器收集器（USWG）", "USWG", ("IOW_CLIENT_ID", "IOW_CLIENT_SECRET")),
+    CollectorEntry(PrecipitationRasterCollector, "累積雨量柵格圖收集器", "PRECIPITATION_RASTER", ("IOW_CLIENT_ID", "IOW_CLIENT_SECRET")),
     CollectorEntry(WastePositionsCollector, "垃圾車 GPS 收集器", "WASTE_POSITIONS"),
     CollectorEntry(WasteMatchCollector, "垃圾車 OSRM map-matching 收集器", "WASTE_MATCH"),
     CollectorEntry(RoadEventLiveCollector, "Road Event Live 收集器", "ROAD_EVENT_LIVE"),

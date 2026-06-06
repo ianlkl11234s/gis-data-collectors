@@ -207,6 +207,7 @@ _COLLECTOR_TOGGLES = (
     ('WRA_DROUGHT_ALERT',            False, 1440),  # 水情燈號 daily（上游不定期，hash 比對去重）
     ('IOT_WRA',                      False, 60),   # 水利署 IoT 7 類站點整合收集（河川/地下水/閘門/沖刷/流量/堤防/揚塵）
     ('USWG',                         False, 10),   # 都市淹水感知器（OAuth2，1999 站全國淹水深度即時，rain-impact 用）
+    ('PRECIPITATION_RASTER',         False, 60),   # 水利署累積雨量柵格圖 PNG（共用 IOW_CLIENT_*，每小時 4 張 ch=1/3/6/24）
     ('WASTE_POSITIONS',              False, 2),    # ⚠️ 跑在 HiCloud VM（Zeabur 端強制關閉，見 docs/EXTERNAL_COLLECTORS.md）— 對齊 NTPC 官方 2 分頻率
     ('WASTE_MATCH',                  False, 5),    # 垃圾車 OSRM map-matching，輸出 matched daily pre-aggregate
     ('ROAD_EVENT_LIVE',              False, 5),    # TDX RoadEvent LiveEvent (freeway+highway+city)
