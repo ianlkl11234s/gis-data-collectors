@@ -2,6 +2,13 @@
 
 本文件說明 Data Collectors 的系統架構與資料歸檔流程。
 
+> **2026-06 更新**：因部分政府 API 對國際雲段 IP 封鎖，**少數 collector 已搬到 HiCloud VM**
+> （目前：`ship_ais` / `waste_positions`）。整套監控升級為「單一 Telegram 日報」。
+> - 外部 collector pattern → [EXTERNAL_COLLECTORS.md](EXTERNAL_COLLECTORS.md)
+> - 監控架構 → [MONITORING.md](MONITORING.md)
+>
+> 以下章節描述 **Zeabur 主力部署**的內部架構，仍有效。
+
 ## 系統概覽
 
 ```
@@ -305,6 +312,9 @@ S3 存取只需要以下權限：
 
 ## 相關文件
 
-- [S3_SETUP.md](./S3_SETUP.md) - S3 設定指南
-- [API.md](./API.md) - API 端點文件
-- [README.md](../README.md) - 專案總覽
+- [MONITORING.md](MONITORING.md) — 監控系統（每日 Telegram 12 段）
+- [EXTERNAL_COLLECTORS.md](EXTERNAL_COLLECTORS.md) — HiCloud VM 上的外部 collector pattern
+- [S3_SETUP.md](S3_SETUP.md) — S3 設定指南
+- [AWS_INVENTORY.md](AWS_INVENTORY.md) — S3 bucket 用量清冊
+- [API.md](API.md) — API 端點文件
+- [README.md](../README.md) — 專案總覽

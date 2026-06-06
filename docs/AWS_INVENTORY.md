@@ -95,6 +95,7 @@ Rule ID: tiered-cold-storage
 | `pulse-db/` | 應用端 | 0.29 GB |
 | `mini-taipei/` | 應用端（mini taipei publish task） | 0.05 GB |
 | `rail-data/` | 應用端 rail 相關 | 0.05 GB |
+| `_external_vm_health/` | **監控**：HiCloud VM + 本機 Mac 每日推 health snapshot JSON。被 `tasks/daily_report.py` 撈來顯示「VM 健康」段。**勿手動改 / 勿加 lifecycle** | < 0.01 GB |
 
 ---
 
