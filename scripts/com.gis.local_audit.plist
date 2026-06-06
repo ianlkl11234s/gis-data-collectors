@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  macOS launchd 設定範本：每天 07:00 跑 local_audit_push.py，把本機 GIS 三 repo
+  macOS launchd 設定範本：每天 10:00 跑 local_audit_push.py，把本機 GIS 三 repo
   健康狀態推 S3 給 Zeabur daily_report 撈。
 
   安裝步驟（在 Mac 上）：
@@ -21,7 +21,7 @@
     tail ~/Library/Logs/gis-local-audit.log
 
   關鍵設計：
-    - StartCalendarInterval: 每天 07:00
+    - StartCalendarInterval: 每天 10:00
     - RunAtLoad: false（不在 load 時馬上跑）
     - 在 ~/.config/.gis-audit-env 放 S3_BUCKET/S3_REGION/S3_ACCESS_KEY/S3_SECRET_KEY
 
@@ -43,7 +43,7 @@
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>7</integer>
+        <integer>10</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
