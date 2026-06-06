@@ -91,6 +91,8 @@ class DailyReportTask:
             ("收集狀態", self._section_collector_status),
             ("Supabase realtime 寫入", self._section_supabase_realtime),
             ("S3 archives 心跳", self._section_s3_archives),
+            ("跨層一致性", self._section_cross_layer),
+            ("異常 7 天趨勢", self._section_anomaly_trend),
             ("檔案統計", self._section_file_stats),
             ("S3 統計", self._section_s3_stats),
         ]
@@ -273,6 +275,159 @@ class DailyReportTask:
                 parts.append(f"    `{name}`{tag} 最新 {last}（落後 {days} 天）")
         if not stale and not missing:
             parts.append("  ✅ 全部 enabled+expected_daily 的 collector 都有昨日歸檔")
+        return "\n".join(parts)
+
+    def _section_cross_layer(self) -> str:
+        """跨層一致性：collector heartbeat × Supabase × S3 三向交叉。
+
+        對每個 enabled collector，三層都要動才算 OK：
+          [A] collector last_run / last_success（in-memory，有則用）
+          [B] Supabase 對應的 history table 有 24h 寫入
+          [C] S3 archives 有昨天的 tar.gz（expected_daily=true 才檢查）
+        """
+        from tasks import monitoring
+
+        cmap = monitoring.load_cross_layer_map()
+        if not cmap:
+            return "\n🔁 *跨層一致性*\n  cross_layer_map.yaml 為空"
+
+        # 預先撈 SB / S3 兩層全量
+        rt_tables = monitoring.load_realtime_tables()
+        rt_results = monitoring.query_realtime_health(rt_tables) if rt_tables else []
+        rt_24h_count = {(r["schema"], r["table"]): r.get("count_24h", 0) for r in rt_results}
+        s3_dates = monitoring.list_archive_dates_per_collector()
+        yesterday = (datetime.now(TAIPEI_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # 收集器 in-memory 狀態（last_success_at）
+        collector_state: dict[str, datetime | None] = {}
+        for c in self.collectors:
+            collector_state[c.name] = getattr(c, "last_success_at", None)
+
+        misaligned = []  # [(name, [A?, B?, C?, reason]), ...]
+        ok_count = 0
+        for name, cfg in cmap.items():
+            if not cfg.get("enabled"):
+                continue
+            # [A] collector heartbeat — 寬鬆判斷（in-memory 失憶就略過 A，不算問題）
+            a_ok = True
+            if name in collector_state:
+                last = collector_state[name]
+                if last is not None:
+                    age_min = (datetime.now(TAIPEI_TZ) - last).total_seconds() / 60
+                    a_ok = age_min < cfg["expected_interval_min"] * 3
+            # [B] SB 寫入
+            sb_tables = cfg.get("supabase_tables") or []
+            if sb_tables:
+                b_ok = any(rt_24h_count.get(tuple(t.split(".", 1)), 0) > 0 for t in sb_tables)
+            else:
+                b_ok = True  # 沒設 SB 表就略過
+            # [C] S3 archive 昨天
+            has_daily_prefix = any(p.get("expected_daily") for p in cfg.get("s3_prefixes", []))
+            if has_daily_prefix:
+                latest = s3_dates.get(name)
+                c_ok = latest is not None and latest >= yesterday
+            else:
+                c_ok = True
+            if a_ok and b_ok and c_ok:
+                ok_count += 1
+            else:
+                misaligned.append((name, cfg, a_ok, b_ok, c_ok))
+
+        parts = [f"\n🔁 *跨層一致性* ({ok_count} OK / {len(misaligned)} 斷層)"]
+        if not misaligned:
+            parts.append("  ✅ 所有 enabled collector 三層都對齊")
+            return "\n".join(parts)
+
+        for name, cfg, a_ok, b_ok, c_ok in misaligned[:8]:
+            tag = " ⚠️" if cfg.get("critical") else ""
+            flags = "".join(["A" if a_ok else "a", "B" if b_ok else "b", "C" if c_ok else "c"])
+            parts.append(f"  🔴 `{name}`{tag} [{flags}] {self._cross_layer_diagnosis(a_ok, b_ok, c_ok)}")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _cross_layer_diagnosis(a: bool, b: bool, c: bool) -> str:
+        """用文字描述 (A,B,C) 斷在哪。大寫=OK 小寫=異常。"""
+        if not a and not b and not c:
+            return "三層全斷（collector 沒跑 → SB / S3 全停）"
+        if not a and not b:
+            return "collector + SB 雙斷（極可能完全沒跑）"
+        if not c and a and b:
+            return "SB / collector 動但 S3 archive 沒上（archive task silent fail）"
+        if not b and a and c:
+            return "S3 動但 SB 停寫（transform/connection 異常）"
+        if not a and b:
+            return "SB 有寫但 collector 失憶（可能剛重啟）"
+        return "至少一層 missing"
+
+    def _section_anomaly_trend(self) -> str:
+        """異常 rolling 7 天趨勢 + D1/D3/D7 去重提醒。
+
+        本輪偵測到的異常：
+          - SB DEAD/STALE/NEVER 的 table
+          - S3 expected_daily 缺檔的 collector
+          - 跨層斷層的 collector
+        以 anomaly id 標記，存 data/anomaly_state.json，分新發生/持續/已修復。
+        """
+        from tasks import monitoring
+
+        # 偵測本輪所有異常（與上面 sections 邏輯一致，重跑一次）
+        current: set[str] = set()
+
+        # SB
+        rt_tables = monitoring.load_realtime_tables()
+        rt_meta = {(t["schema"], t["table"]): t for t in rt_tables}
+        for r in monitoring.query_realtime_health(rt_tables) if rt_tables else []:
+            if r.get("error"):
+                current.add(f"sb:{r['schema']}.{r['table']}:err")
+                continue
+            t = rt_meta.get((r["schema"], r["table"]), {})
+            status, _ = monitoring.classify_freshness(r["max_time"], t.get("expected_interval_min", 60))
+            if status in ("DEAD", "STALE", "NEVER"):
+                current.add(f"sb:{r['schema']}.{r['table']}:{status.lower()}")
+
+        # S3
+        cmap = monitoring.load_cross_layer_map()
+        s3_dates = monitoring.list_archive_dates_per_collector()
+        yesterday = (datetime.now(TAIPEI_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+        for name, cfg in cmap.items():
+            if not cfg.get("enabled"):
+                continue
+            for s3p in cfg.get("s3_prefixes", []):
+                if not s3p.get("expected_daily"):
+                    continue
+                last = s3_dates.get(name)
+                if last is None:
+                    current.add(f"s3:{name}:missing")
+                elif last < yesterday:
+                    current.add(f"s3:{name}:stale")
+                break
+
+        # update state（檔案讀寫失敗時 silently 空 dict）
+        new_ones, persistent, resolved = monitoring.update_anomaly_state(current)
+        state = monitoring.load_anomaly_state()
+
+        parts = [f"\n📈 *異常 7 天趨勢* (新 {len(new_ones)} / 持續 {len(persistent)} / 已修復 {len(resolved)})"]
+        if new_ones:
+            parts.append("  🆕 新發生")
+            for aid in sorted(new_ones)[:8]:
+                parts.append(f"    `{aid}`")
+        if resolved:
+            parts.append("  ✅ 已修復")
+            for aid in sorted(resolved)[:6]:
+                parts.append(f"    `{aid}`")
+        # 持續中：依 D1/D3/D7 規則篩選提報
+        notify_persistent = [aid for aid in persistent if monitoring.should_notify_persistent(aid, state)]
+        if notify_persistent:
+            parts.append("  ⏳ 持續中（D1/D3/D7 提醒）")
+            for aid in sorted(notify_persistent)[:6]:
+                entry = state.get(aid, {})
+                first = entry.get("first_seen", "?")
+                parts.append(f"    `{aid}` 自 {first}")
+        elif persistent:
+            silent_count = len(persistent) - len(notify_persistent)
+            parts.append(f"  ⏳ 另有 {silent_count} 個持續異常（非 D1/D3/D7 靜音）")
+        if not (new_ones or resolved or notify_persistent or persistent):
+            parts.append("  ✅ 無異常")
         return "\n".join(parts)
 
     def _section_file_stats(self) -> str:
