@@ -19,6 +19,7 @@
 | Collector | 來源 API | 部署位置 | 子目錄 |
 |---|---|---|---|
 | `ship_ais` | `mpbais.motcmpb.gov.tw` (航港局) | HiCloud VM `210.61.15.74` | [`external/ship_ais_vm/`](../external/ship_ais_vm/) |
+| `waste_positions` | 高雄/新北/台南 GPS 三家 | 同上 VM | [`external/waste_positions_vm/`](../external/waste_positions_vm/) |
 
 主 repo 對應 collector 的 `*_ENABLED` 環境變數**必須在 Zeabur 上設為 `false`**（避免雙跑、避免無意義的 timeout 錯誤刷 log）。
 

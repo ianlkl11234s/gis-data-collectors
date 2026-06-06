@@ -12,6 +12,11 @@
 Quiet hours：垃圾車收運時段為早班 06-12 / 午班 12-18 / 晚班 18-24，凌晨幾乎零信號。
 預設 01:00-06:00 跳過此 tick（節省 ~25% 流量；空回傳 INSERT 0 筆本身成本極低，
 但跳過可少打三次 HTTP）。透過 WASTE_POSITIONS_QUIET_HOURS 調整或關閉。
+
+⚠️ Taiwan IP recommended — 三家來源對 Zeabur 出口偶發 ConnectTimeout，
+   已搬至 HiCloud VM 跑（external/waste_positions_vm/）。
+   Zeabur 環境必須維持 WASTE_POSITIONS_ENABLED=false，否則 append-only
+   history 表會同一時段被雙 INSERT。詳見 docs/EXTERNAL_COLLECTORS.md。
 """
 
 import csv
