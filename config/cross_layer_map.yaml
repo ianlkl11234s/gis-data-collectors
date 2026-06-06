@@ -1,0 +1,403 @@
+# Cross-Layer Map — collector ↔ Supabase tables ↔ S3 prefixes 的單一真相
+#
+# 用途：
+#   - tasks/daily_report.py 跨層一致性（collector × SB × S3 三向交叉）
+#   - 任何「全集合掃描」工具都該以此為準
+#
+# 維護規則（重要）：
+#   每次新增 / 改動 collector 後，務必同步本檔！見 .claude/CLAUDE.md
+#   遺漏會造成 daily_report 漏報該 collector 的健康狀態。
+#
+# 欄位定義：
+#   enabled               : 該 collector 是否「應該在跑」（不論部署在哪）
+#   deployment            : zeabur | hicloud_vm | disabled
+#   expected_interval_min : 期望抓取間隔（分鐘，給 staleness 判斷用）
+#   supabase_tables       : 該 collector 寫的所有 Supabase 表（含 history / current / 多表）
+#   s3_prefixes           : 該 collector 在 S3 上的歸檔路徑（用於檢查 daily tar.gz 是否健康）
+#   critical              : 壞了會 page 你的，True / False
+#   notes                 : 自由備註
+
+# ─────────────────────────────────────────────────────────
+# 交通類
+# ─────────────────────────────────────────────────────────
+youbike:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 15
+  supabase_tables: [realtime.youbike_snapshots, realtime.youbike_current]
+  s3_prefixes:
+    - {prefix: youbike/archives/, expected_daily: true}
+  critical: true
+
+bus:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 2
+  supabase_tables: [realtime.bus_positions, realtime.bus_current]
+  s3_prefixes:
+    - {prefix: bus/archives/, expected_daily: true}
+  critical: true
+
+bus_intercity:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 2
+  supabase_tables: [realtime.bus_intercity_positions, realtime.bus_intercity_current]
+  s3_prefixes:
+    - {prefix: bus_intercity/archives/, expected_daily: false}
+  critical: false
+
+vd:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables: []  # 改走 freeway_vd
+  s3_prefixes: []
+  critical: false
+  notes: 已被 freeway_vd 取代
+
+freeway_vd:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 10
+  supabase_tables:
+    - realtime.freeway_sections
+    - realtime.freeway_sections_current
+    - realtime.freeway_vd_traffic
+  s3_prefixes:
+    - {prefix: freeway_vd/archives/, expected_daily: true}
+  critical: true
+
+parking:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 15
+  supabase_tables: []
+  s3_prefixes: []
+  critical: false
+  notes: 已下線，S3 無 archives 不算問題
+
+tra_train:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 2
+  supabase_tables: [realtime.train_positions]
+  s3_prefixes:
+    - {prefix: tra_train/archives/, expected_daily: true}
+  critical: true
+
+tra_static:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
+  supabase_tables: []  # reference data，不寫即時表
+  s3_prefixes:
+    - {prefix: tra_static/archives/, expected_daily: false}
+  critical: false
+
+rail_timetable:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
+  supabase_tables: [reference.daily_schedules]
+  s3_prefixes:
+    - {prefix: rail_timetable/archives/, expected_daily: false}
+  critical: false
+
+ship_tdx:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 2
+  supabase_tables: []
+  s3_prefixes: []
+  critical: false
+  notes: 改走 ship_ais（覆蓋面更廣）
+
+ship_ais:
+  enabled: true
+  deployment: hicloud_vm        # ⚠️ Taiwan IP required，跑在 HiCloud VM
+  expected_interval_min: 10
+  supabase_tables: [realtime.ship_positions, realtime.ship_current]
+  s3_prefixes:
+    - {prefix: ship_ais/archives/, expected_daily: true}
+  critical: true
+
+# ─────────────────────────────────────────────────────────
+# 航空類
+# ─────────────────────────────────────────────────────────
+flight_fr24:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables: [realtime.flight_positions, realtime.flight_trails]
+  s3_prefixes:
+    - {prefix: flight_fr24/archives/, expected_daily: false}
+  critical: false
+  notes: 2026-05 起停跑，archives silent fail 32 天屬已知問題（disabled 後預期）
+
+flight_fr24_zone:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables: [realtime.flight_positions]
+  s3_prefixes:
+    - {prefix: flight_fr24_zone/archives/, expected_daily: false}
+  critical: false
+
+flight_opensky:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables: [realtime.flight_positions]
+  s3_prefixes:
+    - {prefix: flight_opensky/archives/, expected_daily: false}
+  critical: false
+
+# ─────────────────────────────────────────────────────────
+# 氣象 / 環境 / 地震
+# ─────────────────────────────────────────────────────────
+weather:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 60
+  supabase_tables: [realtime.weather_observations, realtime.weather_current]
+  s3_prefixes:
+    - {prefix: weather/archives/, expected_daily: true}
+  critical: true
+
+temperature:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 60
+  supabase_tables: [realtime.temperature_grids]
+  s3_prefixes:
+    - {prefix: temperature/archives/, expected_daily: true}
+  critical: false
+
+cwa_satellite:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 10
+  supabase_tables: [realtime.cwa_imagery_frames]
+  s3_prefixes:
+    - {prefix: cwa_satellite/archives/, expected_daily: true}
+  critical: false
+
+earthquake:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
+  supabase_tables: [realtime.earthquake_events]
+  s3_prefixes:
+    - {prefix: earthquake/archives/, expected_daily: false}
+  critical: true
+  notes: 事件驅動，每日 archive 可能為空
+
+ncdr_alerts:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 15
+  supabase_tables: [realtime.disaster_alerts]
+  s3_prefixes:
+    - {prefix: ncdr_alerts/archives/, expected_daily: true}
+  critical: true
+
+# ─────────────────────────────────────────────────────────
+# 太空 / 衛星
+# ─────────────────────────────────────────────────────────
+satellite:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 120
+  supabase_tables:
+    - realtime.satellite_positions
+    - realtime.satellite_current
+    - realtime.satellite_tle
+    - realtime.satellite_tle_history
+  s3_prefixes:
+    - {prefix: satellite/archives/, expected_daily: false}
+  critical: false
+
+launch:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 15
+  supabase_tables: [realtime.launches, realtime.launch_events, realtime.launch_pads]
+  s3_prefixes:
+    - {prefix: launch/archives/, expected_daily: false}
+  critical: false
+
+# ─────────────────────────────────────────────────────────
+# 空氣品質
+# ─────────────────────────────────────────────────────────
+air_quality:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 60
+  supabase_tables: [realtime.air_quality_observations, realtime.air_quality_current]
+  s3_prefixes:
+    - {prefix: air_quality/archives/, expected_daily: false}
+  critical: false
+
+air_quality_imagery:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 60
+  supabase_tables: [realtime.aqi_imagery_frames]
+  s3_prefixes:
+    - {prefix: air_quality_imagery/archives/, expected_daily: false}
+  critical: false
+
+air_quality_microsensors:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables: [realtime.micro_sensor_readings]
+  s3_prefixes:
+    - {prefix: air_quality_microsensors/archives/, expected_daily: false}
+  critical: false
+
+# ─────────────────────────────────────────────────────────
+# 水利
+# ─────────────────────────────────────────────────────────
+water_reservoir:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 60
+  supabase_tables: [realtime.reservoir_status]
+  s3_prefixes:
+    - {prefix: water_reservoir/archives/, expected_daily: false}
+  critical: false
+
+water_reservoir_daily_ops:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 1440
+  supabase_tables: [realtime.reservoir_daily_ops]
+  s3_prefixes:
+    - {prefix: water_reservoir_daily_ops/archives/, expected_daily: false}
+  critical: false
+  notes: 官方 09:30 後更新，排程晚於資料源發布即可能延遲
+
+river_water_level:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 10
+  supabase_tables: [realtime.river_water_level]
+  s3_prefixes:
+    - {prefix: river_water_level/archives/, expected_daily: false}
+  critical: false
+
+rain_gauge_realtime:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 10
+  supabase_tables: [realtime.rain_gauge_readings]
+  s3_prefixes:
+    - {prefix: rain_gauge_realtime/archives/, expected_daily: false}
+  critical: false
+
+groundwater_level:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 60
+  supabase_tables: [realtime.groundwater_level_readings]
+  s3_prefixes:
+    - {prefix: groundwater_level/archives/, expected_daily: false}
+  critical: false
+
+wra_drought_alert:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 1440
+  supabase_tables: [public.drought_alert_history, public.drought_alert_current]
+  s3_prefixes:
+    - {prefix: wra_drought_alert/archives/, expected_daily: false}
+  critical: false
+
+iot_wra:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 60
+  supabase_tables: [realtime.iot_wra_measurements]
+  s3_prefixes:
+    - {prefix: iot_wra/archives/, expected_daily: false}
+  critical: false
+
+uswg:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 10
+  supabase_tables: [realtime.uswg_measurements]
+  s3_prefixes:
+    - {prefix: uswg/archives/, expected_daily: false}
+  critical: false
+
+# ─────────────────────────────────────────────────────────
+# 道路事件 / 廢棄物 / 急診 / 電力
+# ─────────────────────────────────────────────────────────
+road_event_live:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables: [realtime.road_events, realtime.road_events_current]
+  s3_prefixes:
+    - {prefix: road_event_live/archives/, expected_daily: false}
+  critical: false
+
+road_event_planned:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 720
+  supabase_tables: [realtime.road_events, realtime.road_events_current]
+  s3_prefixes:
+    - {prefix: road_event_planned/archives/, expected_daily: false}
+  critical: false
+
+waste_positions:
+  enabled: true
+  deployment: hicloud_vm        # ⚠️ Taiwan IP recommended，跑在 HiCloud VM
+  expected_interval_min: 2
+  supabase_tables: [spatial.waste_positions_realtime]
+  s3_prefixes:
+    - {prefix: waste_positions/archives/, expected_daily: true}
+  critical: true
+
+waste_match:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables: []  # 寫 derived 表，依 waste_positions
+  s3_prefixes:
+    - {prefix: waste_match/archives/, expected_daily: false}
+  critical: false
+
+er_hospital_realtime:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 15
+  supabase_tables: [realtime.er_hospital_status, realtime.er_hospital_current]
+  s3_prefixes:
+    - {prefix: er_hospital_realtime/archives/, expected_daily: false}
+  critical: false
+
+power_taipower:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 10
+  supabase_tables:
+    - realtime.power_system_status
+    - realtime.power_generation_unit
+    - realtime.power_region_demand
+  s3_prefixes:
+    - {prefix: power_taipower/archives/, expected_daily: false}
+  critical: false
+
+foursquare_poi:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 43200    # 每 30 天
+  supabase_tables: [reference.foursquare_poi]
+  s3_prefixes:
+    - {prefix: foursquare_poi/archives/, expected_daily: false}
+  critical: false

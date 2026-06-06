@@ -39,8 +39,17 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 | 4 | data-collectors | `config.py` | `_COLLECTOR_TOGGLES` 加一筆 (prefix, enabled_default, interval_default)；如需額外變數（CITIES/AIRPORTS/API Key）另外宣告 |
 | 5 | data-collectors | `storage/supabase_tables.py` | 若需寫 Supabase，加一筆 `TABLE_MAP[name]` |
 | 6 | data-collectors | `storage/supabase_writer.py` | 若需寫 Supabase，加 `_transform_{name}` 並註冊到 `TRANSFORMERS` |
-| 7 | gis-platform | `docs/data-inventory.md` | 更新資料清冊 |
-| 8 | taipei-gis-analytics | `docs/data-sources.md` | 更新 pipeline 狀態 |
+| 7 | data-collectors | `config/cross_layer_map.yaml` | **新增 collector 條目**（enabled / deployment / supabase_tables / s3_prefixes / critical）— 漏寫日報會漏報 |
+| 8 | data-collectors | `config/realtime_tables.yaml` | **新增所有 Supabase 表條目**（每張 history / current / multi-table 都要列）— 漏寫 RPC 撈不到 |
+| 9 | gis-platform | `docs/data-inventory.md` | 更新資料清冊（含 `部署位置` 欄：Zeabur / HiCloud VM / Disabled） |
+| 10 | taipei-gis-analytics | `docs/data-sources.md` | 更新 pipeline 狀態 |
+
+> 步驟 7 + 8 是監控系統（daily_report）的真相來源，漏寫不會立刻爆炸但會默默漏報，加新 collector 時請務必同步。
+
+> 若新 collector 因目標 API 對國際雲商 IP 封鎖需走 HiCloud VM：
+> - 步驟 4 的 `_COLLECTOR_TOGGLES` 預設 `enabled=False`
+> - 步驟 7 的 `deployment: hicloud_vm`
+> - 額外加 `external/{name}_vm/` 鏡像實作（見 [docs/EXTERNAL_COLLECTORS.md](../docs/EXTERNAL_COLLECTORS.md) SOP）
 
 Registry + toggle list 自動處理：
 - `config.XXX_ENABLED` / `config.XXX_INTERVAL` 變數（來自 `_COLLECTOR_TOGGLES`）
