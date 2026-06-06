@@ -100,13 +100,40 @@ def disk_usage() -> dict:
         return {}
 
 
+def run_taipei_gis_audit() -> dict | None:
+    """跑 taipei-gis-analytics 的 audit.py --format json，拿 summary（compliance/coverage 等）"""
+    audit_path = GIS_REPOS["taipei-gis-analytics"] / ".claude/skills/data-catalog-audit/audit.py"
+    if not audit_path.exists():
+        return None
+    try:
+        res = subprocess.run(
+            ["python3", str(audit_path), "--format", "json"],
+            capture_output=True, text=True, timeout=300,
+            cwd=str(GIS_REPOS["taipei-gis-analytics"]),
+        )
+        data = json.loads(res.stdout)
+        return {
+            "summary": data.get("summary", {}),
+            "fatal_count": len(data.get("fatal", [])),
+            "warn_count": len(data.get("warn", [])),
+            "info_count": len(data.get("info", [])),
+            "exit_code": res.returncode,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 def build_snapshot() -> dict:
     collectors_report: dict[str, dict] = {}
+    audit_result = run_taipei_gis_audit()
     for name, repo in GIS_REPOS.items():
         info: dict = git_status(repo)
         # 對 data-collectors 多看 data/ 目錄大小，幫助理解本機 raw 容量
         if name == "data-collectors":
             info["snapshot_dir_mb"] = dir_size_mb(repo / "data")
+        # taipei-gis-analytics 嵌入 audit summary（compliance/coverage 等）
+        if name == "taipei-gis-analytics" and audit_result:
+            info["audit"] = audit_result
         # 補一個假的 24h 統計欄位，與 VM snapshot 結構對齊（避免 daily_report 解析錯）
         info.setdefault("runs_24h", 0)
         info.setdefault("success_24h", 0)

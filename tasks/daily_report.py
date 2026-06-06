@@ -394,6 +394,34 @@ class DailyReportTask:
                 if "error" in c:
                     parts.append(f"    ⚠️ `{cname}` log 讀取失敗: {c['error']}")
                     continue
+                # 本機 audit 欄位（來自 local_audit_push）
+                if "audit" in c:
+                    audit = c["audit"]
+                    if "error" in audit:
+                        parts.append(f"    ⚠️ `{cname}` audit 失敗: {audit['error']}")
+                    else:
+                        s = audit.get("summary", {})
+                        grade_emoji = {"pass": "✓", "warn": "🟡", "fail": "🔴"}.get(s.get("grade"), "❔")
+                        parts.append(
+                            f"    {grade_emoji} `{cname}` audit grade={s.get('grade')} "
+                            f"compliance={s.get('compliance_pct')}% coverage={s.get('coverage_pct')}% "
+                            f"fatal={audit.get('fatal_count')} warn={audit.get('warn_count')}"
+                        )
+                    continue
+                # 本機 git status 欄位
+                if "branch" in c:
+                    dirty = c.get("dirty_files", 0)
+                    ahead = c.get("ahead_of_remote", 0) or 0
+                    flag = "✓" if dirty == 0 and ahead == 0 else "🟡"
+                    extras = []
+                    if dirty:
+                        extras.append(f"dirty={dirty}")
+                    if ahead:
+                        extras.append(f"ahead={ahead}")
+                    extras_str = " " + " ".join(extras) if extras else ""
+                    parts.append(f"    {flag} `{cname}` {c['branch']}{extras_str}")
+                    continue
+                # VM 端 collector 統計
                 runs = c.get("runs_24h", 0)
                 ok = c.get("success_24h", 0)
                 last = c.get("last_success_at") or "?"
