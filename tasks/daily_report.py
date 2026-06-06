@@ -96,6 +96,8 @@ class DailyReportTask:
             ("異常 7 天趨勢", self._section_anomaly_trend),
             ("檔案統計", self._section_file_stats),
             ("S3 統計", self._section_s3_stats),
+            ("成本趨勢", self._section_cost_trend),
+            ("今日 Action", self._section_today_action),
         ]
 
         # 歸檔結果（有設定才加）
@@ -628,6 +630,111 @@ class DailyReportTask:
         ]
 
         return '\n'.join(parts)
+
+    def _section_cost_trend(self) -> str:
+        """S3 月增量趨勢（CloudWatch BucketSizeBytes）— 月增 > 20% 標警"""
+        if not config.S3_BUCKET:
+            return "\n💰 *成本趨勢*\n  S3 未設定"
+        try:
+            import boto3
+            cw = boto3.client(
+                "cloudwatch",
+                region_name=getattr(config, "S3_REGION", "ap-southeast-2"),
+                aws_access_key_id=getattr(config, "S3_ACCESS_KEY", None),
+                aws_secret_access_key=getattr(config, "S3_SECRET_KEY", None),
+            )
+        except Exception as exc:
+            return f"\n💰 *成本趨勢*\n  CloudWatch 連線失敗: {exc}"
+
+        now = datetime.now(TAIPEI_TZ)
+        # 取近 35 天的 BucketSizeBytes 日資料
+        try:
+            r = cw.get_metric_statistics(
+                Namespace="AWS/S3",
+                MetricName="BucketSizeBytes",
+                Dimensions=[
+                    {"Name": "BucketName", "Value": config.S3_BUCKET},
+                    {"Name": "StorageType", "Value": "StandardStorage"},
+                ],
+                StartTime=now - timedelta(days=35),
+                EndTime=now,
+                Period=86400,
+                Statistics=["Maximum"],
+            )
+        except Exception as exc:
+            return f"\n💰 *成本趨勢*\n  查詢失敗: {exc}"
+
+        points = sorted(r.get("Datapoints", []), key=lambda x: x["Timestamp"])
+        if len(points) < 7:
+            return f"\n💰 *成本趨勢*\n  CloudWatch BucketSizeBytes 資料 < 7 天 ({len(points)} 點)"
+
+        latest_gb = points[-1]["Maximum"] / (1024 ** 3)
+        week_ago_gb = points[-7]["Maximum"] / (1024 ** 3)
+        month_ago_gb = points[0]["Maximum"] / (1024 ** 3)
+
+        wow = (latest_gb - week_ago_gb) / week_ago_gb * 100 if week_ago_gb else 0
+        mom = (latest_gb - month_ago_gb) / month_ago_gb * 100 if month_ago_gb else 0
+        emoji = "🔴" if mom > 20 else ("🟡" if mom > 10 else "🟢")
+        return (
+            "\n💰 *成本趨勢* (StandardStorage)\n"
+            f"  {emoji} 目前 {latest_gb:.2f} GB | 週增 {wow:+.1f}% | 月增 {mom:+.1f}%"
+        )
+
+    def _section_today_action(self) -> str:
+        """規則式推薦：根據其他 section 偵測到的問題，給出 1-3 件今天最該做的事"""
+        from tasks import monitoring
+
+        actions: list[str] = []
+
+        # 1. SB DEAD 表（critical 優先）
+        rt_tables = monitoring.load_realtime_tables()
+        rt_meta = {(t["schema"], t["table"]): t for t in rt_tables}
+        for r in monitoring.query_realtime_health(rt_tables) if rt_tables else []:
+            if r.get("error"):
+                continue
+            t = rt_meta.get((r["schema"], r["table"]), {})
+            status, age = monitoring.classify_freshness(r["max_time"], t.get("expected_interval_min", 60))
+            if status == "DEAD" and t.get("critical"):
+                actions.append(f"修 `{r['schema']}.{r['table']}` (DEAD 超過 {age} 分，critical)")
+                break  # 只取最嚴重的一個
+
+        # 2. S3 archives 落後
+        cmap = monitoring.load_cross_layer_map()
+        s3_dates = monitoring.list_archive_dates_per_collector()
+        today_str = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
+        yesterday_str = (datetime.now(TAIPEI_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+        for name, cfg in cmap.items():
+            if not cfg.get("enabled") or not cfg.get("critical"):
+                continue
+            for sp in cfg.get("s3_prefixes", []):
+                if not sp.get("expected_daily"):
+                    continue
+                last = s3_dates.get(name)
+                if last and last < yesterday_str:
+                    days = (datetime.strptime(today_str, "%Y-%m-%d") - datetime.strptime(last, "%Y-%m-%d")).days
+                    actions.append(f"檢查 `{name}` archive task（落後 {days} 天，最新 {last}）")
+                    break
+            if len(actions) >= 3:
+                break
+
+        # 3. VM 失聯
+        for entry in monitoring.list_vm_health_snapshots(max_age_hours=26):
+            if entry["is_lost"]:
+                actions.append(f"檢查 HiCloud VM `{entry['host']}` 是否還活著（snapshot {entry['age_hours']:.0f}h 沒更新）")
+                break
+
+        # 4. 異常持續 > 7 天但未修
+        state = monitoring.load_anomaly_state()
+        old_anomalies = [
+            aid for aid, e in state.items()
+            if (datetime.now(TAIPEI_TZ) - datetime.strptime(e["first_seen"], "%Y-%m-%d").replace(tzinfo=TAIPEI_TZ)).days >= 7
+        ]
+        if old_anomalies:
+            actions.append(f"清舊異常 — {len(old_anomalies)} 個已持續 ≥7 天（例 `{old_anomalies[0]}`）")
+
+        if not actions:
+            return "\n🎯 *今日 Action*\n  ✅ 沒有需要立即處理的事，安心睡覺"
+        return "\n🎯 *今日 Action*\n" + "\n".join(f"  {i+1}. {a}" for i, a in enumerate(actions[:3]))
 
     def _check_silence(self):
         """檢查收集器是否靜默（即時告警）"""

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS launchd 設定範本：每天 07:00 跑 local_audit_push.py，把本機 GIS 三 repo
+  健康狀態推 S3 給 Zeabur daily_report 撈。
+
+  安裝步驟（在 Mac 上）：
+
+    # 1. 編輯這個檔案，把 ${USER} 換成你的 macOS 使用者名稱
+    #    把 ${GIS_REPO_PATH} 換成 data-collectors 的絕對路徑
+
+    # 2. 複製到 LaunchAgents
+    cp scripts/com.gis.local_audit.plist ~/Library/LaunchAgents/
+
+    # 3. 載入
+    launchctl load ~/Library/LaunchAgents/com.gis.local_audit.plist
+
+    # 4. 立即跑一次測試
+    launchctl start com.gis.local_audit
+
+    # 5. 看 log
+    tail ~/Library/Logs/gis-local-audit.log
+
+  關鍵設計：
+    - StartCalendarInterval: 每天 07:00
+    - RunAtLoad: false（不在 load 時馬上跑）
+    - 在 ~/.config/.gis-audit-env 放 S3_BUCKET/S3_REGION/S3_ACCESS_KEY/S3_SECRET_KEY
+
+  注意：
+    - macOS 睡眠時 launchd 不會喚醒（要 pmset 設 wake-on-schedule，這已超出本檔範圍）
+    - 若 Mac 睡眠跨日，下次醒來會「立刻補跑」（StartCalendarInterval 預設行為）
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gis.local_audit</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>${GIS_REPO_PATH}/scripts/local_audit_push.py</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/${USER}/Library/Logs/gis-local-audit.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/${USER}/Library/Logs/gis-local-audit.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>WorkingDirectory</key>
+    <string>${GIS_REPO_PATH}</string>
+</dict>
+</plist>
