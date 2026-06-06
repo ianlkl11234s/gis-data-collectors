@@ -92,6 +92,7 @@ class DailyReportTask:
             ("Supabase realtime 寫入", self._section_supabase_realtime),
             ("S3 archives 心跳", self._section_s3_archives),
             ("跨層一致性", self._section_cross_layer),
+            ("HiCloud VM 健康", self._section_external_vm_health),
             ("異常 7 天趨勢", self._section_anomaly_trend),
             ("檔案統計", self._section_file_stats),
             ("S3 統計", self._section_s3_stats),
@@ -358,6 +359,58 @@ class DailyReportTask:
         if not a and b:
             return "SB 有寫但 collector 失憶（可能剛重啟）"
         return "至少一層 missing"
+
+    def _section_external_vm_health(self) -> str:
+        """從 s3://.../_external_vm_health/<host>/YYYY-MM-DD.json 撈所有 VM 心跳。
+
+        無 snapshot = 該 VM 失聯（snapshot age > 26h）。
+        每 host 列：uptime / load / disk / 各 collector 24h 成功率 / outbound 健檢。
+        """
+        from tasks import monitoring
+
+        snapshots = monitoring.list_vm_health_snapshots(max_age_hours=26)
+        if not snapshots:
+            return "\n🖥️ *HiCloud VM 健康*\n  尚未收到任何 VM snapshot（external/_shared/ 未部署？）"
+
+        parts = ["\n🖥️ *HiCloud VM 健康*"]
+        for entry in snapshots:
+            host = entry["host"]
+            if entry["is_lost"] or entry["snapshot"] is None:
+                parts.append(f"  🔴 `{host}` 失聯（snapshot age {entry['age_hours']:.0f}h）")
+                continue
+            snap = entry["snapshot"]
+            sys_ = snap.get("system", {})
+            disk = sys_.get("disk_used_pct")
+            load = sys_.get("load_avg_1m")
+            up = sys_.get("uptime_days")
+            egress = snap.get("egress_ip", "?")
+            parts.append(
+                f"  🟢 `{host}` ({egress}) up {up}d / load {load} / disk {disk}%"
+            )
+
+            for cname, c in (snap.get("collectors") or {}).items():
+                if "error" in c:
+                    parts.append(f"    ⚠️ `{cname}` log 讀取失敗: {c['error']}")
+                    continue
+                runs = c.get("runs_24h", 0)
+                ok = c.get("success_24h", 0)
+                last = c.get("last_success_at") or "?"
+                last_short = last.split("T")[1][:5] if "T" in last else last
+                last_count = c.get("last_count")
+                snap_mb = c.get("snapshot_dir_mb")
+                cnt_str = f" {last_count}" if last_count else ""
+                rate = "✓" if runs and ok / runs >= 0.95 else "⚠️"
+                parts.append(
+                    f"    {rate} `{cname}` {ok}/{runs}  最後 {last_short}{cnt_str}  snapshot {snap_mb}MB"
+                )
+
+            ob = snap.get("outbound_health") or {}
+            bad = [k for k, v in ob.items() if v.get("http_status") is None and v.get("tcp_ms") is None]
+            if bad:
+                parts.append(f"    🔴 outbound 異常: {', '.join(bad)}")
+            elif ob:
+                parts.append(f"    ✓ outbound {len(ob)}/{len(ob)} OK")
+        return "\n".join(parts)
 
     def _section_anomaly_trend(self) -> str:
         """異常 rolling 7 天趨勢 + D1/D3/D7 去重提醒。
