@@ -266,6 +266,32 @@ TABLE_MAP = {
         'upsert_key': 'iow_station_id,physical_quantity_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'wic_sewer': {
+        'history': 'realtime.taipei_sewer_measurements',
+        'columns': [
+            'station_no', 'observed_at', 'level_out', 'ground_far', 'voltage', 'collected_at',
+        ],
+        'upsert_key': 'station_no,observed_at',
+        'upsert_strategy': 'do_nothing',
+    },
+    'wic_evacuate': {
+        'history': 'realtime.taipei_evacuate_status',
+        'columns': [
+            'station_no', 'observed_at',
+            'fo01', 'fc01', 'flt01', 'fo02', 'fc02', 'flt02', 'collected_at',
+        ],
+        'upsert_key': 'station_no,observed_at',
+        'upsert_strategy': 'do_nothing',
+    },
+    'wic_pumb': {
+        'history': 'realtime.taipei_pumb_status',
+        'columns': [
+            'stn_id', 'observed_at', 'inner_value', 'outer_value',
+            'pumb_status', 'door_status', 'collected_at',
+        ],
+        'upsert_key': 'stn_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+    },
     'precipitation_raster': {
         'history': 'realtime.precipitation_raster_frames',
         'columns': [

@@ -1091,6 +1091,77 @@ class SupabaseWriter:
             execute_values(cur, sql, values, page_size=500)
         self.conn.commit()
 
+    # ------------------------------------------------------------
+    # 北市水利處三本柱（wic_taipei platform）
+    # ------------------------------------------------------------
+    def _transform_wic_sewer(self, result: dict, ts: datetime) -> list[dict]:
+        """北市雨水下水道水位即時讀值；collector 已 upsert stations metadata。"""
+        return result.get('data', [])
+
+    def _transform_wic_evacuate(self, result: dict, ts: datetime) -> list[dict]:
+        """北市疏散門即時狀態；collector 已 upsert stations metadata。"""
+        return result.get('data', [])
+
+    def _transform_wic_pumb(self, result: dict, ts: datetime) -> list[dict]:
+        """北市抽水站即時運轉狀態；collector 已 upsert stations metadata。"""
+        return result.get('data', [])
+
+    def _upsert_taipei_sewer_stations(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        self._ensure_conn()
+        cols = ['station_no', 'station_name']
+        dedup = {r['station_no']: r for r in rows if r.get('station_no')}
+        values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
+        sql = (
+            "INSERT INTO public.taipei_sewer_stations (station_no, station_name) VALUES %s "
+            "ON CONFLICT (station_no) DO UPDATE SET "
+            "station_name = EXCLUDED.station_name, "
+            "updated_at = now()"
+        )
+        with self.conn.cursor() as cur:
+            execute_values(cur, sql, values, page_size=500)
+        self.conn.commit()
+
+    def _upsert_taipei_evacuate_stations(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        self._ensure_conn()
+        cols = ['station_no', 'station_name', 'gate_num']
+        dedup = {r['station_no']: r for r in rows if r.get('station_no')}
+        values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
+        sql = (
+            "INSERT INTO public.taipei_evacuate_stations (station_no, station_name, gate_num) VALUES %s "
+            "ON CONFLICT (station_no) DO UPDATE SET "
+            "station_name = EXCLUDED.station_name, "
+            "gate_num = EXCLUDED.gate_num, "
+            "updated_at = now()"
+        )
+        with self.conn.cursor() as cur:
+            execute_values(cur, sql, values, page_size=500)
+        self.conn.commit()
+
+    def _upsert_taipei_pumb_stations(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        self._ensure_conn()
+        cols = ['stn_id', 'stn_name', 'lat', 'lng', 'pumb_num', 'door_num', 'max_allowable_water_level']
+        dedup = {r['stn_id']: r for r in rows if r.get('stn_id')}
+        values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
+        sql = (
+            "INSERT INTO public.taipei_pumb_stations "
+            "(stn_id, stn_name, lat, lng, pumb_num, door_num, max_allowable_water_level) VALUES %s "
+            "ON CONFLICT (stn_id) DO UPDATE SET "
+            "stn_name = EXCLUDED.stn_name, "
+            "lat = EXCLUDED.lat, lng = EXCLUDED.lng, "
+            "pumb_num = EXCLUDED.pumb_num, door_num = EXCLUDED.door_num, "
+            "max_allowable_water_level = EXCLUDED.max_allowable_water_level, "
+            "updated_at = now()"
+        )
+        with self.conn.cursor() as cur:
+            execute_values(cur, sql, values, page_size=500)
+        self.conn.commit()
+
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
         """upsert 靜態水庫基本資料到 public.water_reservoirs
 
@@ -1270,6 +1341,9 @@ class SupabaseWriter:
         'road_event_planned': _transform_road_event,
         'wra_drought_alert': _transform_wra_drought_alert,
         'power_taipower': _transform_power_taipower,
+        'wic_sewer': _transform_wic_sewer,
+        'wic_evacuate': _transform_wic_evacuate,
+        'wic_pumb': _transform_wic_pumb,
     }
 
     # ============================================================

@@ -46,6 +46,9 @@ from .waste_positions import WastePositionsCollector
 from .waste_match import WasteMatchCollector
 from .precipitation_raster import PrecipitationRasterCollector
 from .uswg_realtime import UswgCollector
+from .wic_sewer import WicSewerCollector
+from .wic_evacuate import WicEvacuateCollector
+from .wic_pumb import WicPumbCollector
 from .water_reservoir import WaterReservoirCollector
 from .water_reservoir_daily_ops import WaterReservoirDailyOpsCollector
 from .weather import WeatherCollector
@@ -105,6 +108,9 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(RoadEventPlannedCollector, "Road Event Planned 收集器", "ROAD_EVENT_PLANNED"),
     CollectorEntry(ERHospitalRealtimeCollector, "急診即時量能收集器", "ER_HOSPITAL_REALTIME"),
     CollectorEntry(PowerTaipowerCollector, "台電即時電力供需收集器", "POWER_TAIPOWER"),
+    CollectorEntry(WicSewerCollector, "北市雨水下水道水位收集器", "WIC_SEWER"),
+    CollectorEntry(WicEvacuateCollector, "北市疏散門狀態收集器", "WIC_EVACUATE"),
+    CollectorEntry(WicPumbCollector, "北市抽水站運轉收集器", "WIC_PUMB"),
 )
 
 
