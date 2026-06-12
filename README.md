@@ -42,6 +42,7 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 | 航空 | FR24 / FR24 Zone / OpenSky | Zeabur |
 | 氣象 | CWA Weather / Temperature / CWA Satellite | Zeabur |
 | 地震 / 災害 | Earthquake / NCDR Alerts | Zeabur |
+| 新聞 | News Events（RSS ×29 + Gemini Flash-Lite 地名抽取，LLM 不吐座標） | Zeabur |
 | 太空 | Satellite / Launch | Zeabur |
 | 環境 | Air Quality / Micro Sensors / AQI Imagery | Zeabur |
 | 水利 | Reservoir / River / Rain Gauge / Groundwater / IoT WRA / USWG | Zeabur |

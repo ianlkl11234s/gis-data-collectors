@@ -202,6 +202,16 @@ ncdr_alerts:
     - {prefix: ncdr_alerts/archives/, expected_daily: true}
   critical: true
 
+news_events:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 20
+  supabase_tables: [realtime.news_events]
+  s3_prefixes:
+    - {prefix: news_events/archives/, expected_daily: true}
+  critical: false
+  notes: RSS 29 feeds + Gemini Flash-Lite 地名抽取（需 GEMINI_API_KEY + NEWS_EVENTS_ENABLED）
+
 # ─────────────────────────────────────────────────────────
 # 太空 / 衛星
 # ─────────────────────────────────────────────────────────

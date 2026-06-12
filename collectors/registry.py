@@ -28,6 +28,7 @@ from .groundwater_level import GroundwaterLevelCollector
 from .iot_wra import IotWraCollector
 from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
+from .news_events import NewsEventsCollector
 from .parking import ParkingCollector
 from .power_taipower import PowerTaipowerCollector
 from .rail_timetable import RailTimetableCollector
@@ -111,6 +112,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(WicSewerCollector, "北市雨水下水道水位收集器", "WIC_SEWER"),
     CollectorEntry(WicEvacuateCollector, "北市疏散門狀態收集器", "WIC_EVACUATE"),
     CollectorEntry(WicPumbCollector, "北市抽水站運轉收集器", "WIC_PUMB"),
+    CollectorEntry(NewsEventsCollector, "News Events 新聞事件收集器", "NEWS_EVENTS", ("GEMINI_API_KEY",)),
 )
 
 

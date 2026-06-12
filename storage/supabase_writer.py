@@ -1290,6 +1290,12 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_news_events(self, result: dict, ts: datetime) -> list[dict]:
+        """新聞事件：collector 已產出與 TABLE_MAP columns 同名的 dict（JSON-safe），
+        published_ts 為 isoformat 字串、title_simhash 為 signed 64-bit int。
+        url_norm 缺值跳過（UNIQUE key 不可為 NULL 重複）。"""
+        return [r for r in result.get('data', []) if r.get('url_norm')]
+
     def _transform_power_taipower(self, result: dict, ts: datetime) -> list[dict]:
         """台電即時電力供需：3 表攤平為單一 records list，由 _write_multi_table 依 _type 分派。
 
@@ -1324,6 +1330,7 @@ class SupabaseWriter:
         'satellite': _transform_satellite,
         'launch': _transform_launch,
         'ncdr_alerts': _transform_ncdr_alerts,
+        'news_events': _transform_news_events,
         'cwa_satellite': _transform_cwa_satellite,
         'foursquare_poi': _transform_foursquare_poi,
         'air_quality_imagery': _transform_air_quality_imagery,

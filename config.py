@@ -88,7 +88,7 @@ COLLECTOR_RETENTION_OVERRIDES = {
                  'air_quality', 'air_quality_microsensors', 'air_quality_imagery',
                  'foursquare_poi', 'ncdr_alerts', 'rain_gauge_realtime',
                  'river_water_level', 'groundwater_level', 'water_reservoir',
-                 'water_reservoir_daily_ops')
+                 'water_reservoir_daily_ops', 'news_events')
     if os.getenv(f'{name.upper()}_ARCHIVE_RETENTION_DAYS')
 }
 
@@ -217,6 +217,7 @@ _COLLECTOR_TOGGLES = (
     ('WIC_SEWER',                    False, 10),   # 北市雨水下水道水位 (233 站，wic.gov.taipei，無金鑰)
     ('WIC_EVACUATE',                 False, 10),   # 北市疏散門狀態 (35 站，wic.gov.taipei，無金鑰)
     ('WIC_PUMB',                     False, 10),   # 北市抽水站運轉 (97 站，heopublic.gov.taipei，無金鑰)
+    ('NEWS_EVENTS',                  False, 20),   # 新聞事件 RSS + Gemini 地點抽取（CNA/LTN/ETtoday + Google News geo×22）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
@@ -329,6 +330,10 @@ WASTE_MATCH_MAX_TRIPS = int(os.getenv('WASTE_MATCH_MAX_TRIPS', '80'))
 WASTE_MATCH_MAX_POINTS = int(os.getenv('WASTE_MATCH_MAX_POINTS', '100'))  # OSRM default max matching size
 WASTE_MATCH_RADIUS_M = int(os.getenv('WASTE_MATCH_RADIUS_M', '50'))
 WASTE_MATCH_MIN_CONFIDENCE = float(os.getenv('WASTE_MATCH_MIN_CONFIDENCE', '0.35'))
+
+# 新聞事件 LLM 地點抽取（Gemini）
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.1-flash-lite-preview')
 
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')

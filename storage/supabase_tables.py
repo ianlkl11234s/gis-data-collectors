@@ -321,6 +321,19 @@ TABLE_MAP = {
     'road_event_planned': {
         'is_multi_table': True,
     },
+    'news_events': {
+        # 表 schema 見 gis-platform/migrations/162（realtime.news_events）
+        # geom 不由 collector 提供：DB trigger 由 admin_code 查 township centroid
+        # url_norm 有 UNIQUE constraint → ON CONFLICT DO NOTHING（重複抓不更新）
+        'history': 'realtime.news_events',
+        'columns': [
+            'source', 'url', 'url_norm', 'title', 'summary', 'category',
+            'location_name', 'county', 'admin_code',
+            'published_ts', 'confidence', 'title_simhash',
+        ],
+        'upsert_key': 'url_norm',
+        'upsert_strategy': 'do_nothing',
+    },
     'power_taipower': {
         # 台電即時電力供需：單一 collector 寫 3 張表
         #   realtime.power_system_status   UNIQUE(observed_at)             DO NOTHING
