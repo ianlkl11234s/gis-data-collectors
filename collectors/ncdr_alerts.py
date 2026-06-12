@@ -12,11 +12,13 @@ CAP (Common Alerting Protocol) 示警，每 15 分鐘執行一次。
     - feed 只列「目前有效」示警，過期自動消失
     - 以 identifier UPSERT，重複收集不會產生重複資料
     - 自動累積歷史（過期示警仍保留於 DB）
-    - 解析 CAP <polygon> → MULTIPOLYGON (WGS84)
+    - 解析 CAP <polygon> 與 <circle>（中心+半徑km→近似圓）→ MULTIPOLYGON (WGS84)
+    - <geocode>（行政區代碼）由 DB 端 fill_disaster_alert_geom() 補 geom（migration 161）
     - 完全獨立於其他 collector，例外被 BaseCollector.run 隔離
 """
 
 import json
+import math
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional
@@ -80,6 +82,30 @@ class NCDRAlertsCollector(BaseCollector):
             return ''
         node = elem.find(path, CAP_NS)
         return (node.text or '').strip() if node is not None and node.text else ''
+
+    @staticmethod
+    def _circle_to_wkt(circle_str: str, segments: int = 32) -> Optional[str]:
+        """CAP circle「lat,lon radius_km」→ WKT 近似圓 POLYGON ring
+
+        火災 / 道路封閉 / 鐵路事故等示警以 <circle> 表示中心點 + 半徑（公里）。
+        radius=0 時仍給最小 50m，避免退化成無面積幾何。
+        """
+        try:
+            center_s, radius_s = circle_str.strip().split()
+            lat_s, lon_s = center_s.split(',')
+            lat, lon = float(lat_s), float(lon_s)
+            radius_km = max(float(radius_s), 0.05)
+        except (ValueError, IndexError):
+            return None
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            return None
+        dlat = radius_km / 111.32
+        dlon = radius_km / (111.32 * max(math.cos(math.radians(lat)), 0.01))
+        coords = []
+        for i in range(segments + 1):
+            theta = 2 * math.pi * i / segments
+            coords.append(f"{lon + dlon * math.cos(theta):.6f} {lat + dlat * math.sin(theta):.6f}")
+        return f"(({', '.join(coords)}))"
 
     @staticmethod
     def _polygon_to_wkt(polygon_str: str) -> Optional[str]:
@@ -146,6 +172,11 @@ class NCDRAlertsCollector(BaseCollector):
                 for poly in area.findall('cap:polygon', CAP_NS):
                     if poly.text:
                         wkt = self._polygon_to_wkt(poly.text)
+                        if wkt:
+                            polygons_wkt.append(wkt)
+                for circle in area.findall('cap:circle', CAP_NS):
+                    if circle.text:
+                        wkt = self._circle_to_wkt(circle.text)
                         if wkt:
                             polygons_wkt.append(wkt)
                 for gc in area.findall('cap:geocode', CAP_NS):
