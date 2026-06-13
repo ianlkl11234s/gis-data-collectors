@@ -320,7 +320,7 @@ class TownshipGazetteer:
 # LLM（Gemini）設定
 # ============================================================
 
-LLM_BATCH_SIZE = 20
+LLM_BATCH_SIZE = 15  # v2 output 變多（多 3 欄），降 batch 防超時
 LLM_BATCH_SLEEP = 0.5  # batch 間隔秒數
 
 CATEGORY_ENUM = ('accident', 'crime', 'disaster', 'traffic', 'health', 'policy', 'other')
@@ -329,10 +329,12 @@ CATEGORY_ENUM = ('accident', 'crime', 'disaster', 'traffic', 'health', 'policy',
 GEMINI_PRICE_INPUT_PER_MTOK = 0.10
 GEMINI_PRICE_OUTPUT_PER_MTOK = 0.40
 
-SYSTEM_PROMPT_HEADER = """你是台灣新聞地點抽取器。輸入是一批台灣新聞（每則含 idx、標題、摘要、可能的縣市提示 county_hint）。
+# v2 prompt（2026-06-13）：加 gis_relevance / severity / is_event 三維度，
+# 讓前端能篩掉政績宣傳 / 純政治發言 / 體育娛樂 / 個人事件。
+SYSTEM_PROMPT_HEADER = """你是台灣新聞地點抽取器 + GIS 相關性評估器。輸入是一批台灣新聞（每則含 idx、標題、摘要、可能的縣市提示 county_hint）。
 
 對每一則新聞輸出一個 JSON 物件，全部組成 JSON array（嚴格 JSON，不要 markdown code block）：
-{"idx": <輸入的 idx>, "county": "<縣市或 null>", "township": "<鄉鎮市區或 null>", "category": "<分類>", "summary": "<30 字內中文摘要>", "confidence": <0~1>}
+{"idx": <輸入的 idx>, "county": "<縣市或 null>", "township": "<鄉鎮市區或 null>", "category": "<分類>", "summary": "<30 字內中文摘要>", "confidence": <0~1>, "gis_relevance": <0-3>, "severity": <0-3>, "is_event": <true|false>}
 
 規則：
 1. county / township 必須一字不差取自下方「行政區清單」中的名稱；不在清單內就回 null。
@@ -342,6 +344,19 @@ SYSTEM_PROMPT_HEADER = """你是台灣新聞地點抽取器。輸入是一批台
 5. 禁止輸出任何座標（經緯度）。
 6. confidence：地點明確 0.9 以上、需推測 0.5~0.8、僅縣市級 0.5 左右、無地點 0。
 7. 每一則輸入都要有對應輸出，idx 不可遺漏或重複。
+8. gis_relevance（地理影響程度，0-3）：
+   0 = 與地理空間無關（純政治發言／質詢／聲明、體育、娛樂、影劇、個人就醫、弊案調查、純政績宣傳、人物特寫）
+   1 = 提到地點但事件本身不影響當地（座談會、紀念活動、人事任命、政策宣布、地方文化介紹）
+   2 = 地方事件，影響有限（單一交通事故、個案治安、地方建設動工、地方節慶開幕、社區活動）
+   3 = 重大地方事件，明顯影響當地（火災、氣爆、群聚感染≥50 人、大規模停水電、人員傷亡≥1、土石流、淹水）
+9. severity（傷亡或影響規模，0-3）：
+   0 = 無傷亡、無公共服務中斷
+   1 = 個案（1 人受傷、輕微影響）
+   2 = 區域（社區或街道規模、影響 < 100 人）
+   3 = 大規模（縣市規模、影響 > 100 人或有死亡）
+10. is_event：是否為發生於物理空間的「事件」
+    true  = 火災、事故、群聚、活動舉辦、開幕、抗議、災害、犯罪行為
+    false = 聲明、發言、質詢、評論、政策說明、回顧報導、人事任命、人物特寫
 
 行政區清單（admin_code 縣市 鄉鎮市區）：
 """
@@ -652,6 +667,18 @@ class NewsEventsCollector(BaseCollector):
                     it['confidence'] = None
                 if it['location_name'] is None:
                     it['confidence'] = 0.0 if it['confidence'] is None else it['confidence']
+
+                # v2 三維度：gis_relevance / severity / is_event（不合法值留 NULL，DB 允許）
+                def _int_in_range(v, lo, hi):
+                    try:
+                        n = int(v)
+                        return n if lo <= n <= hi else None
+                    except (TypeError, ValueError):
+                        return None
+                it['gis_relevance'] = _int_in_range(ann.get('gis_relevance'), 0, 3)
+                it['severity']      = _int_in_range(ann.get('severity'), 0, 3)
+                raw_event = ann.get('is_event')
+                it['is_event'] = bool(raw_event) if isinstance(raw_event, bool) else None
         return total_usage
 
     @staticmethod
@@ -664,6 +691,9 @@ class NewsEventsCollector(BaseCollector):
             it.setdefault('location_name', None)
             it.setdefault('category', 'other')
             it.setdefault('confidence', None)
+            it.setdefault('gis_relevance', None)
+            it.setdefault('severity', None)
+            it.setdefault('is_event', None)
 
     # ------------------------------------------------------------
     # Collect
@@ -720,6 +750,10 @@ class NewsEventsCollector(BaseCollector):
                 'published_ts': it['published_ts'],
                 'confidence': it.get('confidence'),
                 'title_simhash': it['title_simhash'],
+                # v2（2026-06-13）：LLM 評的 GIS 相關性 / 嚴重度 / 是否為事件
+                'gis_relevance': it.get('gis_relevance'),
+                'severity': it.get('severity'),
+                'is_event': it.get('is_event'),
             })
 
         located = sum(1 for r in records if r['admin_code'])
