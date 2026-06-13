@@ -322,7 +322,7 @@ TABLE_MAP = {
         'is_multi_table': True,
     },
     'news_events': {
-        # 表 schema 見 gis-platform/migrations/162（realtime.news_events）
+        # 表 schema 見 gis-platform/migrations/162（realtime.news_events）+ 164（v2 三維度）
         # geom 不由 collector 提供：DB trigger 由 admin_code 查 township centroid
         # url_norm 有 UNIQUE constraint → ON CONFLICT DO NOTHING（重複抓不更新）
         'history': 'realtime.news_events',
@@ -330,6 +330,8 @@ TABLE_MAP = {
             'source', 'url', 'url_norm', 'title', 'summary', 'category',
             'location_name', 'county', 'admin_code',
             'published_ts', 'confidence', 'title_simhash',
+            # v2（2026-06-13）：LLM 評估的 GIS 相關性 / 嚴重度 / 是否為事件
+            'gis_relevance', 'severity', 'is_event',
         ],
         'upsert_key': 'url_norm',
         'upsert_strategy': 'do_nothing',

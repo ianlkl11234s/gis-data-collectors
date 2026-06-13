@@ -217,7 +217,7 @@ _COLLECTOR_TOGGLES = (
     ('WIC_SEWER',                    False, 10),   # 北市雨水下水道水位 (233 站，wic.gov.taipei，無金鑰)
     ('WIC_EVACUATE',                 False, 10),   # 北市疏散門狀態 (35 站，wic.gov.taipei，無金鑰)
     ('WIC_PUMB',                     False, 10),   # 北市抽水站運轉 (97 站，heopublic.gov.taipei，無金鑰)
-    ('NEWS_EVENTS',                  False, 20),   # 新聞事件 RSS + Gemini 地點抽取（CNA/LTN/ETtoday + Google News geo×22）
+    ('NEWS_EVENTS',                  False, 10),   # 新聞事件 RSS + Gemini 地點抽取 + GIS 相關性評估（v2 prompt）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
