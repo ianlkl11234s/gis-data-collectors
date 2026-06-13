@@ -1,0 +1,32 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            請 review 這個 PR 的 diff。重點檢查：
+            1. 新 collector 是否照 ncdr_alerts.py 慣例：registry.py / config.py / supabase_tables.py / supabase_writer.py 四處接線完整
+            2. Supabase 寫入是否正確（upsert key、TRANSFORMERS、TABLE_MAP）
+            3. 外部 API 抓取：UA / timeout / retry / rate limit / 單一 feed 失敗是否影響其他
+            4. 環境變數讀取是否有預設值與守門
+            5. 有沒有把 secret / API key 寫進 log 或 commit
+            6. py_compile 跟 pytest 是否有對應測試覆蓋
+            把 review 意見貼成 PR comment（用繁體中文）。
+            若 diff 很小或無問題，簡短說明 LGTM 即可。
