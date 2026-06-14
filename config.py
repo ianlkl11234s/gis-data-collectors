@@ -218,6 +218,7 @@ _COLLECTOR_TOGGLES = (
     ('WIC_EVACUATE',                 False, 10),   # 北市疏散門狀態 (35 站，wic.gov.taipei，無金鑰)
     ('WIC_PUMB',                     False, 10),   # 北市抽水站運轉 (97 站，heopublic.gov.taipei，無金鑰)
     ('NEWS_EVENTS',                  False, 10),   # 新聞事件 RSS + Gemini 地點抽取 + GIS 相關性評估（v2 prompt）
+    ('SATELLITE_PASSES_DAILY',       False, 1440), # 中國軍偵衛星通過台灣每日彙總（補昨+前天），需 SATELLITE collector 累積 TLE 歷史
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:

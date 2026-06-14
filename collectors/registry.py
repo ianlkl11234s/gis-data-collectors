@@ -37,6 +37,7 @@ from .river_water_level import RiverWaterLevelCollector
 from .road_event_live import RoadEventLiveCollector
 from .road_event_planned import RoadEventPlannedCollector
 from .satellite import SatelliteCollector
+from .satellite_passes_daily import SatellitePassesDailyCollector
 from .ship_ais import ShipAISCollector
 from .ship_tdx import ShipTDXCollector
 from .temperature import TemperatureGridCollector
@@ -87,6 +88,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(EarthquakeCollector, "Earthquake 收集器", "EARTHQUAKE", ("CWA_API_KEY",)),
     CollectorEntry(FlightOpenSkyCollector, "OpenSky 收集器", "FLIGHT_OPENSKY"),
     CollectorEntry(SatelliteCollector, "Satellite 收集器", "SATELLITE"),
+    CollectorEntry(SatellitePassesDailyCollector, "中國軍偵衛星通過台灣每日彙總", "SATELLITE_PASSES_DAILY"),
     CollectorEntry(LaunchCollector, "Launch 收集器", "LAUNCH"),
     CollectorEntry(CWASatelliteCollector, "CWA Satellite 影像收集器", "CWA_SATELLITE", ("CWA_API_KEY",)),
     CollectorEntry(NCDRAlertsCollector, "NCDR Alerts 收集器", "NCDR_ALERTS"),
