@@ -11,6 +11,7 @@ from pathlib import Path
 import config
 from utils.notify import (
     send_telegram,
+    send_telegram_long,
     notify_disk_alert,
     notify_silence_alert,
 )
@@ -59,13 +60,13 @@ class DailyReportTask:
 
         if report:
             print(f"   報告長度: {len(report)} 字元")
-            ok = send_telegram(report)
+            # 用 long 版本：超過 4096 自動分段，避免 collectors 多的實例（如「主站」）整則失敗
+            ok = send_telegram_long(report)
             if ok:
                 print("✓ 每日報告已發送到 Telegram")
             else:
                 print("❌ Telegram Markdown 發送失敗，嘗試純文字...")
-                # Markdown 失敗時，主動用純文字再試一次
-                ok2 = send_telegram(report, parse_mode=None)
+                ok2 = send_telegram_long(report, parse_mode=None)
                 if ok2:
                     print("✓ 每日報告已以純文字發送")
                 else:

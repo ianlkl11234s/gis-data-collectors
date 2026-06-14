@@ -101,6 +101,50 @@ def send_telegram(message: str, parse_mode: str = 'Markdown') -> bool:
     return True
 
 
+# Telegram 單則訊息官方上限 4096，留一點 buffer 給分頁 header
+_TG_CHUNK_LIMIT = 3800
+
+
+def _split_for_telegram(message: str, limit: int = _TG_CHUNK_LIMIT) -> list:
+    """把長訊息切成 ≤ limit 的多段。優先在 \n\n 邊界切，其次 \n，再次強切。"""
+    if len(message) <= limit:
+        return [message]
+
+    chunks = []
+    remaining = message
+    while len(remaining) > limit:
+        cut = remaining.rfind("\n\n", 0, limit)
+        if cut < limit // 2:
+            cut = remaining.rfind("\n", 0, limit)
+        if cut < limit // 2:
+            cut = limit
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def send_telegram_long(message: str, parse_mode: str = 'Markdown') -> bool:
+    """發送可能超過 4096 字元上限的長訊息（自動分段）
+
+    Returns:
+        全部分段都成功才回 True；任何一段失敗回 False。
+    """
+    chunks = _split_for_telegram(message)
+    if len(chunks) == 1:
+        return send_telegram(message, parse_mode=parse_mode)
+
+    total = len(chunks)
+    all_ok = True
+    for i, chunk in enumerate(chunks, 1):
+        header = f"（{i}/{total}）\n"
+        ok = send_telegram(header + chunk, parse_mode=parse_mode)
+        if not ok:
+            all_ok = False
+    return all_ok
+
+
 def notify_error(collector_name: str, error: str, consecutive_errors: int = 0):
     """通知錯誤
 
