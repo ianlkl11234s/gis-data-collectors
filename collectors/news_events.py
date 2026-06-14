@@ -498,11 +498,58 @@ class NewsEventsCollector(BaseCollector):
                 items = self._fetch_feed(feed)
                 all_items.extend(items)
                 ok += 1
+                self._upsert_source_health(feed, success=True, error=None)
             except Exception as e:
                 failed += 1
                 label = feed.get('county_hint') or feed['source']
                 print(f"   ⚠ feed 抓取失敗 [{feed['source']}/{label}]: {e}")
+                self._upsert_source_health(feed, success=False, error=str(e)[:500])
         return all_items, ok, failed
+
+    def _upsert_source_health(self, feed: dict, success: bool, error: Optional[str]) -> None:
+        """更新 realtime.source_health（失敗不影響主流程）。"""
+        if not self.supabase_writer:
+            return
+        try:
+            self.supabase_writer._ensure_conn()  # noqa: SLF001
+            with self.supabase_writer.conn.cursor() as cur:
+                if success:
+                    cur.execute(
+                        """
+                        INSERT INTO realtime.source_health
+                            (feed_url, source, county_hint, last_success_at, last_attempt_at,
+                             last_error, consecutive_fail, updated_at)
+                        VALUES (%s, %s, %s, now(), now(), NULL, 0, now())
+                        ON CONFLICT (feed_url) DO UPDATE SET
+                            last_success_at  = EXCLUDED.last_success_at,
+                            last_attempt_at  = EXCLUDED.last_attempt_at,
+                            last_error       = NULL,
+                            consecutive_fail = 0,
+                            source           = EXCLUDED.source,
+                            county_hint      = EXCLUDED.county_hint,
+                            updated_at       = now();
+                        """,
+                        (feed['url'], feed['source'], feed.get('county_hint')),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO realtime.source_health
+                            (feed_url, source, county_hint, last_attempt_at,
+                             last_error, consecutive_fail, updated_at)
+                        VALUES (%s, %s, %s, now(), %s, 1, now())
+                        ON CONFLICT (feed_url) DO UPDATE SET
+                            last_attempt_at  = EXCLUDED.last_attempt_at,
+                            last_error       = EXCLUDED.last_error,
+                            consecutive_fail = realtime.source_health.consecutive_fail + 1,
+                            source           = EXCLUDED.source,
+                            county_hint      = EXCLUDED.county_hint,
+                            updated_at       = now();
+                        """,
+                        (feed['url'], feed['source'], feed.get('county_hint'), error),
+                    )
+        except Exception as e:
+            logger.warning(f"[{self.name}] source_health upsert 失敗（不影響主流程）: {e}")
 
     # ------------------------------------------------------------
     # 去重
