@@ -344,4 +344,37 @@ TABLE_MAP = {
         # 表 schema 見 gis-platform/migrations/145_power_taipower_realtime.sql
         'is_multi_table': True,
     },
+    'lightning_events': {
+        # 台電落雷 nid 61139（snapshot 1 分鐘覆寫，collector 5 分 cron 去重累積）
+        # 表 schema 見 gis-platform/migrations/183_realtime_lightning_events.sql
+        # UNIQUE(event_id) + UNIQUE(dedup_hash) 雙保險，ON CONFLICT DO NOTHING
+        'history': 'realtime.lightning_events',
+        'columns': [
+            'event_id', 'strike_time', 'lon', 'lat',
+            'intensity_ka', 'strike_type', 'dedup_hash',
+            'geom', 'observed_at', 'collected_at',
+        ],
+        'upsert_key': 'event_id',
+        'upsert_strategy': 'do_nothing',
+    },
+    'nuclear_radiation': {
+        # 核設施環境輻射劑量 nid 42326（51 站，15 分 cron）
+        # 表 schema 見 gis-platform/migrations/184_realtime_nuclear_radiation.sql
+        # history: realtime.nuclear_radiation_measurements UNIQUE(station_id, observed_at) DO NOTHING
+        # current: realtime.nuclear_radiation_stations PK=station_id UPSERT
+        'history': 'realtime.nuclear_radiation_measurements',
+        'current': 'realtime.nuclear_radiation_stations',
+        'current_key': 'station_id',
+        'columns': [
+            'station_id', 'station_name', 'dose_usvh', 'observed_at',
+            'lon', 'lat', 'is_stale', 'geom', 'collected_at',
+        ],
+        'current_columns': [
+            'station_id', 'station_name', 'dose_usvh', 'observed_at',
+            'lon', 'lat', 'is_stale', 'geom',
+        ],
+        'upsert_key': 'station_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+        'current_touch_updated_at': True,
+    },
 }

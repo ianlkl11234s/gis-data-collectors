@@ -1311,6 +1311,48 @@ class SupabaseWriter:
             records.append({'_type': 'region', **r})
         return records
 
+    def _transform_lightning_events(self, result: dict, ts: datetime) -> list[dict]:
+        """落雷事件：collector 已產出 JSON-safe dict；補 geom WKT。"""
+        records: list[dict] = []
+        for r in result.get('data', []):
+            lon = r.get('lon')
+            lat = r.get('lat')
+            if lon is None or lat is None:
+                continue
+            records.append({
+                'event_id':     r.get('event_id'),
+                'strike_time':  r.get('strike_time'),
+                'lon':          lon,
+                'lat':          lat,
+                'intensity_ka': r.get('intensity_ka'),
+                'strike_type':  r.get('strike_type'),
+                'dedup_hash':   r.get('dedup_hash'),
+                'geom':         f'SRID=4326;POINT({lon} {lat})',
+                'observed_at':  r.get('observed_at'),
+                'collected_at': r.get('collected_at') or ts.isoformat(),
+            })
+        return records
+
+    def _transform_nuclear_radiation(self, result: dict, ts: datetime) -> list[dict]:
+        """核安輻射：補 geom WKT；lon/lat 缺值時 geom=None。"""
+        records: list[dict] = []
+        for r in result.get('data', []) or result.get('measurements', []):
+            lon = r.get('lon')
+            lat = r.get('lat')
+            geom = f'SRID=4326;POINT({lon} {lat})' if (lon is not None and lat is not None) else None
+            records.append({
+                'station_id':   r.get('station_id'),
+                'station_name': r.get('station_name'),
+                'dose_usvh':    r.get('dose_usvh'),
+                'observed_at':  r.get('observed_at'),
+                'lon':          lon,
+                'lat':          lat,
+                'is_stale':     r.get('is_stale'),
+                'geom':         geom,
+                'collected_at': r.get('collected_at') or ts.isoformat(),
+            })
+        return records
+
     TRANSFORMERS = {
         'groundwater_level': _transform_groundwater_level,
         'water_reservoir_daily_ops': _transform_water_reservoir_daily_ops,
@@ -1348,6 +1390,8 @@ class SupabaseWriter:
         'road_event_planned': _transform_road_event,
         'wra_drought_alert': _transform_wra_drought_alert,
         'power_taipower': _transform_power_taipower,
+        'lightning_events': _transform_lightning_events,
+        'nuclear_radiation': _transform_nuclear_radiation,
         'wic_sewer': _transform_wic_sewer,
         'wic_evacuate': _transform_wic_evacuate,
         'wic_pumb': _transform_wic_pumb,
