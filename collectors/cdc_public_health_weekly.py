@@ -1,6 +1,13 @@
 """
 CDC 公衛週報收集器（類流感 / 登革熱 / 腸病毒）
 
+⚠️⚠️⚠️  Taiwan IP required — runs on external VM  ⚠️⚠️⚠️
+   Zeabur 出口 IP 連 od.cdc.gov.tw timeout（2026-06-16 實證）。
+   主 repo 此 collector 在 Zeabur 必設 CDC_PUBLIC_HEALTH_WEEKLY_ENABLED=false，
+   實際 schedule 由 external/cdc_public_health_weekly_vm/ 在 HiCloud VM 跑。
+   本檔仍保留完整實作 = schema / parser SSOT，VM 版照抄。
+   詳見 docs/EXTERNAL_COLLECTORS.md。
+
 資料來源：data.cdc.gov.tw 開放資料平台
   下載走 od.cdc.gov.tw/eic/{dataset_id}.csv（CSV 直下載，免認證）
 

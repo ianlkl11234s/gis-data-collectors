@@ -20,6 +20,7 @@
 |---|---|---|---|
 | `ship_ais` | `mpbais.motcmpb.gov.tw` (航港局) | HiCloud VM `210.61.15.74` | [`external/ship_ais_vm/`](../external/ship_ais_vm/) |
 | `waste_positions` | 高雄/新北/台南 GPS 三家 | 同上 VM | [`external/waste_positions_vm/`](../external/waste_positions_vm/) |
+| `cdc_public_health_weekly` | 疾管署 `od.cdc.gov.tw` | 同上 VM（待部署） | [`external/cdc_public_health_weekly_vm/`](../external/cdc_public_health_weekly_vm/) |
 
 主 repo 對應 collector 的 `*_ENABLED` 環境變數**必須在 Zeabur 上設為 `false`**（避免雙跑、避免無意義的 timeout 錯誤刷 log）。
 
@@ -47,6 +48,7 @@
 |---|---|
 | `*.motcmpb.gov.tw`（航港局）| 高 |
 | `*.afa.gov.tw`（空中航管） | 推測高 |
+| `od.cdc.gov.tw`（疾管署 CSV 下載）| **高**（2026-06-16 實證 Zeabur timeout，雖然 `data.cdc.gov.tw` CKAN API 仍開放）|
 | `*.cwa.gov.tw`（氣象） | 中（部分 API 仍開放） |
 | `data.gov.tw` | 低（國際 IP 多半 OK） |
 | `tdx.transportdata.tw` | 低（明確開放 API 給開發者） |
