@@ -377,4 +377,54 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
         'current_touch_updated_at': True,
     },
+    'twse_market_index': {
+        # TWSE 加權指數 ticker — gis-platform migration 204
+        # history: realtime.market_index_tick UNIQUE(index_code, observed_at) DO NOTHING
+        # current: realtime.market_index_current PK=index_code UPSERT
+        'history': 'realtime.market_index_tick',
+        'current': 'realtime.market_index_current',
+        'current_key': 'index_code',
+        'columns': [
+            'index_code', 'index_name', 'current_value', 'prev_close',
+            'open_value', 'high_value', 'low_value',
+            'volume_lots', 'value_thousands', 'is_market_open',
+            'observed_at', 'collected_at',
+        ],
+        'current_columns': [
+            'index_code', 'index_name', 'current_value', 'prev_close',
+            'open_value', 'high_value', 'low_value',
+            'volume_lots', 'value_thousands', 'is_market_open',
+            'observed_at',
+        ],
+        'upsert_key': 'index_code,observed_at',
+        'upsert_strategy': 'do_nothing',
+        'current_touch_updated_at': True,
+    },
+    'pla_activity_daily': {
+        # 共機每日通報 — gis-platform migration 205
+        # 單表，PK = report_date，每日重抓同一日要 UPSERT（內容可能修正）
+        'history': 'realtime.pla_activity_daily',
+        'columns': [
+            'report_date', 'aircraft_sorties', 'crossed_median_line_cnt',
+            'plan_vessels', 'official_ships',
+            'adiz_north', 'adiz_central', 'adiz_southwestern', 'adiz_eastern',
+            'raw_text', 'source_lang', 'source_url', 'collected_at',
+        ],
+        'upsert_key': 'report_date',
+        'upsert_strategy': 'update',
+    },
+    'cdc_public_health_weekly': {
+        # CDC 公衛週報 — gis-platform migration 206
+        # UNIQUE(disease_code, iso_year, iso_week, county_code, township_code, age_group, gender, is_imported)
+        # 同週重抓 DO NOTHING（CDC 確認後不會回修）
+        'history': 'realtime.public_health_weekly',
+        'columns': [
+            'disease_code', 'iso_year', 'iso_week',
+            'county_code', 'county_name', 'township_code', 'township_name',
+            'age_group', 'gender', 'is_imported',
+            'metric_value', 'source_dataset', 'collected_at',
+        ],
+        'upsert_key': 'disease_code,iso_year,iso_week,county_code,township_code,age_group,gender,is_imported',
+        'upsert_strategy': 'do_nothing',
+    },
 }

@@ -221,6 +221,9 @@ _COLLECTOR_TOGGLES = (
     ('WIC_PUMB',                     False, 10),   # 北市抽水站運轉 (97 站，heopublic.gov.taipei，無金鑰)
     ('NEWS_EVENTS',                  False, 10),   # 新聞事件 RSS + Gemini 地點抽取 + GIS 相關性評估（v2 prompt）
     ('SATELLITE_PASSES_DAILY',       False, 1440), # 中國軍偵衛星通過台灣每日彙總（補昨+前天），需 SATELLITE collector 累積 TLE 歷史
+    ('TWSE_MARKET_INDEX',            False, 1),    # TWSE 加權指數 ticker（盤中 5s 更新，1 分 polling 已遠快於前端需要）
+    ('PLA_ACTIVITY_DAILY',           False, 30),   # 共機 @MoNDefense 每日通報（每 30 分鐘抓推特看當天有沒有更新）
+    ('CDC_PUBLIC_HEALTH_WEEKLY',     False, 360),  # CDC 公衛週報（週四發布，每 6 小時抓一次足夠）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:

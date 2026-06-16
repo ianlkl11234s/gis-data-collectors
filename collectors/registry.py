@@ -19,6 +19,9 @@ from .bus_intercity import BusIntercityCollector
 from .cwa_satellite import CWASatelliteCollector
 from .earthquake import EarthquakeCollector
 from .er_hospital_realtime import ERHospitalRealtimeCollector
+from .twse_market_index import TwseMarketIndexCollector
+from .pla_activity_daily import PlaActivityDailyCollector
+from .cdc_public_health_weekly import CdcPublicHealthWeeklyCollector
 from .flight_fr24 import FlightFR24Collector
 from .flight_fr24_zone import FlightFR24ZoneCollector
 from .flight_opensky import FlightOpenSkyCollector
@@ -119,6 +122,9 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(WicEvacuateCollector, "北市疏散門狀態收集器", "WIC_EVACUATE"),
     CollectorEntry(WicPumbCollector, "北市抽水站運轉收集器", "WIC_PUMB"),
     CollectorEntry(NewsEventsCollector, "News Events 新聞事件收集器", "NEWS_EVENTS", ("GEMINI_API_KEY",)),
+    CollectorEntry(TwseMarketIndexCollector, "TWSE 加權指數即時收集器", "TWSE_MARKET_INDEX"),
+    CollectorEntry(PlaActivityDailyCollector, "中共解放軍臺海周邊動態每日收集器", "PLA_ACTIVITY_DAILY"),
+    CollectorEntry(CdcPublicHealthWeeklyCollector, "CDC 公衛週報收集器", "CDC_PUBLIC_HEALTH_WEEKLY"),
 )
 
 

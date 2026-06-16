@@ -1353,6 +1353,83 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_twse_market_index(self, result: dict, ts: datetime) -> list[dict]:
+        """TWSE 加權指數：collector 已產出與 TABLE_MAP 同名 dict，observed_at/collected_at 為 datetime
+        物件 → 序列化。"""
+        def _iso(v):
+            if v is None:
+                return None
+            return v.isoformat() if isinstance(v, datetime) else v
+
+        records = []
+        for r in result.get('data', []):
+            observed_at = _iso(r.get('observed_at'))
+            if not r.get('index_code') or not observed_at or r.get('current_value') is None:
+                continue
+            records.append({
+                'index_code':      r.get('index_code'),
+                'index_name':      r.get('index_name'),
+                'current_value':   r.get('current_value'),
+                'prev_close':      r.get('prev_close'),
+                'open_value':      r.get('open_value'),
+                'high_value':      r.get('high_value'),
+                'low_value':       r.get('low_value'),
+                'volume_lots':     r.get('volume_lots'),
+                'value_thousands': r.get('value_thousands'),
+                'is_market_open':  r.get('is_market_open'),
+                'observed_at':     observed_at,
+                'collected_at':    _iso(r.get('collected_at')) or ts.isoformat(),
+            })
+        return records
+
+    def _transform_pla_activity_daily(self, result: dict, ts: datetime) -> list[dict]:
+        """共機每日通報：collector 已產出 JSON-safe dict（report_date 為 ISO str）。
+        report_date 為 PK，缺值跳過。"""
+        records = []
+        for r in result.get('data', []):
+            if not r.get('report_date'):
+                continue
+            records.append({
+                'report_date':             r.get('report_date'),
+                'aircraft_sorties':        r.get('aircraft_sorties'),
+                'crossed_median_line_cnt': r.get('crossed_median_line_cnt'),
+                'plan_vessels':            r.get('plan_vessels'),
+                'official_ships':          r.get('official_ships'),
+                'adiz_north':              r.get('adiz_north'),
+                'adiz_central':            r.get('adiz_central'),
+                'adiz_southwestern':       r.get('adiz_southwestern'),
+                'adiz_eastern':            r.get('adiz_eastern'),
+                'raw_text':                r.get('raw_text'),
+                'source_lang':             r.get('source_lang'),
+                'source_url':              r.get('source_url'),
+                'collected_at':            r.get('collected_at') or ts.isoformat(),
+            })
+        return records
+
+    def _transform_cdc_public_health_weekly(self, result: dict, ts: datetime) -> list[dict]:
+        """CDC 公衛週報：collector 已產出與 TABLE_MAP 同名 dict。
+        UNIQUE 含 township_code/gender/age_group/is_imported；rods 類別這些欄位用空字串/NULL 佔位。"""
+        records = []
+        for r in result.get('data', []):
+            if not r.get('disease_code') or r.get('iso_year') is None or r.get('iso_week') is None:
+                continue
+            records.append({
+                'disease_code':    r.get('disease_code'),
+                'iso_year':        r.get('iso_year'),
+                'iso_week':        r.get('iso_week'),
+                'county_code':     r.get('county_code') or '',
+                'county_name':     r.get('county_name'),
+                'township_code':   r.get('township_code') or '',
+                'township_name':   r.get('township_name'),
+                'age_group':       r.get('age_group') or '',
+                'gender':          r.get('gender') or '',
+                'is_imported':     r.get('is_imported'),
+                'metric_value':    r.get('metric_value'),
+                'source_dataset':  r.get('source_dataset'),
+                'collected_at':    ts.isoformat(),
+            })
+        return records
+
     TRANSFORMERS = {
         'groundwater_level': _transform_groundwater_level,
         'water_reservoir_daily_ops': _transform_water_reservoir_daily_ops,
@@ -1383,6 +1460,9 @@ class SupabaseWriter:
         'river_water_level': _transform_river_water_level,
         'rain_gauge_realtime': _transform_rain_gauge_realtime,
         'er_hospital_realtime': _transform_er_hospital_realtime,
+        'twse_market_index': _transform_twse_market_index,
+        'pla_activity_daily': _transform_pla_activity_daily,
+        'cdc_public_health_weekly': _transform_cdc_public_health_weekly,
         'iot_wra': _transform_iot_wra,
         'uswg': _transform_uswg,
         'precipitation_raster': _transform_precipitation_raster,
