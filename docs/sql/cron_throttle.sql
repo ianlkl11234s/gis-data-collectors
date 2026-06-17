@@ -41,34 +41,40 @@ SELECT cron.unschedule('refresh_mv_disaster_alert_dates') WHERE EXISTS (SELECT 1
 -- 新排程：錯開分鐘，降低頻率
 -- ------------------------------------------------------------
 
+-- ⚠️ target_day 一律用 `(now() AT TIME ZONE 'Asia/Taipei')::date`，
+-- 不要用 `current_date`。DB session 是 UTC，台北時間 00:00–08:00
+-- 那 8 小時 current_date 會比台北今天少 1 天，cron 從不 refresh
+-- 「今天 (台北)」→ 前端 get_*_dates / get_*_trails 在這段窗口回空。
+-- 2026-06-17 實證 + 修法見 gis-platform/migrations/208_fix_cron_taipei_tz.sql
+
 -- Ship trails：15 分鐘一次，分 00/15/30/45
 SELECT cron.schedule('refresh-ship-trails', '0,15,30,45 * * * *', $$
-    SELECT public.refresh_ship_trails_daily(current_date);
-    SELECT public.refresh_ship_trails_daily(current_date - 1);
+    SELECT public.refresh_ship_trails_daily((now() AT TIME ZONE 'Asia/Taipei')::date);
+    SELECT public.refresh_ship_trails_daily((now() AT TIME ZONE 'Asia/Taipei')::date - 1);
 $$);
 
 -- Flight trails：15 分鐘一次，錯開到 03/18/33/48
 SELECT cron.schedule('refresh-flight-trails', '3,18,33,48 * * * *', $$
-    SELECT public.refresh_flight_trails_daily(current_date);
-    SELECT public.refresh_flight_trails_daily(current_date - 1);
+    SELECT public.refresh_flight_trails_daily((now() AT TIME ZONE 'Asia/Taipei')::date);
+    SELECT public.refresh_flight_trails_daily((now() AT TIME ZONE 'Asia/Taipei')::date - 1);
 $$);
 
 -- Freeway congestion：20 分鐘一次，06/26/46
 SELECT cron.schedule('refresh-freeway-congestion', '6,26,46 * * * *', $$
-    SELECT public.refresh_freeway_congestion_daily(current_date);
-    SELECT public.refresh_freeway_congestion_daily(current_date - 1);
+    SELECT public.refresh_freeway_congestion_daily((now() AT TIME ZONE 'Asia/Taipei')::date);
+    SELECT public.refresh_freeway_congestion_daily((now() AT TIME ZONE 'Asia/Taipei')::date - 1);
 $$);
 
 -- YouBike H3：20 分鐘一次，09/29/49
 SELECT cron.schedule('refresh-youbike-h3', '9,29,49 * * * *', $$
-    SELECT public.refresh_youbike_h3_daily(current_date);
-    SELECT public.refresh_youbike_h3_daily(current_date - 1);
+    SELECT public.refresh_youbike_h3_daily((now() AT TIME ZONE 'Asia/Taipei')::date);
+    SELECT public.refresh_youbike_h3_daily((now() AT TIME ZONE 'Asia/Taipei')::date - 1);
 $$);
 
 -- Disaster alerts：20 分鐘一次，12/32/52
 SELECT cron.schedule('refresh-disaster-alerts', '12,32,52 * * * *', $$
-    SELECT public.refresh_disaster_alerts_daily(current_date);
-    SELECT public.refresh_disaster_alerts_daily(current_date - 1);
+    SELECT public.refresh_disaster_alerts_daily((now() AT TIME ZONE 'Asia/Taipei')::date);
+    SELECT public.refresh_disaster_alerts_daily((now() AT TIME ZONE 'Asia/Taipei')::date - 1);
 $$);
 
 -- Temperature dates cache：20 分鐘一次（CWA 本來 1hr 更新，不急）
@@ -80,8 +86,8 @@ $$);
 -- Temperature frames：60 分鐘一次（CWA 每小時才更新一次，不需要每 30 分）
 -- 排在每小時的 15 分，避開其他 job 的密集時段
 SELECT cron.schedule('refresh-temperature-frames', '15 * * * *', $$
-    SELECT public.refresh_temperature_frames_daily(current_date);
-    SELECT public.refresh_temperature_frames_daily(current_date - 1);
+    SELECT public.refresh_temperature_frames_daily((now() AT TIME ZONE 'Asia/Taipei')::date);
+    SELECT public.refresh_temperature_frames_daily((now() AT TIME ZONE 'Asia/Taipei')::date - 1);
 $$);
 
 -- ------------------------------------------------------------
