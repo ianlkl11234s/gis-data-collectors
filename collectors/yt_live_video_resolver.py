@@ -19,6 +19,7 @@ YouTube Live Video Resolver — Monitor Mode LiveWall 用
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Optional
@@ -52,17 +53,25 @@ UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
-# regex 從 YouTube 頁面 HTML 撈關鍵欄位
-RE_VIDEO_ID    = re.compile(r'"videoId":"([A-Za-z0-9_-]{11})"')
-RE_CHANNEL_ID  = re.compile(r'"(?:channelId|browseId)":"(UC[A-Za-z0-9_-]{22})"')
-RE_IS_LIVE     = re.compile(r'"isLive":(true|false)')
-RE_TITLE       = re.compile(r'"title":"([^"]+)","lengthSeconds"')  # 影片 title（直播也吃）
-RE_VIEW_COUNT  = re.compile(r'"viewCount":"(\d+)"')
+# 從 YouTube /live page 取 ytInitialPlayerResponse JSON —— 對應「目前 player 載入的影片」
+# 比起獨立 regex 抓「第一個 videoId / isLiveContent」可靠太多
+# （/live page 即使沒直播仍會 redirect 載入頻道頭推薦影片，那些影片的 meta 也會出現在頁面 HTML）
+RE_PLAYER_RESPONSE = re.compile(
+    r'(?:var\s+)?ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;\s*(?:var|</script>)',
+    re.DOTALL,
+)
+RE_CHANNEL_ID = re.compile(r'"(?:externalChannelId|channelId)":"(UC[A-Za-z0-9_-]{22})"')
 
 
-def _first(regex: re.Pattern, text: str) -> Optional[str]:
-    m = regex.search(text)
-    return m.group(1) if m else None
+def _extract_player_response(html: str) -> Optional[dict]:
+    """從 page HTML 撈 ytInitialPlayerResponse JSON 物件"""
+    m = RE_PLAYER_RESPONSE.search(html)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 class YtLiveVideoResolverCollector(BaseCollector):
@@ -101,25 +110,55 @@ class YtLiveVideoResolverCollector(BaseCollector):
             row["last_error"] = f"fetch_failed: {type(e).__name__}: {e}"[:200]
             return row
 
-        # 頻道頁如果當下沒直播，會 redirect 回頻道首頁 → videoId 抓不到或是頻道頭照
-        video_id   = _first(RE_VIDEO_ID, html)
-        channel_id = _first(RE_CHANNEL_ID, html)
-        is_live_s  = _first(RE_IS_LIVE, html)
-        title      = _first(RE_TITLE, html)
-        view_s     = _first(RE_VIEW_COUNT, html)
+        # 從 ytInitialPlayerResponse 取「目前 player 載入的這支影片」的 metadata
+        player = _extract_player_response(html)
+        # channel_id 可以從整頁找（fallback），player 內也有 videoDetails.channelId
+        m_ch = RE_CHANNEL_ID.search(html)
+        row["channel_id"] = m_ch.group(1) if m_ch else None
 
-        row["channel_id"] = channel_id
-        row["video_id"]   = video_id
-        row["title"]      = title
-        row["is_live"]    = is_live_s == "true"
-        row["view_count"] = int(view_s) if view_s else None
+        if not player:
+            row["last_error"] = "no_player_response"
+            return row
 
-        if not video_id:
-            row["last_error"] = "no_video_id_in_html"
-        elif not is_live_s:
-            row["last_error"] = "no_isLive_flag"
-        elif not row["is_live"]:
-            row["last_error"] = "not_currently_live"
+        details = player.get("videoDetails") or {}
+        live_details = player.get("microformat", {}).get("playerMicroformatRenderer", {}).get("liveBroadcastDetails") or {}
+        playability = player.get("playabilityStatus") or {}
+
+        video_id   = details.get("videoId")
+        is_live_content = bool(details.get("isLiveContent"))
+        is_live_now_meta = live_details.get("isLiveNow")
+        # videoDetails 沒有直接 isLiveNow，但有 isLive（罕見）— 兩個都看
+        is_live_now_top = details.get("isLive")
+        # 嚴格判：必須是直播類型 (isLiveContent) AND 現在正在播 (isLiveNow not false)
+        is_actually_live = (
+            is_live_content
+            and is_live_now_meta is not False
+            and is_live_now_top is not False
+            and playability.get("status") == "OK"
+        )
+
+        # channel_id from player 比 regex 更準
+        if details.get("channelId"):
+            row["channel_id"] = details["channelId"]
+        row["is_live"]    = is_actually_live
+        view_s = details.get("viewCount")
+        row["view_count"] = int(view_s) if view_s and str(view_s).isdigit() else None
+
+        # 只在真正在播時寫 video_id / title
+        if is_actually_live:
+            row["video_id"] = video_id
+            row["title"]    = details.get("title")
+        else:
+            row["video_id"] = None
+            row["title"]    = None
+            if not video_id:
+                row["last_error"] = "no_video_id_in_player"
+            elif not is_live_content:
+                row["last_error"] = "channel_has_no_active_live"
+            elif is_live_now_meta is False or is_live_now_top is False:
+                row["last_error"] = "live_ended"
+            elif playability.get("status") != "OK":
+                row["last_error"] = f"playability:{playability.get('status')}"
 
         return row
 
