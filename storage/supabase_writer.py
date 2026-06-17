@@ -1430,6 +1430,27 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_yt_live_video_resolver(self, result: dict, ts: datetime) -> list[dict]:
+        """YouTube 直播 videoId 解析：collector 已產出與 TABLE_MAP 同名 dict，
+        handle 為 current 表 PK，缺值跳過；is_live 預設 False。"""
+        records = []
+        for r in result.get('data', []):
+            handle = r.get('handle')
+            if not handle:
+                continue
+            records.append({
+                'handle':       handle,
+                'channel_id':   r.get('channel_id'),
+                'video_id':     r.get('video_id'),
+                'title':        r.get('title'),
+                'is_live':      bool(r.get('is_live', False)),
+                'view_count':   r.get('view_count'),
+                'last_error':   r.get('last_error'),
+                'observed_at':  r.get('observed_at') or ts.isoformat(),
+                'collected_at': r.get('collected_at') or ts.isoformat(),
+            })
+        return records
+
     TRANSFORMERS = {
         'groundwater_level': _transform_groundwater_level,
         'water_reservoir_daily_ops': _transform_water_reservoir_daily_ops,
@@ -1475,6 +1496,7 @@ class SupabaseWriter:
         'wic_sewer': _transform_wic_sewer,
         'wic_evacuate': _transform_wic_evacuate,
         'wic_pumb': _transform_wic_pumb,
+        'yt_live_video_resolver': _transform_yt_live_video_resolver,
     }
 
     # ============================================================

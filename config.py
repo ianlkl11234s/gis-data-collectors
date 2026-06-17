@@ -224,6 +224,7 @@ _COLLECTOR_TOGGLES = (
     ('TWSE_MARKET_INDEX',            False, 1),    # TWSE 加權指數 ticker（盤中 5s 更新，1 分 polling 已遠快於前端需要）
     ('PLA_ACTIVITY_DAILY',           False, 30),   # 共機 @MoNDefense 每日通報（每 30 分鐘抓推特看當天有沒有更新）
     ('CDC_PUBLIC_HEALTH_WEEKLY',     False, 360),  # ⚠️ Taiwan IP required — Zeabur 必設 false（od.cdc.gov.tw 連線 timeout）；實際走 external/cdc_public_health_weekly_vm/
+    ('YT_LIVE_VIDEO_RESOLVER',       False, 5),    # YouTube 14 家新聞台當前直播 videoId 解析（cron 5min，video_id 約 1-7 天換一次）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:

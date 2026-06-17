@@ -413,6 +413,26 @@ TABLE_MAP = {
         'upsert_key': 'report_date',
         'upsert_strategy': 'update',
     },
+    'yt_live_video_resolver': {
+        # YouTube 14 家新聞台直播 videoId 解析 — gis-platform migration 209
+        # history: realtime.yt_live_history UNIQUE(handle, video_id, observed_at) DO NOTHING
+        # current: realtime.yt_live_current PK=handle UPSERT
+        'history': 'realtime.yt_live_history',
+        'current': 'realtime.yt_live_current',
+        'current_key': 'handle',
+        'columns': [
+            'handle', 'channel_id', 'video_id', 'title',
+            'is_live', 'view_count', 'last_error',
+            'observed_at', 'collected_at',
+        ],
+        'current_columns': [
+            'handle', 'channel_id', 'video_id', 'title',
+            'is_live', 'view_count', 'last_error', 'observed_at',
+        ],
+        'upsert_key': 'handle,video_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+        'current_touch_updated_at': True,
+    },
     'cdc_public_health_weekly': {
         # CDC 公衛週報 — gis-platform migration 206
         # UNIQUE(disease_code, iso_year, iso_week, county_code, township_code, age_group, gender, is_imported)

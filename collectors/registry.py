@@ -22,6 +22,7 @@ from .er_hospital_realtime import ERHospitalRealtimeCollector
 from .twse_market_index import TwseMarketIndexCollector
 from .pla_activity_daily import PlaActivityDailyCollector
 from .cdc_public_health_weekly import CdcPublicHealthWeeklyCollector
+from .yt_live_video_resolver import YtLiveVideoResolverCollector
 from .flight_fr24 import FlightFR24Collector
 from .flight_fr24_zone import FlightFR24ZoneCollector
 from .flight_opensky import FlightOpenSkyCollector
@@ -125,6 +126,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(TwseMarketIndexCollector, "TWSE 加權指數即時收集器", "TWSE_MARKET_INDEX"),
     CollectorEntry(PlaActivityDailyCollector, "中共解放軍臺海周邊動態每日收集器", "PLA_ACTIVITY_DAILY"),
     CollectorEntry(CdcPublicHealthWeeklyCollector, "CDC 公衛週報收集器", "CDC_PUBLIC_HEALTH_WEEKLY"),
+    CollectorEntry(YtLiveVideoResolverCollector, "YouTube 新聞直播 videoId 解析器", "YT_LIVE_VIDEO_RESOLVER"),
 )
 
 
