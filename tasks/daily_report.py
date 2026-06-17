@@ -74,6 +74,14 @@ class DailyReportTask:
 
         if report:
             print(f"   報告長度: {len(report)} 字元")
+            # 先發 3 行速報，讓手機通知列就能掃完狀態（成功與否不影響主報）
+            try:
+                digest = self._build_speed_digest()
+                if digest:
+                    send_telegram(digest)
+                    print("✓ 速報已發送")
+            except Exception as e:
+                print(f"⚠️ 速報發送失敗（不影響主報）: {e}")
             # 用 long 版本：超過 4096 自動分段，避免 collectors 多的實例（如「主站」）整則失敗
             ok = send_telegram_long(report)
             if ok:
@@ -136,6 +144,116 @@ class DailyReportTask:
                 lines.append(f"\n⚠️ *{name}*\n  產生失敗: {e}")
 
         return '\n'.join(lines)
+
+    def _build_speed_digest(self) -> str:
+        """3-5 行精簡速報，獨立發送，給 Telegram 通知列 5 秒掃完用。
+
+        判定標準與 _section_health_summary 一致，但格式更壓縮。
+        """
+        from tasks import monitoring
+
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        tag = f" [{config.INSTANCE_NAME}]" if config.INSTANCE_NAME else ""
+
+        # 收集器
+        total = len(self.collectors)
+        col_err = sum(1 for c in self.collectors if c.get_status().get("error_count", 0) > 0)
+        col_ok = total - col_err
+
+        # SB
+        sb_dead = sb_stale = sb_never = sb_err = sb_total = 0
+        sb_critical_bad = False
+        try:
+            rt_tables = monitoring.load_realtime_tables()
+            rt_meta = {(t["schema"], t["table"]): t for t in rt_tables}
+            for r in monitoring.query_realtime_health(rt_tables) if rt_tables else []:
+                sb_total += 1
+                t = rt_meta.get((r["schema"], r["table"]), {})
+                if r.get("error"):
+                    sb_err += 1
+                    continue
+                status, _ = monitoring.classify_freshness(r["max_time"], t.get("expected_interval_min", 60))
+                if status == "DEAD":
+                    sb_dead += 1
+                    if t.get("critical"): sb_critical_bad = True
+                elif status == "STALE":
+                    sb_stale += 1
+                    if t.get("critical"): sb_critical_bad = True
+                elif status == "NEVER":
+                    sb_never += 1
+                    if t.get("critical"): sb_critical_bad = True
+            sb_bad = sb_dead + sb_stale + sb_never + sb_err
+            sb_ok = sb_total - sb_bad
+        except Exception:
+            sb_ok, sb_total, sb_bad = 0, 0, 0
+
+        # S3
+        s3_stale = s3_total = 0
+        s3_critical_severe = False
+        try:
+            cmap = monitoring.load_cross_layer_map()
+            s3_dates = monitoring.list_archive_dates_per_collector()
+            now_tw = datetime.now(TAIPEI_TZ)
+            for name, cfg in cmap.items():
+                if not cfg.get("enabled"):
+                    continue
+                for sp in cfg.get("s3_prefixes", []):
+                    if not sp.get("expected_daily"):
+                        continue
+                    s3_total += 1
+                    last = s3_dates.get(name)
+                    expected = _expected_archive_date(cfg, now_tw)
+                    if last is None or last < expected:
+                        s3_stale += 1
+                        if last and cfg.get("critical"):
+                            days = (
+                                datetime.strptime(expected, "%Y-%m-%d")
+                                - datetime.strptime(last, "%Y-%m-%d")
+                            ).days
+                            if days >= 3:
+                                s3_critical_severe = True
+                    break
+            s3_ok = s3_total - s3_stale
+        except Exception:
+            s3_ok, s3_total, s3_stale = 0, 0, 0
+
+        # VM
+        vm_lost = vm_total = 0
+        try:
+            for entry in monitoring.list_vm_health_snapshots(max_age_hours=26):
+                vm_total += 1
+                if entry["is_lost"] or entry["snapshot"] is None:
+                    vm_lost += 1
+            vm_ok = vm_total - vm_lost
+        except Exception:
+            vm_ok, vm_total, vm_lost = 0, 0, 0
+
+        # verdict
+        if sb_critical_bad or s3_critical_severe or vm_lost > 0:
+            verdict, emoji = "嚴重", "🔴"
+        elif sb_bad or s3_stale or col_err:
+            verdict, emoji = "有問題", "🟡"
+        else:
+            verdict, emoji = "正常", "🟢"
+
+        lines = [
+            f"⚡ *速報*{tag} — {yesterday}",
+            f"{emoji} *{verdict}*",
+            f"收集 {col_ok}/{total} · SB {sb_ok}/{sb_total} · S3 {s3_ok}/{s3_total} · VM {vm_ok}/{vm_total}",
+        ]
+        # 有狀況才補一行細節
+        if verdict != "正常":
+            bits = []
+            if sb_dead: bits.append(f"SB DEAD {sb_dead}")
+            if sb_stale: bits.append(f"STALE {sb_stale}")
+            if sb_err: bits.append(f"ERR {sb_err}")
+            if s3_stale: bits.append(f"S3 落後 {s3_stale}")
+            if vm_lost: bits.append(f"VM 失聯 {vm_lost}")
+            if col_err: bits.append(f"collector 錯誤 {col_err}")
+            if bits:
+                lines.append("  " + " · ".join(bits))
+        lines.append("⏬ 詳細日報接續")
+        return "\n".join(lines)
 
     def _section_health_summary(self) -> str:
         """整份日報跑完前先給結論：昨日是『正常 / 有問題 / 嚴重』。
