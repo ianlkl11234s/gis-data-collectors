@@ -119,7 +119,8 @@ ship_ais:
   expected_interval_min: 10
   supabase_tables: [realtime.ship_positions, realtime.ship_current]
   s3_prefixes:
-    - {prefix: ship_ais/archives/, expected_daily: true}
+    # VM archive 保留 7 天本地，第 8 天才上 S3 — 監控需把預期最新日期往前推 8 天
+    - {prefix: ship_ais/archives/, expected_daily: true, archive_lag_days: 8}
   critical: true
 
 # ─────────────────────────────────────────────────────────
@@ -370,7 +371,8 @@ waste_positions:
   expected_interval_min: 2
   supabase_tables: [spatial.waste_positions_realtime]
   s3_prefixes:
-    - {prefix: waste_positions/archives/, expected_daily: true}
+    # VM archive 保留 7 天本地，第 8 天才上 S3 — 監控需把預期最新日期往前推 8 天
+    - {prefix: waste_positions/archives/, expected_daily: true, archive_lag_days: 8}
   critical: true
 
 waste_match:

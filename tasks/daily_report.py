@@ -21,6 +21,20 @@ from utils.notify import (
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
 
+def _expected_archive_date(cfg: dict, today: datetime) -> str:
+    """根據 cfg.s3_prefixes 的 archive_lag_days 算出『今天應有的最新 archive 日期』。
+
+    用於修正 HiCloud VM 那種「保留 N 天本地、第 N+1 天才上 S3」的延遲歸檔 collector，
+    避免被誤判為 stale。沒設 archive_lag_days → 預設 1（昨天就該有）。
+    """
+    lag = 1
+    for p in cfg.get("s3_prefixes", []):
+        if not p.get("expected_daily"):
+            continue
+        lag = max(lag, p.get("archive_lag_days", 1))
+    return (today - timedelta(days=lag)).strftime("%Y-%m-%d")
+
+
 class DailyReportTask:
     """每日報告任務"""
 
@@ -88,6 +102,13 @@ class DailyReportTask:
         tag = f" [{config.INSTANCE_NAME}]" if config.INSTANCE_NAME else ""
         lines = [f"📊 *資料收集日報{tag} — {yesterday}*\n"]
 
+        # 開頭健診摘要：讀者一眼判斷昨日狀態
+        try:
+            lines.append(self._section_health_summary())
+        except Exception as e:
+            print(f"⚠️ 日報區塊 [昨日健診] 失敗: {e}")
+            lines.append(f"\n⚠️ *昨日健診*\n  產生失敗: {e}")
+
         sections = [
             ("收集狀態", self._section_collector_status),
             ("Supabase realtime 寫入", self._section_supabase_realtime),
@@ -115,6 +136,143 @@ class DailyReportTask:
                 lines.append(f"\n⚠️ *{name}*\n  產生失敗: {e}")
 
         return '\n'.join(lines)
+
+    def _section_health_summary(self) -> str:
+        """整份日報跑完前先給結論：昨日是『正常 / 有問題 / 嚴重』。
+
+        判定規則：
+          🔴 嚴重 — critical 表 DEAD/STALE/NEVER，或 critical S3 落後 >=3 天，或 VM 失聯
+          🟡 有問題 — 任何非 critical 異常、ERR、跨層斷層、collector 有錯誤
+          🟢 正常 — 全綠
+        """
+        from tasks import monitoring
+
+        sb_dead = sb_stale = sb_never = sb_err = 0
+        sb_critical_bad = False
+        try:
+            rt_tables = monitoring.load_realtime_tables()
+            rt_meta = {(t["schema"], t["table"]): t for t in rt_tables}
+            for r in monitoring.query_realtime_health(rt_tables) if rt_tables else []:
+                t = rt_meta.get((r["schema"], r["table"]), {})
+                if r.get("error"):
+                    sb_err += 1
+                    continue
+                status, _ = monitoring.classify_freshness(
+                    r["max_time"], t.get("expected_interval_min", 60)
+                )
+                if status == "DEAD":
+                    sb_dead += 1
+                    if t.get("critical"):
+                        sb_critical_bad = True
+                elif status == "STALE":
+                    sb_stale += 1
+                    if t.get("critical"):
+                        sb_critical_bad = True
+                elif status == "NEVER":
+                    sb_never += 1
+                    if t.get("critical"):
+                        sb_critical_bad = True
+        except Exception as e:
+            return f"\n🩺 *昨日健診*\n  摘要產生失敗: {e}"
+
+        s3_stale = 0
+        s3_critical_severe = False
+        try:
+            cmap = monitoring.load_cross_layer_map()
+            s3_dates = monitoring.list_archive_dates_per_collector()
+            now_tw_h = datetime.now(TAIPEI_TZ)
+            for name, cfg in cmap.items():
+                if not cfg.get("enabled"):
+                    continue
+                for sp in cfg.get("s3_prefixes", []):
+                    if not sp.get("expected_daily"):
+                        continue
+                    last = s3_dates.get(name)
+                    expected = _expected_archive_date(cfg, now_tw_h)
+                    if last is None or last < expected:
+                        s3_stale += 1
+                        if last and cfg.get("critical"):
+                            days = (
+                                datetime.strptime(expected, "%Y-%m-%d")
+                                - datetime.strptime(last, "%Y-%m-%d")
+                            ).days
+                            if days >= 3:
+                                s3_critical_severe = True
+                    break
+        except Exception:
+            pass
+
+        vm_lost = 0
+        try:
+            for entry in monitoring.list_vm_health_snapshots(max_age_hours=26):
+                if entry["is_lost"] or entry["snapshot"] is None:
+                    vm_lost += 1
+        except Exception:
+            pass
+
+        collector_err = sum(1 for c in self.collectors if c.get_status().get("error_count", 0) > 0)
+
+        cross_break = 0
+        try:
+            cmap2 = monitoring.load_cross_layer_map()
+            rt_tables2 = monitoring.load_realtime_tables()
+            rt_results2 = monitoring.query_realtime_health(rt_tables2) if rt_tables2 else []
+            rt_24h_count = {(r["schema"], r["table"]): r.get("count_24h", 0) for r in rt_results2}
+            rt_max_time2 = {(r["schema"], r["table"]): r.get("max_time") for r in rt_results2}
+            s3_dates2 = monitoring.list_archive_dates_per_collector()
+            now_tw_c = datetime.now(TAIPEI_TZ)
+            for name, cfg in cmap2.items():
+                if not cfg.get("enabled"):
+                    continue
+                sb_tables = cfg.get("supabase_tables") or []
+                if sb_tables:
+                    interval = cfg.get("expected_interval_min", 60)
+                    if interval >= 720:
+                        threshold_min = max(interval * 3, 1440)
+                        b_ok = False
+                        for t in sb_tables:
+                            mt = rt_max_time2.get(tuple(t.split(".", 1)))
+                            if mt is None:
+                                continue
+                            if mt.tzinfo is None:
+                                mt = mt.replace(tzinfo=TAIPEI_TZ)
+                            if (now_tw_c - mt).total_seconds() / 60 < threshold_min:
+                                b_ok = True
+                                break
+                    else:
+                        b_ok = any(rt_24h_count.get(tuple(t.split(".", 1)), 0) > 0 for t in sb_tables)
+                else:
+                    b_ok = True
+                has_daily = any(p.get("expected_daily") for p in cfg.get("s3_prefixes", []))
+                if has_daily:
+                    latest = s3_dates2.get(name)
+                    expected = _expected_archive_date(cfg, now_tw_c)
+                    c_ok = latest is not None and latest >= expected
+                else:
+                    c_ok = True
+                if not (b_ok and c_ok):
+                    cross_break += 1
+        except Exception:
+            pass
+
+        # 判定 verdict
+        if sb_critical_bad or s3_critical_severe or vm_lost > 0:
+            verdict = "🔴 *嚴重*（需要處理）"
+        elif (sb_dead + sb_stale + sb_never + sb_err + s3_stale + cross_break + collector_err) > 0:
+            verdict = "🟡 *有問題*（非 critical）"
+        else:
+            verdict = "🟢 *正常*（全綠）"
+
+        parts = [f"\n🩺 *昨日健診*：{verdict}"]
+        parts.append(
+            f"  SB: {sb_dead} DEAD / {sb_stale} STALE / {sb_never} NEVER / {sb_err} ERR"
+        )
+        parts.append(
+            f"  S3 落後: {s3_stale} | 跨層斷層: {cross_break} | VM 失聯: {vm_lost}"
+        )
+        parts.append(f"  Collector 有錯誤: {collector_err} 個")
+        parts.append("  詳情見下方各區塊；待辦見「今日 Action」")
+        return "\n".join(parts)
 
     def _section_collector_status(self) -> str:
         """收集器狀態區塊"""
@@ -240,8 +398,8 @@ class DailyReportTask:
             return "\n📦 *S3 archives*\n  cross_layer_map.yaml 為空"
 
         latest_dates = monitoring.list_archive_dates_per_collector()
-        today = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
-        yesterday = (datetime.now(TAIPEI_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+        now_tw = datetime.now(TAIPEI_TZ)
+        today = now_tw.strftime("%Y-%m-%d")
 
         stale = []   # 應有但落後
         ok = []
@@ -257,10 +415,14 @@ class DailyReportTask:
                     ignored += 1
                     continue
                 last = latest_dates.get(name)
+                expected = _expected_archive_date(cfg, now_tw)
                 if last is None:
                     missing.append((name, cfg))
-                elif last < yesterday:
-                    days_behind = (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(last, "%Y-%m-%d")).days
+                elif last < expected:
+                    days_behind = (
+                        datetime.strptime(expected, "%Y-%m-%d")
+                        - datetime.strptime(last, "%Y-%m-%d")
+                    ).days
                     stale.append((name, cfg, last, days_behind))
                 else:
                     ok.append(name)
@@ -299,8 +461,10 @@ class DailyReportTask:
         rt_tables = monitoring.load_realtime_tables()
         rt_results = monitoring.query_realtime_health(rt_tables) if rt_tables else []
         rt_24h_count = {(r["schema"], r["table"]): r.get("count_24h", 0) for r in rt_results}
+        # 低頻 collector（>=12h）24h 窗常常 0 筆是正常；用 max_time 寬鬆判斷
+        rt_max_time = {(r["schema"], r["table"]): r.get("max_time") for r in rt_results}
         s3_dates = monitoring.list_archive_dates_per_collector()
-        yesterday = (datetime.now(TAIPEI_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+        now_tw = datetime.now(TAIPEI_TZ)
 
         # 收集器 in-memory 狀態（last_success_at）
         collector_state: dict[str, datetime | None] = {}
@@ -317,19 +481,35 @@ class DailyReportTask:
             if name in collector_state:
                 last = collector_state[name]
                 if last is not None:
-                    age_min = (datetime.now(TAIPEI_TZ) - last).total_seconds() / 60
+                    age_min = (now_tw - last).total_seconds() / 60
                     a_ok = age_min < cfg["expected_interval_min"] * 3
-            # [B] SB 寫入
+            # [B] SB 寫入：高頻看 24h count；低頻（interval >= 720 分）看 max_time 是否在 3x interval 內
             sb_tables = cfg.get("supabase_tables") or []
             if sb_tables:
-                b_ok = any(rt_24h_count.get(tuple(t.split(".", 1)), 0) > 0 for t in sb_tables)
+                interval = cfg.get("expected_interval_min", 60)
+                if interval >= 720:
+                    # 低頻：rail_timetable / earthquake 這種 1 天 1 次的，用 max_time 判斷
+                    threshold_min = max(interval * 3, 1440)
+                    b_ok = False
+                    for t in sb_tables:
+                        mt = rt_max_time.get(tuple(t.split(".", 1)))
+                        if mt is None:
+                            continue
+                        if mt.tzinfo is None:
+                            mt = mt.replace(tzinfo=TAIPEI_TZ)
+                        if (now_tw - mt).total_seconds() / 60 < threshold_min:
+                            b_ok = True
+                            break
+                else:
+                    b_ok = any(rt_24h_count.get(tuple(t.split(".", 1)), 0) > 0 for t in sb_tables)
             else:
                 b_ok = True  # 沒設 SB 表就略過
-            # [C] S3 archive 昨天
+            # [C] S3 archive：以 archive_lag_days 推算今天該有的最新日期
             has_daily_prefix = any(p.get("expected_daily") for p in cfg.get("s3_prefixes", []))
             if has_daily_prefix:
                 latest = s3_dates.get(name)
-                c_ok = latest is not None and latest >= yesterday
+                expected = _expected_archive_date(cfg, now_tw)
+                c_ok = latest is not None and latest >= expected
             else:
                 c_ok = True
             if a_ok and b_ok and c_ok:
@@ -469,10 +649,10 @@ class DailyReportTask:
             if status in ("DEAD", "STALE", "NEVER"):
                 current.add(f"sb:{r['schema']}.{r['table']}:{status.lower()}")
 
-        # S3
+        # S3（吃 archive_lag_days）
         cmap = monitoring.load_cross_layer_map()
         s3_dates = monitoring.list_archive_dates_per_collector()
-        yesterday = (datetime.now(TAIPEI_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+        now_tw_a = datetime.now(TAIPEI_TZ)
         for name, cfg in cmap.items():
             if not cfg.get("enabled"):
                 continue
@@ -480,9 +660,10 @@ class DailyReportTask:
                 if not s3p.get("expected_daily"):
                     continue
                 last = s3_dates.get(name)
+                expected = _expected_archive_date(cfg, now_tw_a)
                 if last is None:
                     current.add(f"s3:{name}:missing")
-                elif last < yesterday:
+                elif last < expected:
                     current.add(f"s3:{name}:stale")
                 break
 
@@ -727,11 +908,10 @@ class DailyReportTask:
                 actions.append(f"修 `{r['schema']}.{r['table']}` (DEAD 超過 {age} 分，critical)")
                 break  # 只取最嚴重的一個
 
-        # 2. S3 archives 落後
+        # 2. S3 archives 落後（吃 archive_lag_days，避免 HiCloud VM 7 天延遲被誤判）
         cmap = monitoring.load_cross_layer_map()
         s3_dates = monitoring.list_archive_dates_per_collector()
-        today_str = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
-        yesterday_str = (datetime.now(TAIPEI_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+        now_tw = datetime.now(TAIPEI_TZ)
         for name, cfg in cmap.items():
             if not cfg.get("enabled") or not cfg.get("critical"):
                 continue
@@ -739,9 +919,13 @@ class DailyReportTask:
                 if not sp.get("expected_daily"):
                     continue
                 last = s3_dates.get(name)
-                if last and last < yesterday_str:
-                    days = (datetime.strptime(today_str, "%Y-%m-%d") - datetime.strptime(last, "%Y-%m-%d")).days
-                    actions.append(f"檢查 `{name}` archive task（落後 {days} 天，最新 {last}）")
+                expected = _expected_archive_date(cfg, now_tw)
+                if last and last < expected:
+                    days = (
+                        datetime.strptime(expected, "%Y-%m-%d")
+                        - datetime.strptime(last, "%Y-%m-%d")
+                    ).days
+                    actions.append(f"檢查 `{name}` archive task（落後預期 {days} 天，最新 {last}）")
                     break
             if len(actions) >= 3:
                 break
