@@ -84,5 +84,9 @@ tables:
   # ── 新聞 ────────────────────────────────
   - {schema: realtime, table: news_events,               time_column: created_at,   owner_collector: news_events, expected_interval_min: 20, critical: false}
 
+  # ── 公衛 ────────────────────────────────
+  # cdc_public_health_weekly 跑在 HiCloud VM 上，每週四 11:00 一次
+  - {schema: realtime, table: public_health_weekly,      time_column: collected_at, owner_collector: cdc_public_health_weekly, expected_interval_min: 10080, critical: false, notes: 週四 11:00 跑一次}
+
   # ── 其他 reference ──────────────────────
   - {schema: reference, table: foursquare_poi,           time_column: collected_at, owner_collector: foursquare_poi, expected_interval_min: 43200, critical: false}
