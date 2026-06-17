@@ -375,6 +375,15 @@ waste_positions:
     - {prefix: waste_positions/archives/, expected_daily: true, archive_lag_days: 8}
   critical: true
 
+cdc_public_health_weekly:
+  enabled: true
+  deployment: hicloud_vm        # 跑在 HiCloud VM，週四 11:00 一次
+  expected_interval_min: 10080  # 一週
+  supabase_tables: [realtime.public_health_weekly]
+  s3_prefixes: []               # 無 S3 archive，直接寫 SB
+  critical: false
+  notes: CDC 開放資料每週更新，僅週四 11:00 抓一次寫 SB
+
 waste_match:
   enabled: false
   deployment: disabled
