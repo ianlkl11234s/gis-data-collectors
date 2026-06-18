@@ -42,7 +42,7 @@ tables:
   - {schema: realtime, table: weather_current,           time_column: observed_at,  owner_collector: weather, expected_interval_min: 60, critical: true}
   - {schema: realtime, table: temperature_grids,         time_column: collected_at, owner_collector: temperature, expected_interval_min: 60, critical: false}
   - {schema: realtime, table: cwa_imagery_frames,        time_column: observed_at,  owner_collector: cwa_satellite, expected_interval_min: 10, critical: false}
-  - {schema: realtime, table: earthquake_events,         time_column: occurred_at,  owner_collector: earthquake, expected_interval_min: 1440, critical: true, notes: 事件驅動可能很久才一次}
+  - {schema: realtime, table: earthquake_events,         time_column: occurred_at,  owner_collector: earthquake, expected_interval_min: 1440, critical: false, notes: 事件驅動可能很久才一次（critical=false 避免無震時誤觸 🔴 嚴重）}
   - {schema: realtime, table: disaster_alerts,           time_column: collected_at, owner_collector: ncdr_alerts, expected_interval_min: 15, critical: true}
 
   # ── 太空 ────────────────────────────────
@@ -89,4 +89,4 @@ tables:
   - {schema: realtime, table: public_health_weekly,      time_column: collected_at, owner_collector: cdc_public_health_weekly, expected_interval_min: 10080, critical: false, notes: 週四 11:00 跑一次}
 
   # ── 其他 reference ──────────────────────
-  - {schema: reference, table: foursquare_poi,           time_column: collected_at, owner_collector: foursquare_poi, expected_interval_min: 43200, critical: false}
+  - {schema: reference, table: foursquare_poi,           time_column: imported_at,  owner_collector: foursquare_poi, expected_interval_min: 43200, critical: false}
