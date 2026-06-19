@@ -174,7 +174,7 @@ def _env_bool(key: str, default: bool) -> bool:
 
 # (prefix, enabled_default, interval_default_minutes)
 _COLLECTOR_TOGGLES = (
-    ('YOUBIKE',                      True,  15),
+    ('YOUBIKE',                      True,  10),  # 2026-06 擴張至全台 12 城（實測有 YouBike/Moovo 站點），interval 15→10
     ('WEATHER',                      True,  60),
     ('VD',                           False, 5),
     ('FREEWAY_VD',                   True,  10),
@@ -235,8 +235,12 @@ for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
 # 各 collector 的「額外設定」（city list、API 金鑰、參數）
 # ------------------------------------------------------------
 
-# YouBike
-YOUBIKE_CITIES = os.getenv('YOUBIKE_CITIES', 'Taipei,NewTaipei,Taoyuan').split(',')
+# YouBike — 2026-06 實測 12 縣市有 YouBike/Moovo 站點（共 ~9,100 站）
+# 其他 10 縣市（Keelung/Changhua/Yunlin/Pingtung/NantouCounty/YilanCounty/HualienCounty/PenghuCounty/KinmenCounty/LienchiangCounty）TDX 回 0 站
+YOUBIKE_CITIES = os.getenv(
+    'YOUBIKE_CITIES',
+    'Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung,Hsinchu,HsinchuCounty,Chiayi,ChiayiCounty,MiaoliCounty,TaitungCounty'
+).split(',')
 
 # Weather
 WEATHER_STATIONS = os.getenv('WEATHER_STATIONS', '').split(',') if os.getenv('WEATHER_STATIONS') else []
