@@ -294,6 +294,34 @@ class SupabaseWriter:
                 })
         return records
 
+    def _transform_road_congestion(self, result: dict, ts: datetime) -> list[dict]:
+        """省道+市區路況 → realtime.road_sections_live/_current"""
+        import json
+        records = []
+        for r in result.get('data', []):
+            ds = r.get('data_sources')
+            if ds is not None and not isinstance(ds, str):
+                ds = json.dumps(ds, ensure_ascii=False)
+            records.append({
+                'section_uid': r.get('section_uid', ''),
+                'section_id': r.get('section_id', ''),
+                'source': r.get('source'),
+                'city': r.get('city'),
+                'authority_code': r.get('authority_code'),
+                'travel_time': r.get('travel_time'),
+                'travel_speed': r.get('travel_speed'),
+                'congestion_level': r.get('congestion_level'),
+                'congestion_level_id': r.get('congestion_level_id'),
+                'data_sources': ds,
+                'data_collect_time': r.get('data_collect_time'),
+                'collected_at': ts.isoformat(),
+            })
+        seen = {}
+        for r in records:
+            if r['section_uid']:
+                seen[r['section_uid']] = r
+        return list(seen.values())
+
     def _transform_parking(self, result: dict, ts: datetime) -> list[dict]:
         """OnStreet 路邊停車 → realtime.parking_segments_availability/_current
         資料來自 collectors/parking.py 的 _parse_segment（已 normalize），這邊只做 JSONB 化 + 去重。
@@ -1548,6 +1576,7 @@ class SupabaseWriter:
         'tourist_shuttle': _transform_tourist_shuttle,
         'parking': _transform_parking,
         'parking_offstreet': _transform_parking_offstreet,
+        'road_congestion': _transform_road_congestion,
         'ship_ais': _transform_ship_ais,
         'earthquake': _transform_earthquake,
         'rail_timetable': _transform_rail_timetable,

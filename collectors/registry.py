@@ -41,6 +41,7 @@ from .nuclear_radiation import NuclearRadiationCollector
 from .rail_timetable import RailTimetableCollector
 from .rain_gauge_realtime import RainGaugeRealtimeCollector
 from .river_water_level import RiverWaterLevelCollector
+from .road_congestion import RoadCongestionCollector
 from .road_event_live import RoadEventLiveCollector
 from .road_event_planned import RoadEventPlannedCollector
 from .satellite import SatelliteCollector
@@ -82,6 +83,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(WeatherCollector, "Weather 收集器", "WEATHER", ("CWA_API_KEY",)),
     CollectorEntry(VDCollector, "VD 收集器", "VD"),
     CollectorEntry(FreewayVDCollector, "Freeway VD 收集器", "FREEWAY_VD"),
+    CollectorEntry(RoadCongestionCollector, "省道+市區路況 收集器", "ROAD_CONGESTION"),
     CollectorEntry(TemperatureGridCollector, "Temperature Grid 收集器", "TEMPERATURE", ("CWA_API_KEY",)),
     CollectorEntry(ParkingCollector, "Parking 路邊 收集器", "PARKING"),
     CollectorEntry(ParkingOffStreetCollector, "Parking 路外場館 收集器", "PARKING_OFFSTREET"),

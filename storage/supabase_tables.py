@@ -74,6 +74,17 @@ TABLE_MAP = {
             'space_types', 'data_collect_time', 'collected_at',
         ],
     },
+    'road_congestion': {
+        # 省道+市區即時路況統一表（source/city 分流）
+        'history': 'realtime.road_sections_live',
+        'current': 'realtime.road_sections_current',
+        'current_key': 'section_uid',
+        'columns': [
+            'section_uid', 'section_id', 'source', 'city', 'authority_code',
+            'travel_time', 'travel_speed', 'congestion_level', 'congestion_level_id',
+            'data_sources', 'data_collect_time', 'collected_at',
+        ],
+    },
     'parking_offstreet': {
         # OffStreet 路外場館（新 collector parking_offstreet.py，City/SA/Tourism 3 變體）
         'history': 'realtime.parking_lots_availability',

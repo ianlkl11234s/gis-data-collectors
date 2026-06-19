@@ -178,6 +178,7 @@ _COLLECTOR_TOGGLES = (
     ('WEATHER',                      True,  60),
     ('VD',                           False, 5),
     ('FREEWAY_VD',                   True,  10),
+    ('ROAD_CONGESTION',              False, 5),    # 省道全國 + 市區 5 縣市實測堪用
     ('TEMPERATURE',                  True,  60),
     ('PARKING',                      False, 15),  # OnStreet 路邊（既有，221 補 Supabase 寫入）
     ('PARKING_OFFSTREET',            False, 10),  # OffStreet 路外場館 3 變體（City/SA/Tourism）
@@ -261,6 +262,13 @@ TEMPERATURE_DATASET = 'O-A0038-003'  # 小時溫度觀測分析格點資料
 
 # 路邊停車
 PARKING_CITIES = os.getenv('PARKING_CITIES', 'Taipei,NewTaipei,Taichung').split(',')
+
+# 省道+市區路況 — 市區實測 2026-06-19 僅 5 縣市有及時資料（Taoyuan/Taichung/Tainan/Keelung/YilanCounty）
+# 其他縣市多回 0 段或 TravelTime=-99；北市 6/16 三天前停滯。用戶後續要全收只需設 env 覆寫。
+ROAD_CONGESTION_CITIES = os.getenv(
+    'ROAD_CONGESTION_CITIES',
+    'Taoyuan,Taichung,Tainan,Keelung,YilanCounty'
+).split(',')
 
 # 路外停車場（OffStreet）— 預設 19 縣市（2026-06-19 實測 Changhua/Yunlin/Pingtung 端點回 HTTP 400 移出）
 PARKING_OFFSTREET_CITIES = os.getenv(
