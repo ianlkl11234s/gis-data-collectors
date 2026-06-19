@@ -15,7 +15,7 @@ from utils.tdx_session import TDXSession
 from .base import BaseCollector
 
 
-# 城市代碼對照
+# 城市代碼對照（2026-06 實測全台有 YouBike/Moovo 資料的 12 個縣市）
 CITY_NAMES = {
     'Taipei': '臺北市',
     'NewTaipei': '新北市',
@@ -24,7 +24,11 @@ CITY_NAMES = {
     'Tainan': '臺南市',
     'Kaohsiung': '高雄市',
     'Hsinchu': '新竹市',
+    'HsinchuCounty': '新竹縣',
     'Chiayi': '嘉義市',
+    'ChiayiCounty': '嘉義縣',
+    'MiaoliCounty': '苗栗縣',
+    'TaitungCounty': '臺東縣',
 }
 
 
