@@ -47,6 +47,7 @@ from .satellite_passes_daily import SatellitePassesDailyCollector
 from .ship_ais import ShipAISCollector
 from .ship_tdx import ShipTDXCollector
 from .temperature import TemperatureGridCollector
+from .tourist_shuttle import TouristShuttleCollector
 from .tra_static import TRAStaticCollector
 from .tra_train import TRATrainCollector
 from .vd import VDCollector
@@ -84,6 +85,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(ParkingCollector, "Parking 收集器", "PARKING"),
     CollectorEntry(BusCollector, "Bus 收集器", "BUS"),
     CollectorEntry(BusIntercityCollector, "Bus InterCity 收集器", "BUS_INTERCITY"),
+    CollectorEntry(TouristShuttleCollector, "台灣好行 收集器", "TOURIST_SHUTTLE"),
     CollectorEntry(TRATrainCollector, "TRA Train 收集器", "TRA_TRAIN"),
     CollectorEntry(TRAStaticCollector, "TRA Static 收集器", "TRA_STATIC"),
     CollectorEntry(RailTimetableCollector, "Rail Timetable 收集器", "RAIL_TIMETABLE"),
