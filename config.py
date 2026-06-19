@@ -179,7 +179,8 @@ _COLLECTOR_TOGGLES = (
     ('VD',                           False, 5),
     ('FREEWAY_VD',                   True,  10),
     ('TEMPERATURE',                  True,  60),
-    ('PARKING',                      False, 15),
+    ('PARKING',                      False, 15),  # OnStreet 路邊（既有，221 補 Supabase 寫入）
+    ('PARKING_OFFSTREET',            False, 10),  # OffStreet 路外場館 3 變體（City/SA/Tourism）
     ('BUS',                          True,  2),    # 22 城擴充後預設 2 分鐘
     ('BUS_INTERCITY',                False, 2),
     ('TOURIST_SHUTTLE',              False, 2),  # 台灣好行 A1 全國單一端點
@@ -260,6 +261,14 @@ TEMPERATURE_DATASET = 'O-A0038-003'  # 小時溫度觀測分析格點資料
 
 # 路邊停車
 PARKING_CITIES = os.getenv('PARKING_CITIES', 'Taipei,NewTaipei,Taichung').split(',')
+
+# 路外停車場（OffStreet）— 預設 19 縣市（2026-06-19 實測 Changhua/Yunlin/Pingtung 端點回 HTTP 400 移出）
+PARKING_OFFSTREET_CITIES = os.getenv(
+    'PARKING_OFFSTREET_CITIES',
+    'Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung,Keelung,Hsinchu,HsinchuCounty,'
+    'MiaoliCounty,Chiayi,ChiayiCounty,NantouCounty,YilanCounty,'
+    'HualienCounty,TaitungCounty,PenghuCounty,KinmenCounty,LienchiangCounty'
+).split(',')
 
 # 公車即時位置（TDX Bus RealTimeByFrequency）
 # 預設涵蓋全台 22 縣市（6 直轄市 + 3 省轄市 + 10 縣 + 3 離島縣）

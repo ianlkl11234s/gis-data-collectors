@@ -62,6 +62,31 @@ TABLE_MAP = {
             'lat', 'lng', 'speed', 'azimuth', 'gps_time', 'collected_at',
         ],
     },
+    'parking': {
+        # OnStreet 路邊停車（既有 collector parking.py，221 補 Supabase 寫入）
+        'history': 'realtime.parking_segments_availability',
+        'current': 'realtime.parking_segments_current',
+        'current_key': 'segment_id',
+        'columns': [
+            'segment_id', 'segment_name', 'city',
+            'total_spaces', 'available_spaces', 'occupancy',
+            'full_status', 'service_status', 'charge_status',
+            'space_types', 'data_collect_time', 'collected_at',
+        ],
+    },
+    'parking_offstreet': {
+        # OffStreet 路外場館（新 collector parking_offstreet.py，City/SA/Tourism 3 變體）
+        'history': 'realtime.parking_lots_availability',
+        'current': 'realtime.parking_lots_current',
+        'current_key': 'car_park_uid',
+        'columns': [
+            'car_park_uid', 'car_park_id', 'car_park_name',
+            'source_category', 'authority_code', 'sub_category',
+            'total_spaces', 'available_spaces',
+            'full_status', 'service_status', 'charge_status',
+            'space_types', 'data_collect_time', 'collected_at',
+        ],
+    },
     'ship_ais': {
         'history': 'realtime.ship_positions',
         'current': 'realtime.ship_current',
