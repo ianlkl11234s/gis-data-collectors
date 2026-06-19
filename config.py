@@ -181,7 +181,7 @@ _COLLECTOR_TOGGLES = (
     ('ROAD_CONGESTION',              False, 5),    # 省道全國 + 市區 5 縣市實測堪用
     ('TEMPERATURE',                  True,  60),
     ('PARKING',                      False, 15),  # OnStreet 路邊（既有，221 補 Supabase 寫入）
-    ('PARKING_OFFSTREET',            False, 10),  # OffStreet 路外場館 3 變體（City/SA/Tourism）
+    ('PARKING_OFFSTREET',            False, 15),  # OffStreet 路外場館 3 變體（City/SA/Tourism）
     ('BUS',                          True,  2),    # 22 城擴充後預設 2 分鐘
     ('BUS_INTERCITY',                False, 2),
     ('TOURIST_SHUTTLE',              False, 2),  # 台灣好行 A1 全國單一端點
