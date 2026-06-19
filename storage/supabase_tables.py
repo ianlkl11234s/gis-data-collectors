@@ -52,6 +52,16 @@ TABLE_MAP = {
         'history': 'realtime.train_positions',
         'columns': ['train_no', 'train_type', 'station_id', 'delay_minutes', 'collected_at'],
     },
+    'tourist_shuttle': {
+        'history': 'realtime.tourist_shuttle_positions',
+        'current': 'realtime.tourist_shuttle_current',
+        'current_key': 'plate_numb',
+        'columns': [
+            'plate_numb', 'operator_id', 'route_uid', 'sub_route_uid',
+            'sub_route_name', 'taiwan_trip_name', 'direction',
+            'lat', 'lng', 'speed', 'azimuth', 'gps_time', 'collected_at',
+        ],
+    },
     'ship_ais': {
         'history': 'realtime.ship_positions',
         'current': 'realtime.ship_current',

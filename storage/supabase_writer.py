@@ -294,6 +294,30 @@ class SupabaseWriter:
                 })
         return records
 
+    def _transform_tourist_shuttle(self, result: dict, ts: datetime) -> list[dict]:
+        """台灣好行 A1 → realtime.tourist_shuttle_positions/_current"""
+        records = []
+        for r in result.get('data', []):
+            pos = r.get('BusPosition') or {}
+            sub_route = r.get('SubRouteName') or {}
+            taiwan_trip = r.get('TaiwanTripName') or {}
+            records.append({
+                'plate_numb': r.get('PlateNumb', ''),
+                'operator_id': str(r.get('OperatorID', '')),
+                'route_uid': r.get('RouteUID', ''),
+                'sub_route_uid': r.get('SubRouteUID', ''),
+                'sub_route_name': sub_route.get('Zh_tw', '') if isinstance(sub_route, dict) else str(sub_route),
+                'taiwan_trip_name': taiwan_trip.get('Zh_tw', '') if isinstance(taiwan_trip, dict) else str(taiwan_trip),
+                'direction': r.get('Direction', 0),
+                'lat': pos.get('PositionLat') if isinstance(pos, dict) else None,
+                'lng': pos.get('PositionLon') if isinstance(pos, dict) else None,
+                'speed': r.get('Speed'),
+                'azimuth': r.get('Azimuth'),
+                'gps_time': r.get('GPSTime'),
+                'collected_at': ts.isoformat(),
+            })
+        return records
+
     def _transform_tra_train(self, result: dict, ts: datetime) -> list[dict]:
         records = []
         for r in result.get('data', []):
@@ -1460,6 +1484,7 @@ class SupabaseWriter:
         'weather': _transform_weather,
         'temperature': _transform_temperature,
         'tra_train': _transform_tra_train,
+        'tourist_shuttle': _transform_tourist_shuttle,
         'ship_ais': _transform_ship_ais,
         'earthquake': _transform_earthquake,
         'rail_timetable': _transform_rail_timetable,

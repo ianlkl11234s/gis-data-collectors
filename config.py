@@ -182,6 +182,7 @@ _COLLECTOR_TOGGLES = (
     ('PARKING',                      False, 15),
     ('BUS',                          True,  2),    # 22 城擴充後預設 2 分鐘
     ('BUS_INTERCITY',                False, 2),
+    ('TOURIST_SHUTTLE',              False, 2),  # 台灣好行 A1 全國單一端點
     ('TRA_TRAIN',                    True,  2),
     ('TRA_STATIC',                   True,  1440),
     ('RAIL_TIMETABLE',               True,  1440),
