@@ -34,6 +34,7 @@ from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
 from .news_events import NewsEventsCollector
 from .parking import ParkingCollector
+from .parking_offstreet import ParkingOffStreetCollector
 from .power_taipower import PowerTaipowerCollector
 from .lightning_events import LightningEventsCollector
 from .nuclear_radiation import NuclearRadiationCollector
@@ -82,7 +83,8 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(VDCollector, "VD 收集器", "VD"),
     CollectorEntry(FreewayVDCollector, "Freeway VD 收集器", "FREEWAY_VD"),
     CollectorEntry(TemperatureGridCollector, "Temperature Grid 收集器", "TEMPERATURE", ("CWA_API_KEY",)),
-    CollectorEntry(ParkingCollector, "Parking 收集器", "PARKING"),
+    CollectorEntry(ParkingCollector, "Parking 路邊 收集器", "PARKING"),
+    CollectorEntry(ParkingOffStreetCollector, "Parking 路外場館 收集器", "PARKING_OFFSTREET"),
     CollectorEntry(BusCollector, "Bus 收集器", "BUS"),
     CollectorEntry(BusIntercityCollector, "Bus InterCity 收集器", "BUS_INTERCITY"),
     CollectorEntry(TouristShuttleCollector, "台灣好行 收集器", "TOURIST_SHUTTLE"),

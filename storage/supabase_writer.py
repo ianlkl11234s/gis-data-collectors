@@ -294,6 +294,67 @@ class SupabaseWriter:
                 })
         return records
 
+    def _transform_parking(self, result: dict, ts: datetime) -> list[dict]:
+        """OnStreet 路邊停車 → realtime.parking_segments_availability/_current
+        資料來自 collectors/parking.py 的 _parse_segment（已 normalize），這邊只做 JSONB 化 + 去重。
+        """
+        import json
+        records = []
+        for r in result.get('data', []):
+            space_types = r.get('space_types')
+            if space_types is not None and not isinstance(space_types, str):
+                space_types = json.dumps(space_types, ensure_ascii=False)
+            records.append({
+                'segment_id': r.get('segment_id', ''),
+                'segment_name': r.get('segment_name', ''),
+                'city': r.get('_city', ''),
+                'total_spaces': r.get('total_spaces'),
+                'available_spaces': r.get('available_spaces'),
+                'occupancy': r.get('occupancy'),
+                'full_status': r.get('full_status'),
+                'service_status': r.get('service_status'),
+                'charge_status': r.get('charge_status'),
+                'space_types': space_types,
+                'data_collect_time': r.get('data_collect_time'),
+                'collected_at': ts.isoformat(),
+            })
+        # 去重：segment_id 同批次內若重複保留最後
+        seen = {}
+        for r in records:
+            if r['segment_id']:
+                seen[r['segment_id']] = r
+        return list(seen.values())
+
+    def _transform_parking_offstreet(self, result: dict, ts: datetime) -> list[dict]:
+        """OffStreet 路外場館 → realtime.parking_lots_availability/_current"""
+        import json
+        records = []
+        for r in result.get('data', []):
+            space_types = r.get('space_types')
+            if space_types is not None and not isinstance(space_types, str):
+                space_types = json.dumps(space_types, ensure_ascii=False)
+            records.append({
+                'car_park_uid': r.get('car_park_uid', ''),
+                'car_park_id': r.get('car_park_id', ''),
+                'car_park_name': r.get('car_park_name', ''),
+                'source_category': r.get('source_category'),
+                'authority_code': r.get('authority_code'),
+                'sub_category': r.get('sub_category'),
+                'total_spaces': r.get('total_spaces'),
+                'available_spaces': r.get('available_spaces'),
+                'full_status': r.get('full_status'),
+                'service_status': r.get('service_status'),
+                'charge_status': r.get('charge_status'),
+                'space_types': space_types,
+                'data_collect_time': r.get('data_collect_time'),
+                'collected_at': ts.isoformat(),
+            })
+        seen = {}
+        for r in records:
+            if r['car_park_uid']:
+                seen[r['car_park_uid']] = r
+        return list(seen.values())
+
     def _transform_tourist_shuttle(self, result: dict, ts: datetime) -> list[dict]:
         """台灣好行 A1 → realtime.tourist_shuttle_positions/_current"""
         records = []
@@ -1485,6 +1546,8 @@ class SupabaseWriter:
         'temperature': _transform_temperature,
         'tra_train': _transform_tra_train,
         'tourist_shuttle': _transform_tourist_shuttle,
+        'parking': _transform_parking,
+        'parking_offstreet': _transform_parking_offstreet,
         'ship_ais': _transform_ship_ais,
         'earthquake': _transform_earthquake,
         'rail_timetable': _transform_rail_timetable,
