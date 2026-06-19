@@ -175,13 +175,13 @@ class DailyReportTask:
                 status, _ = monitoring.classify_freshness(r["max_time"], t.get("expected_interval_min", 60))
                 if status == "DEAD":
                     sb_dead += 1
+                    # 只有 critical 表 DEAD（>12x interval）才算「嚴重」
+                    # STALE/NEVER 不觸發 🔴，避免重啟期暫時舊資料造成假嚴重
                     if t.get("critical"): sb_critical_bad = True
                 elif status == "STALE":
                     sb_stale += 1
-                    if t.get("critical"): sb_critical_bad = True
                 elif status == "NEVER":
                     sb_never += 1
-                    if t.get("critical"): sb_critical_bad = True
             sb_bad = sb_dead + sb_stale + sb_never + sb_err
             sb_ok = sb_total - sb_bad
         except Exception:
@@ -280,16 +280,14 @@ class DailyReportTask:
                 )
                 if status == "DEAD":
                     sb_dead += 1
+                    # 只有 critical 表 DEAD（>12x interval）才算「嚴重」
+                    # STALE/NEVER 不觸發 🔴，避免重啟期暫時舊資料造成假嚴重
                     if t.get("critical"):
                         sb_critical_bad = True
                 elif status == "STALE":
                     sb_stale += 1
-                    if t.get("critical"):
-                        sb_critical_bad = True
                 elif status == "NEVER":
                     sb_never += 1
-                    if t.get("critical"):
-                        sb_critical_bad = True
         except Exception as e:
             return f"\n🩺 *昨日健診*\n  摘要產生失敗: {e}"
 
