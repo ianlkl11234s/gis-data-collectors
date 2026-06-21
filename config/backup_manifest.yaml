@@ -61,23 +61,70 @@ exclude:
   - realtime.satellite_current      # reconstructible from positions
 
 # Tables ALREADY covered by data-collectors/tasks/archive.py (JSON archive to S3)
+# Expanded 2026-06-21 from real S3 audit (49 collector archives found vs 16 documented).
+# Sourced from `aws s3 ls s3://migu-gis-data-collector/` actual coverage.
 archive_py_covered:
-  - realtime.youbike_snapshots
-  - realtime.bus_positions
-  - realtime.bus_intercity_positions
-  - realtime.weather_observations
-  - realtime.temperature_grids
-  - realtime.train_positions
-  - realtime.ship_positions
-  - realtime.flight_positions
-  - realtime.air_quality_observations
-  - realtime.groundwater_level_readings
-  - realtime.rain_gauge_readings
-  - realtime.river_water_level
-  - realtime.reservoir_status
-  - realtime.reservoir_daily_ops
-  - realtime.iot_wra_measurements
-  - realtime.news_events
+  # Transportation
+  - realtime.youbike_snapshots         # youbike, 2026-02-28 起
+  - realtime.bus_positions             # bus, 2026-02-28 起
+  - realtime.bus_intercity_positions   # bus_intercity, 2026-04-14 起
+  - realtime.train_positions           # tra_train, 2026-02-28 起
+  - realtime.flight_positions          # flight_fr24_zone + flight_opensky, 2026-03-03 起
+  - realtime.freeway_vd_traffic        # freeway_vd, 2026-03-03 起
+  - realtime.freeway_sections          # freeway_vd, 2026-03-03 起 (same collector)
+  - realtime.road_events               # road_event_live + _planned, 2026-05-09 起
+  - realtime.road_sections_live        # road_congestion, 2026-06-19 起
+  - realtime.parking_lots_availability # parking_offstreet, 2026-06-19 起
+  - realtime.parking_segments_availability  # parking, 2026-06-19 起
+  - realtime.tourist_shuttle_positions # tourist_shuttle, 2026-06-19 起
+  - realtime.ship_positions            # ship_ais (HiCloud VM), 2026-02-28 起 (8-day retention)
+  # Weather / environment
+  - realtime.weather_observations      # weather, 2026-02-28 起
+  - realtime.temperature_grids         # temperature, 2026-02-28 起
+  - realtime.air_quality_observations  # air_quality, 2026-04-14 起
+  - realtime.aqi_imagery_frames        # air_quality_imagery, 2026-04-14 起
+  - realtime.micro_sensor_readings     # air_quality_microsensors, 2026-04-14 起
+  - realtime.cwa_imagery_frames        # cwa_satellite, 2026-04-07 起
+  - realtime.precipitation_raster_frames  # precipitation_raster, 2026-06-08 起
+  # Water
+  - realtime.groundwater_level_readings  # groundwater_level, 2026-04-20 起
+  - realtime.rain_gauge_readings       # rain_gauge_realtime, 2026-04-19 起
+  - realtime.river_water_level         # river_water_level, 2026-04-19 起
+  - realtime.reservoir_status          # water_reservoir, 2026-04-18 起
+  - realtime.reservoir_daily_ops       # water_reservoir_daily_ops, 2026-04-21 起
+  - realtime.iot_wra_measurements      # iot_wra, 2026-04-24 起
+  - realtime.uswg_measurements         # uswg, 2026-06-05 起
+  - realtime.taipei_sewer_measurements # wic_sewer, 2026-06-08 起
+  - realtime.taipei_evacuate_status    # wic_evacuate, 2026-06-08 起
+  - realtime.taipei_pumb_status        # wic_pumb, 2026-06-08 起
+  # Disaster / alerts
+  - realtime.earthquake_events         # earthquake, 2026-03-06 起
+  - realtime.disaster_alerts           # ncdr_alerts + wra_drought_alert, 2026-04-07 起
+  - realtime.lightning_events          # lightning_events, 2026-06-15 起
+  - realtime.nuclear_radiation_measurements  # nuclear_radiation, 2026-06-15 起
+  - realtime.nuclear_radiation_stations  # 同上
+  # Satellite / launch
+  - realtime.satellite_positions       # satellite, 2026-03-28 起
+  - realtime.satellite_tle             # 同 satellite collector
+  - realtime.satellite_passes_daily    # satellite_passes_daily, 2026-06-14 起
+  - realtime.launch_events             # launch, 2026-03-31 起
+  - realtime.launches                  # 同上
+  - realtime.launch_pads               # 同上
+  # Energy / market
+  - realtime.power_system_status       # power_taipower, 2026-06-05 起
+  - realtime.power_generation_unit     # 同上
+  - realtime.power_region_demand       # 同上
+  - realtime.market_index_tick         # twse_market_index, 2026-06-16 起
+  # News / media / social
+  - realtime.news_events               # news_events, 2026-06-12 起
+  - realtime.yt_live_current           # yt_live_video_resolver, 2026-06-17 起
+  - realtime.yt_live_history           # 同上
+  - realtime.pla_activity_daily        # pla_activity_daily, 2026-06-16 起
+  # Health
+  - realtime.er_hospital_status        # er_hospital_realtime, 2026-06-02 起
+  - realtime.public_health_weekly      # cdc_public_health_weekly (VM), 2026-06-16 起
+  # Spatial schema (waste GPS on HiCloud VM)
+  - spatial.waste_positions_realtime   # waste_positions (HiCloud VM), 8-day retention
 
 # Automatic classification by schema
 classification:

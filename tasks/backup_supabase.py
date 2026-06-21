@@ -708,6 +708,119 @@ class BackupSupabaseTask:
     # ROBOT C — Daily Reconcile
     # ──────────────────────────────────────────────
 
+    # ---- Archive freshness check (detects silent fail of archive.py per collector) ----
+    # Default expected lag: archive.py uploads yesterday's data → S3 latest = today - 1
+    # Exceptions: some collectors keep N days local before archiving (見 external/*/archive_*.py)
+    _ARCHIVE_LAG_BY_COLLECTOR = {
+        # 8-day retention (HiCloud VM 設計給 archive 自我修復空間)
+        'ship_ais': 8,
+        'waste_positions': 8,
+        # Weekly collectors
+        'cdc_public_health_weekly': 8,         # 週四跑
+        'wra_drought_alert': 14,                # 上游不定期 + hash 去重
+        # Stopped intentionally
+        'flight_fr24': None,                    # 永久 None = 不檢查
+    }
+    _ARCHIVE_LAG_DEFAULT_DAYS = 2               # 大多 collector 預期 today-1，多給 1 天 grace
+
+    def _check_archive_freshness(self) -> int:
+        """檢查每個 collector S3 archive 最新日期是否 stale。
+
+        對應上次 2026-06-15 silent fail 7 天才發現的問題。
+
+        Returns:
+            int: 觸發 critical 的 collector 數量
+        """
+        if not self.s3:
+            return 0
+
+        # 從 archive_py_covered 推 collector 名（取 schema.table 的「典型對應」）
+        # 簡單方式：直接掃 S3 top-level，看哪些 prefix 有 archives/ 子目錄
+        try:
+            collectors = self._list_archive_collectors_from_s3()
+        except Exception as exc:
+            print(f"   ⚠️  archive freshness 掃描失敗: {exc}")
+            return 0
+
+        today = datetime.now(TAIPEI_TZ).date()
+        critical_count = 0
+        checked = 0
+        ok_count = 0
+
+        for collector in collectors:
+            expected_lag = self._ARCHIVE_LAG_BY_COLLECTOR.get(collector, self._ARCHIVE_LAG_DEFAULT_DAYS)
+            if expected_lag is None:
+                continue  # 主動跳過（如 flight_fr24 已停跑）
+            checked += 1
+
+            try:
+                dates = self.s3.list_dates(collector)
+            except Exception as exc:
+                print(f"   ⚠️  {collector}: list_dates 失敗 {exc}")
+                continue
+
+            if not dates:
+                msg = f"collector {collector} archives/ 目錄為空"
+                self._audit(
+                    run_kind="reconcile",
+                    severity="warn",
+                    code="missing_s3",
+                    message=msg,
+                    details={"collector": collector},
+                )
+                continue
+
+            latest_str = max(dates)
+            try:
+                latest_date = datetime.strptime(latest_str, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+
+            lag_days = (today - latest_date).days
+
+            if lag_days > expected_lag:
+                msg = (
+                    f"archive.py silent fail? {collector} 最新 archive {latest_str} "
+                    f"= 落後 {lag_days} 天 (預期 ≤ {expected_lag} 天)"
+                )
+                print(f"   🔴 {msg}")
+                self._audit(
+                    run_kind="reconcile",
+                    severity="critical",
+                    code="upload_failed",
+                    message=msg,
+                    details={
+                        "collector": collector,
+                        "latest_archive_date": latest_str,
+                        "lag_days": lag_days,
+                        "expected_lag_days": expected_lag,
+                    },
+                )
+                critical_count += 1
+            else:
+                ok_count += 1
+
+        print(f"   archive freshness: {checked} collector 檢查 / {ok_count} ✅ / {critical_count} 🔴")
+        return critical_count
+
+    def _list_archive_collectors_from_s3(self) -> list[str]:
+        """掃 S3 top-level，回傳所有有 archives/ 子目錄的 collector 名稱"""
+        if not self.s3 or not self.s3.s3:
+            return []
+        paginator = self.s3.s3.get_paginator('list_objects_v2')
+        collectors: set[str] = set()
+        for page in paginator.paginate(Bucket=self.s3.bucket, Delimiter='/'):
+            for prefix in page.get('CommonPrefixes', []):
+                name = prefix['Prefix'].rstrip('/')
+                # 排除非 collector 目錄
+                if name.startswith('_') or name in (
+                    'supabase-snapshots', 'deploy-assets', 'flight-arc',
+                    'mini-taipei', 'pulse-db', 'rail-data',
+                ):
+                    continue
+                collectors.add(name)
+        return sorted(collectors)
+
     def run_reconcile(self) -> dict:
         """Robot C：盤點所有 schema.table vs backup_state vs S3，輸出告警。
 
@@ -822,6 +935,10 @@ class BackupSupabaseTask:
                     message=msg,
                 )
                 severity_counts["info"] += 1
+
+        # 5.5 Archive freshness check（archive.py 是否 silent-fail）
+        archive_critical = self._check_archive_freshness()
+        severity_counts["critical"] += archive_critical
 
         # 6. Flush audit
         flushed = self._flush_audit()
