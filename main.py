@@ -18,7 +18,7 @@ import schedule
 import config
 from scheduler import get_scheduler
 from collectors.registry import COLLECTOR_REGISTRY
-from tasks import ArchiveTask, DailyReportTask, MiniTaipeiPublishTask
+from tasks import ArchiveTask, BackupSupabaseTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
 
 
@@ -214,6 +214,26 @@ def run_mini_taipei_publish_task():
         return None
 
 
+def run_backup_task():
+    """設定 Supabase → S3 備份任務排程（每日 03:30 UTC，archive.py 之後執行）"""
+    if not config.BACKUP_ENABLED:
+        print("\n⏸️  Supabase 備份已停用 (BACKUP_ENABLED=false)")
+        return None
+
+    if not config.S3_BUCKET:
+        print("\n⚠️  S3_BUCKET 未設定，Supabase 備份功能停用")
+        return None
+
+    try:
+        backup_task = BackupSupabaseTask()
+        schedule.every().day.at("03:30").do(backup_task.run)
+        print("\n✓ Supabase 備份任務已設定 (每日 03:30 UTC)")
+        return backup_task
+    except Exception as e:
+        print(f"\n✗ Supabase 備份任務初始化失敗: {e}")
+        return None
+
+
 def _setup_logging():
     """初始化 logging（讓 scheduler 與其他模組的 logger 輸出）"""
     level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
@@ -254,6 +274,9 @@ def main():
 
     # 設定 Mini Taipei 發布任務
     run_mini_taipei_publish_task()
+
+    # 設定 Supabase → S3 備份任務
+    run_backup_task()
 
     # Supabase buffer flush 排程
     if config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:

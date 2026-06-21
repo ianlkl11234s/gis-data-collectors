@@ -72,6 +72,14 @@ S3_SECRET_KEY = os.getenv('S3_SECRET_KEY') or os.getenv('AWS_SECRET_ACCESS_KEY')
 S3_REGION = os.getenv('S3_REGION', 'ap-southeast-2')
 S3_ENDPOINT = os.getenv('S3_ENDPOINT')  # 用於 MinIO 等相容服務
 
+# === Supabase → S3 backup system (tasks/backup_supabase.py) ===
+BACKUP_ENABLED = os.getenv('BACKUP_ENABLED', 'false').lower() == 'true'
+BACKUP_DRY_RUN = os.getenv('BACKUP_DRY_RUN', 'false').lower() == 'true'
+BACKUP_MANIFEST_PATH = Path(__file__).parent / 'config' / 'backup_manifest.yaml'
+BACKUP_STATIC_STORAGE_CLASS = os.getenv('BACKUP_STATIC_STORAGE_CLASS', 'GLACIER_IR')
+BACKUP_REALTIME_STORAGE_CLASS = os.getenv('BACKUP_REALTIME_STORAGE_CLASS', 'STANDARD')
+BACKUP_STATEMENT_TIMEOUT_MS = int(os.getenv('BACKUP_STATEMENT_TIMEOUT_MS', '300000'))
+
 # 歸檔設定
 ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').lower() in ('true', '1', 'yes')
 ARCHIVE_RETENTION_DAYS = int(os.getenv('ARCHIVE_RETENTION_DAYS', '7'))  # 本地保留天數（預設全域）

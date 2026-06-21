@@ -101,6 +101,34 @@ class S3Storage:
             print(f"   ✗ 上傳失敗 {s3_key}: {e}")
             return False
 
+    def upload_snapshot(self, s3_key: str, data: bytes, storage_class: str = 'STANDARD') -> bool:
+        """上傳原始 bytes 快照到 S3（支援指定 StorageClass）
+
+        Args:
+            s3_key: S3 物件 key
+            data: 要上傳的原始資料（bytes）
+            storage_class: S3 StorageClass（預設 STANDARD）
+
+        Returns:
+            bool: 是否成功
+        """
+        put_kwargs: dict = {
+            'Bucket': self.bucket,
+            'Key': s3_key,
+            'Body': data,
+            'StorageClass': storage_class,
+        }
+        # *.csv.gz — 讓瀏覽器/工具正確辨識壓縮 CSV
+        if s3_key.endswith('.csv.gz'):
+            put_kwargs['ContentType'] = 'text/csv'
+            put_kwargs['ContentEncoding'] = 'gzip'
+        try:
+            self.s3.put_object(**put_kwargs)
+            return True
+        except self.ClientError as e:
+            print(f"   ✗ 上傳快照失敗 {s3_key}: {e}")
+            return False
+
     def upload_archive(self, local_path: Path, s3_key: str) -> bool:
         """上傳 tar.gz 歸檔到 S3
 

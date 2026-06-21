@@ -1,0 +1,166 @@
+version: 1
+
+# Global defaults for all table classifications
+defaults:
+  static:
+    cadence: change_only          # fingerprint-driven; skip unchanged
+    storage_class: GLACIER_IR     # inexpensive long-term storage
+    fingerprint_strategy: row_count_plus_max_updated_at
+  realtime:
+    cadence: daily_yesterday      # dump yesterday's partition only
+    storage_class: STANDARD       # lifecycle transitions to GLACIER after 90d
+    skip_if_archive_py_covered: true
+
+# Per-table configuration overrides (optional)
+overrides:
+  reference.foursquare_poi:
+    fingerprint_strategy: row_count_only
+    notes: "Huge table (420k rows, 161MB); HuggingFace gated dataset; monthly collector update"
+
+  spatial.statistical_areas:
+    storage_class: STANDARD
+    notes: "21M GeoJSON source; 11,490 rows; critical for demographic analysis"
+
+  spatial.village_demographics_yearly:
+    storage_class: STANDARD
+    notes: "77,811 rows; 10-year history; ETL-intensive with migration 138 fixes"
+
+  spatial.fire_events:
+    cadence: daily_yesterday
+    storage_class: STANDARD
+    notes: "48k fire incidents; permanent archive (民國 111–113)"
+
+  realtime.lightning_events:
+    cadence: daily_yesterday
+    storage_class: STANDARD
+    notes: "Permanent table; 200-500 events/day; analytics.lightning_daily_summary also kept"
+
+# analytics.* tables are append-only; row_count fingerprint catches all changes.
+# They belong to static_schemas (fingerprint-driven), so no cadence override needed.
+
+# Tables to EXCLUDE from all backup (ephemeral, reconstructible, or low value)
+exclude:
+  # Metadata ephemeral tables
+  - metadata.collector_status       # heartbeat ephemeral; reconstructible from logs
+  - metadata.import_history         # audit trail; reconstructible
+  - opendata.catalog                # catalog only; low value
+  - opendata.sync_runs              # sync metadata; ephemeral
+
+  # Realtime rolling views (not partitioned, reconstructible from snapshots)
+  - realtime.youbike_current        # reconstructible from youbike_snapshots
+  - realtime.bus_current            # reconstructible from bus_positions
+  - realtime.bus_intercity_current  # reconstructible from bus_intercity_positions
+  - realtime.weather_current        # reconstructible from weather_observations
+  - realtime.air_quality_current    # reconstructible from air_quality_observations
+  - realtime.ship_current           # reconstructible from ship_positions
+  - realtime.market_index_current   # market tick; reconstructible from tick table
+  - realtime.parking_lots_current   # reconstructible from availability
+  - realtime.parking_segments_current
+  - realtime.tourist_shuttle_current
+  - realtime.er_hospital_current
+  - realtime.satellite_current      # reconstructible from positions
+
+# Tables ALREADY covered by data-collectors/tasks/archive.py (JSON archive to S3)
+archive_py_covered:
+  - realtime.youbike_snapshots
+  - realtime.bus_positions
+  - realtime.bus_intercity_positions
+  - realtime.weather_observations
+  - realtime.temperature_grids
+  - realtime.train_positions
+  - realtime.ship_positions
+  - realtime.flight_positions
+  - realtime.air_quality_observations
+  - realtime.groundwater_level_readings
+  - realtime.rain_gauge_readings
+  - realtime.river_water_level
+  - realtime.reservoir_status
+  - realtime.reservoir_daily_ops
+  - realtime.iot_wra_measurements
+  - realtime.news_events
+
+# Automatic classification by schema
+classification:
+  static_schemas:
+    - reference        # POI, airports, counties, national KPIs
+    - spatial          # boundaries, demographics, fire, waste, environment
+    - admin            # villages geometry
+    - rail             # stations, ridership, lines
+    - maritime         # ports, fishery, lighthouses
+    - demographics     # population, vital stats
+    - fire             # incidents, casualties, stations
+    - energy           # power facilities, coal/LNG/fossil
+    - public           # OSM power/water/flood/EV
+    - safety           # hospitals, shelters
+    - medical          # AED, long-term care
+    - analytics        # daily/monthly summaries
+
+  realtime_schemas:
+    - realtime
+
+  exclude_schemas:
+    - metadata
+    - opendata
+    - pg_temp
+    - pg_toast
+
+# Summary Statistics
+statistics:
+  static_tables: 155
+  realtime_tables: 83
+  metadata_tables: 5
+  archive_py_covered: 16
+  realtime_backup_targets: 67
+  description:
+    - "Total static schemas: 12 (reference, spatial, admin, rail, maritime, demographics, fire, energy, public, safety, medical, analytics)"
+    - "Total realtime schema: 1 (realtime)"
+    - "Realtime targets for daily S3 backup: 83 - 16 (archive_py_covered) = 67 tables"
+    - "Critical static tables: foursquare_poi, statistical_areas, village_demographics_yearly, power_facilities/units, villages"
+
+strategy:
+  archive_py_covered:
+    description: "16 collectors write JSON locally; archive.py tars daily to S3"
+    path: "s3://{bucket}/{collector_name}/archives/{YYYY-MM-DD}.tar.gz"
+    lifecycle: "STANDARD then GLACIER_IR after 90 days"
+    recovery: "Re-ingest JSON via data-collectors/restore_from_s3.py"
+
+  static_tables:
+    description: "155 tables across 12 static schemas"
+    cadence: "Daily fingerprint check; only changed tables dumped"
+    format: "CSV/Parquet, compressed, partitioned by date"
+    lifecycle: "STANDARD then GLACIER_IR 180d then DEEP_ARCHIVE 1y"
+    path: "s3://{bucket}/static/{schema}/{table}/YYYY-MM-DD/"
+
+  realtime_non_covered:
+    description: "67 realtime tables without JSON archive"
+    cadence: "Daily partition dump to S3"
+    format: "Parquet, compressed"
+    retention: "30 days STANDARD then GLACIER_IR"
+    path: "s3://{bucket}/realtime/{schema}/{table}/YYYY-MM-DD/"
+    critical: "Only backup option; CRITICAL for recovery if Supabase lost"
+
+  metadata_tables:
+    description: "5 metadata tables (excluded from backup)"
+    reason: "Ephemeral; all reconstructible or low-value"
+
+reconcile_robot:
+  name: "backup_manifest_reconcile.py"
+  frequency: "daily"
+  steps:
+    - "Query information_schema.tables for all schemas in Supabase"
+    - "Classify: static_schemas > static; realtime_schemas > realtime; exclude_schemas > skip"
+    - "Match against overrides for per-table config"
+    - "Report totals and detect mismatches"
+  expected_output:
+    static_discovered: 155
+    realtime_discovered: 83
+    excluded: 16
+    archive_py_covered: 16
+    realtime_backup_targets: 67
+
+metadata:
+  document_version: "1.0"
+  generated: "2026-06-21"
+  data_catalog_source: "docs/api-catalog/{realtime,reference,spatial,metadata}.md"
+  audit_reference: "docs/s3-backup-audit.md"
+  maintenance: "Update when new migrations add tables or classifications change"
