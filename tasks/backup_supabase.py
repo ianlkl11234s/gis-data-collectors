@@ -171,7 +171,11 @@ class BackupSupabaseTask:
         return cur
 
     def _list_schema_tables(self, schemas: set[str]) -> list[tuple[str, str]]:
-        """從 information_schema 列出指定 schema 的所有 user 表。
+        """列出指定 schema 的所有 user 表（**排除 partition 子表**）。
+
+        改用 pg_class 而非 information_schema，因為後者無法區分 parent 與
+        partition child（如 realtime.bus_positions 是 parent，bus_positions_20260619
+        是 child）。Robot B 只應 dump parent，partition pruning 會自動處理該日 child。
 
         Returns:
             list of (schema_name, table_name)
@@ -182,11 +186,13 @@ class BackupSupabaseTask:
         with self._cursor() as cur:
             cur.execute(
                 """
-                SELECT table_schema, table_name
-                FROM   information_schema.tables
-                WHERE  table_schema = ANY(%s)
-                  AND  table_type = 'BASE TABLE'
-                ORDER BY table_schema, table_name
+                SELECT n.nspname, c.relname
+                FROM   pg_class c
+                JOIN   pg_namespace n ON c.relnamespace = n.oid
+                WHERE  n.nspname = ANY(%s)
+                  AND  c.relkind IN ('r', 'p')      -- regular + partitioned parent
+                  AND  NOT c.relispartition         -- exclude partition children
+                ORDER BY n.nspname, c.relname
                 """,
                 (schema_list,),
             )
