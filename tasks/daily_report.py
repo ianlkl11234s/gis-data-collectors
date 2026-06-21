@@ -121,6 +121,7 @@ class DailyReportTask:
             ("收集狀態", self._section_collector_status),
             ("Supabase realtime 寫入", self._section_supabase_realtime),
             ("S3 archives 心跳", self._section_s3_archives),
+            ("Supabase 備份健康", self._section_backup_health),
             ("跨層一致性", self._section_cross_layer),
             ("HiCloud VM 健康", self._section_external_vm_health),
             ("異常 7 天趨勢", self._section_anomaly_trend),
@@ -503,6 +504,57 @@ class DailyReportTask:
 
         if not any(buckets[k] for k in ("DEAD", "STALE", "NEVER", "ERR")):
             parts.append("  ✅ 全部 OK")
+        return "\n".join(parts)
+
+    def _section_backup_health(self) -> str:
+        """Supabase → S3 備份系統健康度（metadata.backup_audit_log + backup_state）"""
+        from tasks import monitoring
+
+        data = monitoring.query_backup_health()
+        if data is None:
+            return "\n🗄️ *Supabase 備份*\n  撈不到 backup_audit_log（migration 250 套了嗎？）"
+
+        sev = data['severity_24h']
+        ok = sev.get('ok', 0)
+        info = sev.get('info', 0)
+        warn = sev.get('warn', 0)
+        crit = sev.get('critical', 0)
+        tracked = data['static_tracked']
+        total_mb = data['static_total_kb'] / 1024
+        oldest = data['oldest_snapshot_age_days']
+
+        head_emoji = "✅" if crit == 0 and warn == 0 else ("🟡" if crit == 0 else "🔴")
+        parts = [f"\n🗄️ *Supabase 備份* {head_emoji}"]
+        parts.append(
+            f"  24h: ✅ {ok} / ℹ️ {info} / ⚠️ {warn} / 🔴 {crit}"
+        )
+        parts.append(
+            f"  靜態追蹤: {tracked} 表 / {total_mb:.1f} MB"
+            + (f" / 最舊快照 {oldest}d" if oldest is not None else "")
+        )
+
+        # last run per kind
+        last = data['last_run_per_kind']
+        if last:
+            now = datetime.now(TAIPEI_TZ)
+            line = []
+            for kind in ('static_snapshot', 'realtime_snapshot', 'reconcile'):
+                ts = last.get(kind)
+                if ts:
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=TAIPEI_TZ)
+                    hrs = int((now - ts).total_seconds() / 3600)
+                    line.append(f"{kind.replace('_snapshot','').replace('_',' ')}={hrs}h")
+                else:
+                    line.append(f"{kind.replace('_snapshot','').replace('_',' ')}=–")
+            parts.append("  最近: " + " | ".join(line))
+
+        if data['top_critical']:
+            parts.append("  🔴 critical (近 24h, 取 5):")
+            for schema_n, table_n, code, msg in data['top_critical']:
+                label = f"{schema_n}.{table_n}" if schema_n and table_n else "(global)"
+                parts.append(f"    `{label}` [{code}] {msg}")
+
         return "\n".join(parts)
 
     def _section_s3_archives(self) -> str:

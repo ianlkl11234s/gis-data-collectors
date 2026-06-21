@@ -290,6 +290,82 @@ def update_anomaly_state(current_anomalies: set[str]) -> tuple[set[str], set[str
     return new_ones, persistent_ones, resolved_ones
 
 
+def query_backup_health() -> dict | None:
+    """撈 metadata.backup_audit_log + backup_state 的健康度摘要。
+
+    Returns:
+        dict {
+          'severity_24h': {ok: N, info: N, warn: N, critical: N},
+          'top_critical': [(schema_name, table_name, code, message)] up to 5,
+          'static_tracked': N,        # backup_state 總筆數
+          'static_total_kb': N,
+          'last_run_per_kind': {static_snapshot: ts, realtime_snapshot: ts, reconcile: ts},
+          'oldest_snapshot_age_days': N,  # static
+        }
+        None if DB unreachable.
+    """
+    if not (config.SUPABASE_ENABLED and config.SUPABASE_DB_URL):
+        return None
+    try:
+        import psycopg2
+    except ImportError:
+        log.warning("psycopg2 not available — backup health 跳過")
+        return None
+
+    try:
+        with psycopg2.connect(config.SUPABASE_DB_URL, connect_timeout=15) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT severity, count(*)
+                    FROM metadata.backup_audit_log
+                    WHERE run_at > now() - interval '24 hours'
+                    GROUP BY severity
+                """)
+                severity_24h = {row[0]: row[1] for row in cur.fetchall()}
+
+                cur.execute("""
+                    SELECT schema_name, table_name, code, left(coalesce(message,''), 80)
+                    FROM metadata.backup_audit_log
+                    WHERE run_at > now() - interval '24 hours'
+                      AND severity = 'critical'
+                    ORDER BY run_at DESC
+                    LIMIT 5
+                """)
+                top_critical = cur.fetchall()
+
+                cur.execute("""
+                    SELECT count(*), coalesce(sum(last_size_bytes), 0) / 1024
+                    FROM metadata.backup_state
+                """)
+                tracked, total_kb = cur.fetchone()
+
+                cur.execute("""
+                    SELECT run_kind, max(run_at)
+                    FROM metadata.backup_audit_log
+                    GROUP BY run_kind
+                """)
+                last_run = {row[0]: row[1] for row in cur.fetchall()}
+
+                cur.execute("""
+                    SELECT EXTRACT(EPOCH FROM (now() - min(last_backup_at))) / 86400
+                    FROM metadata.backup_state
+                """)
+                row = cur.fetchone()
+                oldest_days = int(row[0]) if row and row[0] is not None else None
+
+                return {
+                    'severity_24h': severity_24h,
+                    'top_critical': top_critical,
+                    'static_tracked': tracked or 0,
+                    'static_total_kb': int(total_kb or 0),
+                    'last_run_per_kind': last_run,
+                    'oldest_snapshot_age_days': oldest_days,
+                }
+    except Exception as exc:
+        log.warning("query_backup_health failed: %s", exc)
+        return None
+
+
 def should_notify_persistent(anomaly_id: str, state: dict[str, dict] | None = None) -> bool:
     """D1 / D3 / D7 規則：first_seen 算 D0，第 1, 3, 7 天才提報"""
     state = state if state is not None else load_anomaly_state()
