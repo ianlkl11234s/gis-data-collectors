@@ -16,10 +16,9 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-import psycopg2
-
 import config
 from collectors.base import BaseCollector
+from storage.db import connect_supabase
 
 # 重用 scripts/ 內的核心函數，避免邏輯重複
 SCRIPT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts')
@@ -39,6 +38,8 @@ class SatellitePassesDailyCollector(BaseCollector):
 
     name = "satellite_passes_daily"
     interval_minutes = config.SATELLITE_PASSES_DAILY_INTERVAL
+    # SGP4 ~40s + UPDATE/SP，最壞 1-3 分鐘；給 10 分鐘 budget 觸發超時 warning
+    COLLECT_TIMEOUT = 600
 
     def collect(self) -> dict:
         if not config.SUPABASE_DB_URL:
@@ -49,7 +50,11 @@ class SatellitePassesDailyCollector(BaseCollector):
             hour=0, minute=0, second=0, microsecond=0)
         days = [today_utc - timedelta(days=2), today_utc - timedelta(days=1)]
 
-        conn = psycopg2.connect(config.SUPABASE_DB_URL)
+        # autocommit=True：避免 SGP4 那段 ~40s 純 Python idle 落在 transaction
+        # 內被 idle_in_transaction_session_timeout 砍掉（Supavisor SSL 斷線根因）。
+        # statement_timeout 拉長到 5 分鐘：容納 update_counties_for_range 空間 join
+        # + rebuild_daily SP。
+        conn = connect_supabase(autocommit=True, statement_timeout_ms=300_000)
         try:
             stats = {
                 'days_processed': [],
