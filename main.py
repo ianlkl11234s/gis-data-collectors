@@ -12,11 +12,22 @@ import sys
 import time
 import threading
 from datetime import datetime
+from types import SimpleNamespace
 
 import schedule
 
 import config
 from scheduler import get_scheduler
+
+
+def _as_task(name: str, fn, timeout: int = 300):
+    """把 callable 包成「偽 collector」物件，丟進 CollectorScheduler.submit。
+
+    這樣這些原本掛在主迴圈跑的 daily/buffer task 都跑在 worker thread，不會
+    堵主迴圈，避免 watchdog 因主迴圈靜默 > 120s 誤殺整個進程。
+    免費取得 skip-if-running、uncaught exception logging、超時 warning。
+    """
+    return SimpleNamespace(name=name, run=fn, COLLECT_TIMEOUT=timeout)
 from collectors.registry import COLLECTOR_REGISTRY
 from tasks import ArchiveTask, BackupSupabaseTask, DailyReportTask, MiniTaipeiPublishTask
 from utils.notify import notify_archive_complete
@@ -70,7 +81,8 @@ def run_collectors():
     # Skip-if-running 保護避免同 collector 疊加
     # ============================================================
     # max_workers 預設為 collector 數量 + 緩衝（避免所有 collector 都撞同一 tick 時排隊）
-    max_workers = max(10, len(collectors) + 2)
+    # +5 留給 5 個 task（archive/backup/daily_report/mini_taipei/sb_flush）共用 pool
+    max_workers = max(10, len(collectors) + 7)
     sched = get_scheduler(max_workers=max_workers)
 
     print("\n" + "=" * 60)
@@ -157,8 +169,10 @@ def run_archive_task(daily_report_task=None):
                     daily_report_task.last_archive_result = result
             return result
 
-        # 設定每日排程
-        schedule.every().day.at(config.ARCHIVE_TIME).do(archive_with_notify)
+        # 設定每日排程（worker thread，不堵主迴圈避免觸發 watchdog）
+        sched = get_scheduler()
+        schedule.every().day.at(config.ARCHIVE_TIME).do(
+            sched.submit, _as_task("archive", archive_with_notify, timeout=900))
 
         return archive_task
     except Exception as e:
@@ -178,7 +192,9 @@ def run_daily_report_task(collectors: list, archive_task=None):
 
     try:
         daily_report = DailyReportTask(collectors, archive_task)
-        job = schedule.every().day.at(config.DAILY_REPORT_TIME).do(daily_report.run)
+        sched = get_scheduler()
+        job = schedule.every().day.at(config.DAILY_REPORT_TIME).do(
+            sched.submit, _as_task("daily_report", daily_report.run, timeout=600))
         print(f"✓ 每日報告已設定 (每日 {config.DAILY_REPORT_TIME})")
         print(f"   下次觸發: {job.next_run}")
         print(f"   收集器數量: {len(collectors)}")
@@ -206,7 +222,9 @@ def run_mini_taipei_publish_task():
         publish_time = getattr(config, 'MINI_TAIPEI_PUBLISH_TIME', '07:00')
         print(f"\n✓ Mini Taipei 發布任務已設定 (每日 {publish_time})")
 
-        schedule.every().day.at(publish_time).do(publish_task.run)
+        sched = get_scheduler()
+        schedule.every().day.at(publish_time).do(
+            sched.submit, _as_task("mini_taipei_publish", publish_task.run, timeout=180))
 
         return publish_task
     except Exception as e:
@@ -226,7 +244,9 @@ def run_backup_task():
 
     try:
         backup_task = BackupSupabaseTask()
-        schedule.every().day.at("03:30").do(backup_task.run)
+        sched = get_scheduler()
+        schedule.every().day.at("03:30").do(
+            sched.submit, _as_task("backup_supabase", backup_task.run, timeout=1200))
         print("\n✓ Supabase 備份任務已設定 (每日 03:30 UTC)")
         return backup_task
     except Exception as e:
@@ -283,7 +303,9 @@ def main():
         from collectors.base import get_supabase_writer
         sb_writer = get_supabase_writer()
         if sb_writer:
-            schedule.every(config.SUPABASE_BUFFER_INTERVAL).minutes.do(sb_writer.flush_buffer)
+            sched = get_scheduler()
+            schedule.every(config.SUPABASE_BUFFER_INTERVAL).minutes.do(
+                sched.submit, _as_task("sb_flush", sb_writer.flush_buffer, timeout=60))
             print(f"\n✓ Supabase buffer flush (每 {config.SUPABASE_BUFFER_INTERVAL} 分鐘)")
 
     # 將歸檔任務回傳給每日報告
