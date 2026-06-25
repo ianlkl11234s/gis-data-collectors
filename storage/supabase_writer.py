@@ -8,6 +8,7 @@ Supabase 即時資料寫入模組
 import json
 import logging
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -37,9 +38,16 @@ class SupabaseWriter:
     _db_consecutive_errors: dict[str, int] = {}
     _DB_ERROR_ALERT_THRESHOLD = 3  # 連續 N 次失敗才告警（避免瞬時錯誤洗版）
 
+    # 連線斷路器：連續建線失敗時，冷卻期內直接 fail-fast，
+    # 不再反覆打 Supavisor（避免觸發 ECIRCUITBREAKER），也避免每筆寫入各等 connect_timeout 累積卡死。
+    _CB_COOLDOWN_BASE = 15      # 冷卻秒數基數（指數退避）
+    _CB_COOLDOWN_MAX = 300      # 冷卻上限（秒）
+
     def __init__(self, database_url: str):
         self.database_url = database_url
         self.conn = None
+        self._connect_failures = 0       # 連續建線失敗次數
+        self._next_connect_at = 0.0      # 冷卻到期的 monotonic 時間
         # 跨 thread 序列化 DB 操作（psycopg2 連線非 thread-safe）
         # 給背景 thread collector（flight_fr24）與主 schedule thread 共用 writer
         self._lock = threading.RLock()
@@ -48,15 +56,49 @@ class SupabaseWriter:
 
     def _connect(self):
         try:
-            self.conn = psycopg2.connect(self.database_url)
+            # 韌性：connect_timeout 防建線無限等；statement_timeout（session 層，
+            # 透過 options 套用至所有 cursor，含 execute_values）防單筆寫入 hang 鎖死
+            # 全 collector 共用的單連線 + RLock；keepalive 偵測 pooler 端斷線。
+            self.conn = psycopg2.connect(
+                self.database_url,
+                connect_timeout=config.SUPABASE_CONNECT_TIMEOUT,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=3,
+                options=(
+                    f"-c statement_timeout={config.SUPABASE_STATEMENT_TIMEOUT_MS} "
+                    f"-c idle_in_transaction_session_timeout={config.SUPABASE_STATEMENT_TIMEOUT_MS}"
+                ),
+            )
             self.conn.autocommit = True
+            self._connect_failures = 0
+            self._next_connect_at = 0.0
             logger.info("Supabase 連線成功")
         except Exception as e:
-            logger.warning(f"Supabase 連線失敗: {e}")
+            self._connect_failures += 1
+            cooldown = min(self._CB_COOLDOWN_BASE * (2 ** (self._connect_failures - 1)),
+                           self._CB_COOLDOWN_MAX)
+            self._next_connect_at = time.monotonic() + cooldown
+            logger.warning(
+                f"Supabase 連線失敗（第 {self._connect_failures} 次，冷卻 {cooldown}s）: {e}"
+            )
             self.conn = None
+
+    def health_snapshot(self) -> dict:
+        """回傳連線健康狀態（無副作用，不觸發建線）。供 /health 端點查詢。"""
+        conn = self.conn
+        return {
+            "connected": bool(conn) and not conn.closed,
+            "connect_failures": self._connect_failures,
+            "breaker_open": time.monotonic() < self._next_connect_at,
+        }
 
     def _ensure_conn(self):
         if not self.conn or self.conn.closed:
+            # 斷路器開啟中：冷卻期內直接 fail-fast，不再嘗試建線
+            if time.monotonic() < self._next_connect_at:
+                raise ConnectionError("Supabase 連線斷路器開啟中（冷卻中）")
             self._connect()
         if not self.conn:
             raise ConnectionError("Supabase 連線不可用")

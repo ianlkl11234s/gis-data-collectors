@@ -25,9 +25,10 @@ ENV PYTHONUNBUFFERED=1
 # 開放 API 端口（預設 8080）
 EXPOSE 8080
 
-# 健康檢查（改用 HTTP API）
-HEALTHCHECK --interval=5m --timeout=10s --start-period=30s \
-    CMD curl -f http://localhost:8080/health || python -c "import config; config.validate_config()" || exit 1
+# 健康檢查：探 /health（主迴圈卡死 → 503 → 重啟）。
+# 不用 curl（slim 無）、不做 config fallback（會讓卡死的進程仍判 healthy）。
+HEALTHCHECK --interval=1m --timeout=10s --start-period=60s --retries=3 \
+    CMD python healthcheck.py
 
 # 執行
 CMD ["python", "main.py"]

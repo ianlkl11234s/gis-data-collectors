@@ -121,6 +121,14 @@ else:
 SUPABASE_ENABLED = os.getenv('SUPABASE_ENABLED', 'false').lower() in ('true', '1', 'yes')
 SUPABASE_DB_URL = os.getenv('SUPABASE_DB_URL')  # Supavisor Transaction mode (port 6543)
 SUPABASE_BUFFER_INTERVAL = int(os.getenv('SUPABASE_BUFFER_INTERVAL', '5'))  # buffer 重試間隔（分鐘）
+# 寫入韌性：避免 DB hang 時整條寫入鏈卡死（單連線 + 單 RLock）
+SUPABASE_CONNECT_TIMEOUT = int(os.getenv('SUPABASE_CONNECT_TIMEOUT', '10'))        # 建線 timeout（秒）
+SUPABASE_STATEMENT_TIMEOUT_MS = int(os.getenv('SUPABASE_STATEMENT_TIMEOUT_MS', '30000'))  # 單筆語句 timeout（毫秒）
+# Watchdog：主迴圈 heartbeat 超過此秒數沒更新 → 判定卡死
+HEALTH_MAX_LOOP_SILENCE = int(os.getenv('HEALTH_MAX_LOOP_SILENCE', '120'))
+# 進程內 watchdog：心跳過期時 os._exit(1) 自我了斷 → 容器崩潰 → 平台重啟
+# （Zeabur 不會因 runtime unhealthy 重啟容器，但會重啟崩潰的進程，故走自殺式）
+HEALTH_WATCHDOG_ENABLED = os.getenv('HEALTH_WATCHDOG_ENABLED', 'true').lower() in ('true', '1', 'yes')
 
 # ============================================================
 # API 設定
