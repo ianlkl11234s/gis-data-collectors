@@ -311,8 +311,39 @@ def main():
     print("📡 等待排程執行... (按 Ctrl+C 停止)")
     print("=" * 60)
 
-    # 主迴圈
+    # 主迴圈 + watchdog
+    import health
+    import logging as _logging
+    health.heartbeat()  # 啟動即先記一次，避免 watchdog 在第一輪前誤判
+
+    if config.HEALTH_WATCHDOG_ENABLED:
+        def _on_hang(since):
+            msg = (f"主迴圈 {since:.0f}s 無心跳（>{config.HEALTH_MAX_LOOP_SILENCE}s），"
+                   f"watchdog 強制重啟進程")
+            _logging.error(msg)
+            try:
+                from utils.notify import send_telegram, _instance_tag
+                send_telegram(f"🔁 *Watchdog 重啟進程*{_instance_tag()}\n\n{msg}")
+            except Exception:
+                pass
+        health.start_watchdog(config.HEALTH_MAX_LOOP_SILENCE, on_trigger=_on_hang)
+        print(f"\n✓ Watchdog 啟用（主迴圈靜默 > {config.HEALTH_MAX_LOOP_SILENCE}s 自動重啟）")
+
+    # 自我測試開關（staging 驗證用）：啟動 90s 後停止心跳，模擬主迴圈卡死
+    # → watchdog 應在 HEALTH_MAX_LOOP_SILENCE 後 os._exit → 觀察平台是否重啟。測完移除 env。
+    import os as _os
+    _selftest = _os.getenv('WATCHDOG_SELFTEST', '').lower() in ('true', '1', 'yes')
+    _loop_start = time.monotonic()
+    _selftest_announced = False
+
     while running:
+        if _selftest and time.monotonic() - _loop_start > 90:
+            if not _selftest_announced:
+                print("🧪 WATCHDOG_SELFTEST：停止心跳，模擬主迴圈卡死…")
+                _selftest_announced = True
+            # 故意不打心跳
+        else:
+            health.heartbeat()  # watchdog 心跳：主迴圈卡住 → watchdog 自殺 → 平台重啟
         schedule.run_pending()
         time.sleep(1)
 

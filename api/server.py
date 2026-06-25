@@ -95,13 +95,43 @@ def create_app():
 
     @app.route('/health')
     def health():
-        """健康檢查 - 不需要認證"""
+        """健康檢查 - 不需要認證
+
+        關鍵：主迴圈 heartbeat 過期 → 503（進程卡死，讓平台 liveness 重啟）。
+        DB 連線狀態只作 info 回報，**不**因 DB down 而 503（buffer+斷路器已優雅處理，
+        重啟救不了外部 DB 故障，反而可能 restart loop）。
+        """
+        import health as health_mod
+
+        since = health_mod.seconds_since_heartbeat()
+        # 主迴圈活性：heartbeat 從未開始（None）視為 OK（API-only 或啟動中）；
+        # 有開始但超過門檻沒更新 → 判定卡死
+        loop_alive = since is None or since < config.HEALTH_MAX_LOOP_SILENCE
+
+        # DB 連線快照（無副作用，不觸發建線）
+        db_info = None
+        if config.SUPABASE_ENABLED:
+            try:
+                import collectors.base as base
+                writer = base._supabase_writer  # 直接讀單例，避免 health 觸發建線
+                if writer is not None:
+                    db_info = writer.health_snapshot()
+            except Exception as e:
+                db_info = {'error': str(e)}
+
+        healthy = loop_alive
         return jsonify({
-            'status': 'healthy',
+            'status': 'healthy' if healthy else 'unhealthy',
             'timestamp': datetime.now().isoformat(),
+            'main_loop': {
+                'alive': loop_alive,
+                'seconds_since_heartbeat': round(since, 1) if since is not None else None,
+                'max_silence': config.HEALTH_MAX_LOOP_SILENCE,
+            },
+            'db': db_info,  # info only — 不影響 healthy 判定
             'data_dir': str(config.LOCAL_DATA_DIR),
-            'data_dir_exists': config.LOCAL_DATA_DIR.exists()
-        })
+            'data_dir_exists': config.LOCAL_DATA_DIR.exists(),
+        }), (200 if healthy else 503)
 
     @app.route('/api/collectors')
     @require_api_key
