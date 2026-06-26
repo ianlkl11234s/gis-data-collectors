@@ -410,13 +410,13 @@ class NewsEventsCollector(BaseCollector):
         # 1) 先試 DB（每個 process 只查一次）
         if self.supabase_writer:
             try:
-                self.supabase_writer._ensure_conn()  # noqa: SLF001
-                with self.supabase_writer.conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT code, name FROM spatial.township_boundaries "
-                        "ORDER BY code LIMIT 500"
-                    )
-                    rows = [{'code': r[0], 'name': r[1]} for r in cur.fetchall()]
+                with self.supabase_writer.with_conn() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT code, name FROM spatial.township_boundaries "
+                            "ORDER BY code LIMIT 500"
+                        )
+                        rows = [{'code': r[0], 'name': r[1]} for r in cur.fetchall()]
                 if rows:
                     try:
                         self._gazetteer_cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -511,43 +511,43 @@ class NewsEventsCollector(BaseCollector):
         if not self.supabase_writer:
             return
         try:
-            self.supabase_writer._ensure_conn()  # noqa: SLF001
-            with self.supabase_writer.conn.cursor() as cur:
-                if success:
-                    cur.execute(
-                        """
-                        INSERT INTO realtime.source_health
-                            (feed_url, source, county_hint, last_success_at, last_attempt_at,
-                             last_error, consecutive_fail, updated_at)
-                        VALUES (%s, %s, %s, now(), now(), NULL, 0, now())
-                        ON CONFLICT (feed_url) DO UPDATE SET
-                            last_success_at  = EXCLUDED.last_success_at,
-                            last_attempt_at  = EXCLUDED.last_attempt_at,
-                            last_error       = NULL,
-                            consecutive_fail = 0,
-                            source           = EXCLUDED.source,
-                            county_hint      = EXCLUDED.county_hint,
-                            updated_at       = now();
-                        """,
-                        (feed['url'], feed['source'], feed.get('county_hint')),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        INSERT INTO realtime.source_health
-                            (feed_url, source, county_hint, last_attempt_at,
-                             last_error, consecutive_fail, updated_at)
-                        VALUES (%s, %s, %s, now(), %s, 1, now())
-                        ON CONFLICT (feed_url) DO UPDATE SET
-                            last_attempt_at  = EXCLUDED.last_attempt_at,
-                            last_error       = EXCLUDED.last_error,
-                            consecutive_fail = realtime.source_health.consecutive_fail + 1,
-                            source           = EXCLUDED.source,
-                            county_hint      = EXCLUDED.county_hint,
-                            updated_at       = now();
-                        """,
-                        (feed['url'], feed['source'], feed.get('county_hint'), error),
-                    )
+            with self.supabase_writer.with_conn() as conn:
+                with conn.cursor() as cur:
+                    if success:
+                        cur.execute(
+                            """
+                            INSERT INTO realtime.source_health
+                                (feed_url, source, county_hint, last_success_at, last_attempt_at,
+                                 last_error, consecutive_fail, updated_at)
+                            VALUES (%s, %s, %s, now(), now(), NULL, 0, now())
+                            ON CONFLICT (feed_url) DO UPDATE SET
+                                last_success_at  = EXCLUDED.last_success_at,
+                                last_attempt_at  = EXCLUDED.last_attempt_at,
+                                last_error       = NULL,
+                                consecutive_fail = 0,
+                                source           = EXCLUDED.source,
+                                county_hint      = EXCLUDED.county_hint,
+                                updated_at       = now();
+                            """,
+                            (feed['url'], feed['source'], feed.get('county_hint')),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO realtime.source_health
+                                (feed_url, source, county_hint, last_attempt_at,
+                                 last_error, consecutive_fail, updated_at)
+                            VALUES (%s, %s, %s, now(), %s, 1, now())
+                            ON CONFLICT (feed_url) DO UPDATE SET
+                                last_attempt_at  = EXCLUDED.last_attempt_at,
+                                last_error       = EXCLUDED.last_error,
+                                consecutive_fail = realtime.source_health.consecutive_fail + 1,
+                                source           = EXCLUDED.source,
+                                county_hint      = EXCLUDED.county_hint,
+                                updated_at       = now();
+                            """,
+                            (feed['url'], feed['source'], feed.get('county_hint'), error),
+                        )
         except Exception as e:
             logger.warning(f"[{self.name}] source_health upsert 失敗（不影響主流程）: {e}")
 
@@ -563,15 +563,15 @@ class NewsEventsCollector(BaseCollector):
         if not self.supabase_writer:
             return set(), []
         try:
-            self.supabase_writer._ensure_conn()  # noqa: SLF001
-            with self.supabase_writer.conn.cursor() as cur:
-                cur.execute(
-                    "SELECT url_norm, title_simhash FROM realtime.news_events "
-                    "WHERE published_ts >= now() - make_interval(days => %s) "
-                    "LIMIT 100000",
-                    (self.DEDUP_WINDOW_DAYS,),
-                )
-                rows = cur.fetchall()
+            with self.supabase_writer.with_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT url_norm, title_simhash FROM realtime.news_events "
+                        "WHERE published_ts >= now() - make_interval(days => %s) "
+                        "LIMIT 100000",
+                        (self.DEDUP_WINDOW_DAYS,),
+                    )
+                    rows = cur.fetchall()
             url_set = {r[0] for r in rows if r[0]}
             hashes = [to_unsigned_64(int(r[1])) for r in rows if r[1] is not None]
             return url_set, hashes

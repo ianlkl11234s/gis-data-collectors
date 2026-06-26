@@ -124,6 +124,10 @@ SUPABASE_BUFFER_INTERVAL = int(os.getenv('SUPABASE_BUFFER_INTERVAL', '5'))  # bu
 # 寫入韌性：避免 DB hang 時整條寫入鏈卡死（單連線 + 單 RLock）
 SUPABASE_CONNECT_TIMEOUT = int(os.getenv('SUPABASE_CONNECT_TIMEOUT', '10'))        # 建線 timeout（秒）
 SUPABASE_STATEMENT_TIMEOUT_MS = int(os.getenv('SUPABASE_STATEMENT_TIMEOUT_MS', '30000'))  # 單筆語句 timeout（毫秒）
+# 連線池：取代舊「一條 conn + RLock」設計，避免單條連線 wedge 連鎖卡住所有 collector
+SUPABASE_POOL_MIN = int(os.getenv('SUPABASE_POOL_MIN', '2'))                       # pool 最小連線數
+SUPABASE_POOL_MAX = int(os.getenv('SUPABASE_POOL_MAX', '15'))                      # pool 最大連線數（並發上限）
+SUPABASE_BORROW_TIMEOUT_SEC = float(os.getenv('SUPABASE_BORROW_TIMEOUT_SEC', '5')) # 借連線 timeout（秒）— 借不到就 buffer
 # Watchdog：主迴圈 heartbeat 超過此秒數沒更新 → 判定卡死
 HEALTH_MAX_LOOP_SILENCE = int(os.getenv('HEALTH_MAX_LOOP_SILENCE', '120'))
 # 進程內 watchdog：心跳過期時 os._exit(1) 自我了斷 → 容器崩潰 → 平台重啟

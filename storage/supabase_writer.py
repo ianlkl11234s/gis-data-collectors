@@ -2,22 +2,27 @@
 Supabase 即時資料寫入模組
 
 主路徑寫 DB（分區表 + current 表），失敗時暫存 buffer，定期重試。
-使用 psycopg2 + Supavisor 連線池 (port 6543)。
+使用 psycopg2 連線池（SupabaseConnectionPool），每個 collector 借/還連線，
+死連線只影響當下借它的 collector，其他人不受波及。
+
+歷史背景（事故 2026-06-26）：
+舊版用「單條 conn + RLock」，連線 wedge（TCP 沒斷但 server 不回）時所有
+collector 在 RLock 後排隊 3 小時。改 pool + borrow timeout 後，借不到就
+fall-back 到 buffer，collector 繼續收。
 """
 
 import json
 import logging
 import threading
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import psycopg2
 from psycopg2 import Binary as PgBinary
 from psycopg2.extras import execute_values
 
 import config
+from storage.db import SupabaseConnectionPool, PoolBorrowTimeout, PoolBreakerOpen
 from storage.supabase_tables import TABLE_MAP
 from utils.notify import send_telegram, _escape_md, _instance_tag
 from tasks.mini_taipei_publish import (
@@ -32,102 +37,91 @@ BUFFER_DIR = config.LOCAL_DATA_DIR / 'buffer'
 
 
 class SupabaseWriter:
-    """統一的 Supabase 寫入介面"""
+    """統一的 Supabase 寫入介面（連線池版本）。
+
+    架構：
+    - self._pool: SupabaseConnectionPool — 借/還連線，含 borrow timeout + 斷路器
+    - self._err_lock: threading.Lock — 只保護 _db_consecutive_errors dict，短臨界區
+    - 沒有共用 RLock；每個 write/flush 各自借自己的 conn，互不卡
+
+    對 collector 的契約：
+    - 寫 DB 失敗（含 borrow timeout、breaker open）→ 自動 fallback 到 buffer
+    - collector.run() 不會被 DB 問題卡住，永遠能繼續 collect/save local/buffer
+    """
 
     # DB 寫入連續錯誤追蹤（跨 collector 共用）
     _db_consecutive_errors: dict[str, int] = {}
     _DB_ERROR_ALERT_THRESHOLD = 3  # 連續 N 次失敗才告警（避免瞬時錯誤洗版）
 
-    # 連線斷路器：連續建線失敗時，冷卻期內直接 fail-fast，
-    # 不再反覆打 Supavisor（避免觸發 ECIRCUITBREAKER），也避免每筆寫入各等 connect_timeout 累積卡死。
-    _CB_COOLDOWN_BASE = 15      # 冷卻秒數基數（指數退避）
-    _CB_COOLDOWN_MAX = 300      # 冷卻上限（秒）
-
     def __init__(self, database_url: str):
         self.database_url = database_url
-        self.conn = None
-        self._connect_failures = 0       # 連續建線失敗次數
-        self._next_connect_at = 0.0      # 冷卻到期的 monotonic 時間
-        # 跨 thread 序列化 DB 操作（psycopg2 連線非 thread-safe）
-        # 給背景 thread collector（flight_fr24）與主 schedule thread 共用 writer
-        self._lock = threading.RLock()
-        self._connect()
+        # 連線池：取代舊單條 conn + RLock。borrow timeout / 斷路器都在 pool 內。
+        self._pool = SupabaseConnectionPool()
+        # 只保護 _db_consecutive_errors dict 的 increment/reset 短臨界區
+        self._err_lock = threading.Lock()
         BUFFER_DIR.mkdir(parents=True, exist_ok=True)
 
-    def _connect(self):
-        try:
-            # 韌性：connect_timeout 防建線無限等；statement_timeout（session 層，
-            # 透過 options 套用至所有 cursor，含 execute_values）防單筆寫入 hang 鎖死
-            # 全 collector 共用的單連線 + RLock；keepalive 偵測 pooler 端斷線。
-            self.conn = psycopg2.connect(
-                self.database_url,
-                connect_timeout=config.SUPABASE_CONNECT_TIMEOUT,
-                keepalives=1,
-                keepalives_idle=30,
-                keepalives_interval=10,
-                keepalives_count=3,
-                options=(
-                    f"-c statement_timeout={config.SUPABASE_STATEMENT_TIMEOUT_MS} "
-                    f"-c idle_in_transaction_session_timeout={config.SUPABASE_STATEMENT_TIMEOUT_MS}"
-                ),
-            )
-            self.conn.autocommit = True
-            self._connect_failures = 0
-            self._next_connect_at = 0.0
-            logger.info("Supabase 連線成功")
-        except Exception as e:
-            self._connect_failures += 1
-            cooldown = min(self._CB_COOLDOWN_BASE * (2 ** (self._connect_failures - 1)),
-                           self._CB_COOLDOWN_MAX)
-            self._next_connect_at = time.monotonic() + cooldown
-            logger.warning(
-                f"Supabase 連線失敗（第 {self._connect_failures} 次，冷卻 {cooldown}s）: {e}"
-            )
-            self.conn = None
-
     def health_snapshot(self) -> dict:
-        """回傳連線健康狀態（無副作用，不觸發建線）。供 /health 端點查詢。"""
-        conn = self.conn
+        """回傳連線健康狀態（無副作用，不借連線）。供 /health 端點查詢。
+
+        保留舊欄位名稱 (connect_failures / breaker_open) 不破壞 API 相容。
+        """
+        snap = self._pool.snapshot()
         return {
-            "connected": bool(conn) and not conn.closed,
-            "connect_failures": self._connect_failures,
-            "breaker_open": time.monotonic() < self._next_connect_at,
+            "connected": snap["pool_initialized"] and not snap["breaker_open"],
+            "connect_failures": snap["connect_failures"],
+            "breaker_open": snap["breaker_open"],
+            "pool_min": snap["minconn"],
+            "pool_max": snap["maxconn"],
         }
 
-    def _ensure_conn(self):
-        if not self.conn or self.conn.closed:
-            # 斷路器開啟中：冷卻期內直接 fail-fast，不再嘗試建線
-            if time.monotonic() < self._next_connect_at:
-                raise ConnectionError("Supabase 連線斷路器開啟中（冷卻中）")
-            self._connect()
-        if not self.conn:
-            raise ConnectionError("Supabase 連線不可用")
+    def with_conn(self, timeout: Optional[float] = None):
+        """Public API：借一條連線，with 區塊結束自動歸還。
+
+        Usage:
+            with writer.with_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(...)
+
+        供 collector 直接寫自訂 SQL 用（例：news_events 的 dedup query、
+        wra_drought_alert 的查詢、collect() 階段需要查 reference 表的情境）。
+        取代以前直接讀 self.supabase_writer.conn 的 thread-unsafe 寫法。
+
+        Raises:
+            PoolBorrowTimeout: 借不到（pool 全 busy）
+            PoolBreakerOpen: 斷路器開啟中
+        """
+        return self._pool.borrow(timeout=timeout)
 
     # ============================================================
     # 主要寫入介面
     # ============================================================
 
     def write(self, collector_name: str, result: dict, timestamp: datetime):
-        """主路徑寫 DB，失敗時暫存 buffer（thread-safe）"""
-        with self._lock:
-            return self._write_locked(collector_name, result, timestamp)
+        """主路徑寫 DB，失敗時暫存 buffer。
 
-    def _write_locked(self, collector_name: str, result: dict, timestamp: datetime):
+        Thread-safe：transformer 是純函數；DB 寫入透過 pool 借連線；錯誤計數
+        用短 lock 保護。沒有阻塞點。
+        """
         try:
+            # Transform 是純函數，不需要 conn / lock
             records = self._transform(collector_name, result, timestamp)
             if not records:
                 return
 
-            self._write_to_db(collector_name, records, timestamp)
+            # 借一條連線，把所有 DB 動作（含衛星 TLE 額外表）跑完才還
+            with self._pool.borrow() as conn:
+                self._write_to_db(conn, collector_name, records, timestamp)
+                if collector_name == 'satellite':
+                    self._write_satellite_tle(conn, result, timestamp)
 
-            # 衛星：額外更新 TLE 參數表（供前端 satellite.js 使用）
-            if collector_name == 'satellite':
-                self._write_satellite_tle(result, timestamp)
-
+            # heartbeat 是 best-effort，獨立借連線；失敗只 debug log
             self._report_heartbeat(collector_name, True, len(records))
 
-            # 寫入成功：重置連續錯誤計數，恢復時通知
-            prev_errors = self._db_consecutive_errors.get(collector_name, 0)
+            # 連續錯誤計數重置 + 恢復通知
+            with self._err_lock:
+                prev_errors = self._db_consecutive_errors.get(collector_name, 0)
+                self._db_consecutive_errors[collector_name] = 0
             if prev_errors >= self._DB_ERROR_ALERT_THRESHOLD:
                 tag = _instance_tag()
                 send_telegram(
@@ -135,40 +129,37 @@ class SupabaseWriter:
                     f"收集器: `{collector_name}`\n"
                     f"之前連續失敗: {prev_errors} 次"
                 )
-            self._db_consecutive_errors[collector_name] = 0
+
+        except (PoolBorrowTimeout, PoolBreakerOpen) as e:
+            # 池滿 / 斷路器 — 都是「DB 暫時不可用」的訊號。不是 bug，不要 Telegram 洗版。
+            logger.warning(f"[{collector_name}] DB 暫時不可用，暫存 buffer: {e}")
+            self._write_to_buffer(collector_name, result, timestamp)
+            self._report_heartbeat(collector_name, False, 0, str(e))
+            self._record_db_error(collector_name, e)
 
         except Exception as e:
             logger.warning(f"[{collector_name}] DB 寫入失敗，暫存 buffer: {e}")
             self._write_to_buffer(collector_name, result, timestamp)
             self._report_heartbeat(collector_name, False, 0, str(e))
+            self._record_db_error(collector_name, e)
 
-            # DB 寫入連續錯誤追蹤 + Telegram 告警
+    def _record_db_error(self, collector_name: str, err: Exception) -> None:
+        """累計連續錯誤，到達閾值才發 Telegram（避免洗版）。"""
+        with self._err_lock:
             self._db_consecutive_errors[collector_name] = self._db_consecutive_errors.get(collector_name, 0) + 1
             count = self._db_consecutive_errors[collector_name]
-            if count == self._DB_ERROR_ALERT_THRESHOLD:
-                tag = _instance_tag()
-                tg_msg = (
-                    f"🗄️ *DB 寫入連續失敗*{tag}\n\n"
-                    f"收集器: `{collector_name}`\n"
-                    f"連續失敗: *{count} 次*\n"
-                    f"錯誤: {_escape_md(str(e)[:200])}\n\n"
-                    f"資料已暫存 buffer，待問題修復後自動補回"
-                )
-                send_telegram(tg_msg)
+        if count == self._DB_ERROR_ALERT_THRESHOLD:
+            tag = _instance_tag()
+            send_telegram(
+                f"🗄️ *DB 寫入連續失敗*{tag}\n\n"
+                f"收集器: `{collector_name}`\n"
+                f"連續失敗: *{count} 次*\n"
+                f"錯誤: {_escape_md(str(err)[:200])}\n\n"
+                f"資料已暫存 buffer，待問題修復後自動補回"
+            )
 
     def flush_buffer(self):
-        """重試 buffer 中的資料（thread-safe）"""
-        with self._lock:
-            return self._flush_buffer_locked()
-
-    # Buffer 檔最大保留天數：超過則直接丟棄
-    # 因為分區表 retention 會自動刪舊分區，過期 buffer 已無處可寫，且會永久卡住其他檔案
-    BUFFER_MAX_AGE_DAYS = 3
-
-    # 連續失敗多少筆後判定 DB 仍不可用、放棄本輪
-    BUFFER_FAIL_THRESHOLD = 5
-
-    def _flush_buffer_locked(self):
+        """重試 buffer 中的資料。一次借一條連線跑完整批，期間其他 collector 用別條 conn 不受影響。"""
         from datetime import timezone, timedelta as _td
 
         buffer_files = sorted(BUFFER_DIR.glob("*.json"))
@@ -183,39 +174,51 @@ class SupabaseWriter:
         skipped_old = 0
         consecutive_failures = 0
 
-        for f in buffer_files:
-            try:
-                payload = json.loads(f.read_text())
-                ts = datetime.fromisoformat(payload['timestamp'])
-                if ts.tzinfo is None:
-                    ts_cmp = ts.replace(tzinfo=timezone.utc)
-                else:
-                    ts_cmp = ts
+        try:
+            with self._pool.borrow() as conn:
+                for f in buffer_files:
+                    try:
+                        payload = json.loads(f.read_text())
+                        ts = datetime.fromisoformat(payload['timestamp'])
+                        if ts.tzinfo is None:
+                            ts_cmp = ts.replace(tzinfo=timezone.utc)
+                        else:
+                            ts_cmp = ts
 
-                # 過期 buffer 直接丟棄（分區可能已被 retention 清掉）
-                if now - ts_cmp > max_age:
-                    f.unlink()
-                    skipped_old += 1
-                    logger.info(f"Buffer 過期丟棄：{f.name} (age={now - ts_cmp})")
-                    continue
+                        # 過期 buffer 直接丟棄（分區可能已被 retention 清掉）
+                        if now - ts_cmp > max_age:
+                            f.unlink()
+                            skipped_old += 1
+                            logger.info(f"Buffer 過期丟棄：{f.name} (age={now - ts_cmp})")
+                            continue
 
-                records = self._transform(payload['collector'], payload['result'], ts)
-                if records:
-                    self._write_to_db(payload['collector'], records, ts)
-                f.unlink()
-                success += 1
-                consecutive_failures = 0
-                logger.info(f"Buffer 補寫成功：{f.name}")
-            except Exception as e:
-                consecutive_failures += 1
-                logger.warning(f"Buffer 重試失敗：{f.name}: {e}")
-                # 不再 break — 改為連續多筆失敗才放棄，避免單一爛檔卡住其他
-                if consecutive_failures >= self.BUFFER_FAIL_THRESHOLD:
-                    logger.warning(f"Buffer 連續 {consecutive_failures} 筆失敗，放棄本輪重試")
-                    break
+                        records = self._transform(payload['collector'], payload['result'], ts)
+                        if records:
+                            self._write_to_db(conn, payload['collector'], records, ts)
+                        f.unlink()
+                        success += 1
+                        consecutive_failures = 0
+                        logger.info(f"Buffer 補寫成功：{f.name}")
+                    except Exception as e:
+                        consecutive_failures += 1
+                        logger.warning(f"Buffer 重試失敗：{f.name}: {e}")
+                        # 不再 break — 改為連續多筆失敗才放棄，避免單一爛檔卡住其他
+                        if consecutive_failures >= self.BUFFER_FAIL_THRESHOLD:
+                            logger.warning(f"Buffer 連續 {consecutive_failures} 筆失敗，放棄本輪重試")
+                            break
+        except (PoolBorrowTimeout, PoolBreakerOpen) as e:
+            logger.warning(f"Buffer flush 跳過：DB 暫時不可用 ({e})")
+            return
 
         if success or skipped_old:
             logger.info(f"Buffer 重試完成：補寫 {success} 筆 / 過期丟棄 {skipped_old} 筆")
+
+    # Buffer 檔最大保留天數：超過則直接丟棄
+    # 因為分區表 retention 會自動刪舊分區，過期 buffer 已無處可寫，且會永久卡住其他檔案
+    BUFFER_MAX_AGE_DAYS = 3
+
+    # 連續失敗多少筆後判定 DB 仍不可用、放棄本輪
+    BUFFER_FAIL_THRESHOLD = 5
 
     # ============================================================
     # 資料轉換：Collector 原始格式 → DB 欄位
@@ -1144,7 +1147,6 @@ class SupabaseWriter:
         """
         if not rows:
             return
-        self._ensure_conn()
         cols = [
             'iow_station_id', 'station_id', 'station_type', 'name',
             'county_code', 'county_name', 'town_code', 'town_name',
@@ -1169,9 +1171,9 @@ class SupabaseWriter:
             f"INSERT INTO public.iot_wra_stations ({','.join(cols)}) VALUES %s "
             f"ON CONFLICT (iow_station_id, station_type) DO UPDATE SET {update_set}"
         )
-        with self.conn.cursor() as cur:
-            execute_values(cur, sql, values, page_size=500)
-        self.conn.commit()
+        with self._pool.borrow() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, values, page_size=500)
 
     def _transform_precipitation_raster(self, result: dict, ts: datetime) -> list[dict]:
         """水利署累積雨量柵格圖（PNG → bytea 經 base64 transit）
@@ -1218,7 +1220,6 @@ class SupabaseWriter:
         """
         if not rows:
             return
-        self._ensure_conn()
         cols = [
             'iow_station_id', 'station_id', 'name',
             'county_code', 'county_name', 'town_code', 'town_name',
@@ -1242,9 +1243,9 @@ class SupabaseWriter:
             f"INSERT INTO public.uswg_stations ({','.join(cols)}) VALUES %s "
             f"ON CONFLICT (iow_station_id) DO UPDATE SET {update_set}"
         )
-        with self.conn.cursor() as cur:
-            execute_values(cur, sql, values, page_size=500)
-        self.conn.commit()
+        with self._pool.borrow() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, values, page_size=500)
 
     # ------------------------------------------------------------
     # 北市水利處三本柱（wic_taipei platform）
@@ -1264,7 +1265,6 @@ class SupabaseWriter:
     def _upsert_taipei_sewer_stations(self, rows: list[dict]) -> None:
         if not rows:
             return
-        self._ensure_conn()
         cols = ['station_no', 'station_name']
         dedup = {r['station_no']: r for r in rows if r.get('station_no')}
         values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
@@ -1274,14 +1274,13 @@ class SupabaseWriter:
             "station_name = EXCLUDED.station_name, "
             "updated_at = now()"
         )
-        with self.conn.cursor() as cur:
-            execute_values(cur, sql, values, page_size=500)
-        self.conn.commit()
+        with self._pool.borrow() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, values, page_size=500)
 
     def _upsert_taipei_evacuate_stations(self, rows: list[dict]) -> None:
         if not rows:
             return
-        self._ensure_conn()
         cols = ['station_no', 'station_name', 'gate_num']
         dedup = {r['station_no']: r for r in rows if r.get('station_no')}
         values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
@@ -1292,14 +1291,13 @@ class SupabaseWriter:
             "gate_num = EXCLUDED.gate_num, "
             "updated_at = now()"
         )
-        with self.conn.cursor() as cur:
-            execute_values(cur, sql, values, page_size=500)
-        self.conn.commit()
+        with self._pool.borrow() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, values, page_size=500)
 
     def _upsert_taipei_pumb_stations(self, rows: list[dict]) -> None:
         if not rows:
             return
-        self._ensure_conn()
         cols = ['stn_id', 'stn_name', 'lat', 'lng', 'pumb_num', 'door_num', 'max_allowable_water_level']
         dedup = {r['stn_id']: r for r in rows if r.get('stn_id')}
         values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
@@ -1313,9 +1311,9 @@ class SupabaseWriter:
             "max_allowable_water_level = EXCLUDED.max_allowable_water_level, "
             "updated_at = now()"
         )
-        with self.conn.cursor() as cur:
-            execute_values(cur, sql, values, page_size=500)
-        self.conn.commit()
+        with self._pool.borrow() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, values, page_size=500)
 
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
         """upsert 靜態水庫基本資料到 public.water_reservoirs
@@ -1326,7 +1324,6 @@ class SupabaseWriter:
         """
         if not rows:
             return
-        self._ensure_conn()
         cols = [
             'id', 'name', 'region', 'river_name', 'township',
             'dam_type', 'design_capacity_wan', 'effective_capacity_wan',
@@ -1350,10 +1347,10 @@ class SupabaseWriter:
               AND g.compare_id > 0
               AND (w.lat IS DISTINCT FROM g.lat OR w.lng IS DISTINCT FROM g.lng)
         """
-        with self.conn.cursor() as cur:
-            execute_values(cur, sql, values, page_size=100)
-            cur.execute(sync_lat_lng_sql)
-        self.conn.commit()
+        with self._pool.borrow() as conn:
+            with conn.cursor() as cur:
+                execute_values(cur, sql, values, page_size=100)
+                cur.execute(sync_lat_lng_sql)
 
     def _transform_waste_positions(self, result: dict, ts: datetime) -> list[dict]:
         """垃圾車即時 GPS（高雄 / 新北 / 台南，by waste_positions collector）
@@ -1663,26 +1660,24 @@ class SupabaseWriter:
     # 表對應設定改由 storage/supabase_tables.py 集中管理（見 module top import）
     # ============================================================
 
-    def _write_to_db(self, collector_name: str, records: list[dict], timestamp: datetime):
-        self._ensure_conn()
-
+    def _write_to_db(self, conn, collector_name: str, records: list[dict], timestamp: datetime):
         table_config = TABLE_MAP.get(collector_name)
         if not table_config:
             return
 
         # 特殊處理：時刻表寫入 reference schema
         if table_config.get('is_reference'):
-            self._write_schedules(records)
+            self._write_schedules(conn, records)
             return
 
         # 特殊處理：多表寫入（freeway_vd, flight_fr24）
         if table_config.get('is_multi_table'):
-            self._write_multi_table(collector_name, records)
+            self._write_multi_table(conn, collector_name, records)
             return
 
         columns = table_config['columns']
 
-        with self.conn.cursor() as cur:
+        with conn.cursor() as cur:
             # 1. INSERT INTO 分區表（歷史）
             values = []
             for r in records:
@@ -1747,15 +1742,13 @@ class SupabaseWriter:
         record_count = len(records)
         logger.info(f"[{collector_name}] ✓ DB 寫入 {record_count} 筆")
 
-    def _write_multi_table(self, collector_name: str, records: list[dict]):
+    def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """freeway_vd 和 flight_fr24 的多表寫入"""
-        self._ensure_conn()
-
         if collector_name == 'freeway_vd':
             sections = [r for r in records if r.get('_type') == 'section']
             vds = [r for r in records if r.get('_type') == 'vd']
 
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 if sections:
                     cols = ['section_id', 'travel_speed', 'travel_time', 'congestion_level', 'collected_at']
                     values = [tuple(r.get(c) for c in cols) for r in sections]
@@ -1773,7 +1766,7 @@ class SupabaseWriter:
 
         elif collector_name == 'flight_fr24':
             trails = [r for r in records if r.get('_type') == 'trail']
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 if trails:
                     cols = ['flight_id', 'callsign', 'aircraft_type', 'registration', 'origin', 'destination', 'status', 'trail', 'trail_points', 'geom', 'collected_at']
                     values = [tuple(r.get(c) for c in cols) for r in trails]
@@ -1811,7 +1804,7 @@ class SupabaseWriter:
             update_cols = [c for c in cols if c not in ('event_id', 'source')]
             update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
 
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 # 1. 撈 current 實質欄位，過濾「內容未變」的事件
                 #
                 # 注意：TDX LastUpdateTime 每 5 min 都會刷新（即使事件實質沒變），
@@ -1878,7 +1871,7 @@ class SupabaseWriter:
             pads = [r for r in records if r.get('_type') == 'pad']
             events = [r for r in records if r.get('_type') == 'event']
 
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 # launches — UPSERT（id 為 PK）
                 if launches:
                     cols = ['id', 'name', 'slug', 'net', 'window_start', 'window_end',
@@ -1931,7 +1924,7 @@ class SupabaseWriter:
             units = [r for r in records if r.get('_type') == 'unit']
             regions = [r for r in records if r.get('_type') == 'region']
 
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 # 1) 系統供需 — UNIQUE(observed_at)
                 if system:
                     cols = [
@@ -1995,9 +1988,8 @@ class SupabaseWriter:
                 f"+ regions {len(regions)} 筆寫入"
             )
 
-    def _write_satellite_tle(self, result: dict, timestamp: datetime):
-        """更新衛星 TLE 參數表（全量 UPSERT，供前�� SGP4 計算用）"""
-        self._ensure_conn()
+    def _write_satellite_tle(self, conn, result: dict, timestamp: datetime):
+        """更新衛星 TLE 參數表（全量 UPSERT，供前端 SGP4 計算用）"""
         # Space-Track 版：data_all 含全部衛星（活躍+失效）；舊格式 fallback 用 data
         data = result.get('data_all') or result.get('data', [])
         if not data:
@@ -2032,16 +2024,16 @@ class SupabaseWriter:
             ))
 
         if values:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 sql = f"INSERT INTO realtime.satellite_tle ({','.join(cols)}) VALUES %s ON CONFLICT (norad_id) DO UPDATE SET {update_set}"
                 execute_values(cur, sql, values, page_size=1000)
             decayed = sum(1 for v in values if v[12])
             logger.info(f"[satellite] ✓ TLE 表已更新 {len(values)} 筆（其中失效 {decayed} 筆）")
 
-            # 同步寫入 TLE 歷史表（用於變軌偵測）
-            self._write_satellite_tle_history(values, timestamp)
+            # 同步寫入 TLE 歷史表（用於變軌偵測）— 共用同一條 conn
+            self._write_satellite_tle_history(conn, values, timestamp)
 
-    def _write_satellite_tle_history(self, tle_values: list, timestamp: datetime):
+    def _write_satellite_tle_history(self, conn, tle_values: list, timestamp: datetime):
         """追加 TLE 歷史紀錄，同一 norad_id + tle_epoch 不重複寫入"""
         hist_cols = ['norad_id', 'name', 'constellation', 'orbit_type',
                      'tle_line1', 'tle_line2', 'tle_epoch',
@@ -2058,7 +2050,7 @@ class SupabaseWriter:
         ]
 
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 sql = (f"INSERT INTO realtime.satellite_tle_history ({','.join(hist_cols)}) "
                        f"VALUES %s ON CONFLICT (norad_id, tle_epoch) DO NOTHING")
                 execute_values(cur, sql, hist_values, page_size=1000)
@@ -2066,10 +2058,9 @@ class SupabaseWriter:
         except Exception as e:
             logger.warning(f"[satellite] TLE 歷史寫入失敗（表可能尚未建立）: {e}")
 
-    def _write_schedules(self, records: list[dict]):
+    def _write_schedules(self, conn, records: list[dict]):
         """寫入每日時刻表到 reference.daily_schedules"""
-        self._ensure_conn()
-        with self.conn.cursor() as cur:
+        with conn.cursor() as cur:
             for r in records:
                 cur.execute(
                     """INSERT INTO reference.daily_schedules (system, schedule_date, train_count, data)
@@ -2099,12 +2090,14 @@ class SupabaseWriter:
     # ============================================================
 
     def _report_heartbeat(self, collector_name: str, success: bool, records: int = 0, error: str = None):
+        """Best-effort 心跳回報。借不到連線或失敗都靜默 — 不能影響主寫入路徑。"""
         try:
-            self._ensure_conn()
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    "SELECT report_collector_heartbeat(%s, %s, %s, %s)",
-                    (collector_name, success, records, error)
-                )
+            # 短 timeout：心跳只是觀測，不該為了它等很久
+            with self._pool.borrow(timeout=1) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT report_collector_heartbeat(%s, %s, %s, %s)",
+                        (collector_name, success, records, error)
+                    )
         except Exception as e:
             logger.debug(f"心跳回報失敗: {e}")
