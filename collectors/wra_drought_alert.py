@@ -163,14 +163,14 @@ class WraDroughtAlertCollector(BaseCollector):
         if not self.supabase_writer:
             return None
         try:
-            self.supabase_writer._ensure_conn()  # noqa: SLF001
-            with self.supabase_writer.conn.cursor() as cur:
-                cur.execute(
-                    "SELECT source_hash FROM public.drought_alert_current "
-                    "ORDER BY fetched_at DESC LIMIT 1"
-                )
-                row = cur.fetchone()
-                return row[0] if row else None
+            with self.supabase_writer.with_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT source_hash FROM public.drought_alert_current "
+                        "ORDER BY fetched_at DESC LIMIT 1"
+                    )
+                    row = cur.fetchone()
+                    return row[0] if row else None
         except Exception as e:
             logger.warning(f"[{self.name}] 讀取既有 hash 失敗（將正常寫入）: {e}")
             return None

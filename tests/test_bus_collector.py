@@ -143,6 +143,8 @@ class TestBusCollectorCollect:
 
         monkeypatch.setattr(config, 'BUS_CITIES', cities)
         monkeypatch.setattr(config, 'BUS_FETCH_WORKERS', 5)
+        # 避免測試在台北凌晨 00:00–04:59 跑時觸發夜間暫停（NIGHT_KEEP_CITIES 機制）
+        monkeypatch.setattr('collectors.bus.NIGHT_PAUSE_HOURS', frozenset())
 
         collector = self._make_collector_with_fake_fetch(fake_results)
 
@@ -180,6 +182,8 @@ class TestBusCollectorCollect:
 
         monkeypatch.setattr(config, 'BUS_CITIES', cities)
         monkeypatch.setattr(config, 'BUS_FETCH_WORKERS', 3)
+        # 同上：避免測試在凌晨跑時觸發夜間暫停
+        monkeypatch.setattr('collectors.bus.NIGHT_PAUSE_HOURS', frozenset())
 
         collector = self._make_collector_with_fake_fetch(fake_results)
         result = collector.collect()
