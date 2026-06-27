@@ -249,6 +249,7 @@ _COLLECTOR_TOGGLES = (
     ('CDC_PUBLIC_HEALTH_WEEKLY',     False, 360),  # ⚠️ Taiwan IP required — Zeabur 必設 false（od.cdc.gov.tw 連線 timeout）；實際走 external/cdc_public_health_weekly_vm/
     ('YT_LIVE_VIDEO_RESOLVER',       False, 5),    # YouTube 14 家新聞台當前直播 videoId 解析（cron 5min，video_id 約 1-7 天換一次）
     ('CORRECTIONAL_DAILY_SNAPSHOT',  False, 1440), # 矯正機關每日收容動態（prisonmuseum.moj.gov.tw/jqw_pub/today.xml，全國總計 1 row/day，無金鑰）
+    ('IMMIGRATION_APIS_AIRPORT',     False, 60),   # 移民署機場入出境 6 端點 demographic snapshot（無時間戳，每細格 paxCnt，無金鑰）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:

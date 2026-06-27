@@ -1442,6 +1442,28 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_immigration_apis_airport(self, result: dict, ts: datetime) -> list[dict]:
+        """移民署機場入出境 demographic snapshot（每細格一 row）。
+        collector 已產出 isoformat 字串；append-only，無 upsert key。
+        """
+        records = []
+        for r in result.get('data', []):
+            if r.get('pax_count') is None or r.get('airport') is None:
+                continue
+            records.append({
+                'airport':       r.get('airport'),
+                'terminal':      r.get('terminal'),
+                'in_out':        r.get('in_out'),
+                'in_out_code':   r.get('in_out_code'),
+                'gender':        r.get('gender'),
+                'nationality':   r.get('nationality'),
+                'age_band':      r.get('age_band'),
+                'pax_count':     r.get('pax_count'),
+                'endpoint_code': r.get('endpoint_code'),
+                'collected_at':  r.get('collected_at') or ts.isoformat(),
+            })
+        return records
+
     def _transform_correctional_daily_snapshot(self, result: dict, ts: datetime) -> list[dict]:
         """矯正機關每日收容動態（全國總計）。
         collector 已產出 isoformat 字串；observed_date 必填（PRIMARY KEY）。
@@ -1659,6 +1681,7 @@ class SupabaseWriter:
         'rain_gauge_realtime': _transform_rain_gauge_realtime,
         'er_hospital_realtime': _transform_er_hospital_realtime,
         'correctional_daily_snapshot': _transform_correctional_daily_snapshot,
+        'immigration_apis_airport': _transform_immigration_apis_airport,
         'twse_market_index': _transform_twse_market_index,
         'pla_activity_daily': _transform_pla_activity_daily,
         'cdc_public_health_weekly': _transform_cdc_public_health_weekly,

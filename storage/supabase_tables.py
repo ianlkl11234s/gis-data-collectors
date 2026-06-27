@@ -239,6 +239,15 @@ TABLE_MAP = {
         'upsert_key': 'station_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'immigration_apis_airport': {
+        'history': 'realtime.border_airport_snapshot',
+        'columns': [
+            'airport', 'terminal', 'in_out', 'in_out_code',
+            'gender', 'nationality', 'age_band', 'pax_count',
+            'endpoint_code', 'collected_at',
+        ],
+        # append-only：每次 snapshot 全寫進去（無 upsert key）
+    },
     'correctional_daily_snapshot': {
         'history': 'realtime.prison_population_daily',
         'columns': [
