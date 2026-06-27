@@ -1442,6 +1442,16 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_npa_traffic_accident_a1(self, result: dict, ts: datetime) -> list[dict]:
+        """警政署即時 A1 交通事故。collector 已產出 isoformat 字串 + dedup_hash + geom WKT。
+        dedup_hash 必填（UNIQUE key），缺值跳過。"""
+        records = []
+        for r in result.get('data', []):
+            if not r.get('dedup_hash') or not r.get('occurred_at'):
+                continue
+            records.append(dict(r))
+        return records
+
     def _transform_immigration_apis_airport(self, result: dict, ts: datetime) -> list[dict]:
         """移民署機場入出境 demographic snapshot（每細格一 row）。
         collector 已產出 isoformat 字串；append-only，無 upsert key。
@@ -1682,6 +1692,7 @@ class SupabaseWriter:
         'er_hospital_realtime': _transform_er_hospital_realtime,
         'correctional_daily_snapshot': _transform_correctional_daily_snapshot,
         'immigration_apis_airport': _transform_immigration_apis_airport,
+        'npa_traffic_accident_a1': _transform_npa_traffic_accident_a1,
         'twse_market_index': _transform_twse_market_index,
         'pla_activity_daily': _transform_pla_activity_daily,
         'cdc_public_health_weekly': _transform_cdc_public_health_weekly,

@@ -239,6 +239,20 @@ TABLE_MAP = {
         'upsert_key': 'station_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'npa_traffic_accident_a1': {
+        'history': 'realtime.traffic_accidents_a1',
+        'columns': [
+            'accident_class', 'occurred_at', 'agency', 'location',
+            'lat', 'lon', 'weather', 'light', 'road_type', 'speed_limit',
+            'accident_type_major', 'accident_type_sub',
+            'cause_main_major', 'cause_main_sub',
+            'death_injury', 'party_order', 'party_type_major', 'party_type_sub',
+            'party_gender', 'party_age', 'is_hit_and_run',
+            'dedup_hash', 'geom', 'collected_at',
+        ],
+        'upsert_key': 'dedup_hash',
+        'upsert_strategy': 'do_nothing',
+    },
     'immigration_apis_airport': {
         'history': 'realtime.border_airport_snapshot',
         'columns': [

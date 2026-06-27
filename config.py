@@ -250,6 +250,7 @@ _COLLECTOR_TOGGLES = (
     ('YT_LIVE_VIDEO_RESOLVER',       False, 5),    # YouTube 14 家新聞台當前直播 videoId 解析（cron 5min，video_id 約 1-7 天換一次）
     ('CORRECTIONAL_DAILY_SNAPSHOT',  False, 1440), # 矯正機關每日收容動態（prisonmuseum.moj.gov.tw/jqw_pub/today.xml，全國總計 1 row/day，無金鑰）
     ('IMMIGRATION_APIS_AIRPORT',     False, 60),   # 移民署機場入出境 6 端點 demographic snapshot（無時間戳，每細格 paxCnt，無金鑰）
+    ('NPA_TRAFFIC_ACCIDENT_A1',      False, 720),  # 警政署即時 A1 交通事故（24h 死亡，累積年度，每日 1-2 次抓 dedup by hash）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:

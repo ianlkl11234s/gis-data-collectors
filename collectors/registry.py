@@ -67,6 +67,7 @@ from .wra_drought_alert import WraDroughtAlertCollector
 from .youbike import YouBikeCollector
 from .correctional_daily_snapshot import CorrectionalDailySnapshotCollector
 from .immigration_apis_airport import ImmigrationApisAirportCollector
+from .npa_traffic_accident_a1 import NpaTrafficAccidentA1Collector
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(YtLiveVideoResolverCollector, "YouTube 新聞直播 videoId 解析器", "YT_LIVE_VIDEO_RESOLVER"),
     CollectorEntry(CorrectionalDailySnapshotCollector, "矯正機關每日收容動態收集器", "CORRECTIONAL_DAILY_SNAPSHOT"),
     CollectorEntry(ImmigrationApisAirportCollector, "移民署機場入出境 APIS 收集器", "IMMIGRATION_APIS_AIRPORT"),
+    CollectorEntry(NpaTrafficAccidentA1Collector, "警政署即時 A1 交通事故收集器", "NPA_TRAFFIC_ACCIDENT_A1"),
 )
 
 
