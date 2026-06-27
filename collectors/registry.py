@@ -65,6 +65,7 @@ from .water_reservoir_daily_ops import WaterReservoirDailyOpsCollector
 from .weather import WeatherCollector
 from .wra_drought_alert import WraDroughtAlertCollector
 from .youbike import YouBikeCollector
+from .correctional_daily_snapshot import CorrectionalDailySnapshotCollector
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(PlaActivityDailyCollector, "中共解放軍臺海周邊動態每日收集器", "PLA_ACTIVITY_DAILY"),
     CollectorEntry(CdcPublicHealthWeeklyCollector, "CDC 公衛週報收集器", "CDC_PUBLIC_HEALTH_WEEKLY"),
     CollectorEntry(YtLiveVideoResolverCollector, "YouTube 新聞直播 videoId 解析器", "YT_LIVE_VIDEO_RESOLVER"),
+    CollectorEntry(CorrectionalDailySnapshotCollector, "矯正機關每日收容動態收集器", "CORRECTIONAL_DAILY_SNAPSHOT"),
 )
 
 

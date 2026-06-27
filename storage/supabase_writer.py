@@ -1442,6 +1442,27 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_correctional_daily_snapshot(self, result: dict, ts: datetime) -> list[dict]:
+        """矯正機關每日收容動態（全國總計）。
+        collector 已產出 isoformat 字串；observed_date 必填（PRIMARY KEY）。
+        """
+        records = []
+        for r in result.get('data', []):
+            if not r.get('observed_date'):
+                continue
+            records.append({
+                'observed_date':     r.get('observed_date'),
+                'total_inmates':     r.get('total_inmates'),
+                'male_inmates':      r.get('male_inmates'),
+                'female_inmates':    r.get('female_inmates'),
+                'approved_capacity': r.get('approved_capacity'),
+                'over_capacity_pct': r.get('over_capacity_pct'),
+                'new_in_count':      r.get('new_in_count'),
+                'new_out_count':     r.get('new_out_count'),
+                'collected_at':      r.get('collected_at') or ts.isoformat(),
+            })
+        return records
+
     def _transform_news_events(self, result: dict, ts: datetime) -> list[dict]:
         """新聞事件：collector 已產出與 TABLE_MAP columns 同名的 dict（JSON-safe），
         published_ts 為 isoformat 字串、title_simhash 為 signed 64-bit int。
@@ -1637,6 +1658,7 @@ class SupabaseWriter:
         'river_water_level': _transform_river_water_level,
         'rain_gauge_realtime': _transform_rain_gauge_realtime,
         'er_hospital_realtime': _transform_er_hospital_realtime,
+        'correctional_daily_snapshot': _transform_correctional_daily_snapshot,
         'twse_market_index': _transform_twse_market_index,
         'pla_activity_daily': _transform_pla_activity_daily,
         'cdc_public_health_weekly': _transform_cdc_public_health_weekly,

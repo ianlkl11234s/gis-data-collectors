@@ -239,6 +239,16 @@ TABLE_MAP = {
         'upsert_key': 'station_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'correctional_daily_snapshot': {
+        'history': 'realtime.prison_population_daily',
+        'columns': [
+            'observed_date', 'total_inmates', 'male_inmates', 'female_inmates',
+            'approved_capacity', 'over_capacity_pct', 'new_in_count', 'new_out_count',
+            'collected_at',
+        ],
+        'upsert_key': 'observed_date',
+        'upsert_strategy': 'update',  # 同日多次抓取覆寫，最新值勝
+    },
     'er_hospital_realtime': {
         'history': 'realtime.er_hospital_status',
         'current': 'realtime.er_hospital_current',
