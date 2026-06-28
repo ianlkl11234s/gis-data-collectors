@@ -1516,6 +1516,87 @@ class SupabaseWriter:
             records.append({'_type': 'region', **r})
         return records
 
+    def _transform_global_climate_typhoon_positions(self, result: dict, ts: datetime) -> list[dict]:
+        """颱風 time-point decomposed（JMA + JTWC 共用）：補 geom WKT。"""
+        records: list[dict] = []
+        for r in result.get('data', []):
+            lon = r.get('lon') or r.get('center_lon')
+            lat = r.get('lat') or r.get('center_lat')
+            if lon is None or lat is None:
+                continue
+            records.append({
+                'storm_id':            r.get('storm_id'),
+                'source':              r.get('source'),
+                'valid_at':            r.get('valid_at'),
+                'point_type':          r.get('point_type'),
+                'advisory_number':     r.get('advisory_number'),
+                'advisory_issued_at':  r.get('advisory_issued_at'),
+                'name_local':          r.get('name_local'),
+                'name_en':             r.get('name_en'),
+                'center_lat':          r.get('center_lat'),
+                'center_lon':          r.get('center_lon'),
+                'center_pressure_hpa': r.get('center_pressure_hpa'),
+                'max_wind_kt':         r.get('max_wind_kt'),
+                'gale_radius_km':      r.get('gale_radius_km'),
+                'storm_radius_km':     r.get('storm_radius_km'),
+                'geom':                f'SRID=4326;POINT({lon} {lat})',
+                'raw_json':            r.get('raw_json'),
+                'collected_at':        ts.isoformat(),
+            })
+        return records
+
+    def _transform_global_climate_grids(self, result: dict, ts: datetime) -> list[dict]:
+        """CMEMS/CAMS/GFS digest 共用：bbox 4 數字 → Polygon WKT。"""
+        records: list[dict] = []
+        for r in result.get('data', []):
+            min_lon = r.get('bbox_min_lon')
+            max_lon = r.get('bbox_max_lon')
+            min_lat = r.get('bbox_min_lat')
+            max_lat = r.get('bbox_max_lat')
+            if None not in (min_lon, max_lon, min_lat, max_lat):
+                bbox_wkt = (
+                    f'SRID=4326;POLYGON(('
+                    f'{min_lon} {min_lat},{max_lon} {min_lat},'
+                    f'{max_lon} {max_lat},{min_lon} {max_lat},'
+                    f'{min_lon} {min_lat}))'
+                )
+            else:
+                bbox_wkt = None
+            records.append({
+                'dataset_id':     r.get('dataset_id'),
+                'observed_at':    r.get('observed_at'),
+                'init_at':        r.get('init_at'),
+                'leadtime_hr':    r.get('leadtime_hr'),
+                'bbox':           bbox_wkt,
+                'digest':         r.get('digest'),
+                's3_uri':         r.get('s3_uri'),
+                'pmtiles_uri':    r.get('pmtiles_uri'),
+                'raw_size_bytes': r.get('raw_size_bytes'),
+                'collected_at':   ts.isoformat(),
+            })
+        return records
+
+    def _transform_global_climate_usgs_earthquake(self, result: dict, ts: datetime) -> list[dict]:
+        """USGS 全球地震：collector 已產出 JSON-safe dict；補 geom WKT。"""
+        records: list[dict] = []
+        for r in result.get('data', []):
+            lon = r.get('lon')
+            lat = r.get('lat')
+            if lon is None or lat is None:
+                continue
+            records.append({
+                'event_id':     r.get('event_id'),
+                'mag':          r.get('mag'),
+                'place':        r.get('place'),
+                'observed_at':  r.get('observed_at'),
+                'depth_km':     r.get('depth_km'),
+                'raw_json':     r.get('raw_json'),
+                'dedup_hash':   r.get('dedup_hash'),
+                'geom':         f'SRID=4326;POINT({lon} {lat})',
+                'collected_at': ts.isoformat(),
+            })
+        return records
+
     def _transform_lightning_events(self, result: dict, ts: datetime) -> list[dict]:
         """落雷事件：collector 已產出 JSON-safe dict；補 geom WKT。"""
         records: list[dict] = []
@@ -1704,6 +1785,12 @@ class SupabaseWriter:
         'wra_drought_alert': _transform_wra_drought_alert,
         'power_taipower': _transform_power_taipower,
         'lightning_events': _transform_lightning_events,
+        'global_climate_usgs_earthquake': _transform_global_climate_usgs_earthquake,
+        'global_climate_jma_typhoon': _transform_global_climate_typhoon_positions,
+        'global_climate_jtwc': _transform_global_climate_typhoon_positions,
+        'global_climate_cmems': _transform_global_climate_grids,
+        'global_climate_cams': _transform_global_climate_grids,
+        'global_climate_noaa_gfs': _transform_global_climate_grids,
         'nuclear_radiation': _transform_nuclear_radiation,
         'wic_sewer': _transform_wic_sewer,
         'wic_evacuate': _transform_wic_evacuate,

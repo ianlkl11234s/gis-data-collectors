@@ -61,6 +61,13 @@ MOENV_API_KEY = os.getenv('MOENV_API_KEY')
 IOW_CLIENT_ID     = os.getenv('IOW_CLIENT_ID')
 IOW_CLIENT_SECRET = os.getenv('IOW_CLIENT_SECRET')
 
+# === 全球氣候 plan-misty-fog（2026-06-28）===
+# CMEMS (Copernicus Marine) — 帳號 username + password (非 email)
+COPERNICUSMARINE_SERVICE_USERNAME = os.getenv('COPERNICUSMARINE_SERVICE_USERNAME')
+COPERNICUSMARINE_SERVICE_PASSWORD = os.getenv('COPERNICUSMARINE_SERVICE_PASSWORD')
+# CAMS (Copernicus Atmosphere Monitoring) — ADS API key
+CAMS_API_KEY = os.getenv('CAMS_API_KEY')
+
 # ============================================================
 # 儲存設定
 # ============================================================
@@ -251,6 +258,13 @@ _COLLECTOR_TOGGLES = (
     ('CORRECTIONAL_DAILY_SNAPSHOT',  False, 1440), # 矯正機關每日收容動態（prisonmuseum.moj.gov.tw/jqw_pub/today.xml，全國總計 1 row/day，無金鑰）
     ('IMMIGRATION_APIS_AIRPORT',     False, 60),   # 移民署機場入出境 6 端點 demographic snapshot（無時間戳，每細格 paxCnt，無金鑰）
     ('NPA_TRAFFIC_ACCIDENT_A1',      False, 720),  # 警政署即時 A1 交通事故（24h 死亡，累積年度，每日 1-2 次抓 dedup by hash）
+    # === 全球氣候（plan-misty-fog 2026-06-28）===
+    ('GLOBAL_CLIMATE_USGS_EARTHQUAKE', False, 60),  # USGS hourly feed M≥任意（無認證、GeoJSON），全球地震寫 realtime.earthquakes_global；台灣周邊 1y M≥4.0 約 172 筆
+    ('GLOBAL_CLIMATE_JMA_TYPHOON',     False, 180), # JMA RSMC Tokyo 颱風（無認證、JSON）；targetTc.json 空就 idle；展開為 typhoon_positions row source='jma'
+    ('GLOBAL_CLIMATE_JTWC',            False, 360), # JTWC 颱風（無認證、RSS+ATCF 文字）；同 typhoon_positions source='jtwc'
+    ('GLOBAL_CLIMATE_CMEMS',           False, 1440), # CMEMS 海洋模式（CMEMS account 必設 USERNAME/_PASSWORD）；binary 走 S3 + Supabase digest
+    ('GLOBAL_CLIMATE_CAMS',            False, 1440), # CAMS 大氣（CAMS_API_KEY 必設 + dataset licence accept）；排隊 5-30 min
+    ('GLOBAL_CLIMATE_NOAA_GFS',        False, 1440), # NOAA GFS 全球風場（無認證 AWS Open Data）；HTTP Range pull
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
