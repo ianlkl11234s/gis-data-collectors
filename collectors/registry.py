@@ -68,6 +68,12 @@ from .youbike import YouBikeCollector
 from .correctional_daily_snapshot import CorrectionalDailySnapshotCollector
 from .immigration_apis_airport import ImmigrationApisAirportCollector
 from .npa_traffic_accident_a1 import NpaTrafficAccidentA1Collector
+from .global_climate.usgs_earthquake import UsgsEarthquakeCollector
+from .global_climate.jma_typhoon import JmaTyphoonCollector
+from .global_climate.jtwc import JtwcCollector
+from .global_climate.cmems import CmemsCollector
+from .global_climate.cams import CamsCollector
+from .global_climate.noaa_gfs import NoaaGfsCollector
 
 
 @dataclass(frozen=True)
@@ -139,6 +145,14 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(CorrectionalDailySnapshotCollector, "矯正機關每日收容動態收集器", "CORRECTIONAL_DAILY_SNAPSHOT"),
     CollectorEntry(ImmigrationApisAirportCollector, "移民署機場入出境 APIS 收集器", "IMMIGRATION_APIS_AIRPORT"),
     CollectorEntry(NpaTrafficAccidentA1Collector, "警政署即時 A1 交通事故收集器", "NPA_TRAFFIC_ACCIDENT_A1"),
+    # === 全球氣候（plan-misty-fog 2026-06-28）===
+    CollectorEntry(UsgsEarthquakeCollector, "USGS 全球地震 hourly 收集器", "GLOBAL_CLIMATE_USGS_EARTHQUAKE"),
+    CollectorEntry(JmaTyphoonCollector, "JMA RSMC Tokyo 颱風收集器", "GLOBAL_CLIMATE_JMA_TYPHOON"),
+    CollectorEntry(JtwcCollector, "JTWC 颱風 ATCF 收集器", "GLOBAL_CLIMATE_JTWC"),
+    CollectorEntry(CmemsCollector, "CMEMS 海洋模式收集器", "GLOBAL_CLIMATE_CMEMS",
+                   ("COPERNICUSMARINE_SERVICE_USERNAME", "COPERNICUSMARINE_SERVICE_PASSWORD")),
+    CollectorEntry(CamsCollector, "CAMS 大氣化學收集器", "GLOBAL_CLIMATE_CAMS", ("CAMS_API_KEY",)),
+    CollectorEntry(NoaaGfsCollector, "NOAA GFS 風場收集器", "GLOBAL_CLIMATE_NOAA_GFS"),
 )
 
 

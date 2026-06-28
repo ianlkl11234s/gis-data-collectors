@@ -423,6 +423,72 @@ TABLE_MAP = {
         # 表 schema 見 gis-platform/migrations/145_power_taipower_realtime.sql
         'is_multi_table': True,
     },
+    'global_climate_usgs_earthquake': {
+        # USGS 全球地震 hourly feed — gis-platform migration 261
+        # UNIQUE(event_id) + UNIQUE(dedup_hash) 雙保險，ON CONFLICT DO NOTHING
+        'history': 'realtime.earthquakes_global',
+        'columns': [
+            'event_id', 'mag', 'place', 'observed_at', 'depth_km',
+            'raw_json', 'dedup_hash', 'geom', 'collected_at',
+        ],
+        'upsert_key': 'event_id',
+        'upsert_strategy': 'do_nothing',
+    },
+    'global_climate_jma_typhoon': {
+        # JMA RSMC Tokyo 颱風 time-point decomposed — gis-platform migration 261
+        # UNIQUE(storm_id, source, valid_at, point_type, advisory_number) DO NOTHING
+        'history': 'realtime.typhoon_positions',
+        'columns': [
+            'storm_id', 'source', 'valid_at', 'point_type', 'advisory_number',
+            'advisory_issued_at', 'name_local', 'name_en',
+            'center_lat', 'center_lon', 'center_pressure_hpa', 'max_wind_kt',
+            'gale_radius_km', 'storm_radius_km', 'geom', 'raw_json', 'collected_at',
+        ],
+        'upsert_key': 'storm_id,source,valid_at,point_type,advisory_number',
+        'upsert_strategy': 'do_nothing',
+    },
+    'global_climate_jtwc': {
+        # JTWC ATCF 颱風 time-point decomposed — gis-platform migration 261
+        # 跟 jma 共表，靠 source='jtwc' 區分
+        'history': 'realtime.typhoon_positions',
+        'columns': [
+            'storm_id', 'source', 'valid_at', 'point_type', 'advisory_number',
+            'advisory_issued_at', 'name_local', 'name_en',
+            'center_lat', 'center_lon', 'center_pressure_hpa', 'max_wind_kt',
+            'gale_radius_km', 'storm_radius_km', 'geom', 'raw_json', 'collected_at',
+        ],
+        'upsert_key': 'storm_id,source,valid_at,point_type,advisory_number',
+        'upsert_strategy': 'do_nothing',
+    },
+    'global_climate_cmems': {
+        # CMEMS NetCDF digest — gis-platform migration 261
+        # 每 time slice 一筆 row
+        'history': 'realtime.global_climate_grids',
+        'columns': [
+            'dataset_id', 'observed_at', 'init_at', 'leadtime_hr',
+            'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
+        ],
+        'upsert_key': 'dataset_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+    },
+    'global_climate_cams': {
+        'history': 'realtime.global_climate_grids',
+        'columns': [
+            'dataset_id', 'observed_at', 'init_at', 'leadtime_hr',
+            'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
+        ],
+        'upsert_key': 'dataset_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+    },
+    'global_climate_noaa_gfs': {
+        'history': 'realtime.global_climate_grids',
+        'columns': [
+            'dataset_id', 'observed_at', 'init_at', 'leadtime_hr',
+            'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
+        ],
+        'upsert_key': 'dataset_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+    },
     'lightning_events': {
         # 台電落雷 nid 61139（snapshot 1 分鐘覆寫，collector 5 分 cron 去重累積）
         # 表 schema 見 gis-platform/migrations/183_realtime_lightning_events.sql
