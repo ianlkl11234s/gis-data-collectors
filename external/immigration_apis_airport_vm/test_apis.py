@@ -21,7 +21,12 @@ ctx.verify_mode = ssl.CERT_NONE
 
 req = urllib.request.Request(
     URL,
-    headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+    headers={
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://opendata.immigration.gov.tw/",
+        "Origin": "https://opendata.immigration.gov.tw",
+    },
 )
 t = time.time()
 r = urllib.request.urlopen(req, timeout=20, context=ctx)

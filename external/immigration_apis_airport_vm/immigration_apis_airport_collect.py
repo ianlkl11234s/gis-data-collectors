@@ -62,7 +62,9 @@ ENDPOINTS = [
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-    "Accept": "application/json",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://opendata.immigration.gov.tw/",
+    "Origin": "https://opendata.immigration.gov.tw",
 }
 
 
