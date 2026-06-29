@@ -161,6 +161,23 @@ def write_to_supabase(records: list[dict]) -> int:
 
 
 # ────────────────────────────────────────────────────────────────────
+# Heartbeat — best-effort，跟主 repo writer 同表 metadata.collector_status
+# ────────────────────────────────────────────────────────────────────
+def report_heartbeat(success: bool, records: int = 0, error: str | None = None) -> None:
+    """寫 metadata.collector_status — best-effort，失敗不影響主流程"""
+    try:
+        with psycopg2.connect(DB_URL, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT report_collector_heartbeat(%s, %s, %s, %s)",
+                    ("immigration_apis_airport", success, records, error),
+                )
+            conn.commit()
+    except Exception as exc:
+        logging.warning(f"heartbeat 失敗（不影響主流程）: {exc}")
+
+
+# ────────────────────────────────────────────────────────────────────
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -185,9 +202,14 @@ def main() -> int:
 
         n = write_to_supabase(records)
         log.info(f"Supabase 寫入: {n} 筆")
+
+        # heartbeat：成功（部分 endpoint 404 算成功，只要主流程跑完且寫入 > 0）
+        err = f"endpoints failed: {','.join(failed)}" if failed else None
+        report_heartbeat(success=True, records=n, error=err)
         return 0
     except Exception as exc:
         log.error(f"FAILED: {exc}", exc_info=True)
+        report_heartbeat(success=False, records=0, error=str(exc)[:500])
         return 1
 
 
