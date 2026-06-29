@@ -62,8 +62,10 @@ class ImmigrationApisAirportCollector(BaseCollector):
         super().__init__()
         self._session = requests.Session()
         self._session.headers.update({
-            "User-Agent": "GIS-DataCollectors/1.0 (immigration-apis-airport)",
-            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://opendata.immigration.gov.tw/",
+            "Origin": "https://opendata.immigration.gov.tw",
         })
         self._session.verify = False
 
