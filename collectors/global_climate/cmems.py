@@ -22,7 +22,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -88,6 +88,10 @@ class CmemsCollector(BaseCollector):
     def _subset(self, ds_cfg: dict, out_dir: Path) -> Optional[Path]:
         """copernicusmarine subset → NetCDF；回傳檔案路徑。"""
         out_file = out_dir / f"{ds_cfg['id']}.nc"
+        # ⚠ 時間範圍必帶：不帶會抓整段 anfc 時間軸（多年 analysis + 10 天 forecast），
+        # 60°×45° bbox 下單檔爆到 18.7GB（2026-07-02 事故）。只取今日 00Z 起 +48h。
+        t0 = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        t1 = t0 + timedelta(hours=48)
         cmd = [
             "copernicusmarine", "subset",
             "--dataset-id", ds_cfg["dataset_id"],
@@ -95,6 +99,8 @@ class CmemsCollector(BaseCollector):
             "--maximum-longitude", str(BBOX_TAIWAN["max_lon"]),
             "--minimum-latitude", str(BBOX_TAIWAN["min_lat"]),
             "--maximum-latitude", str(BBOX_TAIWAN["max_lat"]),
+            "--start-datetime", t0.strftime("%Y-%m-%dT%H:%M:%S"),
+            "--end-datetime", t1.strftime("%Y-%m-%dT%H:%M:%S"),
             "-o", str(out_dir),
             "--output-filename", out_file.name,
             "--force-download",
