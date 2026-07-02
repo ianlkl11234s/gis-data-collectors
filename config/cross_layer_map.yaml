@@ -435,14 +435,14 @@ foursquare_poi:
 # ─────────────────────────────────────────────────────────
 
 correctional_daily_snapshot:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 1440
   supabase_tables: [realtime.prison_population_daily]
   s3_prefixes:
     - {prefix: correctional_daily_snapshot/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: production 最後寫入 2026-06-27（與 npa_traffic_accident_a1 同時停寫，可疑），待用戶確認是否刻意停用（2026-07-02 實測）
+  notes: 破案：6/27 那筆是開發期一次性測試寫入、從未排程；2026-07-03 用戶設 Zeabur env 正式啟用（日更 1 row，啟用當晚已確認寫入）
 
 global_climate_bake:
   enabled: false
@@ -535,14 +535,14 @@ lightning_events:
   notes: production 實測 2026-07-02 有寫入（最新 row 約 15h 前）；事件驅動（無落雷即無資料）→ interval 比照 earthquake_events 放寬 1440，久旱仍可能誤報屬預期；collector 實際 1min cron
 
 npa_traffic_accident_a1:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 720
   supabase_tables: [realtime.traffic_accidents_a1]
   s3_prefixes:
     - {prefix: npa_traffic_accident_a1/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: production 最後寫入 2026-06-27（與 correctional_daily_snapshot 同時停寫，可疑），待用戶確認是否刻意停用（2026-07-02 實測）
+  notes: 破案：6/27 那筆是開發期一次性測試寫入、從未排程；2026-07-03 用戶設 Zeabur env 正式啟用（feed 年度累積 dedup by hash，無新事故日 MAX 不動屬預期）
 
 nuclear_radiation:
   enabled: true
