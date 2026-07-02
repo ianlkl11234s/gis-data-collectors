@@ -298,3 +298,37 @@ def test_consecutive_error_alert_threshold(writer_with_mock_pool, tmp_path):
         # 第 4 次：已經 alert 過，不再重複
         writer.write('youbike', result, ts)
         assert tg.call_count == 1
+
+
+def test_do_nothing_upsert_is_targetless(writer_with_mock_pool, monkeypatch):
+    """do_nothing 策略必須生成無目標 ON CONFLICT DO NOTHING。
+
+    lightning_events 有雙 unique index（uk_eventid + uk_dedup），
+    指定 (event_id) 只護一個 — feed 用新 event_id 重發同筆落雷時
+    dedup_hash 撞第二個 index 會炸整批（2026-07-03 事故回歸測試）。
+    """
+    writer, mock_pool = writer_with_mock_pool
+    mock_pool.statement_timeout_ms = 30_000  # _txn 的 SET LOCAL 會讀（spec mock 沒有此屬性）
+    captured = []
+    monkeypatch.setattr(
+        'storage.supabase_writer.execute_values',
+        lambda cur, sql, values, page_size=100: captured.append(sql),
+    )
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+    conn.cursor.return_value.__exit__.return_value = None
+    records = [{
+        'event_id': 'E1', 'strike_time': '2026-07-03T00:00:00+08:00',
+        'lon': 121.0, 'lat': 23.5, 'intensity_ka': -12.3,
+        'strike_type': 'CG', 'dedup_hash': 'h1',
+        'geom': 'SRID=4326;POINT(121.0 23.5)',
+        'observed_at': '2026-07-03T00:00:00+08:00',
+        'collected_at': '2026-07-03T00:01:00+08:00',
+    }]
+    writer._write_to_db(conn, 'lightning_events', records, datetime(2026, 7, 3))
+
+    history_sqls = [s for s in captured if 'lightning_events' in s]
+    assert history_sqls, '應產生寫入 lightning_events 的 SQL'
+    assert 'ON CONFLICT DO NOTHING' in history_sqls[0]
+    assert 'ON CONFLICT (' not in history_sqls[0]
