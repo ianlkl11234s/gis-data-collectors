@@ -14,6 +14,7 @@ fall-back 到 buffer，collector 繼續收。
 import json
 import logging
 import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -92,6 +93,41 @@ class SupabaseWriter:
             PoolBreakerOpen: 斷路器開啟中
         """
         return self._pool.borrow(timeout=timeout)
+
+    @contextmanager
+    def _txn(self, conn):
+        """開一個顯式 transaction，第一件事就是 SET LOCAL statement_timeout，
+        再 yield cursor 給呼叫端做寫入，成功 commit / 失敗 rollback。
+
+        為什麼不靠連線 startup options / session-level SET
+        （AR-06 實測 2026-07-02，連的是 Supavisor transaction mode pooler，port 6543）：
+        - startup `options=-c statement_timeout` 會被 pooler 丟棄 → SHOW = 0、
+          pg_sleep(35) 完整跑完不被砍（保護形同虛設）。
+        - session-level SET 只在 backend 沒被換掉時有效；transaction mode 下每個
+          transaction 可能落到不同 backend，SET 會遺失 → 不可靠。
+        - 唯一可靠：SET LOCAL（set_config is_local=true）與工作語句在【同一個
+          transaction】，pooler 保證同一 backend 直到 commit → timeout 一定生效。
+
+        每個寫入單元各開一個 _txn（對齊原本每個 `with conn.cursor()` 區塊的粒度），
+        因為 SET LOCAL 在 commit 後即失效，必須逐 transaction 重下。
+        """
+        conn.autocommit = False
+        try:
+            with conn.cursor() as cur:
+                # set_config(name, value, is_local=true) 等同 SET LOCAL；
+                # statement_timeout 吃裸整數 = 毫秒。
+                cur.execute(
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    (str(self._pool.statement_timeout_ms),),
+                )
+                yield cur
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            # 還原給 pool / 其它 best-effort 讀取用（borrow 也會再設一次）
+            conn.autocommit = True
 
     # ============================================================
     # 主要寫入介面
@@ -1172,7 +1208,7 @@ class SupabaseWriter:
             f"ON CONFLICT (iow_station_id, station_type) DO UPDATE SET {update_set}"
         )
         with self._pool.borrow() as conn:
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 execute_values(cur, sql, values, page_size=500)
 
     def _transform_precipitation_raster(self, result: dict, ts: datetime) -> list[dict]:
@@ -1244,7 +1280,7 @@ class SupabaseWriter:
             f"ON CONFLICT (iow_station_id) DO UPDATE SET {update_set}"
         )
         with self._pool.borrow() as conn:
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 execute_values(cur, sql, values, page_size=500)
 
     # ------------------------------------------------------------
@@ -1275,7 +1311,7 @@ class SupabaseWriter:
             "updated_at = now()"
         )
         with self._pool.borrow() as conn:
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 execute_values(cur, sql, values, page_size=500)
 
     def _upsert_taipei_evacuate_stations(self, rows: list[dict]) -> None:
@@ -1292,7 +1328,7 @@ class SupabaseWriter:
             "updated_at = now()"
         )
         with self._pool.borrow() as conn:
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 execute_values(cur, sql, values, page_size=500)
 
     def _upsert_taipei_pumb_stations(self, rows: list[dict]) -> None:
@@ -1312,7 +1348,7 @@ class SupabaseWriter:
             "updated_at = now()"
         )
         with self._pool.borrow() as conn:
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 execute_values(cur, sql, values, page_size=500)
 
     def _upsert_water_reservoirs(self, rows: list[dict]) -> None:
@@ -1348,7 +1384,7 @@ class SupabaseWriter:
               AND (w.lat IS DISTINCT FROM g.lat OR w.lng IS DISTINCT FROM g.lng)
         """
         with self._pool.borrow() as conn:
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 execute_values(cur, sql, values, page_size=100)
                 cur.execute(sync_lat_lng_sql)
 
@@ -1820,7 +1856,7 @@ class SupabaseWriter:
 
         columns = table_config['columns']
 
-        with conn.cursor() as cur:
+        with self._txn(conn) as cur:
             # 1. INSERT INTO 分區表（歷史）
             values = []
             for r in records:
@@ -1891,7 +1927,7 @@ class SupabaseWriter:
             sections = [r for r in records if r.get('_type') == 'section']
             vds = [r for r in records if r.get('_type') == 'vd']
 
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 if sections:
                     cols = ['section_id', 'travel_speed', 'travel_time', 'congestion_level', 'collected_at']
                     values = [tuple(r.get(c) for c in cols) for r in sections]
@@ -1909,7 +1945,7 @@ class SupabaseWriter:
 
         elif collector_name == 'flight_fr24':
             trails = [r for r in records if r.get('_type') == 'trail']
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 if trails:
                     cols = ['flight_id', 'callsign', 'aircraft_type', 'registration', 'origin', 'destination', 'status', 'trail', 'trail_points', 'geom', 'collected_at']
                     values = [tuple(r.get(c) for c in cols) for r in trails]
@@ -1947,7 +1983,7 @@ class SupabaseWriter:
             update_cols = [c for c in cols if c not in ('event_id', 'source')]
             update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
 
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 # 1. 撈 current 實質欄位，過濾「內容未變」的事件
                 #
                 # 注意：TDX LastUpdateTime 每 5 min 都會刷新（即使事件實質沒變），
@@ -2014,7 +2050,7 @@ class SupabaseWriter:
             pads = [r for r in records if r.get('_type') == 'pad']
             events = [r for r in records if r.get('_type') == 'event']
 
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 # launches — UPSERT（id 為 PK）
                 if launches:
                     cols = ['id', 'name', 'slug', 'net', 'window_start', 'window_end',
@@ -2067,7 +2103,7 @@ class SupabaseWriter:
             units = [r for r in records if r.get('_type') == 'unit']
             regions = [r for r in records if r.get('_type') == 'region']
 
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 # 1) 系統供需 — UNIQUE(observed_at)
                 if system:
                     cols = [
@@ -2167,7 +2203,7 @@ class SupabaseWriter:
             ))
 
         if values:
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 sql = f"INSERT INTO realtime.satellite_tle ({','.join(cols)}) VALUES %s ON CONFLICT (norad_id) DO UPDATE SET {update_set}"
                 execute_values(cur, sql, values, page_size=1000)
             decayed = sum(1 for v in values if v[12])
@@ -2193,7 +2229,7 @@ class SupabaseWriter:
         ]
 
         try:
-            with conn.cursor() as cur:
+            with self._txn(conn) as cur:
                 sql = (f"INSERT INTO realtime.satellite_tle_history ({','.join(hist_cols)}) "
                        f"VALUES %s ON CONFLICT (norad_id, tle_epoch) DO NOTHING")
                 execute_values(cur, sql, hist_values, page_size=1000)
@@ -2203,7 +2239,7 @@ class SupabaseWriter:
 
     def _write_schedules(self, conn, records: list[dict]):
         """寫入每日時刻表到 reference.daily_schedules"""
-        with conn.cursor() as cur:
+        with self._txn(conn) as cur:
             for r in records:
                 cur.execute(
                     """INSERT INTO reference.daily_schedules (system, schedule_date, train_count, data)
@@ -2237,7 +2273,7 @@ class SupabaseWriter:
         try:
             # 短 timeout：心跳只是觀測，不該為了它等很久
             with self._pool.borrow(timeout=1) as conn:
-                with conn.cursor() as cur:
+                with self._txn(conn) as cur:
                     cur.execute(
                         "SELECT report_collector_heartbeat(%s, %s, %s, %s)",
                         (collector_name, success, records, error)
