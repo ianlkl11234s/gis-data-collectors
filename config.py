@@ -265,6 +265,7 @@ _COLLECTOR_TOGGLES = (
     ('GLOBAL_CLIMATE_CMEMS',           False, 1440), # CMEMS 海洋模式（CMEMS account 必設 USERNAME/_PASSWORD）；binary 走 S3 + Supabase digest
     ('GLOBAL_CLIMATE_CAMS',            False, 1440), # CAMS 大氣（CAMS_API_KEY 必設 + dataset licence accept）；排隊 5-30 min
     ('GLOBAL_CLIMATE_NOAA_GFS',        False, 1440), # NOAA GFS 全球風場（無認證 AWS Open Data）；HTTP Range pull
+    ('GLOBAL_CLIMATE_BAKE',            False, 360),  # 烤圖：GFS/CMEMS/CAMS 最新實況場 → deploy-assets/climate/*_latest.{png,json}（前端粒子/raster）；每 6h 重烤取最新
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:

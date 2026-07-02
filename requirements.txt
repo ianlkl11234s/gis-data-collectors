@@ -36,6 +36,7 @@ netCDF4>=1.6.0           # xarray 開 .nc 的 backend（CMEMS / CAMS）
 cfgrib>=0.9.10           # xarray 開 GRIB2 的 engine（NOAA GFS）；需系統庫 eccodes（見 Dockerfile）
 cdsapi>=0.7.2            # CAMS ADS API client
 copernicusmarine>=2.0.0  # CMEMS subset CLI（cmems.py 以 subprocess 呼叫）
+Pillow>=10.0.0          # climate_bake 烤 RGBA PNG texture
 
 # 未來擴充
 # pandas>=2.0.0
