@@ -11,6 +11,8 @@
   │  path : <DATA_DIR>/waste_positions/YYYY/MM/DD/waste_positions_HHMM.json
   └─────────────────────────────────────────────
 
+DB 寫入失敗 → 存 <DATA_DIR>/buffer/*.json，下輪開頭自動補寫（vm_buffer.py）。
+
 來源 (3 家政府開放資料 GPS)：
   - 高雄 openapi.kcg.gov.tw     JSON wrapper, x/y, ISO8601
   - 新北 data.ntpc.gov.tw       CSV (UTF-8 BOM), longitude/latitude
@@ -37,6 +39,14 @@ from psycopg2.extras import execute_values
 
 # ────────────────────────────────────────────────────────────────────
 APP_DIR = Path(__file__).parent
+
+# VM 部署時 vm_buffer.py 跟本檔放同目錄；repo 內直接跑則 fallback 到 external/vm_common/
+try:
+    from vm_buffer import connect_with_retry, flush_pending, has_pending, save_batch
+except ImportError:
+    sys.path.insert(0, str(APP_DIR.parent / "vm_common"))
+    from vm_buffer import connect_with_retry, flush_pending, has_pending, save_batch
+
 load_dotenv(APP_DIR / ".env")
 
 DB_URL = os.environ.get("SUPABASE_DB_URL")
@@ -44,6 +54,7 @@ if not DB_URL:
     sys.exit("FATAL: SUPABASE_DB_URL 未設定（請編輯 .env）")
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/var/lib/waste-positions/data"))
+BUFFER_DIR = DATA_DIR / "buffer"  # DB 寫入失敗的暫存區（vm_buffer）
 CITIES = os.environ.get("CITIES", "Kaohsiung,NewTaipei,Tainan").split(",")
 QUIET_HOURS = os.environ.get("QUIET_HOURS", "01-06")  # "HH-HH" or "off"
 
@@ -223,8 +234,8 @@ HISTORY_TABLE = "spatial.waste_positions_realtime"
 COLUMNS = ["city", "vehicle_no", "route_id", "status", "geometry", "observed_at", "source_url"]
 
 
-def write_to_supabase(records: list[dict]) -> int:
-    """append-only history INSERT，無 current 表、無 UPSERT"""
+def write_to_supabase(conn, records: list[dict]) -> int:
+    """append-only history INSERT，無 current 表、無 UPSERT（conn 由 caller 管理）"""
     rows = []
     for r in records:
         lat, lng = r.get("lat"), r.get("lng")
@@ -244,11 +255,15 @@ def write_to_supabase(records: list[dict]) -> int:
         return 0
 
     sql = f"INSERT INTO {HISTORY_TABLE} ({','.join(COLUMNS)}) VALUES %s"
-    with psycopg2.connect(DB_URL, connect_timeout=15) as conn:
-        with conn.cursor() as cur:
-            execute_values(cur, sql, rows, page_size=1000)
-        conn.commit()
+    with conn.cursor() as cur:
+        execute_values(cur, sql, rows, page_size=1000)
+    conn.commit()
     return len(rows)
+
+
+def _flush_write(conn, payload: dict) -> None:
+    """flush_pending 用：還原 buffer payload → 走同一條寫入路徑"""
+    write_to_supabase(conn, payload["records"])
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -266,8 +281,10 @@ def main() -> int:
         log.info(f"quiet_hours ({QUIET_HOURS}) → skip")
         return 0
 
+    # 1) fetch + snapshot（失敗不影響 buffer 補寫）
+    all_records: list[dict] = []
+    fetch_ok = False
     try:
-        all_records: list[dict] = []
         city_stats: dict[str, dict] = {}
         for city in CITIES:
             city_name = CITY_NAMES.get(city, city)
@@ -298,13 +315,34 @@ def main() -> int:
 
         snap_path = save_snapshot(result, ts)
         log.info(f"snapshot → {snap_path}")
-
-        n = write_to_supabase(all_records)
-        log.info(f"Supabase 寫入: {n} 筆")
-        return 0
+        fetch_ok = True
     except Exception as exc:
         log.error(f"FAILED: {exc}", exc_info=True)
-        return 1
+
+    # 2) DB：連線 retry → 先補寫積壓 buffer → 寫本輪；寫入失敗存 buffer 不丟資料
+    if not all_records and not has_pending(BUFFER_DIR):
+        return 0 if fetch_ok else 1
+
+    conn = None
+    try:
+        conn = connect_with_retry(
+            lambda: psycopg2.connect(DB_URL, connect_timeout=15), log=log)
+        flush_pending(conn, BUFFER_DIR, _flush_write, log=log)
+        if all_records:
+            n = write_to_supabase(conn, all_records)
+            log.info(f"Supabase 寫入: {n} 筆")
+    except Exception as exc:
+        log.error(f"DB 寫入失敗: {exc}")
+        if all_records:
+            saved = save_batch(BUFFER_DIR, "waste_positions",
+                               {"ts": ts.isoformat(), "records": all_records}, log=log)
+            if saved is None:
+                return 1  # buffer 也存不進去才算真的丟資料
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return 0 if fetch_ok else 1
 
 
 if __name__ == "__main__":

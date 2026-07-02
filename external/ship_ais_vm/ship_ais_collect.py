@@ -13,6 +13,8 @@
   │  content : {fetch_time, ship_count, data: [...processed_ships]}
   └─────────────────────────────────────────────
 
+DB 寫入失敗 → 存 <DATA_DIR>/buffer/*.json，下輪開頭自動補寫（vm_buffer.py）。
+
 來源：航港局「臺灣海域船舶即時資訊系統」https://mpbais.motcmpb.gov.tw/
 """
 from __future__ import annotations
@@ -31,6 +33,14 @@ from psycopg2.extras import execute_values
 
 # ────────────────────────────────────────────────────────────────────
 APP_DIR = Path(__file__).parent
+
+# VM 部署時 vm_buffer.py 跟本檔放同目錄；repo 內直接跑則 fallback 到 external/vm_common/
+try:
+    from vm_buffer import connect_with_retry, flush_pending, has_pending, save_batch
+except ImportError:
+    sys.path.insert(0, str(APP_DIR.parent / "vm_common"))
+    from vm_buffer import connect_with_retry, flush_pending, has_pending, save_batch
+
 load_dotenv(APP_DIR / ".env")
 
 DB_URL = os.environ.get("SUPABASE_DB_URL")
@@ -38,6 +48,7 @@ if not DB_URL:
     sys.exit("FATAL: SUPABASE_DB_URL 未設定（請編輯 .env）")
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/var/lib/ship-ais/data"))
+BUFFER_DIR = DATA_DIR / "buffer"  # DB 寫入失敗的暫存區（vm_buffer）
 AIS_URL = "https://mpbais.motcmpb.gov.tw/aismpb/tools/geojsonais.ashx"
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "30"))
 
@@ -136,8 +147,8 @@ CURRENT_KEY = "mmsi"
 COLUMNS = ["mmsi", "ship_name", "ship_type", "lat", "lng", "speed", "heading", "collected_at", "geom"]
 
 
-def write_to_supabase(processed: list[dict], ts: datetime) -> tuple[int, int]:
-    """history INSERT + current UPSERT，同 transaction"""
+def write_to_supabase(conn, processed: list[dict], ts: datetime) -> tuple[int, int]:
+    """history INSERT + current UPSERT，同 transaction（conn 由 caller 管理）"""
     iso_ts = ts.isoformat()
     history_rows = []
     seen_current: dict[str, tuple] = {}
@@ -173,14 +184,18 @@ def write_to_supabase(processed: list[dict], ts: datetime) -> tuple[int, int]:
         f"ON CONFLICT ({CURRENT_KEY}) DO UPDATE SET {update_set}"
     )
 
-    with psycopg2.connect(DB_URL, connect_timeout=15) as conn:
-        with conn.cursor() as cur:
-            execute_values(cur, sql_history, history_rows, page_size=1000)
-            if current_rows:
-                execute_values(cur, sql_current, current_rows, page_size=1000)
-        conn.commit()
+    with conn.cursor() as cur:
+        execute_values(cur, sql_history, history_rows, page_size=1000)
+        if current_rows:
+            execute_values(cur, sql_current, current_rows, page_size=1000)
+    conn.commit()
 
     return len(history_rows), len(current_rows)
+
+
+def _flush_write(conn, payload: dict) -> None:
+    """flush_pending 用：還原 buffer payload → 走同一條寫入路徑"""
+    write_to_supabase(conn, payload["records"], datetime.fromisoformat(payload["ts"]))
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -193,19 +208,42 @@ def main() -> int:
     log = logging.getLogger("ship_ais")
     ts = datetime.now(TAIPEI_TZ)
 
+    # 1) fetch + snapshot（失敗不影響 buffer 補寫）
+    result = None
     try:
         result = fetch_and_process(ts)
         log.info(f"抓到 {result['ship_count']} 艘船")
 
         snap_path = save_snapshot(result, ts)
         log.info(f"snapshot → {snap_path}")
-
-        h, c = write_to_supabase(result["data"], ts)
-        log.info(f"Supabase 寫入: history={h}, current={c}")
-        return 0
     except Exception as exc:
         log.error(f"FAILED: {exc}", exc_info=True)
-        return 1
+
+    # 2) DB：連線 retry → 先補寫積壓 buffer → 寫本輪；寫入失敗存 buffer 不丟資料
+    have_rows = result is not None and bool(result["data"])
+    if not have_rows and not has_pending(BUFFER_DIR):
+        return 0 if result is not None else 1
+
+    conn = None
+    try:
+        conn = connect_with_retry(
+            lambda: psycopg2.connect(DB_URL, connect_timeout=15), log=log)
+        flush_pending(conn, BUFFER_DIR, _flush_write, log=log)
+        if have_rows:
+            h, c = write_to_supabase(conn, result["data"], ts)
+            log.info(f"Supabase 寫入: history={h}, current={c}")
+    except Exception as exc:
+        log.error(f"DB 寫入失敗: {exc}")
+        if have_rows:
+            saved = save_batch(BUFFER_DIR, "ship_ais",
+                               {"ts": ts.isoformat(), "records": result["data"]}, log=log)
+            if saved is None:
+                return 1  # buffer 也存不進去才算真的丟資料
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return 0 if result is not None else 1
 
 
 if __name__ == "__main__":
