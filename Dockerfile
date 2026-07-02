@@ -8,6 +8,11 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # 設定工作目錄
 WORKDIR /app
 
+# eccodes 系統庫：cfgrib 讀 GRIB2（global_climate NOAA GFS）必需
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libeccodes0 libeccodes-data \
+    && rm -rf /var/lib/apt/lists/*
+
 # 先複製依賴檔案（利用 Docker cache）
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

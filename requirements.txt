@@ -29,6 +29,14 @@ PyYAML>=6.0
 feedparser>=6.0.0
 google-genai>=1.0.0
 
+# 全球氣候 collectors（global_climate：GFS/CMEMS/CAMS 模式場解析）
+numpy>=1.26.0            # 三支 collector 直接 import（先前僅靠 shapely 間接帶入）
+xarray>=2024.1.0         # NetCDF / GRIB2 開檔（noaa_gfs.py / cmems.py / cams.py lazy import）
+netCDF4>=1.6.0           # xarray 開 .nc 的 backend（CMEMS / CAMS）
+cfgrib>=0.9.10           # xarray 開 GRIB2 的 engine（NOAA GFS）；需系統庫 eccodes（見 Dockerfile）
+cdsapi>=0.7.2            # CAMS ADS API client
+copernicusmarine>=2.0.0  # CMEMS subset CLI（cmems.py 以 subprocess 呼叫）
+
 # 未來擴充
 # pandas>=2.0.0
 # aiohttp>=3.8.0
