@@ -425,12 +425,13 @@ foursquare_poi:
 
 # ─────────────────────────────────────────────────────────
 # 自動同步補回（scripts/sync_cross_layer_map.py）
-# 以下 entry 由 config._COLLECTOR_TOGGLES + collectors/registry.py
-# + storage/supabase_tables.py TABLE_MAP 推導自動補回。
-# enabled 為 config.py 的 repo 預設（Zeabur/VM env 可 override）。
-# 標 TODO(sync) 的欄位無法機器推導，請人工複核後移除註解。
-# 複核後可把 entry 搬進上方對應主題分區並手動微調 —
-# sync 只補「缺的 collector」，不會再覆蓋既有 entry。
+# 初始由 config._COLLECTOR_TOGGLES + collectors/registry.py
+# + storage/supabase_tables.py TABLE_MAP 推導補回；
+# 2026-07-02 已依 production DB 實測（各表 MAX 時間）人工複核
+# enabled / deployment / expected_interval_min，enabled 語意回歸
+# 「production 應在跑」（與上方既有 entry 一致）。
+# 標 TODO(sync) 的欄位仍待人工確認。
+# sync 腳本只補「缺的 collector」，不會覆蓋以下人工調整。
 # ─────────────────────────────────────────────────────────
 
 correctional_daily_snapshot:
@@ -441,97 +442,97 @@ correctional_daily_snapshot:
   s3_prefixes:
     - {prefix: correctional_daily_snapshot/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 最後寫入 2026-06-27（與 npa_traffic_accident_a1 同時停寫，可疑），待用戶確認是否刻意停用（2026-07-02 實測）
 
 global_climate_bake:
   enabled: false
   deployment: disabled
   expected_interval_min: 360
-  supabase_tables: []  # TODO(sync): 人工確認 — 此 collector 無 TABLE_MAP 對應（multi_table / reference / 無 SB 表）
+  supabase_tables: []  # TODO(sync): 人工確認 — 烤圖 job 寫 S3 deploy-assets/climate/*，不寫 DB
   s3_prefixes:
     - {prefix: global_climate_bake/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: 烤圖 job — 產物在 deploy-assets 非 DB，監控路徑待人工設計（2026-07-02 複核，維持 TODO）
 
 global_climate_cams:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 1440
   supabase_tables: [realtime.global_climate_grids]
   s3_prefixes:
     - {prefix: global_climate_cams/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 10:27 UTC 有寫入（日級模型，interval 1440）
 
 global_climate_cmems:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 1440
   supabase_tables: [realtime.global_climate_grids]
   s3_prefixes:
     - {prefix: global_climate_cmems/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 10:27 UTC 有寫入（日級模型，interval 1440）
 
 global_climate_jma_typhoon:
-  enabled: false
-  deployment: disabled
-  expected_interval_min: 180
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
   supabase_tables: [realtime.typhoon_positions]
   s3_prefixes:
     - {prefix: global_climate_jma_typhoon/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:34 UTC；事件驅動（targetTc 空即無資料）→ interval 比照 earthquake 放寬 1440；颱風季外跨層 B 斷層屬預期（collector 輪詢 180min）
 
 global_climate_jtwc:
-  enabled: false
-  deployment: disabled
-  expected_interval_min: 360
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
   supabase_tables: [realtime.typhoon_positions]
   s3_prefixes:
     - {prefix: global_climate_jtwc/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:34 UTC；事件驅動同 jma_typhoon，interval 放寬 1440（collector 輪詢 360min）
 
 global_climate_noaa_gfs:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 1440
   supabase_tables: [realtime.global_climate_grids]
   s3_prefixes:
     - {prefix: global_climate_noaa_gfs/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 10:27 UTC 有寫入（日級模型，interval 1440）
 
 global_climate_usgs_earthquake:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 60
   supabase_tables: [realtime.earthquakes_global]
   s3_prefixes:
     - {prefix: global_climate_usgs_earthquake/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:34 UTC；全球 hourly feed 恆有事件，count 穩定
 
 immigration_apis_airport:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: hicloud_vm
   expected_interval_min: 60
   supabase_tables: [realtime.border_airport_snapshot]
   s3_prefixes:
     - {prefix: immigration_apis_airport/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:07 UTC；跑在 HiCloud VM（external/immigration_apis_airport_vm/），Zeabur 端 env 維持 false
 
 lightning_events:
-  enabled: false
-  deployment: disabled
-  expected_interval_min: 1
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
   supabase_tables: [realtime.lightning_events]
   s3_prefixes:
     - {prefix: lightning_events/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 有寫入（最新 row 約 15h 前）；事件驅動（無落雷即無資料）→ interval 比照 earthquake_events 放寬 1440，久旱仍可能誤報屬預期；collector 實際 1min cron
 
 npa_traffic_accident_a1:
   enabled: false
@@ -541,57 +542,57 @@ npa_traffic_accident_a1:
   s3_prefixes:
     - {prefix: npa_traffic_accident_a1/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 最後寫入 2026-06-27（與 correctional_daily_snapshot 同時停寫，可疑），待用戶確認是否刻意停用（2026-07-02 實測）
 
 nuclear_radiation:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 15
   supabase_tables: [realtime.nuclear_radiation_measurements, realtime.nuclear_radiation_stations]
   s3_prefixes:
     - {prefix: nuclear_radiation/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:50 UTC
 
 parking_offstreet:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 15
   supabase_tables: [realtime.parking_lots_availability, realtime.parking_lots_current]
   s3_prefixes:
     - {prefix: parking_offstreet/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:49 UTC
 
 pla_activity_daily:
-  enabled: false
-  deployment: disabled
-  expected_interval_min: 30
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
   supabase_tables: [realtime.pla_activity_daily]
   s3_prefixes:
     - {prefix: pla_activity_daily/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:34 UTC；資料為每日通報 → interval 用 1440（collector 輪詢 30min）
 
 precipitation_raster:
-  enabled: false
-  deployment: disabled
-  expected_interval_min: 60
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 120
   supabase_tables: [realtime.precipitation_raster_frames]
   s3_prefixes:
     - {prefix: precipitation_raster/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 13:27 UTC；上游柵格發布常延遲 1-2h → interval 放寬 120 避免 STALE 誤報（collector 每 60min 跑）
 
 road_congestion:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables: [realtime.road_sections_live, realtime.road_sections_current]
   s3_prefixes:
     - {prefix: road_congestion/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 current 表 15:59 UTC 新鮮；road_sections_live MAX 會 timeout → realtime_tables.yaml 只監控 current 表
 
 satellite_passes_daily:
   enabled: false
@@ -601,64 +602,64 @@ satellite_passes_daily:
   s3_prefixes:
     - {prefix: satellite_passes_daily/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: 自動補回（scripts/sync_cross_layer_map.py）— TABLE_MAP 無表，欄位待人工複核（2026-07-02 複核維持 TODO）
 
 tourist_shuttle:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 2
   supabase_tables: [realtime.tourist_shuttle_positions, realtime.tourist_shuttle_current]
   s3_prefixes:
     - {prefix: tourist_shuttle/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 16:00 UTC
 
 twse_market_index:
-  enabled: false
-  deployment: disabled
-  expected_interval_min: 1
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
   supabase_tables: [realtime.market_index_tick, realtime.market_index_current]
   s3_prefixes:
     - {prefix: twse_market_index/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02（最新 05:34 UTC＝台北收盤 13:34）；僅開盤時段有資料 → interval 放寬 1440（3x＝3 天蓋過週末），連假仍可能誤報屬預期；collector 1min 輪詢
 
 wic_evacuate:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 10
   supabase_tables: [realtime.taipei_evacuate_status]
   s3_prefixes:
     - {prefix: wic_evacuate/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:54 UTC
 
 wic_pumb:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 10
   supabase_tables: [realtime.taipei_pumb_status]
   s3_prefixes:
     - {prefix: wic_pumb/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:54 UTC
 
 wic_sewer:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 10
   supabase_tables: [realtime.taipei_sewer_measurements]
   s3_prefixes:
     - {prefix: wic_sewer/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:54 UTC
 
 yt_live_video_resolver:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables: [realtime.yt_live_history, realtime.yt_live_current]
   s3_prefixes:
     - {prefix: yt_live_video_resolver/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— 欄位請人工複核
+  notes: production 實測 2026-07-02 15:59 UTC
