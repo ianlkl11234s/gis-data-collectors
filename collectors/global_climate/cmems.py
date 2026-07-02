@@ -54,7 +54,7 @@ CMEMS_DATASETS = [
     },
 ]
 
-BBOX_TAIWAN = {"min_lon": 100, "max_lon": 160, "min_lat": 0, "max_lat": 45}  # 西太平洋 60°×45°（前為 117-126/19-27 台灣 9°×8°）
+BBOX_TAIWAN = {"min_lon": 90, "max_lon": 180, "min_lat": -15, "max_lat": 55}  # 廣域西太+東南亞+中太 90°×70°（前為西太 100-160/0-45；再前台灣 117-126/19-27）
 
 
 def _to_number(v) -> Optional[float]:
