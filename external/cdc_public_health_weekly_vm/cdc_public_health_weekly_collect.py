@@ -16,6 +16,8 @@
 
 排程：每週四 11:00 抓一次（CDC 約 10:00 發布上週資料）。
 過濾：只保留近 2 年（KEEP_YEARS=2）。
+DB 寫入失敗 → 存 <DATA_DIR>/buffer/*.json，下輪開頭自動補寫（vm_buffer.py；
+週跑型 → buffer 保留 30 天，預設 3 天必過期）。
 
 ⚠ 為什麼走外部：Zeabur 出口 IP 連 od.cdc.gov.tw timeout（IP 段被擋；本檔 commit 訊息有實證）。
 ⚠ od.cdc.gov.tw 憑證缺 SKI → verify=False 必開。
@@ -39,6 +41,14 @@ from psycopg2.extras import execute_values
 
 # ────────────────────────────────────────────────────────────────────
 APP_DIR = Path(__file__).parent
+
+# VM 部署時 vm_buffer.py 跟本檔放同目錄；repo 內直接跑則 fallback 到 external/vm_common/
+try:
+    from vm_buffer import connect_with_retry, flush_pending, has_pending, save_batch
+except ImportError:
+    sys.path.insert(0, str(APP_DIR.parent / "vm_common"))
+    from vm_buffer import connect_with_retry, flush_pending, has_pending, save_batch
+
 load_dotenv(APP_DIR / ".env")
 
 DB_URL = os.environ.get("SUPABASE_DB_URL")
@@ -46,6 +56,8 @@ if not DB_URL:
     sys.exit("FATAL: SUPABASE_DB_URL 未設定（請編輯 .env）")
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/var/lib/cdc-public-health/data"))
+BUFFER_DIR = DATA_DIR / "buffer"  # DB 寫入失敗的暫存區（vm_buffer）
+BUFFER_MAX_AGE_DAYS = 30  # 週跑一次，預設 3 天必過期 → 拉長到 30 天
 KEEP_YEARS = int(os.environ.get("KEEP_YEARS", "2"))
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
@@ -204,7 +216,7 @@ CONFLICT_KEY = (
 )
 
 
-def write_to_supabase(records: list[dict], ts: datetime) -> int:
+def write_to_supabase(conn, records: list[dict], ts: datetime) -> int:
     if not records:
         return 0
     rows = []
@@ -220,12 +232,16 @@ def write_to_supabase(records: list[dict], ts: datetime) -> int:
         f"INSERT INTO {TABLE} ({','.join(COLUMNS)}) VALUES %s "
         f"ON CONFLICT {CONFLICT_KEY} DO NOTHING"
     )
-    with psycopg2.connect(DB_URL, connect_timeout=15) as conn:
-        with conn.cursor() as cur:
-            execute_values(cur, sql, rows, page_size=1000)
-            inserted = cur.rowcount
-        conn.commit()
+    with conn.cursor() as cur:
+        execute_values(cur, sql, rows, page_size=1000)
+        inserted = cur.rowcount
+    conn.commit()
     return inserted if inserted >= 0 else len(rows)
+
+
+def _flush_write(conn, payload: dict) -> None:
+    """flush_pending 用：還原 buffer payload → 走同一條寫入路徑"""
+    write_to_supabase(conn, payload["records"], datetime.fromisoformat(payload["ts"]))
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -250,12 +266,25 @@ def main() -> int:
             stats[ds["disease_code"]] = f"error: {str(e)[:160]}"
             log.error(f"{ds['disease_code']}: {e}")
 
-    try:
-        inserted = write_to_supabase(all_records, ts)
-        log.info(f"✓ DB 寫入 {inserted} 筆（總候選 {len(all_records)}）")
-    except Exception as e:
-        log.error(f"DB 寫入失敗: {e}")
-        inserted = 0
+    # DB：連線 retry → 先補寫積壓 buffer → 寫本輪；寫入失敗存 buffer 不丟資料
+    inserted = 0
+    if all_records or has_pending(BUFFER_DIR):
+        conn = None
+        try:
+            conn = connect_with_retry(
+                lambda: psycopg2.connect(DB_URL, connect_timeout=15), log=log)
+            flush_pending(conn, BUFFER_DIR, _flush_write, log=log,
+                          max_age_days=BUFFER_MAX_AGE_DAYS)
+            inserted = write_to_supabase(conn, all_records, ts)
+            log.info(f"✓ DB 寫入 {inserted} 筆（總候選 {len(all_records)}）")
+        except Exception as e:
+            log.error(f"DB 寫入失敗: {e}")
+            if all_records:
+                save_batch(BUFFER_DIR, "cdc_public_health_weekly",
+                           {"ts": ts.isoformat(), "records": all_records}, log=log)
+        finally:
+            if conn is not None:
+                conn.close()
 
     result = {
         "fetch_time": ts.isoformat(),
