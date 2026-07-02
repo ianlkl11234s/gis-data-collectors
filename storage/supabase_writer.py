@@ -1871,7 +1871,12 @@ class SupabaseWriter:
                 if table_config.get('upsert_key'):
                     key = table_config['upsert_key']  # 支援複合鍵 'a,b'
                     if table_config.get('upsert_strategy') == 'do_nothing':
-                        sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s ON CONFLICT ({key}) DO NOTHING"
+                        # 無目標 ON CONFLICT：表上任一 unique index 撞到都跳過該列。
+                        # 指定 ({key}) 只護一個 index — lightning_events 有
+                        # uk_eventid + uk_dedup 雙 unique，feed 用新 event_id 重發
+                        # 同一筆落雷時 dedup_hash 撞上第二個 index 會炸掉整批
+                        # （2026-07-03 事故：寫入連續失敗、資料卡 buffer）。
+                        sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s ON CONFLICT DO NOTHING"
                     else:
                         key_set = {k.strip() for k in key.split(',')}
                         update_cols = [c for c in columns if c not in key_set]
