@@ -23,8 +23,10 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 | 位置 | 跑什麼 | 為什麼 |
 |---|---|---|
-| **Zeabur（主力）** | 33 個 collector + `tasks/daily_report.py` + `tasks/archive.py` | PaaS 24/7 託管，與 Supabase / S3 同生態圈 |
-| **HiCloud VM（HiNet IP）** | 2 個被擋的 collector：`ship_ais`、`waste_positions` | 來源 API（航港局 / 高雄市府 / 台南市府）對國際雲段 IP 封鎖。詳見 [docs/EXTERNAL_COLLECTORS.md](docs/EXTERNAL_COLLECTORS.md) |
+| **Zeabur（主力）** | 絕大多數 collector（`deployment: zeabur`）+ `tasks/daily_report.py` + `tasks/archive.py` | PaaS 24/7 託管，與 Supabase / S3 同生態圈 |
+| **HiCloud VM（HiNet IP）** | 需 Taiwan IP 的 collector（`deployment: hicloud_vm`）：`ship_ais`、`waste_positions`、`cdc_public_health_weekly` | 來源 API（航港局 / 高雄市府 / 台南市府 / 疾管署）對國際雲段 IP 封鎖或 timeout。詳見 [docs/EXTERNAL_COLLECTORS.md](docs/EXTERNAL_COLLECTORS.md) |
+
+> 各位置實際跑哪些 collector 以 [`config/cross_layer_map.yaml`](config/cross_layer_map.yaml) 的 `deployment` 欄位為準（勿在本文件寫死數字）。
 | **本機 Mac launchd** | 1 支 audit push（每天 10:00 推 catalog 健康度給 daily_report） | 純監測，不影響線上資料 |
 
 新增需「Taiwan IP」的 collector 走 SOP：[docs/EXTERNAL_COLLECTORS.md](docs/EXTERNAL_COLLECTORS.md) §「新增外部 collector」。
@@ -33,7 +35,7 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 ## 收集器總覽
 
-35+ 個 collector，每個都可獨立啟停。完整列表 + 預設狀態見 [`config/cross_layer_map.yaml`](config/cross_layer_map.yaml)。
+所有 collector 都可獨立啟停。**完整清單 + 預設狀態以 [`config/cross_layer_map.yaml`](config/cross_layer_map.yaml) 與 `config._COLLECTOR_TOGGLES` 為準**（勿在本文件寫死數字；兩者由 [`scripts/sync_cross_layer_map.py`](scripts/sync_cross_layer_map.py) 保持同步、`--check` 擋 drift）。
 
 | 類別 | 代表 collector | 部署 |
 |---|---|---|
@@ -128,7 +130,7 @@ data-collectors/
 ├── scheduler.py                    # CollectorScheduler（ThreadPoolExecutor）
 ├── config.py                       # _COLLECTOR_TOGGLES + 環境變數
 │
-├── collectors/                     # 35+ 個 collector
+├── collectors/                     # 所有 collector（清單見 config/cross_layer_map.yaml）
 │   ├── base.py                     # BaseCollector
 │   ├── registry.py                 # COLLECTOR_REGISTRY（單一真相）
 │   ├── ship_ais.py                 # ⚠️ schema 真相，實際跑在 external/ship_ais_vm/
@@ -275,7 +277,7 @@ psql "$SUPABASE_DB_URL" -f ../gis-platform/migrations/NNN_xxx.sql
 4. `config.py` 的 `_COLLECTOR_TOGGLES` 加一筆
 5. `storage/supabase_tables.py` 加 `TABLE_MAP[xxx]`
 6. `storage/supabase_writer.py` 加 `_transform_xxx`
-7. **`config/cross_layer_map.yaml` 加 entry**（漏寫日報會漏報）
+7. **`config/cross_layer_map.yaml` 加 entry**（漏寫日報會漏報）— 可跑 `python3 scripts/sync_cross_layer_map.py` 自動從 config + TABLE_MAP 回填缺的 entry（再人工複核 TODO 欄位）；`--check` 會擋 drift，`tests/test_cross_layer_sync.py` 已納入測試
 8. **`config/realtime_tables.yaml` 加表條目**（漏寫 RPC 撈不到）
 9. `gis-platform/docs/data-inventory.md` 更新清冊（含部署位置欄）
 10. `taipei-gis-analytics/docs/data-sources.md` 更新
