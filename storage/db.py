@@ -45,6 +45,12 @@ def connect_supabase(autocommit: bool = True,
             的 collector 可拉長（例：satellite_passes_daily 給 300_000 = 5 分鐘）。
     """
     timeout = statement_timeout_ms or config.SUPABASE_STATEMENT_TIMEOUT_MS
+    # ⚠️ 連的是 Supavisor transaction mode pooler（6543）時，此 startup `options`
+    # 會被 pooler 丟棄 → SHOW statement_timeout = 0（AR-06 實測 2026-07-02）。
+    # 對「一條連線 = 一個交易」的長任務（satellite_passes_daily / waste_match）
+    # 若真的要保護單筆 SQL，需在【該筆 SQL 所在的 transaction 內】自行下
+    # SET LOCAL statement_timeout（見 storage/supabase_writer.py 的 _txn()）。
+    # 保留 options 是為了直連 5432 / session-mode pooler 時仍能生效。
     conn = psycopg2.connect(
         config.SUPABASE_DB_URL,
         connect_timeout=config.SUPABASE_CONNECT_TIMEOUT,
@@ -118,6 +124,11 @@ class SupabaseConnectionPool:
         而是首次 getconn 才建。所以這裡只負責設定 pool 物件本身。
         """
         try:
+            # ⚠️ 此 startup `options` 在 Supavisor transaction mode pooler（6543）
+            # 會被丟棄（AR-06 實測 2026-07-02：SHOW statement_timeout = 0、
+            # pg_sleep(35) 不被砍）。SupabaseWriter 的實際保護改由每個寫入
+            # transaction 內的 SET LOCAL 提供（見 supabase_writer.SupabaseWriter._txn）。
+            # 這裡保留 options 僅為直連 5432 / session-mode 時的備援，勿倚賴它。
             self._pool = pg_pool.ThreadedConnectionPool(
                 minconn=self.minconn,
                 maxconn=self.maxconn,
