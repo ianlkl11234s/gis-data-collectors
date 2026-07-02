@@ -74,6 +74,7 @@ from .global_climate.jtwc import JtwcCollector
 from .global_climate.cmems import CmemsCollector
 from .global_climate.cams import CamsCollector
 from .global_climate.noaa_gfs import NoaaGfsCollector
+from .global_climate.climate_bake import ClimateBakeCollector
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
                    ("COPERNICUSMARINE_SERVICE_USERNAME", "COPERNICUSMARINE_SERVICE_PASSWORD")),
     CollectorEntry(CamsCollector, "CAMS 大氣化學收集器", "GLOBAL_CLIMATE_CAMS", ("CAMS_API_KEY",)),
     CollectorEntry(NoaaGfsCollector, "NOAA GFS 風場收集器", "GLOBAL_CLIMATE_NOAA_GFS"),
+    CollectorEntry(ClimateBakeCollector, "全球氣候烤圖收集器", "GLOBAL_CLIMATE_BAKE"),
 )
 
 
