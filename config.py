@@ -79,6 +79,14 @@ S3_SECRET_KEY = os.getenv('S3_SECRET_KEY') or os.getenv('AWS_SECRET_ACCESS_KEY')
 S3_REGION = os.getenv('S3_REGION', 'ap-southeast-2')
 S3_ENDPOINT = os.getenv('S3_ENDPOINT')  # 用於 MinIO 等相容服務
 
+# Cloudflare R2 設定（影像 CDN 雙寫，AR-11 read-path-cdn）
+# 與上方 AWS S3（歸檔）分離，避免影響既有歸檔路徑；R2 走 S3 相容 API（boto3 + endpoint）。
+# 4 個變數任一未設 → R2 功能停用（安全 rollout / best-effort，不因 CDN 壞掉丟資料）。
+R2_ACCESS_KEY_ID = os.getenv('R2_ACCESS_KEY_ID')
+R2_SECRET_ACCESS_KEY = os.getenv('R2_SECRET_ACCESS_KEY')
+R2_ENDPOINT_URL = os.getenv('R2_ENDPOINT_URL')
+R2_BUCKET = os.getenv('R2_BUCKET', 'mini-tw-pulse')
+
 # === Supabase → S3 backup system (tasks/backup_supabase.py) ===
 BACKUP_ENABLED = os.getenv('BACKUP_ENABLED', 'false').lower() == 'true'
 BACKUP_DRY_RUN = os.getenv('BACKUP_DRY_RUN', 'false').lower() == 'true'
