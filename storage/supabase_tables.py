@@ -156,7 +156,7 @@ TABLE_MAP = {
             'dataset_id', 'observed_at', 'image_bytes', 'mime_type',
             'lon_min', 'lon_max', 'lat_min', 'lat_max',
             'width', 'height', 'image_size', 'product_url', 'resource_desc',
-            'collected_at',
+            'image_key', 'collected_at',
         ],
         # 複合 PK (dataset_id, observed_at)：用 ON CONFLICT DO NOTHING
         # 因為同一觀測時間的 PNG 內容固定，重複抓不需更新

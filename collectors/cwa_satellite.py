@@ -27,6 +27,7 @@ import requests
 
 import config
 from collectors.base import BaseCollector
+from storage.r2 import get_r2_storage
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
@@ -38,6 +39,12 @@ DEFAULT_DATASETS = [
     "O-A0058-005",  # 雷達回波圖（較大範圍、透明底，~180 KB PNG）
 ]
 
+# R2 CDN object key 副檔名對照（AR-11 read-path-cdn）
+_EXT_BY_MIME = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+}
+
 
 def _mime_from_url(url: str) -> str:
     u = (url or '').lower()
@@ -46,6 +53,30 @@ def _mime_from_url(url: str) -> str:
     if u.endswith('.jpg') or u.endswith('.jpeg'):
         return 'image/jpeg'
     return 'application/octet-stream'
+
+
+def _ext_from_mime(mime_type: str) -> str:
+    """由 MIME 判定副檔名（png/jpg），未知回 'bin'。"""
+    return _EXT_BY_MIME.get((mime_type or '').lower(), 'bin')
+
+
+def imagery_r2_key(dataset_id: str, observed_at, mime_type: str) -> str:
+    """R2 object key 規約：imagery/cwa/{dataset_id}/{YYYYMMDD}/{HHMMSS}.{ext}
+
+    時間一律取 observed_at 的 **UTC**。observed_at 可為 aware datetime 或
+    ISO 字串（backfill 走字串 / DB datetime；collector 走 datetime）。
+    naive datetime 視為 UTC。
+    """
+    if isinstance(observed_at, str):
+        observed_at = datetime.fromisoformat(observed_at)
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    utc = observed_at.astimezone(timezone.utc)
+    ext = _ext_from_mime(mime_type)
+    return (
+        f"imagery/cwa/{dataset_id}/"
+        f"{utc.strftime('%Y%m%d')}/{utc.strftime('%H%M%S')}.{ext}"
+    )
 
 
 def _parse_range(s: str) -> tuple[float, float] | tuple[None, None]:
@@ -96,6 +127,8 @@ class CWASatelliteCollector(BaseCollector):
         self._session.headers.update({
             "User-Agent": "GIS-DataCollectors/1.0 (cwa-imagery)",
         })
+        # R2 雙寫（AR-11）：憑證未設 → None → 跳過上傳（image_key=None，DB 照寫）
+        self._r2 = get_r2_storage()
 
     def _fetch_metadata(self, dataset_id: str) -> Optional[dict]:
         """從 CWA File API 取得影像 metadata（含 ProductURL）"""
@@ -175,6 +208,22 @@ class CWASatelliteCollector(BaseCollector):
             print(f"[{self.name}]   ✗ 下載失敗 {url}: {e}")
             return None
 
+    def _upload_to_r2(self, frame: dict, data: bytes) -> Optional[str]:
+        """雙寫影像到 R2 CDN，回傳 object key。
+
+        best-effort：R2 未設定或上傳失敗 → 回 None（image_key=None，DB 照寫），
+        絕不因 CDN 失敗丟資料或 crash。
+        """
+        if self._r2 is None:
+            return None
+        key = imagery_r2_key(frame["dataset_id"], frame["observed_at"], frame["mime_type"])
+        try:
+            self._r2.upload_image(key, data, frame["mime_type"])
+            return key
+        except Exception as e:
+            print(f"[{self.name}]   ⚠️ R2 上傳失敗 {key}: {e}")
+            return None
+
     def collect(self) -> dict:
         fetch_time = datetime.now(TAIPEI_TZ)
         frames: list[dict] = []
@@ -194,6 +243,9 @@ class CWASatelliteCollector(BaseCollector):
             png = self._download_png(frame["product_url"])
             if not png:
                 continue
+
+            # R2 雙寫（best-effort，需在 observed_at 轉字串前算 key）
+            frame["image_key"] = self._upload_to_r2(frame, png)
 
             # JSON-safe：image_b64 給 local storage / supabase transformer 使用
             # observed_at 也要轉 ISO string（datetime 不可 JSON 序列化）

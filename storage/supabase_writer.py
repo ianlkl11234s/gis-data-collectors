@@ -1031,6 +1031,7 @@ class SupabaseWriter:
                 'image_size': f.get('image_size'),
                 'product_url': f.get('product_url'),
                 'resource_desc': f.get('resource_desc'),
+                'image_key': f.get('image_key'),  # R2 CDN key（雙寫失敗/未設 → None）
                 'collected_at': ts.isoformat(),
             })
         return records
