@@ -179,12 +179,22 @@ class SupabaseConnectionPool:
         with self._state_lock:
             return time.monotonic() < self._next_connect_at
 
+    # pre-ping：連續拿到死連線時最多換幾條，避免無限迴圈。實務上換 1 條就會拿到
+    # 全新 TCP 連線，設 3 只是安全邊際。
+    _MAX_STALE_SWAPS = 3
+
     @contextmanager
     def borrow(self, timeout: Optional[float] = None):
         """借一條連線，with 區塊結束自動歸還；異常時強制關閉並丟棄。
 
+        借出前會 pre-ping（SELECT 1）確認連線存活：Supavisor transaction pool
+        會在交易之間回收 backend，池裡閒置的連線可能 server 端已死、client 端
+        conn.closed 仍為 0，下一個借到它的 collector 一 execute 就撞
+        `connection already closed`。pre-ping 失敗就關掉換一條，確保交出去的一定
+        是活線（等同 SQLAlchemy pool_pre_ping）。
+
         Raises:
-            PoolBreakerOpen: 斷路器開啟中（冷卻期內）
+            PoolBreakerOpen: 斷路器開啟中（冷卻期內）／連續換線都拿到死連線
             PoolBorrowTimeout: timeout 內所有連線都 busy
         """
         if self._breaker_open():
@@ -198,6 +208,47 @@ class SupabaseConnectionPool:
 
         deadline = time.monotonic() + (timeout if timeout is not None
                                        else self.borrow_timeout)
+
+        # 借一條「確認活著」的連線：pre-ping 失敗就關掉換一條（最多 _MAX_STALE_SWAPS 次）
+        conn = None
+        for _ in range(self._MAX_STALE_SWAPS + 1):
+            candidate = self._getconn_blocking(deadline)
+            if self._preping(candidate):
+                conn = candidate
+                break
+            # pre-ping 失敗 = 死連線：close=True 真關掉並移出池，下次 getconn 建新的
+            logger.warning("borrow: 連線 pre-ping 失敗（死連線），關閉並換一條")
+            try:
+                self._pool.putconn(candidate, close=True)
+            except Exception:
+                pass
+        if conn is None:
+            # 連換幾條都死 → 視為 DB 暫時不可用，讓呼叫端進 buffer（不是 bug）
+            raise PoolBreakerOpen(
+                f"borrow: 連續 {self._MAX_STALE_SWAPS + 1} 條連線 pre-ping 均失敗"
+            )
+
+        broken = False
+        try:
+            yield conn
+        except Exception:
+            broken = True
+            raise
+        finally:
+            # close=True 時 psycopg2 pool 會把連線真關掉並從池移除，下次 getconn
+            # 會建新的。這是讓死連線退場的關鍵。
+            try:
+                self._pool.putconn(conn, close=broken)
+            except Exception as e:
+                logger.warning(f"putconn 失敗（已忽略）: {e}")
+
+    def _getconn_blocking(self, deadline: float):
+        """從底層 pool 取一條連線（池滿時阻塞到 deadline），並設好 autocommit。
+
+        Raises:
+            PoolBorrowTimeout: deadline 內所有連線都 busy（池滿）
+            PoolBreakerOpen: 建線本身失敗（DB unreachable / pooler 拒連）
+        """
         conn = None
         last_err: Optional[Exception] = None
         while True:
@@ -223,25 +274,31 @@ class SupabaseConnectionPool:
 
         # 標記成功（第一次成功就重置斷路器）
         self._record_connect_success()
-        # 確保 autocommit=True（避免 idle_in_transaction_session_timeout 砍）
+        # 確保 autocommit=True（避免 idle_in_transaction_session_timeout 砍，
+        # 也讓 pre-ping 的 SELECT 1 不會殘留開啟的交易）
         try:
             conn.autocommit = True
         except Exception:
             pass
+        return conn
 
-        broken = False
+    @staticmethod
+    def _preping(conn) -> bool:
+        """輕量存活檢查（唯讀，不碰任何資料）：conn 未關且 SELECT 1 有回 → True。
+
+        涵蓋兩種死法：
+        - client 端已知關閉（conn.closed != 0）
+        - server 端靜默回收（conn.closed 仍為 0，execute 才發現 EOF）
+        """
+        if conn.closed:
+            return False
         try:
-            yield conn
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            return True
         except Exception:
-            broken = True
-            raise
-        finally:
-            # close=True 時 psycopg2 pool 會把連線真關掉並從池移除，下次 getconn
-            # 會建新的。這是讓死連線退場的關鍵。
-            try:
-                self._pool.putconn(conn, close=broken)
-            except Exception as e:
-                logger.warning(f"putconn 失敗（已忽略）: {e}")
+            return False
 
     def snapshot(self) -> dict:
         """無副作用的健康摘要，給 /health endpoint 用。**絕不**借連線。"""
