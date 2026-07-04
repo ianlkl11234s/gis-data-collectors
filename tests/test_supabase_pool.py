@@ -26,6 +26,17 @@ from psycopg2 import OperationalError
 # Fixtures
 # ---------------------------------------------------------------------------
 
+def _live_conn(name=None):
+    """模擬一條「活連線」：closed=0 讓 borrow() 的 pre-ping（SELECT 1）會過。
+
+    MagicMock 的 cursor()/execute()/fetchone() 預設就不會 raise，所以 pre-ping
+    只卡在 .closed 這關 — 預設 MagicMock().closed 是 truthy 會被判死連線。
+    """
+    c = MagicMock(name=name)
+    c.closed = 0
+    return c
+
+
 @pytest.fixture
 def fake_pool_factory(monkeypatch):
     """攔截 psycopg2 ThreadedConnectionPool 建構。回傳 (mock_pool_cls, get_state) 元組。
@@ -37,7 +48,7 @@ def fake_pool_factory(monkeypatch):
     def factory(*args, **kwargs):
         # 不用 spec — ThreadedConnectionPool 用 __new__ + dynamic attrs，spec 抓不全
         p = MagicMock()
-        p.getconn.side_effect = lambda: MagicMock()
+        p.getconn.side_effect = lambda: _live_conn()
         p.putconn.side_effect = lambda conn, close=False: None
         p.closeall.side_effect = lambda: None
         created.append(p)
@@ -74,7 +85,7 @@ def pool(fake_pool_factory, monkeypatch):
 def test_borrow_succeeds_normally(pool, fake_pool_factory):
     """正常借得到連線時，with 區塊內 conn 可用，結束時 putconn(close=False)。"""
     underlying = fake_pool_factory[0]
-    conn_returned = MagicMock()
+    conn_returned = _live_conn()
     underlying.getconn.side_effect = lambda: conn_returned
 
     with pool.borrow() as conn:
@@ -157,7 +168,7 @@ def test_breaker_resets_on_successful_borrow(pool, fake_pool_factory):
     pool._connect_failures = 2
     pool._next_connect_at = 0  # 已過期，允許重試
 
-    underlying.getconn.side_effect = lambda: MagicMock()
+    underlying.getconn.side_effect = lambda: _live_conn()
     with pool.borrow() as conn:
         pass
 
@@ -172,7 +183,7 @@ def test_breaker_resets_on_successful_borrow(pool, fake_pool_factory):
 def test_exception_in_with_block_closes_connection(pool, fake_pool_factory):
     """with 區塊內 raise 時，連線以 close=True 歸還（讓死連線退場）。"""
     underlying = fake_pool_factory[0]
-    conn_returned = MagicMock()
+    conn_returned = _live_conn()
     underlying.getconn.side_effect = lambda: conn_returned
 
     with pytest.raises(ValueError):
@@ -185,13 +196,65 @@ def test_exception_in_with_block_closes_connection(pool, fake_pool_factory):
 def test_normal_exit_returns_connection_to_pool(pool, fake_pool_factory):
     """正常結束時，連線以 close=False 歸還（可重用）。"""
     underlying = fake_pool_factory[0]
-    conn_returned = MagicMock()
+    conn_returned = _live_conn()
     underlying.getconn.side_effect = lambda: conn_returned
 
     with pool.borrow() as conn:
         pass
 
     underlying.putconn.assert_called_once_with(conn_returned, close=False)
+
+
+# ---------------------------------------------------------------------------
+# pre-ping（死連線在交出前先換掉）
+# ---------------------------------------------------------------------------
+
+def test_preping_swaps_dead_connection(pool, fake_pool_factory):
+    """借到已被 server 回收的死連線（conn.closed != 0）時，關掉換一條活的再交出。
+
+    對應生產問題：Supavisor 在交易間回收 backend → 下一個借到的 collector 撞
+    `connection already closed`。pre-ping 應在交出前就換掉它。
+    """
+    underlying = fake_pool_factory[0]
+    dead = MagicMock(name="dead")
+    dead.closed = 1                       # server 已回收 → pre-ping 判死
+    live = _live_conn(name="live")
+    conns = iter([dead, live])
+    underlying.getconn.side_effect = lambda: next(conns)
+
+    with pool.borrow() as conn:
+        assert conn is live               # 交出去的是活線，不是死線
+
+    underlying.putconn.assert_any_call(dead, close=True)   # 死線被丟棄
+    underlying.putconn.assert_any_call(live, close=False)  # 活線正常歸還
+
+
+def test_preping_swaps_on_select_error(pool, fake_pool_factory):
+    """conn.closed 為 0 但 SELECT 1 丟例外（server 靜默斷線）也應判死並換線。"""
+    underlying = fake_pool_factory[0]
+    dead = _live_conn(name="dead")        # closed=0 但 cursor 會 raise
+    dead.cursor.side_effect = OperationalError("server closed the connection unexpectedly")
+    live = _live_conn(name="live")
+    conns = iter([dead, live])
+    underlying.getconn.side_effect = lambda: next(conns)
+
+    with pool.borrow() as conn:
+        assert conn is live
+
+    underlying.putconn.assert_any_call(dead, close=True)
+
+
+def test_preping_all_dead_raises_breaker(pool, fake_pool_factory):
+    """連換幾條都是死連線 → raise PoolBreakerOpen，讓呼叫端進 buffer（不無限迴圈）。"""
+    from storage.db import PoolBreakerOpen
+    underlying = fake_pool_factory[0]
+    dead = MagicMock()
+    dead.closed = 1
+    underlying.getconn.side_effect = lambda: dead
+
+    with pytest.raises(PoolBreakerOpen):
+        with pool.borrow() as conn:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +271,7 @@ def test_concurrent_borrows_get_independent_connections(pool, fake_pool_factory)
     def make_conn():
         with lock:
             counter['n'] += 1
-        return MagicMock(name=f"conn-{counter['n']}")
+        return _live_conn(name=f"conn-{counter['n']}")
 
     underlying.getconn.side_effect = make_conn
 
@@ -240,7 +303,7 @@ def test_wedged_conn_does_not_block_others(pool, fake_pool_factory):
     underlying = fake_pool_factory[0]
 
     # 兩條 mock conn
-    conn_pool = [MagicMock(name="conn-A"), MagicMock(name="conn-B")]
+    conn_pool = [_live_conn(name="conn-A"), _live_conn(name="conn-B")]
     idx = {'i': 0}
     glock = threading.Lock()
 
