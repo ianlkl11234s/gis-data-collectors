@@ -141,6 +141,11 @@ SUPABASE_CONNECT_TIMEOUT = int(os.getenv('SUPABASE_CONNECT_TIMEOUT', '10'))     
 SUPABASE_STATEMENT_TIMEOUT_MS = int(os.getenv('SUPABASE_STATEMENT_TIMEOUT_MS', '30000'))  # 單筆語句 timeout（毫秒）
 # 連線池：取代舊「一條 conn + RLock」設計，避免單條連線 wedge 連鎖卡住所有 collector
 SUPABASE_POOL_MIN = int(os.getenv('SUPABASE_POOL_MIN', '2'))                       # pool 最小連線數
+# 預設 15；主站（Zeabur data-collectors-gomn）env 覆寫為 30。2026-07-05：db.py borrow()
+# 加 pool pre-ping（PR #33）修掉 connection already closed 後，殘留錯誤轉為「borrow timeout
+# — 所有連線都 busy」（尖峰 15 條不夠 + pre-ping 每次多一次 SELECT 1 往返）。Postgres
+# max_connections=90、實際僅用 ~24，餘量足 → 拉到 30。若之後仍 borrow timeout，改走
+# idle-threshold pre-ping（熱連線跳過 SELECT 1），別再無腦加大。
 SUPABASE_POOL_MAX = int(os.getenv('SUPABASE_POOL_MAX', '15'))                      # pool 最大連線數（並發上限）
 SUPABASE_BORROW_TIMEOUT_SEC = float(os.getenv('SUPABASE_BORROW_TIMEOUT_SEC', '5')) # 借連線 timeout（秒）— 借不到就 buffer
 # Watchdog：主迴圈 heartbeat 超過此秒數沒更新 → 判定卡死
