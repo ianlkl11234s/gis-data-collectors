@@ -99,7 +99,7 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 | 步驟 | Repo | 檔案 | 說明 |
 |------|------|------|------|
-| 1 | gis-platform | `migrations/NNN_{name}.sql` | 建 Supabase 表 |
+| 1 | gis-platform | `migrations/NNN_{name}.sql` | 建 Supabase 表 **＋ retention**（分區表：加入 `cleanup_expired_partitions()` 硬編碼清單；非分區表：建 `cleanup_{name}` pg_cron）— 漏設會讓磁碟無限長且只擴不縮 |
 | 2 | data-collectors | `collectors/{name}.py` | Collector 實作（繼承 BaseCollector） |
 | 3 | data-collectors | `collectors/registry.py` | `COLLECTOR_REGISTRY` 加一筆（class + display_name + config_prefix + required_env） |
 | 4 | data-collectors | `config.py` | `_COLLECTOR_TOGGLES` 加一筆 (prefix, enabled_default, interval_default)；如需額外變數（CITIES/AIRPORTS/API Key）另外宣告 |
@@ -137,6 +137,7 @@ Registry + toggle list 自動處理：
 - **政府憑證缺 SKI** → requests 用 `verify=False`（NHI ER / 台電核安 / IoW USWG 都踩過）
 - **二進位資料走 base64 轉接 Supabase**（CWA imagery 模式）— 不要直接 bytea
 - **Supabase retention 與 S3 archive 是兩件獨立的事**：ArchiveTask 03:00 → S3 自動歸檔；Supabase 刪舊資料走 pg_cron `cleanup_*_daily`，要分別設定 — ref: `reference_zeabur_archive_pattern.md`
+- **`cleanup_expired_partitions()` 是硬編碼清單，不會自動掃新分區表**（migration 220 錯誤假設踩過）— 新分區表沒加進清單 = 永遠不清理，2026-07 因此 7 張表累到 DB 52GB 產生磁碟費。用 `select * from metadata.check_retention_coverage()` 查漏網
 
 ---
 
@@ -210,13 +211,14 @@ collect() → BaseCollector.run() → supabase_writer.write()
 
 ---
 
-## 上線前驗收三連
+## 上線前驗收四連
 
-對齊 Karpathy §4「Goal-Driven Execution」— 新 collector 上線前三件事都要綠：
+對齊 Karpathy §4「Goal-Driven Execution」— 新 collector 上線前四件事都要綠：
 
 1. **本地跑一輪**：`python3 main.py` 不報錯，看到 collector 被 schedule + collect 成功 log
 2. **DB 有新 row**：`select count(*) from {table} where collected_at > now() - interval '1h'` > 0
 3. **日報列入**：`daily_report` 排程列出該 collector（步驟 7 `cross_layer_map.yaml` 寫對才會生效）
+4. **Retention 有覆蓋**：`select * from metadata.check_retention_coverage()` 沒列出新表（分區表要進 `cleanup_expired_partitions()` 清單、非分區表要有 cleanup pg_cron）
 
 任何一條沒綠都算未上線。
 

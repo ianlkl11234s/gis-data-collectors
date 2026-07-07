@@ -366,6 +366,38 @@ def query_backup_health() -> dict | None:
         return None
 
 
+def query_retention_coverage() -> dict:
+    """呼叫 metadata.check_retention_coverage() 列出缺 retention 覆蓋的表。
+
+    DB 函數由 gis-platform migration 部署，contract：
+        RETURNS TABLE(table_name text, issue text)
+
+    Returns:
+        {'status': 'ok', 'rows': [(table_name, issue), ...]}  # rows 空 = 全覆蓋
+        {'status': 'not_deployed'}                            # DB 函數尚未部署
+        {'status': 'error', 'message': str}                   # 連線失敗 / 其他錯誤
+    """
+    if not (config.SUPABASE_ENABLED and config.SUPABASE_DB_URL):
+        return {'status': 'error', 'message': 'Supabase 未啟用'}
+    try:
+        import psycopg2
+        import psycopg2.errors
+    except ImportError:
+        return {'status': 'error', 'message': 'psycopg2 not available'}
+
+    try:
+        with psycopg2.connect(config.SUPABASE_DB_URL, connect_timeout=15) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT table_name, issue FROM metadata.check_retention_coverage()")
+                rows = cur.fetchall()
+        return {'status': 'ok', 'rows': rows}
+    except (psycopg2.errors.UndefinedFunction, psycopg2.errors.InvalidSchemaName):
+        return {'status': 'not_deployed'}
+    except Exception as exc:
+        log.warning("query_retention_coverage failed: %s", exc)
+        return {'status': 'error', 'message': str(exc)}
+
+
 def should_notify_persistent(anomaly_id: str, state: dict[str, dict] | None = None) -> bool:
     """D1 / D3 / D7 規則：first_seen 算 D0，第 1, 3, 7 天才提報"""
     state = state if state is not None else load_anomaly_state()

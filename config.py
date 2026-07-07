@@ -136,6 +136,10 @@ else:
 SUPABASE_ENABLED = os.getenv('SUPABASE_ENABLED', 'false').lower() in ('true', '1', 'yes')
 SUPABASE_DB_URL = os.getenv('SUPABASE_DB_URL')  # Supavisor Transaction mode (port 6543)
 SUPABASE_BUFFER_INTERVAL = int(os.getenv('SUPABASE_BUFFER_INTERVAL', '5'))  # buffer 重試間隔（分鐘）
+# Buffer 目錄檔數上限（比照 external/vm_common/vm_buffer.py 的 MAX_BUFFER_FILES 模式）：
+# DB 長時間不可用時，寫新 buffer 檔前超量先刪最舊並記 warning，防 /data volume 塞爆。
+# 3 天 age 丟棄邏輯（BUFFER_MAX_AGE_DAYS）另行保留，兩者獨立。
+SUPABASE_BUFFER_MAX_FILES = int(os.getenv('SUPABASE_BUFFER_MAX_FILES', '500'))
 # 寫入韌性：避免 DB hang 時整條寫入鏈卡死（單連線 + 單 RLock）
 SUPABASE_CONNECT_TIMEOUT = int(os.getenv('SUPABASE_CONNECT_TIMEOUT', '10'))        # 建線 timeout（秒）
 SUPABASE_STATEMENT_TIMEOUT_MS = int(os.getenv('SUPABASE_STATEMENT_TIMEOUT_MS', '30000'))  # 單筆語句 timeout（毫秒）

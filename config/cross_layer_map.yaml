@@ -10,6 +10,8 @@
 #
 # 欄位定義：
 #   enabled               : 該 collector 是否「應該在跑」（不論部署在哪）
+#                           ⚠️ 反映 production 實況（Zeabur env 覆寫），非 config.py repo 預設
+#                           （2026-07-08 依主站實際 env 校正 22 筆 AR-05 回填時誤標 disabled 的 collector）
 #   deployment            : zeabur | hicloud_vm | disabled
 #   expected_interval_min : 期望抓取間隔（分鐘，給 staleness 判斷用）
 #   supabase_tables       : 該 collector 寫的所有 Supabase 表（含 history / current / 多表）
@@ -39,8 +41,8 @@ bus:
   critical: true
 
 bus_intercity:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 2
   supabase_tables: [realtime.bus_intercity_positions, realtime.bus_intercity_current]
   s3_prefixes:
@@ -69,13 +71,14 @@ freeway_vd:
   critical: true
 
 parking:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 15
-  supabase_tables: []
-  s3_prefixes: []
+  supabase_tables: [realtime.parking_segments_availability, realtime.parking_segments_current]
+  s3_prefixes:
+    - {prefix: parking/archives/, expected_daily: false}
   critical: false
-  notes: 已下線，S3 無 archives 不算問題
+  notes: 2026-07-08 依主站 env 校正——實際在跑（先前誤標已下線）；表對應 TABLE_MAP['parking']（OnStreet 路邊停車）
 
 tra_train:
   enabled: true
@@ -137,8 +140,8 @@ flight_fr24:
   notes: 2026-05 起停跑，archives silent fail 32 天屬已知問題（disabled 後預期）
 
 flight_fr24_zone:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables: [realtime.flight_positions]
   s3_prefixes:
@@ -146,8 +149,8 @@ flight_fr24_zone:
   critical: false
 
 flight_opensky:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables: [realtime.flight_positions]
   s3_prefixes:
@@ -217,8 +220,8 @@ news_events:
 # 太空 / 衛星
 # ─────────────────────────────────────────────────────────
 satellite:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 120
   supabase_tables:
     - realtime.satellite_positions
@@ -230,10 +233,12 @@ satellite:
   critical: false
 
 launch:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 15
   supabase_tables: [realtime.launches, realtime.launch_events, realtime.launch_pads]
+  # launches 每輪 poll upsert（upcoming 清單恆有資料）→ interval 15 不會誤報；
+  # launch_events 事件驅動，但跨層 B 檢查 any() 由 launches 撐即可
   s3_prefixes:
     - {prefix: launch/archives/, expected_daily: false}
   critical: false
@@ -242,8 +247,8 @@ launch:
 # 空氣品質
 # ─────────────────────────────────────────────────────────
 air_quality:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 60
   supabase_tables: [realtime.air_quality_observations, realtime.air_quality_current]
   s3_prefixes:
@@ -251,8 +256,8 @@ air_quality:
   critical: false
 
 air_quality_imagery:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 60
   supabase_tables: [realtime.aqi_imagery_frames]
   s3_prefixes:
@@ -260,8 +265,8 @@ air_quality_imagery:
   critical: false
 
 air_quality_microsensors:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables: [realtime.micro_sensor_readings]
   s3_prefixes:
@@ -272,8 +277,8 @@ air_quality_microsensors:
 # 水利
 # ─────────────────────────────────────────────────────────
 water_reservoir:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 60
   supabase_tables: [realtime.reservoir_status]
   s3_prefixes:
@@ -281,8 +286,8 @@ water_reservoir:
   critical: false
 
 water_reservoir_daily_ops:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 1440
   supabase_tables: [realtime.reservoir_daily_ops]
   s3_prefixes:
@@ -291,8 +296,8 @@ water_reservoir_daily_ops:
   notes: 官方 09:30 後更新，排程晚於資料源發布即可能延遲
 
 river_water_level:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 10
   supabase_tables: [realtime.river_water_level]
   s3_prefixes:
@@ -300,8 +305,8 @@ river_water_level:
   critical: false
 
 rain_gauge_realtime:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 10
   supabase_tables: [realtime.rain_gauge_readings]
   s3_prefixes:
@@ -309,8 +314,8 @@ rain_gauge_realtime:
   critical: false
 
 groundwater_level:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 60
   supabase_tables: [realtime.groundwater_level_readings]
   s3_prefixes:
@@ -318,17 +323,21 @@ groundwater_level:
   critical: false
 
 wra_drought_alert:
-  enabled: false
-  deployment: disabled
-  expected_interval_min: 1440
+  enabled: true
+  deployment: zeabur
+  # 事件驅動：上游不定期公告（實測 18 天未變屬常態，hash 未變即整批不寫）。
+  # interval 比照 foursquare_poi 放寬 43200（B 層 max_time 視窗 90 天），
+  # 用 collector 實際輪詢值 1440 會天天誤報跨層斷層。
+  expected_interval_min: 43200
   supabase_tables: [public.drought_alert_history, public.drought_alert_current]
   s3_prefixes:
     - {prefix: wra_drought_alert/archives/, expected_daily: false}
   critical: false
+  notes: 2026-07-08 依主站 env 校正 enabled；current 表列 realtime_tables（fetched_at），history 由 current 代監控（測試豁免）
 
 iot_wra:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 60
   supabase_tables: [realtime.iot_wra_measurements]
   s3_prefixes:
@@ -336,8 +345,8 @@ iot_wra:
   critical: false
 
 uswg:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 10
   supabase_tables: [realtime.uswg_measurements]
   s3_prefixes:
@@ -348,8 +357,8 @@ uswg:
 # 道路事件 / 廢棄物 / 急診 / 電力
 # ─────────────────────────────────────────────────────────
 road_event_live:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables: [realtime.road_events, realtime.road_events_current]
   s3_prefixes:
@@ -357,8 +366,8 @@ road_event_live:
   critical: false
 
 road_event_planned:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 720
   supabase_tables: [realtime.road_events, realtime.road_events_current]
   s3_prefixes:
@@ -394,8 +403,8 @@ waste_match:
   critical: false
 
 er_hospital_realtime:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 15
   supabase_tables: [realtime.er_hospital_status, realtime.er_hospital_current]
   s3_prefixes:
@@ -403,8 +412,8 @@ er_hospital_realtime:
   critical: false
 
 power_taipower:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 10
   supabase_tables:
     - realtime.power_system_status
@@ -595,14 +604,14 @@ road_congestion:
   notes: production 實測 2026-07-02 current 表 15:59 UTC 新鮮；road_sections_live MAX 會 timeout → realtime_tables.yaml 只監控 current 表
 
 satellite_passes_daily:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: []  # TODO(sync): 人工確認 — 此 collector 無 TABLE_MAP 對應（multi_table / reference / 無 SB 表）
+  supabase_tables: []  # 直接 SQL 寫 realtime.satellite_passes / satellite_passes_daily（不走 supabase_writer TABLE_MAP）→ B 層跳過，TODO 補表級監控設計
   s3_prefixes:
     - {prefix: satellite_passes_daily/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 自動補回（scripts/sync_cross_layer_map.py）— TABLE_MAP 無表，欄位待人工複核（2026-07-02 複核維持 TODO）
+  notes: 2026-07-08 依主站 env 校正 enabled——實際每日在跑（heartbeat 監控生效）；表級監控待人工設計
 
 tourist_shuttle:
   enabled: true
