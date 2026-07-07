@@ -151,8 +151,12 @@ class SupabaseWriter:
                 if collector_name == 'satellite':
                     self._write_satellite_tle(conn, result, timestamp)
 
-            # heartbeat 是 best-effort，獨立借連線；失敗只 debug log
-            self._report_heartbeat(collector_name, True, len(records))
+                # heartbeat 共用主寫入這條 conn，省一次 borrow + pre-ping
+                # （每次成功寫入原本要借兩條連線，尖峰時是 pool 壓力來源之一）。
+                # 主寫入的 _txn 已各自 commit，這裡開的是【獨立 transaction】：
+                # 心跳失敗只會 rollback 心跳本身，絕不影響已寫入的資料；
+                # 例外在 _report_heartbeat 內吞掉（best-effort 語義不變）。
+                self._report_heartbeat(collector_name, True, len(records), conn=conn)
 
             # 連續錯誤計數重置 + 恢復通知
             with self._err_lock:
@@ -2261,6 +2265,22 @@ class SupabaseWriter:
     # ============================================================
 
     def _write_to_buffer(self, collector_name: str, result: dict, timestamp: datetime):
+        # 容量上限（比照 vm_buffer.MAX_BUFFER_FILES 模式）：超量先刪最舊再寫新檔，
+        # 防 DB 長期不可用時塞爆 volume。檔名開頭是 collector 名、字典序≠時間序，
+        # 故以 mtime 判定最舊（vm_buffer 單 collector 一目錄才可用檔名排序）。
+        try:
+            existing = sorted(BUFFER_DIR.glob('*.json'), key=lambda p: p.stat().st_mtime)
+            overflow = len(existing) - (config.SUPABASE_BUFFER_MAX_FILES - 1)
+            if overflow > 0:
+                for old in existing[:overflow]:
+                    old.unlink(missing_ok=True)
+                logger.warning(
+                    f"Buffer 達上限 {config.SUPABASE_BUFFER_MAX_FILES} 檔，"
+                    f"丟棄最舊 {overflow} 檔"
+                )
+        except Exception as e:
+            logger.warning(f"Buffer 容量檢查失敗（仍繼續寫入）: {e}")
+
         ts_str = timestamp.strftime('%Y%m%d_%H%M%S')
         buffer_file = BUFFER_DIR / f"{collector_name}_{ts_str}.json"
         buffer_file.write_text(json.dumps({
@@ -2274,15 +2294,28 @@ class SupabaseWriter:
     # 心跳回報
     # ============================================================
 
-    def _report_heartbeat(self, collector_name: str, success: bool, records: int = 0, error: str = None):
-        """Best-effort 心跳回報。借不到連線或失敗都靜默 — 不能影響主寫入路徑。"""
+    def _report_heartbeat(self, collector_name: str, success: bool, records: int = 0,
+                          error: str = None, conn=None):
+        """Best-effort 心跳回報。借不到連線或失敗都靜默 — 不能影響主寫入路徑。
+
+        conn 給定時（write() 成功路徑）：直接在該連線上以獨立 transaction 跑，
+        不另外 borrow — 主寫入已 commit，心跳失敗只 rollback 心跳自己。
+        conn 未給定時（失敗路徑）：維持原樣自行借一條短 timeout 連線。
+        """
         try:
-            # 短 timeout：心跳只是觀測，不該為了它等很久
-            with self._pool.borrow(timeout=1) as conn:
-                with self._txn(conn) as cur:
-                    cur.execute(
-                        "SELECT report_collector_heartbeat(%s, %s, %s, %s)",
-                        (collector_name, success, records, error)
-                    )
+            if conn is not None:
+                self._exec_heartbeat(conn, collector_name, success, records, error)
+            else:
+                # 短 timeout：心跳只是觀測，不該為了它等很久
+                with self._pool.borrow(timeout=1) as borrowed:
+                    self._exec_heartbeat(borrowed, collector_name, success, records, error)
         except Exception as e:
             logger.debug(f"心跳回報失敗: {e}")
+
+    def _exec_heartbeat(self, conn, collector_name: str, success: bool, records: int, error: str):
+        """在給定連線上執行心跳 SQL（獨立 transaction，失敗 raise 由呼叫端吞）。"""
+        with self._txn(conn) as cur:
+            cur.execute(
+                "SELECT report_collector_heartbeat(%s, %s, %s, %s)",
+                (collector_name, success, records, error)
+            )

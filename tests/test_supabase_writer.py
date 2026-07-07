@@ -30,6 +30,8 @@ def writer_with_mock_pool(monkeypatch, tmp_path):
 
     from storage.db import SupabaseConnectionPool
     mock_pool = MagicMock(spec=SupabaseConnectionPool)
+    # spec 只涵蓋 class 屬性，statement_timeout_ms 是 __init__ 實例屬性要手動補
+    mock_pool.statement_timeout_ms = 30_000
     mock_pool.snapshot.return_value = {
         'pool_initialized': True,
         'minconn': 2,
@@ -332,3 +334,142 @@ def test_do_nothing_upsert_is_targetless(writer_with_mock_pool, monkeypatch):
     assert history_sqls, '應產生寫入 lightning_events 的 SQL'
     assert 'ON CONFLICT DO NOTHING' in history_sqls[0]
     assert 'ON CONFLICT (' not in history_sqls[0]
+
+
+# ============================================================
+# 心跳併入主寫入連線（成功路徑只 borrow 一次）
+# ============================================================
+
+def _youbike_result():
+    return {'data': [{'StationUID': 'HB_1', '_city': 'Taipei',
+                      'AvailableRentBikes': 2, 'AvailableReturnBikes': 3}]}
+
+
+def test_write_success_single_borrow_heartbeat_same_conn(writer_with_mock_pool):
+    """成功寫入應只 borrow 一次，心跳在同一條 conn 上跑（獨立 transaction）。"""
+    writer, mock_pool = writer_with_mock_pool
+    mock_pool.statement_timeout_ms = 30_000  # _txn 的 SET LOCAL 會讀
+
+    from contextlib import contextmanager
+    borrowed_conns = []
+
+    @contextmanager
+    def tracking_borrow(timeout=None):
+        conn = MagicMock()
+        cursor = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cursor
+        conn.cursor.return_value.__exit__.return_value = None
+        borrowed_conns.append((conn, cursor))
+        yield conn
+
+    mock_pool.borrow.side_effect = tracking_borrow
+
+    writer.write('youbike', _youbike_result(), datetime(2026, 7, 7, 12, 0, 0))
+
+    # 整個成功路徑（主寫入 + 心跳）只 borrow 一次
+    assert mock_pool.borrow.call_count == 1, (
+        f"write() borrowed {mock_pool.borrow.call_count} times, expected 1"
+    )
+
+    # 心跳 SQL 必須跑在同一條 conn 的 cursor 上
+    _, cursor = borrowed_conns[0]
+    heartbeat_calls = [c for c in cursor.execute.call_args_list
+                       if 'report_collector_heartbeat' in str(c.args[0])]
+    assert heartbeat_calls, '心跳 SQL 應在主寫入的 conn 上執行'
+    assert heartbeat_calls[0].args[1][0] == 'youbike'
+    assert heartbeat_calls[0].args[1][1] is True
+
+
+def test_write_heartbeat_failure_does_not_affect_main_write(writer_with_mock_pool, tmp_path):
+    """心跳失敗必須被吞掉：主寫入視為成功，不進 buffer、不發告警、不 raise。"""
+    writer, mock_pool = writer_with_mock_pool
+    mock_pool.statement_timeout_ms = 30_000
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def borrow_heartbeat_broken(timeout=None):
+        conn = MagicMock()
+        cursor = MagicMock()
+
+        def execute(sql, params=None):
+            if 'report_collector_heartbeat' in str(sql):
+                raise RuntimeError('heartbeat proc exploded')
+
+        cursor.execute.side_effect = execute
+        conn.cursor.return_value.__enter__.return_value = cursor
+        conn.cursor.return_value.__exit__.return_value = None
+        yield conn
+
+    mock_pool.borrow.side_effect = borrow_heartbeat_broken
+
+    with patch('storage.supabase_writer.send_telegram') as tg:
+        # 不該 raise
+        writer.write('youbike', _youbike_result(), datetime(2026, 7, 7, 12, 0, 0))
+
+    # 主寫入視為成功：沒有 buffer 檔、錯誤計數歸零、沒發 Telegram
+    buffer_dir = tmp_path / 'buffer'
+    assert list(buffer_dir.glob('*.json')) == []
+    assert writer._db_consecutive_errors.get('youbike', 0) == 0
+    assert tg.call_count == 0
+    # 心跳併入主連線後仍只 borrow 一次
+    assert mock_pool.borrow.call_count == 1
+
+
+def test_write_failure_heartbeat_still_borrows_own_conn(writer_with_mock_pool, tmp_path):
+    """失敗路徑行為不變：主寫入 borrow 失敗後，心跳仍自行借短 timeout 連線回報。"""
+    writer, mock_pool = writer_with_mock_pool
+    mock_pool.statement_timeout_ms = 30_000
+    from storage.db import PoolBorrowTimeout
+
+    from contextlib import contextmanager
+    calls = []
+
+    @contextmanager
+    def borrow_first_fails(timeout=None):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise PoolBorrowTimeout('pool exhausted')
+        conn = MagicMock()
+        cursor = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cursor
+        conn.cursor.return_value.__exit__.return_value = None
+        yield conn
+
+    mock_pool.borrow.side_effect = borrow_first_fails
+
+    writer.write('youbike', _youbike_result(), datetime(2026, 7, 7, 12, 0, 0))
+
+    # 主寫入 borrow（預設 timeout=None）失敗 → 資料進 buffer；
+    # 心跳自行 borrow（timeout=1）回報失敗狀態
+    assert calls == [None, 1]
+    assert len(list((tmp_path / 'buffer').glob('*.json'))) == 1
+
+
+# ============================================================
+# Buffer 容量上限（SUPABASE_BUFFER_MAX_FILES）
+# ============================================================
+
+def test_write_to_buffer_enforces_max_files(writer_with_mock_pool, tmp_path, monkeypatch):
+    """buffer 檔數達上限時，寫新檔前應先刪最舊（依 mtime），總數不超過上限。"""
+    import os
+    writer, _ = writer_with_mock_pool
+    monkeypatch.setattr('config.SUPABASE_BUFFER_MAX_FILES', 3)
+
+    buffer_dir = tmp_path / 'buffer'
+    buffer_dir.mkdir(parents=True, exist_ok=True)
+    # 3 個既有檔，mtime 遞增（zz_oldest 檔名字典序最大但 mtime 最舊 —
+    # 驗證是按 mtime 不是按檔名刪）
+    base = 1_700_000_000
+    for i, name in enumerate(['zz_oldest.json', 'aa_mid.json', 'mm_new.json']):
+        f = buffer_dir / name
+        f.write_text('{}')
+        os.utime(f, (base + i, base + i))
+
+    writer._write_to_buffer('youbike', {'data': []}, datetime(2026, 7, 7, 12, 0, 0))
+
+    remaining = {f.name for f in buffer_dir.glob('*.json')}
+    assert len(remaining) == 3
+    assert 'zz_oldest.json' not in remaining, '應刪除 mtime 最舊的檔'
+    assert 'aa_mid.json' in remaining and 'mm_new.json' in remaining
+    assert any(n.startswith('youbike_') for n in remaining), '新 buffer 檔應已寫入'

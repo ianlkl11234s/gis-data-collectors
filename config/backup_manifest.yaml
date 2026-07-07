@@ -122,7 +122,10 @@ archive_py_covered:
   - realtime.pla_activity_daily        # pla_activity_daily, 2026-06-16 起
   # Health
   - realtime.er_hospital_status        # er_hospital_realtime, 2026-06-02 起
-  - realtime.public_health_weekly      # cdc_public_health_weekly (VM), 2026-06-16 起
+  # realtime.public_health_weekly 已移除（2026-07-07 稽核發現）：CDC VM
+  # (external/cdc_public_health_weekly_vm/) 沒有任何 archive 腳本、cross_layer_map
+  # s3_prefixes 為空 → 列在此處會讓 Robot B 跳過 = 該表零備份。移除後改由
+  # Robot B 每日 snapshot 備份（週更表，非週四後一天多為 skipped_empty_day 屬預期）。
   # Spatial schema (waste GPS on HiCloud VM)
   - spatial.waste_positions_realtime   # waste_positions (HiCloud VM), 8-day retention
 

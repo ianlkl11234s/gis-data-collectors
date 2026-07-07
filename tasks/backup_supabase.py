@@ -889,6 +889,11 @@ class BackupSupabaseTask:
                 s3_key = f"{_S3_REALTIME_PREFIX}/{date_str}/{schema}.{table}.csv.gz"
                 exists = self.s3.file_exists(s3_key) if self.s3 else False
                 if not exists:
+                    # 低頻表（如週更 public_health_weekly、颱風季外 typhoon_positions）
+                    # 昨日本來就沒資料 → Robot B skipped_empty_day 不上傳，非異常
+                    if self._realtime_day_is_empty(schema, table, yesterday):
+                        severity_counts["ok"] += 1
+                        continue
                     msg = f"即時表 {qualified} 昨日 S3 物件不存在: {s3_key}"
                     print(f"   ❌ {msg}")
                     self._audit(
@@ -958,6 +963,29 @@ class BackupSupabaseTask:
         print(f"      ❌ critical: {severity_counts['critical']}")
 
         return severity_counts
+
+    def _realtime_day_is_empty(self, schema: str, table: str, target_date: date) -> bool:
+        """檢查即時表指定日期是否無資料列。
+
+        Robot C 用：昨日無資料 → Robot B 走 skipped_empty_day 不上傳，
+        S3 缺該日 key 屬預期，不應告警 missing_s3。
+        查詢失敗時回 False（寧可誤報 missing_s3，也不要漏報真缺檔）。
+        """
+        try:
+            time_col = self._find_time_column(schema, table)
+            if time_col is None:
+                return False
+            day_start = datetime.combine(target_date, dtime.min, tzinfo=TAIPEI_TZ)
+            day_end = day_start + timedelta(days=1)
+            with self._cursor() as cur:
+                cur.execute(
+                    f'SELECT count(*) FROM "{schema}"."{table}" '
+                    f'WHERE "{time_col}" >= %s AND "{time_col}" < %s',
+                    (day_start, day_end),
+                )
+                return cur.fetchone()[0] == 0
+        except Exception:
+            return False
 
     def _get_all_backup_state_tables(self) -> set[str]:
         """讀 metadata.backup_state，回傳所有已知 schema.table 集合。"""

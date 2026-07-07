@@ -7,11 +7,12 @@ Data Collectors 主程式
 """
 
 import logging
+import random
 import signal
 import sys
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import schedule
@@ -89,14 +90,24 @@ def run_collectors():
     print(f"🚀 初始執行（共 {len(collectors)} 個 collector，pool max_workers={max_workers}）")
     print("=" * 60)
 
-    # 註冊並立即提交一次（異步執行，不阻塞啟動流程）
-    for collector in collectors:
+    # 註冊並立即提交一次（異步執行）。每個 collector 間隔 1-3 秒 submit，
+    # 錯開首輪全量齊發時的 DB 連線尖峰（曾釀 pool borrow timeout，見 config.py 註解）
+    for idx, collector in enumerate(collectors):
+        if idx > 0:
+            time.sleep(random.uniform(1.0, 3.0))
         sched.register(collector)
         sched.submit(collector)
 
-    # 設定排程（schedule 庫只負責觸發，實際執行交給 CollectorScheduler）
+    # 設定排程（schedule 庫只負責觸發，實際執行交給 CollectorScheduler）。
+    # 對 next_run 加一次性隨機 offset（0 ~ min(interval, 5 分鐘)），錯開同 interval
+    # collector 全撞同一 tick 的連線尖峰；schedule 之後以實際執行時間推下一輪，
+    # offset 自然保留，interval 語義不變。
     for collector in collectors:
-        schedule.every(collector.interval_minutes).minutes.do(sched.submit, collector)
+        job = schedule.every(collector.interval_minutes).minutes.do(sched.submit, collector)
+        offset_sec = random.uniform(0, min(collector.interval_minutes * 60, 300))
+        job.next_run += timedelta(seconds=offset_sec)
+        print(f"   ⏱ [{collector.name}] 排程 jitter +{offset_sec:.0f}s"
+              f"（首次觸發 {job.next_run.strftime('%H:%M:%S')}）")
 
     # 顯示下次執行時間
     next_run = schedule.next_run()

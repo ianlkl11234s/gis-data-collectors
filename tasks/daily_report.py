@@ -122,6 +122,7 @@ class DailyReportTask:
             ("Supabase realtime 寫入", self._section_supabase_realtime),
             ("S3 archives 心跳", self._section_s3_archives),
             ("Supabase 備份健康", self._section_backup_health),
+            ("Retention 覆蓋", self._section_retention_coverage),
             ("跨層一致性", self._section_cross_layer),
             ("HiCloud VM 健康", self._section_external_vm_health),
             ("異常 7 天趨勢", self._section_anomaly_trend),
@@ -555,6 +556,35 @@ class DailyReportTask:
                 label = f"{schema_n}.{table_n}" if schema_n and table_n else "(global)"
                 parts.append(f"    `{label}` [{code}] {msg}")
 
+        return "\n".join(parts)
+
+    def _section_retention_coverage(self) -> str:
+        """Supabase retention 覆蓋檢查 — 列出沒被 pg_cron cleanup 蓋到的表。
+
+        呼叫 metadata.check_retention_coverage()（gis-platform 部署的 DB 函數）；
+        函數未部署時優雅降級，不影響整份日報。
+        """
+        from tasks import monitoring
+
+        result = monitoring.query_retention_coverage()
+        status = result.get("status")
+        if status == "not_deployed":
+            return (
+                "\n🧹 *Retention 覆蓋*\n"
+                "  ⚪ 檢查函數未部署（metadata.check_retention_coverage，見 gis-platform migration）"
+            )
+        if status != "ok":
+            return f"\n🧹 *Retention 覆蓋*\n  查詢失敗: {result.get('message', '?')}"
+
+        rows = result.get("rows") or []
+        if not rows:
+            return "\n🧹 *Retention 覆蓋*\n  ✅ 所有表都有 retention 覆蓋"
+
+        parts = [f"\n🧹 *Retention 覆蓋* ⚠️ ({len(rows)} 表缺覆蓋)"]
+        for table_name, issue in rows[:10]:
+            parts.append(f"    `{table_name}` {issue}")
+        if len(rows) > 10:
+            parts.append(f"    …另有 {len(rows) - 10} 筆")
         return "\n".join(parts)
 
     def _section_s3_archives(self) -> str:

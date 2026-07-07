@@ -491,6 +491,10 @@ class NewsEventsCollector(BaseCollector):
         all_items: list[dict] = []
         ok = failed = 0
         feeds = build_feed_list()
+        # source_health 先收集、抓完整批一次 upsert（一次 borrow 一條 conn）。
+        # 舊版每個 feed 各借一條連線 upsert，數十 feed = 數十次 borrow + pre-ping，
+        # 是 pool 壓力來源之一。抓取期間有 sleep，不能邊抓邊持有連線。
+        health_updates: list[tuple[dict, bool, Optional[str]]] = []
         for i, feed in enumerate(feeds):
             if i > 0:
                 time.sleep(self.FEED_SLEEP_SECONDS)
@@ -498,58 +502,71 @@ class NewsEventsCollector(BaseCollector):
                 items = self._fetch_feed(feed)
                 all_items.extend(items)
                 ok += 1
-                self._upsert_source_health(feed, success=True, error=None)
+                health_updates.append((feed, True, None))
             except Exception as e:
                 failed += 1
                 label = feed.get('county_hint') or feed['source']
                 print(f"   ⚠ feed 抓取失敗 [{feed['source']}/{label}]: {e}")
-                self._upsert_source_health(feed, success=False, error=str(e)[:500])
+                health_updates.append((feed, False, str(e)[:500]))
+        self._upsert_source_health_batch(health_updates)
         return all_items, ok, failed
 
-    def _upsert_source_health(self, feed: dict, success: bool, error: Optional[str]) -> None:
-        """更新 realtime.source_health（失敗不影響主流程）。"""
-        if not self.supabase_writer:
+    def _upsert_source_health_batch(
+            self, updates: list[tuple[dict, bool, Optional[str]]]) -> None:
+        """整批更新 realtime.source_health，共用一條連線（失敗不影響主流程）。
+
+        連線為 autocommit（pool borrow 預設），每筆 upsert 各自成交易；
+        單筆失敗只記 log 繼續下一筆，維持舊版「每 feed 獨立 best-effort」語義。
+        """
+        if not self.supabase_writer or not updates:
             return
         try:
             with self.supabase_writer.with_conn() as conn:
-                with conn.cursor() as cur:
-                    if success:
-                        cur.execute(
-                            """
-                            INSERT INTO realtime.source_health
-                                (feed_url, source, county_hint, last_success_at, last_attempt_at,
-                                 last_error, consecutive_fail, updated_at)
-                            VALUES (%s, %s, %s, now(), now(), NULL, 0, now())
-                            ON CONFLICT (feed_url) DO UPDATE SET
-                                last_success_at  = EXCLUDED.last_success_at,
-                                last_attempt_at  = EXCLUDED.last_attempt_at,
-                                last_error       = NULL,
-                                consecutive_fail = 0,
-                                source           = EXCLUDED.source,
-                                county_hint      = EXCLUDED.county_hint,
-                                updated_at       = now();
-                            """,
-                            (feed['url'], feed['source'], feed.get('county_hint')),
-                        )
-                    else:
-                        cur.execute(
-                            """
-                            INSERT INTO realtime.source_health
-                                (feed_url, source, county_hint, last_attempt_at,
-                                 last_error, consecutive_fail, updated_at)
-                            VALUES (%s, %s, %s, now(), %s, 1, now())
-                            ON CONFLICT (feed_url) DO UPDATE SET
-                                last_attempt_at  = EXCLUDED.last_attempt_at,
-                                last_error       = EXCLUDED.last_error,
-                                consecutive_fail = realtime.source_health.consecutive_fail + 1,
-                                source           = EXCLUDED.source,
-                                county_hint      = EXCLUDED.county_hint,
-                                updated_at       = now();
-                            """,
-                            (feed['url'], feed['source'], feed.get('county_hint'), error),
+                for feed, success, error in updates:
+                    try:
+                        with conn.cursor() as cur:
+                            if success:
+                                cur.execute(
+                                    """
+                                    INSERT INTO realtime.source_health
+                                        (feed_url, source, county_hint, last_success_at, last_attempt_at,
+                                         last_error, consecutive_fail, updated_at)
+                                    VALUES (%s, %s, %s, now(), now(), NULL, 0, now())
+                                    ON CONFLICT (feed_url) DO UPDATE SET
+                                        last_success_at  = EXCLUDED.last_success_at,
+                                        last_attempt_at  = EXCLUDED.last_attempt_at,
+                                        last_error       = NULL,
+                                        consecutive_fail = 0,
+                                        source           = EXCLUDED.source,
+                                        county_hint      = EXCLUDED.county_hint,
+                                        updated_at       = now();
+                                    """,
+                                    (feed['url'], feed['source'], feed.get('county_hint')),
+                                )
+                            else:
+                                cur.execute(
+                                    """
+                                    INSERT INTO realtime.source_health
+                                        (feed_url, source, county_hint, last_attempt_at,
+                                         last_error, consecutive_fail, updated_at)
+                                    VALUES (%s, %s, %s, now(), %s, 1, now())
+                                    ON CONFLICT (feed_url) DO UPDATE SET
+                                        last_attempt_at  = EXCLUDED.last_attempt_at,
+                                        last_error       = EXCLUDED.last_error,
+                                        consecutive_fail = realtime.source_health.consecutive_fail + 1,
+                                        source           = EXCLUDED.source,
+                                        county_hint      = EXCLUDED.county_hint,
+                                        updated_at       = now();
+                                    """,
+                                    (feed['url'], feed['source'], feed.get('county_hint'), error),
+                                )
+                    except Exception as e:
+                        logger.warning(
+                            f"[{self.name}] source_health upsert 失敗"
+                            f"（feed={feed['url']}，不影響主流程）: {e}"
                         )
         except Exception as e:
-            logger.warning(f"[{self.name}] source_health upsert 失敗（不影響主流程）: {e}")
+            logger.warning(f"[{self.name}] source_health 批次 upsert 失敗（不影響主流程）: {e}")
 
     # ------------------------------------------------------------
     # 去重

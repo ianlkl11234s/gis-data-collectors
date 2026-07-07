@@ -32,6 +32,7 @@ tables:
   - {schema: realtime, table: ship_positions,            time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
   - {schema: realtime, table: ship_current,              time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
   - {schema: reference, table: daily_schedules,          time_column: created_at,   owner_collector: rail_timetable, expected_interval_min: 1440, critical: false}
+  - {schema: realtime, table: parking_segments_current,  time_column: collected_at, owner_collector: parking, expected_interval_min: 15, critical: false, notes: OnStreet 路邊停車；availability 由 current 代監控（測試豁免）}
 
   # ── 航空 ────────────────────────────────
   - {schema: realtime, table: flight_positions,          time_column: collected_at, owner_collector: flight_fr24, expected_interval_min: 5, critical: false, notes: 多 collector 共用}
@@ -68,8 +69,10 @@ tables:
   - {schema: realtime, table: groundwater_level_readings, time_column: observed_at, owner_collector: groundwater_level, expected_interval_min: 60, critical: false}
   - {schema: realtime, table: iot_wra_measurements,      time_column: observed_at,  owner_collector: iot_wra, expected_interval_min: 60, critical: false}
   - {schema: realtime, table: uswg_measurements,         time_column: observed_at,  owner_collector: uswg, expected_interval_min: 10, critical: false}
-  # drought_alert_history / drought_alert_current — collector 早 disabled，
-  # 留在清冊只會每天顯示 DEAD 干擾。需要時再加回來。
+  # drought_alert_current — 2026-07-08 確認 collector 在主站實際運作，加回監控。
+  # 事件驅動（hash 未變即不寫，18 天未變屬常態）→ interval 比照 foursquare_poi 放寬 43200
+  # 避免天天 DEAD 噪音；drought_alert_history 同批寫入，由 current 代監控（測試豁免）。
+  - {schema: public,   table: drought_alert_current,     time_column: fetched_at,   owner_collector: wra_drought_alert, expected_interval_min: 43200, critical: false, notes: 事件驅動 hash 去重，上游不定期公告}
 
   # ── 道路 / 廢棄物 / 急診 / 電力 ─────────
   - {schema: realtime, table: road_events,               time_column: collected_at, owner_collector: road_event_live, expected_interval_min: 5, critical: false}
