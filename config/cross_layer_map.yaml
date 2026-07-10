@@ -573,6 +573,15 @@ parking_offstreet:
   critical: false  # TODO(sync): 人工確認 criticality
   notes: production 實測 2026-07-02 15:49 UTC
 
+parking_ref:
+  enabled: false
+  deployment: disabled        # 半靜態月更，目前手動觸發（比照 foursquare_poi 低頻慣例）；TDX 國際可打，要排程可移 zeabur
+  expected_interval_min: 43200  # 每 30 天
+  supabase_tables: [spatial.parking_segments_ref, spatial.parking_lots_ref]
+  s3_prefixes: []               # 直接 SQL 寫 spatial.*_ref，不走 supabase_writer / 無 S3 archive
+  critical: false
+  notes: 停車靜態座標 ref（TDX v1 OnStreet ParkingSegment + OffStreet CarPark/ServiceArea/Tourism）。前端 join realtime.parking_*_current（migration 286）。ref 表 updated_at 監控待人工設計
+
 pla_activity_daily:
   enabled: true
   deployment: zeabur

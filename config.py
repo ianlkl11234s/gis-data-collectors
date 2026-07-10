@@ -226,6 +226,7 @@ _COLLECTOR_TOGGLES = (
     ('TEMPERATURE',                  True,  60),
     ('PARKING',                      False, 15),  # OnStreet 路邊（既有，221 補 Supabase 寫入）
     ('PARKING_OFFSTREET',            False, 15),  # OffStreet 路外場館 3 變體（City/SA/Tourism）
+    ('PARKING_REF',                  False, 43200),  # 停車靜態座標 ref（月更），直接 SQL 寫 spatial.parking_segments_ref / parking_lots_ref
     ('BUS',                          True,  2),    # 22 城擴充後預設 2 分鐘
     ('BUS_INTERCITY',                False, 2),
     ('TOURIST_SHUTTLE',              False, 2),  # 台灣好行 A1 全國單一端點
@@ -331,6 +332,17 @@ PARKING_OFFSTREET_CITIES = os.getenv(
     'Taipei,NewTaipei,Taoyuan,Taichung,Tainan,Kaohsiung,Keelung,Hsinchu,HsinchuCounty,'
     'MiaoliCounty,Chiayi,ChiayiCounty,NantouCounty,YilanCounty,'
     'HualienCounty,TaitungCounty,PenghuCounty,KinmenCounty,LienchiangCounty'
+).split(',')
+
+# 停車靜態座標 ref（半靜態月更）— 路邊三城（台北有 POLYGON geom）
+PARKING_REF_ONSTREET_CITIES = os.getenv(
+    'PARKING_REF_ONSTREET_CITIES', 'Taipei,NewTaipei,Taichung'
+).split(',')
+# 場外高覆蓋城市（PK1 驗證命中率 99%+：台中/高雄/台南/花蓮/金門/桃園/宜蘭；台北 10% 也收）
+# 另固定抓國道服務區(NFB) + 觀光景點(TBROC) 兩個全國端點
+PARKING_REF_OFFSTREET_CITIES = os.getenv(
+    'PARKING_REF_OFFSTREET_CITIES',
+    'Taichung,Kaohsiung,Tainan,HualienCounty,KinmenCounty,Taoyuan,YilanCounty,Taipei'
 ).split(',')
 
 # 公車即時位置（TDX Bus RealTimeByFrequency）
