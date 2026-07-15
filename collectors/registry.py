@@ -51,6 +51,7 @@ from .ship_ais import ShipAISCollector
 from .ship_tdx import ShipTDXCollector
 from .temperature import TemperatureGridCollector
 from .tourist_shuttle import TouristShuttleCollector
+from .tpml_seat import TpmlSeatCollector
 from .tra_static import TRAStaticCollector
 from .tra_train import TRATrainCollector
 from .vd import VDCollector
@@ -148,6 +149,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(CorrectionalDailySnapshotCollector, "矯正機關每日收容動態收集器", "CORRECTIONAL_DAILY_SNAPSHOT"),
     CollectorEntry(ImmigrationApisAirportCollector, "移民署機場入出境 APIS 收集器", "IMMIGRATION_APIS_AIRPORT"),
     CollectorEntry(NpaTrafficAccidentA1Collector, "警政署即時 A1 交通事故收集器", "NPA_TRAFFIC_ACCIDENT_A1"),
+    CollectorEntry(TpmlSeatCollector, "北市圖座位即時收集器", "TPML_SEAT"),
     # === 全球氣候（plan-misty-fog 2026-06-28）===
     CollectorEntry(UsgsEarthquakeCollector, "USGS 全球地震 hourly 收集器", "GLOBAL_CLIMATE_USGS_EARTHQUAKE"),
     CollectorEntry(JmaTyphoonCollector, "JMA RSMC Tokyo 颱風收集器", "GLOBAL_CLIMATE_JMA_TYPHOON"),

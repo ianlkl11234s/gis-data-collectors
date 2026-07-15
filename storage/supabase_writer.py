@@ -1483,6 +1483,38 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_tpml_seat(self, result: dict, ts: datetime) -> list[dict]:
+        """北市圖座位即時狀態。
+
+        collector 的 _normalize 已產出與 TABLE_MAP columns 同名的 dict，
+        observed_at / collected_at 通常已是 isoformat 字串，datetime 物件亦容忍
+        （照 er_hospital 慣例，buffer fallback round-trip 後為字串）。
+        observed_at 屬 upsert_key（area_id,observed_at），缺值跳過。
+        """
+        def _iso(v):
+            if v is None:
+                return None
+            return v.isoformat() if isinstance(v, datetime) else v
+
+        records = []
+        for r in result.get('data', []):
+            area_id = r.get('area_id')
+            observed_at = _iso(r.get('observed_at'))
+            if area_id is None or not observed_at:
+                continue
+            records.append({
+                'area_id':      area_id,
+                'branch_name':  r.get('branch_name'),
+                'floor_name':   r.get('floor_name'),
+                'area_name':    r.get('area_name'),
+                'free_count':   r.get('free_count'),
+                'total_count':  r.get('total_count'),
+                'is_closed':    bool(r.get('is_closed', False)),
+                'observed_at':  observed_at,
+                'collected_at': _iso(r.get('collected_at')) or ts.isoformat(),
+            })
+        return records
+
     def _transform_npa_traffic_accident_a1(self, result: dict, ts: datetime) -> list[dict]:
         """警政署即時 A1 交通事故。collector 已產出 isoformat 字串 + dedup_hash + geom WKT。
         dedup_hash 必填（UNIQUE key），缺值跳過。"""
@@ -1812,6 +1844,7 @@ class SupabaseWriter:
         'river_water_level': _transform_river_water_level,
         'rain_gauge_realtime': _transform_rain_gauge_realtime,
         'er_hospital_realtime': _transform_er_hospital_realtime,
+        'tpml_seat': _transform_tpml_seat,
         'correctional_daily_snapshot': _transform_correctional_daily_snapshot,
         'immigration_apis_airport': _transform_immigration_apis_airport,
         'npa_traffic_accident_a1': _transform_npa_traffic_accident_a1,

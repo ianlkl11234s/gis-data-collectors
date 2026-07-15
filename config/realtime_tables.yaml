@@ -115,3 +115,7 @@ tables:
   - {schema: realtime, table: market_index_current,       time_column: updated_at,   owner_collector: twse_market_index, expected_interval_min: 1440, critical: false, notes: 僅開盤時段有資料，1440x3＝3 天蓋過週末；連假誤報屬預期}
   - {schema: realtime, table: prison_population_daily,    time_column: collected_at, owner_collector: correctional_daily_snapshot, expected_interval_min: 1440, critical: false, notes: 每日 1 row（2026-07-03 啟用）}
   - {schema: realtime, table: traffic_accidents_a1,       time_column: collected_at, owner_collector: npa_traffic_accident_a1, expected_interval_min: 720, critical: false, notes: dedup by hash，僅新事故推進 MAX；久無新事故告警屬預期（2026-07-03 啟用）}
+
+  # ── 文化場館 ────────────────────────────
+  - {schema: realtime, table: tpml_seat_status,            time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false, notes: 北市圖座位；閉館時段仍寫入（is_closed=true）}
+  - {schema: realtime, table: tpml_seat_current,           time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false}

@@ -290,6 +290,24 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
         'current_touch_updated_at': True,
     },
+    'tpml_seat': {
+        'history': 'realtime.tpml_seat_status',
+        'current': 'realtime.tpml_seat_current',
+        'current_key': 'area_id',
+        'columns': [
+            'area_id', 'branch_name', 'floor_name', 'area_name',
+            'free_count', 'total_count', 'is_closed',
+            'observed_at', 'collected_at',
+        ],
+        'current_columns': [
+            'area_id', 'branch_name', 'floor_name', 'area_name',
+            'free_count', 'total_count', 'is_closed',
+            'observed_at',
+        ],
+        'upsert_key': 'area_id,observed_at',
+        'upsert_strategy': 'do_nothing',
+        'current_touch_updated_at': True,
+    },
     'groundwater_level': {
         'history': 'realtime.groundwater_level_readings',
         'columns': [

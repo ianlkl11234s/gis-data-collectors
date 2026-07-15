@@ -77,6 +77,14 @@
     "WATER_RESERVOIR_INTERVAL": {
       "description": "水庫水情收集間隔（分鐘），對應 WRA 每小時更新頻率",
       "default": "60"
+    },
+    "TPML_SEAT_ENABLED": {
+      "description": "北市圖座位即時狀態收集（seat.tpml.edu.tw，6 分館 29 區，無金鑰）",
+      "default": "false"
+    },
+    "TPML_SEAT_INTERVAL": {
+      "description": "北市圖座位收集間隔（分鐘），對應 data.taipei 官方標示 10 分鐘",
+      "default": "10"
     }
   }
 }

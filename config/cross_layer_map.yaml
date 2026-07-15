@@ -681,3 +681,13 @@ yt_live_video_resolver:
     - {prefix: yt_live_video_resolver/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
   notes: production 實測 2026-07-02 15:59 UTC
+
+tpml_seat:
+  enabled: true  # 2026-07-16 上線（migration 290 已 apply + Zeabur TPML_SEAT_ENABLED=true）
+  deployment: zeabur
+  expected_interval_min: 10
+  supabase_tables: [realtime.tpml_seat_status, realtime.tpml_seat_current]
+  s3_prefixes:
+    - {prefix: tpml_seat/archives/, expected_daily: false}
+  critical: false
+  notes: 北市圖 6 分館 29 區座位（seat.tpml.edu.tw，無金鑰）；閉館全 0 → is_closed=true
