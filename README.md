@@ -50,6 +50,7 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 | 水利 | Reservoir / River / Rain Gauge / Groundwater / IoT WRA / USWG | Zeabur |
 | 環境衛生 | **Waste Positions** / Waste Match | **HiCloud VM** / Zeabur |
 | 急診 / 電力 | ER Hospital / Power Taipower | Zeabur |
+| 文化 | TPML 圖書館座位 | Zeabur |
 | POI | Foursquare | Zeabur |
 
 ⚠️ 粗體 = 跑在 HiCloud VM（[`external/ship_ais_vm/`](external/ship_ais_vm/) + [`external/waste_positions_vm/`](external/waste_positions_vm/)）。
