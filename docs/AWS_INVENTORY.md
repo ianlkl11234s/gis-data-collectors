@@ -91,7 +91,7 @@ Rule ID: tiered-cold-storage
 | Prefix | 用途 | 容量 |
 |---|---|---|
 | `flight-arc/` | 應用端使用 | 2.11 GB |
-| `deploy-assets/` | 部署資產 | 0.42 GB |
+| `deploy-assets/` | 部署資產（含 `climate/*_latest.{png,json}` 單幀 + `climate/frames/` 多幀時間軸 PNG＋manifest.json，由 global_climate_bake 每 6h 產出、pulse container sync）| 0.42 GB |
 | `pulse-db/` | 應用端 | 0.29 GB |
 | `mini-taipei/` | 應用端（mini taipei publish task） | 0.05 GB |
 | `rail-data/` | 應用端 rail 相關 | 0.05 GB |

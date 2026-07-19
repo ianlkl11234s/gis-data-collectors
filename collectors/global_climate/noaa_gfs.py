@@ -61,7 +61,16 @@ GFS_VARIABLES = [
         "unit":         "m/s",
     },
 ]
+# PRMSL / 250hPa：維持原樣 6 幀（0,24,...,120）
 GFS_LEADTIMES = [0, 24, 48, 72, 96, 120]
+# 10m 風場：多幀時間軸，0~+120h 每 6h 一幀（共 21 幀）；量小（每幀只 UGRD/VGRD 10m subset）
+GFS_WIND10M_LEADTIMES = list(range(0, 121, 6))
+# 每個變數各自的 leadtime 集合（wind10m 多幀；PRMSL/250hPa 不動）
+GFS_VAR_LEADTIMES = {
+    "gfs_prmsl":      GFS_LEADTIMES,
+    "gfs_wind10m":    GFS_WIND10M_LEADTIMES,
+    "gfs_wind250hpa": GFS_LEADTIMES,
+}
 
 
 def _to_number(v) -> Optional[float]:
@@ -198,13 +207,16 @@ class NoaaGfsCollector(BaseCollector):
 
         with tempfile.TemporaryDirectory(prefix="gfs_") as tmpdir:
             tmp = Path(tmpdir)
-            for leadtime in GFS_LEADTIMES:
+            all_leadtimes = sorted({lt for lts in GFS_VAR_LEADTIMES.values() for lt in lts})
+            for leadtime in all_leadtimes:
                 idx = self._fetch_idx(date_str, cycle, leadtime)
                 if not idx:
                     continue
                 valid_at = cycle_init + timedelta(hours=leadtime)
 
                 for var_cfg in GFS_VARIABLES:
+                    if leadtime not in GFS_VAR_LEADTIMES[var_cfg["id"]]:
+                        continue
                     grib_file = tmp / f"{var_cfg['id']}_f{leadtime:03d}.grib2"
                     ok = self._range_pull(
                         date_str, cycle, leadtime, idx,
