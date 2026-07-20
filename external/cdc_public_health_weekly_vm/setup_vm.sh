@@ -7,8 +7,10 @@ DATA_DIR="/var/lib/cdc-public-health/data"
 LOG_DIR="/var/log/cdc-public-health"
 
 echo ">>> 安裝系統套件"
-sudo apt-get update
-sudo apt-get install -y python3 python3-pip python3-venv ca-certificates
+# Ubuntu 22.04+ 的 needrestart 會跳互動框問要不要重啟 daemon → 用 env 自動 "all"
+export NEEDRESTART_MODE=a DEBIAN_FRONTEND=noninteractive
+sudo -E apt-get update
+sudo -E apt-get install -y python3 python3-pip python3-venv ca-certificates
 
 echo ">>> 建立目錄"
 sudo mkdir -p "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
