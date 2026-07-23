@@ -112,16 +112,50 @@ def main() -> None:
     tables = (yaml.safe_load((REPO / "config/realtime_tables.yaml").read_text(encoding="utf-8")) or {}).get("tables", [])
     layer_map = yaml.safe_load((REPO / "config/cross_layer_map.yaml").read_text(encoding="utf-8")) or {}
 
-    # Exactly one read-only RPC for all configured tables.
+    # Bounded read-only RPCs: one batched freshness snapshot plus one aggregate-only
+    # storage metric for the private air-ticket SSOT. Neither exposes fare rows.
     try:
         payload = json.dumps([
             {"schema": t["schema"], "table": t["table"], "time_column": t.get("time_column", "collected_at")}
             for t in tables
         ])
+        storage: dict = {"status": "unknown"}
         with psycopg2.connect(os.environ["GIS_MONITOR_SUPABASE_DB_URL"], connect_timeout=15) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM public.health_snapshot(%s::jsonb)", (payload,))
                 rows = cur.fetchall()
+                try:
+                    cur.execute("SELECT total_bytes, oldest_observed_at, newest_observed_at FROM public.air_tickets_fare_offers_storage()")
+                    storage_row = cur.fetchone()
+                    if storage_row is None:
+                        raise RuntimeError("air_tickets storage metric returned no row")
+                    total_bytes, oldest_at, newest_at = storage_row
+                    coverage_days = 0.0
+                    if oldest_at and newest_at:
+                        coverage_days = max(0.0, (newest_at - oldest_at).total_seconds() / 86400)
+                    annualized_bytes = int(total_bytes * 365 / max(coverage_days, 1.0)) if total_bytes else 0
+                    status = "BASELINE" if coverage_days < 30 else ("WATCH" if annualized_bytes > 1024 ** 3 else "OK")
+                    storage = {
+                        "status": status,
+                        "total_bytes": int(total_bytes),
+                        "coverage_days": round(coverage_days, 1),
+                        "annualized_bytes": annualized_bytes,
+                        "threshold_bytes_per_year": 1024 ** 3,
+                    }
+                    if status == "WATCH":
+                        out["incident_candidates"].append({
+                            "kind": "air_tickets_storage_growth",
+                            "target": "air_tickets.fare_offers",
+                            "severity": "watch",
+                            "total_bytes": int(total_bytes),
+                            "coverage_days": round(coverage_days, 1),
+                            "annualized_bytes": annualized_bytes,
+                            "threshold_bytes_per_year": 1024 ** 3,
+                        })
+                except Exception as exc:
+                    # Migration 311 may not be applied yet; do not turn all collector
+                    # health red merely because this optional aggregate metric is absent.
+                    storage = {"status": "unknown", "error_type": type(exc).__name__}
         results = {(schema, table): (max_time, error) for schema, table, max_time, _count, error in rows}
         counts = {key: 0 for key in ("OK", "STALE", "DEAD", "NEVER", "ERROR")}
         anomalies: list[dict] = []
@@ -152,7 +186,13 @@ def main() -> None:
                 anomalies.append(item)
                 if state in ("ERROR", "DEAD") and item["critical"]:
                     out["incident_candidates"].append({**item, "severity": "critical"})
-        out["supabase"] = {"status": "ok", "table_count": len(tables), "counts": counts, "anomalies": anomalies[:20]}
+        out["supabase"] = {
+            "status": "ok",
+            "table_count": len(tables),
+            "counts": counts,
+            "anomalies": anomalies[:20],
+            "air_tickets_fare_offers_storage": storage,
+        }
     except Exception as exc:
         out["supabase"] = {"status": "unavailable", "error_type": type(exc).__name__}
         out["incident_candidates"].append({"kind": "supabase_unavailable", "severity": "critical", "error_type": type(exc).__name__})
