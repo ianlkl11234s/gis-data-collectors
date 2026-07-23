@@ -57,7 +57,7 @@ def load_realtime_tables() -> list[dict]:
 # Supabase realtime health
 # ────────────────────────────────────────────────────────────────────
 def query_realtime_health(tables: list[dict]) -> list[dict]:
-    """call realtime.health_snapshot RPC 拿每張表的 max_time + count_24h。
+    """call public.health_snapshot RPC 拿每張表的 max_time + count_24h。
 
     Returns: [{schema, table, max_time, count_24h, error}, ...]
     """
@@ -78,7 +78,7 @@ def query_realtime_health(tables: list[dict]) -> list[dict]:
     try:
         with psycopg2.connect(config.SUPABASE_DB_URL, connect_timeout=15) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM realtime.health_snapshot(%s::jsonb)", (payload,))
+                cur.execute("SELECT * FROM public.health_snapshot(%s::jsonb)", (payload,))
                 for schema_n, table_n, max_time, count_24h, err in cur.fetchall():
                     results.append({
                         "schema": schema_n,
