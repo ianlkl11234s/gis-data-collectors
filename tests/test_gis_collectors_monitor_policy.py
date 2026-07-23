@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from gis_collectors_monitor_policy import classify_anomaly, classify_archive, transition_incident
+from scripts.gis_collectors_monitor_policy import classify_anomaly, classify_archive, transition_incident
 
 
 def test_known_noncritical_event_and_dedup_anomalies_are_expected():

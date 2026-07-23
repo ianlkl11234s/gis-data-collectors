@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded, read-only performance probe for realtime.health_snapshot()."""
+"""Bounded, read-only performance probe for public.health_snapshot()."""
 from __future__ import annotations
 
 import argparse
@@ -49,7 +49,7 @@ def probe(db_url: str, tables: list[dict[str, Any]], timeout_ms: int) -> dict[st
                 cur.execute("SET LOCAL TRANSACTION READ ONLY")
                 cur.execute("SET LOCAL statement_timeout = %s", (str(timeout_ms),))
                 started = time.perf_counter()
-                cur.execute("SELECT * FROM realtime.health_snapshot(%s::jsonb)", (payload,))
+                cur.execute("SELECT * FROM public.health_snapshot(%s::jsonb)", (payload,))
                 metrics["execute_ms"] = round((time.perf_counter() - started) * 1000, 1)
                 started = time.perf_counter()
                 rows = cur.fetchall()

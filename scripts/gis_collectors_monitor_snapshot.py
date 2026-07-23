@@ -120,7 +120,7 @@ def main() -> None:
         ])
         with psycopg2.connect(os.environ["GIS_MONITOR_SUPABASE_DB_URL"], connect_timeout=15) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM realtime.health_snapshot(%s::jsonb)", (payload,))
+                cur.execute("SELECT * FROM public.health_snapshot(%s::jsonb)", (payload,))
                 rows = cur.fetchall()
         results = {(schema, table): (max_time, error) for schema, table, max_time, _count, error in rows}
         counts = {key: 0 for key in ("OK", "STALE", "DEAD", "NEVER", "ERROR")}
