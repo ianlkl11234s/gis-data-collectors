@@ -92,7 +92,7 @@ tables:
   - {schema: realtime, table: public_health_weekly,      time_column: collected_at, owner_collector: cdc_public_health_weekly, expected_interval_min: 10080, critical: false, notes: 週四 11:00 跑一次}
 
   # ── 其他 reference ──────────────────────
-  - {schema: reference, table: foursquare_poi,           time_column: imported_at,  owner_collector: foursquare_poi, expected_interval_min: 43200, critical: false}
+  - {schema: reference, table: foursquare_poi,           time_column: imported_at,  owner_collector: foursquare_poi, expected_interval_min: 43200, critical: false, notes: disabled reference dataset；不參與即時 freshness 事故判定}
 
   # ── 2026-07-02 production 實測補齊（AR-05，與 cross_layer_map.yaml 自動補回區同步）──
   # 挑表原則：有 current 表優先（小、可 MAX）；current_touch_updated_at 的表用 updated_at
