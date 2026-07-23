@@ -36,6 +36,7 @@ tables:
 
   # ── 航空 ────────────────────────────────
   - {schema: realtime, table: flight_positions,          time_column: collected_at, owner_collector: flight_fr24, expected_interval_min: 5, critical: false, notes: 多 collector 共用}
+  - {schema: air_tickets, table: fare_offers,             time_column: observed_at, owner_collector: air_ticket_radar, expected_interval_min: 2880, critical: false, notes: 每 48 小時掃描；private SSOT。未配置 writer 或尚無首筆資料時屬預期，不升事故}
   # flight_trails — partitioned parent，本來就為空，NEVER 是預期。從清冊移除避免干擾顯示。
 
   # ── 氣象 / 地震 ─────────────────────────
