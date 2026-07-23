@@ -138,6 +138,9 @@ Registry + toggle list 自動處理：
 - **二進位資料走 base64 轉接 Supabase**（CWA imagery 模式）— 不要直接 bytea
 - **Supabase retention 與 S3 archive 是兩件獨立的事**：ArchiveTask 03:00 → S3 自動歸檔；Supabase 刪舊資料走 pg_cron `cleanup_*_daily`，要分別設定 — ref: `reference_zeabur_archive_pattern.md`
 - **`cleanup_expired_partitions()` 是硬編碼清單，不會自動掃新分區表**（migration 220 錯誤假設踩過）— 新分區表沒加進清單 = 永遠不清理，2026-07 因此 7 張表累到 DB 52GB 產生磁碟費。用 `select * from metadata.check_retention_coverage()` 查漏網
+- **realtime schema 2026-07-23 起「可用不可建」**（平台收權：owner=supabase_admin、postgres 無 CREATE，Dashboard SQL Editor 同）——既有表照常讀寫，但新表/新函式一律建 `public`；migration 撞 `42501 permission denied for schema realtime` 即此因 — ref: `2026-07-23-disk-io-cron-spiral.md`、ADR-0009
+- **高頻 pg_cron 聚合是 Disk IO 頭號殺手**：date-1 資料不會再變、一天重算一次就好；單次執行時間 > 間隔 1/3 必須降頻或增量化，否則表長大後自我重疊成死亡螺旋（2026-07/16-23 IO burst 預算連日燒穿事故主因）— ref: `2026-07-23-disk-io-cron-spiral.md`
+- **分區表監控/聚合查詢，時間條件必須寫在 WHERE 且落在分區鍵**：`COUNT(*) FILTER (WHERE time>…)` 不做 partition pruning 會全掃所有分區（舊 health_snapshot 單次 29 分鐘的根因）；`p IS NULL OR col = p` catch-all 條件讓索引失效（get_waste_stops 193k 全表掃的根因）— ref: gis-platform mig 303/304/306
 
 ---
 

@@ -104,7 +104,7 @@ S3 設 lifecycle：30 天 → IA、90 天 → Glacier IR（見 [docs/AWS_INVENTO
 `tasks/daily_report.py` 12 段：
 
 1. Collector 心跳
-2. **Supabase 50 表寫入新鮮度**（RPC `realtime.health_snapshot()` 一次撈）
+2. **Supabase 50 表寫入新鮮度**（RPC `public.health_snapshot()` 一次撈；migration 306，原 `realtime.health_snapshot()` 已 deprecated）
 3. **S3 archives 每 collector 心跳**（解 silent fail）
 4. **跨層一致性**（collector × SB × S3 三向交叉診斷）
 5. **HiCloud VM 健康**（VM cron 07:00 推 snapshot 到 S3）

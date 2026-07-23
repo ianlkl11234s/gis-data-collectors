@@ -454,14 +454,14 @@ correctional_daily_snapshot:
   notes: 破案：6/27 那筆是開發期一次性測試寫入、從未排程；2026-07-03 用戶設 Zeabur env 正式啟用（日更 1 row，啟用當晚已確認寫入）
 
 global_climate_bake:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 360
-  supabase_tables: []  # TODO(sync): 人工確認 — 烤圖 job 寫 S3 deploy-assets/climate/*，不寫 DB
+  supabase_tables: []  # 烤圖 job 只讀 realtime.global_climate_grids（挑最新 cycle），不寫 DB
   s3_prefixes:
-    - {prefix: global_climate_bake/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
+    - {prefix: deploy-assets/climate/frames/, expected_daily: false}  # 非 {name}/archives/ tar.gz 模式，直接寫 raster+manifest.json；另有 deploy-assets/climate/*_latest.{png,json} 單幀
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: 烤圖 job — 產物在 deploy-assets 非 DB，監控路徑待人工設計（2026-07-02 複核，維持 TODO）
+  notes: 烤圖 job — 產物在 deploy-assets/climate/ 非 DB；2026-07-23 依主站重啟 log（排程 jitter）確認實際跑在 Zeabur 主站，先前條目誤標 disabled（7/20 commit bcd9d19 忘同步），本次修正
 
 global_climate_cams:
   enabled: true
