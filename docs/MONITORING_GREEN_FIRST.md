@@ -19,9 +19,9 @@ The monitoring path is **read-only**: it queries Supabase freshness, S3 object m
 
 ## Health snapshot performance
 
-The snapshot requires only each table's latest timestamp. `count_24h` is not consumed by the monitor. Platform migration `296_health_snapshot_max_only.sql` preserves the RPC return shape but makes `count_24h` NULL, avoiding 71 unnecessary `COUNT` scans. The paired manual rollback restores the previous implementation.
+The snapshot now calls `public.health_snapshot` (gis-platform migration `306_health_snapshot_public.sql`): a two-tier probe (2-day window with partition pruning + full-table fallback) that keeps `count_24h` as a real value while cutting a single call from ~29 min / 12 GB read to seconds. The originally proposed `296_health_snapshot_max_only.sql` (NULL-ing `count_24h`) was superseded — `count_24h > 0` is used as a liveness signal, and the `realtime` schema lost CREATE for `postgres` on 2026-07-23 (42501), so the old function can no longer be replaced in place. See ADR-0009.
 
-Before deploying that migration, run three bounded probes:
+To re-verify RPC cost, run three bounded probes:
 
 ```bash
 uv run --with-requirements requirements.txt python scripts/diagnose_health_snapshot.py --statement-timeout-ms 15000
