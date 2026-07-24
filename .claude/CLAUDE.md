@@ -141,6 +141,8 @@ Registry + toggle list 自動處理：
 - **realtime schema 2026-07-23 起「可用不可建」**（平台收權：owner=supabase_admin、postgres 無 CREATE，Dashboard SQL Editor 同）——既有表照常讀寫，但新表/新函式一律建 `public`；migration 撞 `42501 permission denied for schema realtime` 即此因 — ref: `2026-07-23-disk-io-cron-spiral.md`、ADR-0009
 - **高頻 pg_cron 聚合是 Disk IO 頭號殺手**：date-1 資料不會再變、一天重算一次就好；單次執行時間 > 間隔 1/3 必須降頻或增量化，否則表長大後自我重疊成死亡螺旋（2026-07/16-23 IO burst 預算連日燒穿事故主因）— ref: `2026-07-23-disk-io-cron-spiral.md`
 - **分區表監控/聚合查詢，時間條件必須寫在 WHERE 且落在分區鍵**：`COUNT(*) FILTER (WHERE time>…)` 不做 partition pruning 會全掃所有分區（舊 health_snapshot 單次 29 分鐘的根因）；`p IS NULL OR col = p` catch-all 條件讓索引失效（get_waste_stops 193k 全表掃的根因）— ref: gis-platform mig 303/304/306
+- **表已全量搬到 live schema（2026-07-24）**：realtime schema 只剩 Supabase 系統物件；新即時收集表一律建 live、RPC/view 建 public — ref: ADR-0010、gis-platform mig 312/313
+- **走 Supavisor transaction pool（6543）絕不可下 session 級 SET**（含 psycopg2 set_session）：會殘留在共享 backend 毒到其他 client（2026-07-24 collector 唯讀爆炸事故）；只讀查詢用 autocommit 或 SET LOCAL，長 session 走 5432
 
 ---
 
