@@ -17,8 +17,8 @@
   ⚠ 正常背景 0.039–0.072 µSv/h，異常 >10× 可做核安告警 layer
 
 寫入（schema=realtime）：
-  - realtime.nuclear_radiation_measurements  (UNIQUE(station_id, observed_at)，DO NOTHING)
-  - realtime.nuclear_radiation_stations      (PK=station_id，UPSERT)
+  - live.nuclear_radiation_measurements  (UNIQUE(station_id, observed_at)，DO NOTHING)
+  - live.nuclear_radiation_stations      (PK=station_id，UPSERT)
 """
 
 from __future__ import annotations

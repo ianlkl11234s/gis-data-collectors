@@ -60,7 +60,7 @@
 | # | Section | 解的盲點 | 來源 |
 |---|---|---|---|
 | 1 | 收集狀態 | collector 物件 `last_run` / `consecutive_errors` | in-memory |
-| 2 | Supabase realtime 寫入 | **50 表新鮮度從沒監控過** | RPC `public.health_snapshot()`（306；原 `realtime.health_snapshot()` deprecated） |
+| 2 | Supabase realtime 寫入 | **50 表新鮮度從沒監控過** | RPC `public.health_snapshot()`（306；原 `live.health_snapshot()` deprecated） |
 | 3 | S3 archives 心跳 | flight_fr24 silent fail 32 天類問題 | 掃 S3 `*/archives/*.tar.gz` |
 | 4 | 跨層一致性 | **「SB 動但 ARC 卡」這種斷層** | A×B×C 三向交叉 |
 | 5 | HiCloud VM 健康 | VM 死了 / IP 又被擋 | S3 `_external_vm_health/<host>/` |
@@ -85,7 +85,7 @@ ship_ais:
   enabled: true
   deployment: hicloud_vm           # zeabur | hicloud_vm | disabled
   expected_interval_min: 10
-  supabase_tables: [realtime.ship_positions, realtime.ship_current]
+  supabase_tables: [live.ship_positions, live.ship_current]
   s3_prefixes:
     - {prefix: ship_ais/archives/, expected_daily: true}
   critical: true                   # 壞了會 page 你
@@ -127,7 +127,7 @@ ship_ais:
 
 | 項目 | 值 |
 |---|---|
-| Migration | [`gis-platform/migrations/306_health_snapshot_public.sql`](https://github.com/ianlkl11234s/gis-platform/blob/main/migrations/306_health_snapshot_public.sql)（原始版 [`149_realtime_health_snapshot.sql`](https://github.com/ianlkl11234s/gis-platform/blob/main/migrations/149_realtime_health_snapshot.sql)；2026-07-23 因 realtime schema 被平台收 CREATE 權，306 把秒級版 fallback 搬到 public，`realtime.health_snapshot` 留存但 deprecated） |
+| Migration | [`gis-platform/migrations/306_health_snapshot_public.sql`](https://github.com/ianlkl11234s/gis-platform/blob/main/migrations/306_health_snapshot_public.sql)（原始版 [`149_realtime_health_snapshot.sql`](https://github.com/ianlkl11234s/gis-platform/blob/main/migrations/149_realtime_health_snapshot.sql)；2026-07-23 因 realtime schema 被平台收 CREATE 權，306 把秒級版 fallback 搬到 public，`live.health_snapshot` 留存但 deprecated） |
 | 簽名 | `public.health_snapshot(tables jsonb) → TABLE(schema, table, max_time, count_24h, error_msg)` |
 | 輸入 | `[{schema, table, time_column}, ...]`（從 `realtime_tables.yaml` 組） |
 | 為什麼用 RPC | 50 條獨立 query → 1 條 RPC，**快 100x + 時間點一致** |
@@ -159,8 +159,8 @@ SELECT * FROM public.health_snapshot('[
 
 異常 id 設計：
 ```
-sb:realtime.ship_positions:dead         ← Supabase 表新鮮度
-sb:realtime.foo:err                     ← RPC 錯誤
+sb:live.ship_positions:dead             ← Supabase 表新鮮度
+sb:live.foo:err                         ← RPC 錯誤
 s3:flight_fr24:stale                    ← S3 daily archive 落後
 s3:weather:missing                      ← S3 從未歸檔
 ```
@@ -198,7 +198,7 @@ s3:weather:missing                      ← S3 從未歸檔
 
 `_section_today_action` 依優先序掃前面所有 section 的偵測結果，吐 1-3 件最該做的：
 
-1. SB DEAD 且 `critical=true` 的表 — 「**修 `realtime.xxx`（DEAD 超過 N 分）**」
+1. SB DEAD 且 `critical=true` 的表 — 「**修 `live.xxx`（DEAD 超過 N 分）**」
 2. S3 archives 落後且 `critical=true` 的 collector — 「**檢查 `xxx` archive task**」
 3. VM 失聯 — 「**檢查 HiCloud VM 是否還活著**」
 4. 異常持續 ≥ 7 天但未修 — 「**清舊異常**」
@@ -294,7 +294,7 @@ launchctl load ~/Library/LaunchAgents/com.gis.local_audit.plist
 ## 故障排除
 
 ### `_section_supabase_realtime` 印「RPC 撈不到資料」
-- 確認 migration 306 已 apply：`psql "$DB_URL" -c "\df public.health_snapshot"`（149 建的 `realtime.health_snapshot` 是 deprecated 舊版，monitoring.py 已不呼叫）
+- 確認 migration 306 已 apply：`psql "$DB_URL" -c "\df public.health_snapshot"`（149 建的 `live.health_snapshot` 是 deprecated 舊版，monitoring.py 已不呼叫）
 - 確認 `realtime_tables.yaml` 不是空的
 
 ### `_section_external_vm_health` 印「尚未收到任何 VM snapshot」

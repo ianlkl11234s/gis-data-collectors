@@ -21,7 +21,7 @@ CDC 公衛週報收集器（類流感 / 登革熱 / 腸病毒）
 ⚠ CDC 端點同 NHI 憑證缺 SKI → verify=False 必開。
 
 寫入：
-  - realtime.public_health_weekly（UPSERT by 複合 key）
+  - live.public_health_weekly（UPSERT by 複合 key）
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-回填 realtime.cwa_imagery_frames 歷史影像到 R2 CDN（AR-11 read-path-cdn）。
+回填 live.cwa_imagery_frames 歷史影像到 R2 CDN（AR-11 read-path-cdn）。
 
 對每一列 image_key IS NULL 的 frame：算 R2 key → 上傳 bytea 到 R2 → 回填 image_key。
 
@@ -47,7 +47,7 @@ def fetch_batch(conn, cursor_key, limit):
             cur.execute(
                 """
                 SELECT dataset_id, observed_at, mime_type, image_bytes
-                  FROM realtime.cwa_imagery_frames
+                  FROM live.cwa_imagery_frames
                  WHERE image_key IS NULL
                    AND image_bytes IS NOT NULL
                  ORDER BY dataset_id, observed_at
@@ -59,7 +59,7 @@ def fetch_batch(conn, cursor_key, limit):
             cur.execute(
                 """
                 SELECT dataset_id, observed_at, mime_type, image_bytes
-                  FROM realtime.cwa_imagery_frames
+                  FROM live.cwa_imagery_frames
                  WHERE image_key IS NULL
                    AND image_bytes IS NOT NULL
                    AND (dataset_id, observed_at) > (%s, %s)
@@ -78,7 +78,7 @@ def update_keys(conn, updates):
     if not updates:
         return 0
     sql = """
-        UPDATE realtime.cwa_imagery_frames AS t
+        UPDATE live.cwa_imagery_frames AS t
            SET image_key = v.image_key
           FROM (VALUES %s) AS v(dataset_id, observed_at, image_key)
          WHERE t.dataset_id = v.dataset_id

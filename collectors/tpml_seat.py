@@ -20,8 +20,8 @@
   - 不 hardcode 分館清單，分館增減自動跟 API 內容走
 
 寫入：
-  - realtime.tpml_seat_status   (時序，UNIQUE(area_id, observed_at)，ON CONFLICT DO NOTHING)
-  - realtime.tpml_seat_current  (最新狀態，UPSERT by area_id)
+  - live.tpml_seat_status   (時序，UNIQUE(area_id, observed_at)，ON CONFLICT DO NOTHING)
+  - live.tpml_seat_current  (最新狀態，UPSERT by area_id)
 
 Standalone usage（dry-run，不寫 DB）：
   cd data-collectors

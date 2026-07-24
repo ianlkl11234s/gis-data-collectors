@@ -18,7 +18,7 @@ LASS (Location Aware Sensing System) 是中研院主導的 PM2.5 微型感測開
     SiteName / name
     area  (縣市英文名)
 
-寫入: realtime.micro_sensor_readings，source='lass_airbox'
+寫入: live.micro_sensor_readings，source='lass_airbox'
 
 擴充：環境部微型感測物聯網 (10k+ 點) 原走 Civil IoT SensorThings API，
 目前端點 sta.ci.taiwan.gov.tw 無法從公網連線；待確認後可加入 fetch_moenv_iot()

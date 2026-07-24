@@ -15,8 +15,8 @@
   ⚠ NHI 憑證缺 Subject Key Identifier，Python TLS 預設驗證會失敗，需 verify=False。
 
 寫入：
-  - realtime.er_hospital_status   (時序，UNIQUE(hosp_id, observed_at)，ON CONFLICT DO NOTHING)
-  - realtime.er_hospital_current  (最新狀態，UPSERT by hosp_id)
+  - live.er_hospital_status   (時序，UNIQUE(hosp_id, observed_at)，ON CONFLICT DO NOTHING)
+  - live.er_hospital_current  (最新狀態，UPSERT by hosp_id)
 """
 
 from __future__ import annotations

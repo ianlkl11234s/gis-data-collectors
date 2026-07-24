@@ -1,5 +1,5 @@
 -- ============================================================
--- realtime.ship_trails_daily — 預聚合每日船舶軌跡
+-- live.ship_trails_daily — 預聚合每日船舶軌跡
 --
 -- 架構：普通 table + per-day refresh function（不是 matview）
 --
@@ -30,10 +30,10 @@ SET statement_timeout = 0;
 -- ------------------------------------------------------------
 -- 1) Table（取代舊的 matview，如果存在則先 DROP）
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS realtime.ship_trails_daily;
-DROP MATERIALIZED VIEW IF EXISTS realtime.ship_trails_daily;
+DROP TABLE IF EXISTS live.ship_trails_daily;
+DROP MATERIALIZED VIEW IF EXISTS live.ship_trails_daily;
 
-CREATE TABLE realtime.ship_trails_daily (
+CREATE TABLE live.ship_trails_daily (
     day          date NOT NULL,
     mmsi         text NOT NULL,
     ship_type    text,
@@ -44,15 +44,15 @@ CREATE TABLE realtime.ship_trails_daily (
 );
 
 CREATE INDEX ship_trails_daily_day_idx
-    ON realtime.ship_trails_daily (day);
+    ON live.ship_trails_daily (day);
 
-COMMENT ON TABLE realtime.ship_trails_daily IS
+COMMENT ON TABLE live.ship_trails_daily IS
     '每日船舶軌跡預聚合（最近 7 天，含 ±1h overlap）。由 refresh_ship_trails_daily(date) 維護，pg_cron 每 15 分鐘 refresh today + yesterday。';
 
 -- 小 summary table：get_ship_dates 不能 GROUP BY 整個 ship_trails_daily
 -- （trail 欄位 KB 級，125k rows × 1KB ≈ 125MB IO → 4 秒撞 anon timeout）
 -- refresh function 順手 upsert 這張表，get_ship_dates 直接讀即可。
-CREATE TABLE IF NOT EXISTS realtime.ship_trails_days_summary (
+CREATE TABLE IF NOT EXISTS live.ship_trails_days_summary (
     day          date PRIMARY KEY,
     records      bigint NOT NULL,
     ships        bigint NOT NULL,
@@ -72,9 +72,9 @@ DECLARE
 BEGIN
     -- advisory xact lock 防止並發撞 unique constraint（cron + 手動同時 call）
     PERFORM pg_advisory_xact_lock(hashtext('refresh_ship_trails_daily:' || target_day::text));
-    DELETE FROM realtime.ship_trails_daily WHERE day = target_day;
+    DELETE FROM live.ship_trails_daily WHERE day = target_day;
 
-    INSERT INTO realtime.ship_trails_daily (day, mmsi, ship_type, trail, point_count)
+    INSERT INTO live.ship_trails_daily (day, mmsi, ship_type, trail, point_count)
     SELECT
         target_day AS day,
         mmsi,
@@ -84,7 +84,7 @@ BEGIN
             ';' ORDER BY collected_at
         ) AS trail,
         COUNT(*)::int AS point_count
-    FROM realtime.ship_positions
+    FROM live.ship_positions
     WHERE collected_at >= (target_day::text || ' 00:00:00+08')::timestamptz - INTERVAL '1 hour'
       AND collected_at <  ((target_day + 1)::text || ' 00:00:00+08')::timestamptz + INTERVAL '1 hour'
     GROUP BY mmsi
@@ -93,9 +93,9 @@ BEGIN
     GET DIAGNOSTICS inserted_count = ROW_COUNT;
 
     -- 順手更新小 summary table，讓 get_ship_dates 毫秒級
-    INSERT INTO realtime.ship_trails_days_summary (day, records, ships, refreshed_at)
+    INSERT INTO live.ship_trails_days_summary (day, records, ships, refreshed_at)
     SELECT target_day, COALESCE(sum(point_count), 0), COUNT(*), now()
-    FROM realtime.ship_trails_daily
+    FROM live.ship_trails_daily
     WHERE day = target_day
     ON CONFLICT (day) DO UPDATE
         SET records = EXCLUDED.records,
@@ -119,7 +119,7 @@ AS $function$
 DECLARE
     deleted_count integer;
 BEGIN
-    DELETE FROM realtime.ship_trails_daily
+    DELETE FROM live.ship_trails_daily
     WHERE day < (current_date - keep_days);
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
@@ -136,7 +136,7 @@ STABLE
 SET statement_timeout TO '60s'
 AS $function$
     SELECT mmsi, ship_type, trail
-    FROM realtime.ship_trails_daily
+    FROM live.ship_trails_daily
     WHERE day = target_date
 $function$;
 
@@ -159,7 +159,7 @@ STABLE
 SET statement_timeout TO '60s'
 AS $function$
     SELECT day::text, records, ships
-    FROM realtime.ship_trails_days_summary
+    FROM live.ship_trails_days_summary
     ORDER BY day
 $function$;
 

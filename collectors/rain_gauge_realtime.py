@@ -6,7 +6,7 @@ CWA 即時雨量站收集器
   - 需要 CWA_API_KEY
 
 寫入：
-  - realtime.rain_gauge_readings  (時序，ON CONFLICT DO NOTHING)
+  - live.rain_gauge_readings  (時序，ON CONFLICT DO NOTHING)
 """
 
 from __future__ import annotations

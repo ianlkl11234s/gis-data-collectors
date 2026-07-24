@@ -1,5 +1,5 @@
 -- ============================================================
--- realtime.flight_trails_daily — 預聚合每日航班軌跡
+-- live.flight_trails_daily — 預聚合每日航班軌跡
 --
 -- 同 matview_ship_trails.sql 的架構（普通 table + per-day refresh function）
 -- 套用原 RPC 過濾：altitude IS NOT NULL AND altitude >= 100
@@ -15,10 +15,10 @@ SET statement_timeout = 0;
 -- ------------------------------------------------------------
 -- 1) Table
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS realtime.flight_trails_daily;
-DROP MATERIALIZED VIEW IF EXISTS realtime.flight_trails_daily;
+DROP TABLE IF EXISTS live.flight_trails_daily;
+DROP MATERIALIZED VIEW IF EXISTS live.flight_trails_daily;
 
-CREATE TABLE realtime.flight_trails_daily (
+CREATE TABLE live.flight_trails_daily (
     day            date NOT NULL,
     flight_id      text NOT NULL,
     callsign       text NOT NULL DEFAULT '',
@@ -32,13 +32,13 @@ CREATE TABLE realtime.flight_trails_daily (
 );
 
 CREATE INDEX flight_trails_daily_day_idx
-    ON realtime.flight_trails_daily (day);
+    ON live.flight_trails_daily (day);
 
-COMMENT ON TABLE realtime.flight_trails_daily IS
+COMMENT ON TABLE live.flight_trails_daily IS
     '每日航班軌跡預聚合（最近 7 天，含 ±1h overlap）。由 refresh_flight_trails_daily(date) 維護。';
 
 -- 小 summary table：詳見 matview_ship_trails.sql 說明
-CREATE TABLE IF NOT EXISTS realtime.flight_trails_days_summary (
+CREATE TABLE IF NOT EXISTS live.flight_trails_days_summary (
     day          date PRIMARY KEY,
     records      bigint NOT NULL,
     flights      bigint NOT NULL,
@@ -58,9 +58,9 @@ DECLARE
 BEGIN
     -- advisory xact lock 防止並發撞 unique constraint
     PERFORM pg_advisory_xact_lock(hashtext('refresh_flight_trails_daily:' || target_day::text));
-    DELETE FROM realtime.flight_trails_daily WHERE day = target_day;
+    DELETE FROM live.flight_trails_daily WHERE day = target_day;
 
-    INSERT INTO realtime.flight_trails_daily
+    INSERT INTO live.flight_trails_daily
         (day, flight_id, callsign, aircraft_type, origin, destination, trail, point_count)
     SELECT
         target_day AS day,
@@ -74,7 +74,7 @@ BEGIN
             ';' ORDER BY collected_at
         ) AS trail,
         COUNT(*)::int AS point_count
-    FROM realtime.flight_positions
+    FROM live.flight_positions
     WHERE collected_at >= (target_day::text || ' 00:00:00+08')::timestamptz - INTERVAL '1 hour'
       AND collected_at <  ((target_day + 1)::text || ' 00:00:00+08')::timestamptz + INTERVAL '1 hour'
       AND altitude IS NOT NULL
@@ -85,9 +85,9 @@ BEGIN
     GET DIAGNOSTICS inserted_count = ROW_COUNT;
 
     -- 順手更新小 summary table
-    INSERT INTO realtime.flight_trails_days_summary (day, records, flights, refreshed_at)
+    INSERT INTO live.flight_trails_days_summary (day, records, flights, refreshed_at)
     SELECT target_day, COALESCE(sum(point_count), 0), COUNT(*), now()
-    FROM realtime.flight_trails_daily
+    FROM live.flight_trails_daily
     WHERE day = target_day
     ON CONFLICT (day) DO UPDATE
         SET records = EXCLUDED.records,
@@ -111,7 +111,7 @@ AS $function$
 DECLARE
     deleted_count integer;
 BEGIN
-    DELETE FROM realtime.flight_trails_daily
+    DELETE FROM live.flight_trails_daily
     WHERE day < (current_date - keep_days);
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
@@ -128,7 +128,7 @@ STABLE
 SET statement_timeout TO '60s'
 AS $function$
     SELECT flight_id, callsign, aircraft_type, origin, destination, trail
-    FROM realtime.flight_trails_daily
+    FROM live.flight_trails_daily
     WHERE day = target_date
 $function$;
 
@@ -144,7 +144,7 @@ STABLE
 SET statement_timeout TO '60s'
 AS $function$
     SELECT day::text, records, flights
-    FROM realtime.flight_trails_days_summary
+    FROM live.flight_trails_days_summary
     ORDER BY day
 $function$;
 

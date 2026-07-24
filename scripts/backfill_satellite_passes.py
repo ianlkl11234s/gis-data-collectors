@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-回填 realtime.satellite_passes（中國軍偵衛星通過台灣事件）。
+回填 live.satellite_passes（中國軍偵衛星通過台灣事件）。
 
-來源：realtime.satellite_tle_history（每顆衛星每個 epoch 的 TLE）
+來源：live.satellite_tle_history（每顆衛星每個 epoch 的 TLE）
 做法：對每個 (date, sat) 找最近 epoch 的 TLE → 用 SGP4 採樣 30s →
       偵測進出台灣 bbox (lng 117.5-122.5, lat 21.5-26.5) →
       連續區間記為一筆 pass，track 為 LineString。
 之後一次 UPDATE counties[] 用 spatial.county_boundaries 對 track 做 ST_Intersects。
-最後 call realtime.rebuild_satellite_passes_daily() 重算彙總。
+最後 call live.rebuild_satellite_passes_daily() 重算彙總。
 
 用法：
     python3 scripts/backfill_satellite_passes.py                       # 回填全部 78 天
@@ -165,7 +165,7 @@ def fetch_cn_tles_for_day(conn, day_utc: datetime, groups: list[str] | None) -> 
           PARTITION BY norad_id
           ORDER BY fetched_at DESC
         ) AS rn
-      FROM realtime.satellite_tle_history
+      FROM live.satellite_tle_history
       WHERE fetched_at <= %s
         AND fetched_at >= %s - INTERVAL '7 days'
         AND tle_line1 IS NOT NULL AND tle_line2 IS NOT NULL
@@ -204,7 +204,7 @@ def insert_passes(conn, passes: list[dict]) -> int:
     template = ('(%(norad_id)s,%(name)s,%(cn_group)s,%(constellation)s,%(orbit_type)s,'
                 '%(pass_start_utc)s,%(pass_end_utc)s,%(pass_date_tw)s,%(pass_hour_tw)s,'
                 '%(duration_sec)s,%(min_alt_km)s,ST_GeomFromText(%(track_wkt)s, 4326))')
-    sql = (f"INSERT INTO realtime.satellite_passes ({','.join(cols)}) VALUES %s "
+    sql = (f"INSERT INTO live.satellite_passes ({','.join(cols)}) VALUES %s "
            f"ON CONFLICT (norad_id, pass_start_utc) DO NOTHING")
     with conn.cursor() as cur:
         execute_values(cur, sql, passes, template=template, page_size=1000)
@@ -216,11 +216,11 @@ def insert_passes(conn, passes: list[dict]) -> int:
 def update_counties_for_range(conn, start: datetime, end: datetime) -> int:
     """對指定區間還沒填 counties 的 pass 做空間 join"""
     sql = """
-    UPDATE realtime.satellite_passes p
+    UPDATE live.satellite_passes p
        SET counties = COALESCE(array_remove(c.arr, NULL), '{}')
       FROM (
         SELECT p2.pass_id, array_agg(DISTINCT cb.county) AS arr
-          FROM realtime.satellite_passes p2
+          FROM live.satellite_passes p2
           LEFT JOIN spatial.county_boundaries cb
             ON ST_Intersects(p2.track, cb.geom)
          WHERE p2.pass_date_tw BETWEEN %s AND %s
@@ -237,7 +237,7 @@ def update_counties_for_range(conn, start: datetime, end: datetime) -> int:
 
 def rebuild_daily(conn, start, end) -> int:
     with conn.cursor() as cur:
-        cur.execute("SELECT realtime.rebuild_satellite_passes_daily(%s::date, %s::date)",
+        cur.execute("SELECT live.rebuild_satellite_passes_daily(%s::date, %s::date)",
                     (start.date() if isinstance(start, datetime) else start,
                      end.date() if isinstance(end, datetime) else end))
         n = cur.fetchone()[0]
@@ -260,7 +260,7 @@ def main():
         start = datetime.strptime(args.start, '%Y-%m-%d').replace(tzinfo=timezone.utc)
     else:
         with conn.cursor() as cur:
-            cur.execute("SELECT MIN(fetched_at)::date FROM realtime.satellite_tle_history")
+            cur.execute("SELECT MIN(fetched_at)::date FROM live.satellite_tle_history")
             start = datetime.combine(cur.fetchone()[0], datetime.min.time()).replace(tzinfo=timezone.utc)
     if args.end:
         end = datetime.strptime(args.end, '%Y-%m-%d').replace(tzinfo=timezone.utc)

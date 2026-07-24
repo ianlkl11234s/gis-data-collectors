@@ -18,7 +18,7 @@
 
 寫入：
   - public.taipei_evacuate_stations    （站點 metadata，upsert）
-  - realtime.taipei_evacuate_status    （時序狀態，ON CONFLICT DO NOTHING）
+  - live.taipei_evacuate_status    （時序狀態，ON CONFLICT DO NOTHING）
 """
 
 from __future__ import annotations

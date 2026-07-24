@@ -1,7 +1,7 @@
 -- ============================================================
 -- reference.temperature_grid_cells — CWA 溫度靜態格點
 --
--- 動機：原 get_temperature_grid_info 對 realtime.temperature_grids
+-- 動機：原 get_temperature_grid_info 對 live.temperature_grids
 -- 做 WHERE observed_at 範圍 + DISTINCT grid_lat, grid_lng + ORDER BY，
 -- 實測 ~1s（anon role 3s timeout 的 1/3），隨 partition 累積會越慢。
 --
@@ -29,10 +29,10 @@ CREATE TABLE reference.temperature_grid_cells (
 -- 從最新的 observed_at snapshot 一份（避免掃多個 partition）
 INSERT INTO reference.temperature_grid_cells (grid_lat, grid_lng)
 SELECT grid_lat, grid_lng
-FROM realtime.temperature_grids
+FROM live.temperature_grids
 WHERE observed_at = (
     SELECT max(observed_at)
-    FROM realtime.temperature_grids
+    FROM live.temperature_grids
     WHERE observed_at >= now() - interval '6 hours'
 );
 

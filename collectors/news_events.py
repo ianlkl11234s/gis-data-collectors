@@ -3,7 +3,7 @@
 
 長期收集台灣即時新聞 RSS，經 URL 正規化 + simhash 跨媒體去重後，
 用 Gemini Flash-Lite batch（20 則 packing）抽取「正規化地點（縣市+鄉鎮）+
-分類 + 摘要」，寫入 realtime.news_events。每 20 分鐘執行一次。
+分類 + 摘要」，寫入 live.news_events。每 20 分鐘執行一次。
 
 資料來源（URL 來自 mini-taiwan-pulse/docs/research/news-layer-revival-2026-06.md）：
     - 中央社 CNA：feedburner rsscna/{local,social,lifehealth}
@@ -513,7 +513,7 @@ class NewsEventsCollector(BaseCollector):
 
     def _upsert_source_health_batch(
             self, updates: list[tuple[dict, bool, Optional[str]]]) -> None:
-        """整批更新 realtime.source_health，共用一條連線（失敗不影響主流程）。
+        """整批更新 live.source_health，共用一條連線（失敗不影響主流程）。
 
         連線為 autocommit（pool borrow 預設），每筆 upsert 各自成交易；
         單筆失敗只記 log 繼續下一筆，維持舊版「每 feed 獨立 best-effort」語義。
@@ -528,7 +528,7 @@ class NewsEventsCollector(BaseCollector):
                             if success:
                                 cur.execute(
                                     """
-                                    INSERT INTO realtime.source_health
+                                    INSERT INTO live.source_health
                                         (feed_url, source, county_hint, last_success_at, last_attempt_at,
                                          last_error, consecutive_fail, updated_at)
                                     VALUES (%s, %s, %s, now(), now(), NULL, 0, now())
@@ -546,14 +546,14 @@ class NewsEventsCollector(BaseCollector):
                             else:
                                 cur.execute(
                                     """
-                                    INSERT INTO realtime.source_health
+                                    INSERT INTO live.source_health
                                         (feed_url, source, county_hint, last_attempt_at,
                                          last_error, consecutive_fail, updated_at)
                                     VALUES (%s, %s, %s, now(), %s, 1, now())
                                     ON CONFLICT (feed_url) DO UPDATE SET
                                         last_attempt_at  = EXCLUDED.last_attempt_at,
                                         last_error       = EXCLUDED.last_error,
-                                        consecutive_fail = realtime.source_health.consecutive_fail + 1,
+                                        consecutive_fail = live.source_health.consecutive_fail + 1,
                                         source           = EXCLUDED.source,
                                         county_hint      = EXCLUDED.county_hint,
                                         updated_at       = now();
@@ -583,7 +583,7 @@ class NewsEventsCollector(BaseCollector):
             with self.supabase_writer.with_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT url_norm, title_simhash FROM realtime.news_events "
+                        "SELECT url_norm, title_simhash FROM live.news_events "
                         "WHERE published_ts >= now() - make_interval(days => %s) "
                         "LIMIT 100000",
                         (self.DEDUP_WINDOW_DAYS,),

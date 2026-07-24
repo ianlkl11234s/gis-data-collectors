@@ -2,7 +2,7 @@
 YouTube Live Video Resolver — Monitor Mode LiveWall 用
 
 抓 14 家新聞台的 `youtube.com/@<handle>/live` 頁面，解析出當前直播 videoId 和 UC channel_id，
-寫進 `realtime.yt_live_current`，前端用 `embed/<videoId>` 才能可靠播放。
+寫進 `live.yt_live_current`，前端用 `embed/<videoId>` 才能可靠播放。
 
 為何不用 `embed/live_stream?channel=UCxxx`？
   - YouTube 此 URL 要查頻道的「primary live event」，但很多新聞台沒設這個欄位
@@ -10,8 +10,8 @@ YouTube Live Video Resolver — Monitor Mode LiveWall 用
   - 改用 videoId 直接 embed 100% 可靠，缺點是 video_id 每 1-7 天會換（直播重啟）→ 所以 cron。
 
 寫入（schema=realtime）：
-  - realtime.yt_live_current（current snapshot, PK=handle）UPSERT
-  - realtime.yt_live_history（變更歷史, UNIQUE(handle,video_id,observed_at)）DO NOTHING
+  - live.yt_live_current（current snapshot, PK=handle）UPSERT
+  - live.yt_live_history（變更歷史, UNIQUE(handle,video_id,observed_at)）DO NOTHING
 
 對應 migration：gis-platform/migrations/209_realtime_yt_live_videos.sql
 頻率：5 分鐘 cron（直播 ID 約 1-7 天一換，5 分鐘恰好）

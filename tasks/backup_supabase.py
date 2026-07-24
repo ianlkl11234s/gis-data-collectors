@@ -46,6 +46,10 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 _S3_STATIC_PREFIX  = "supabase-snapshots/static"
 _S3_REALTIME_PREFIX = "supabase-snapshots/realtime"
 
+# DB schema 由 realtime 改名為 live 後，S3 key 檔名仍沿用舊的 "realtime." 前綴，
+# 避免歷史歸檔物件命名斷層（新舊物件混雜同一天 prefix 下）。
+_S3_KEY_SCHEMA_ALIAS = {"live": "realtime"}
+
 # 時間欄位候選（依優先順序嘗試）
 _TIME_COL_CANDIDATES = ("observed_at", "created_at", "snapshot_at", "event_time", "collected_at")
 
@@ -174,7 +178,7 @@ class BackupSupabaseTask:
         """列出指定 schema 的所有 user 表（**排除 partition 子表**）。
 
         改用 pg_class 而非 information_schema，因為後者無法區分 parent 與
-        partition child（如 realtime.bus_positions 是 parent，bus_positions_20260619
+        partition child（如 live.bus_positions 是 parent，bus_positions_20260619
         是 child）。Robot B 只應 dump parent，partition pruning 會自動處理該日 child。
 
         Returns:
@@ -636,7 +640,8 @@ class BackupSupabaseTask:
             return "empty"
 
         # 4. COPY 昨日資料
-        s3_key = f"{_S3_REALTIME_PREFIX}/{date_str}/{schema}.{table}.csv.gz"
+        s3_key_schema = _S3_KEY_SCHEMA_ALIAS.get(schema, schema)
+        s3_key = f"{_S3_REALTIME_PREFIX}/{date_str}/{s3_key_schema}.{table}.csv.gz"
 
         # per-table storage class override（manifest override 優先，再 fallback 到 config）
         override = self._overrides.get(qualified, {})
@@ -886,7 +891,8 @@ class BackupSupabaseTask:
 
             elif is_realtime:
                 # 即時表：S3 昨日 key 必須存在
-                s3_key = f"{_S3_REALTIME_PREFIX}/{date_str}/{schema}.{table}.csv.gz"
+                s3_key_schema = _S3_KEY_SCHEMA_ALIAS.get(schema, schema)
+                s3_key = f"{_S3_REALTIME_PREFIX}/{date_str}/{s3_key_schema}.{table}.csv.gz"
                 exists = self.s3.file_exists(s3_key) if self.s3 else False
                 if not exists:
                     # 低頻表（如週更 public_health_weekly、颱風季外 typhoon_positions）

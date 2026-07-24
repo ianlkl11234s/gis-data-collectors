@@ -4,7 +4,7 @@
 我們自家 raw 歸檔近期只有 f120，缺 f000。從 NOAA AWS Open Data
 （noaa-gfs-bdp-pds，公開免認證）直接補抓各日 00Z f000 的 UGRD/VGRD 10m subset，
 上傳自家 S3 raw 結構（沿用 collector 的 key 慣例）+ 註冊
-realtime.global_climate_grids（leadtime_hr=0，ON CONFLICT DO NOTHING）。
+live.global_climate_grids（leadtime_hr=0，ON CONFLICT DO NOTHING）。
 
 之後跑 climate_bake 一輪，這些 row 會被 _plan_wind_frames 撿為過去 14 天
 daily 00Z analysis 幀。CMEMS 歷史不需 backfill：既有 daily nc row 已在 grids/S3，
@@ -80,7 +80,7 @@ def main() -> int:
             for r in rows:
                 cur.execute(
                     """
-                    INSERT INTO realtime.global_climate_grids
+                    INSERT INTO live.global_climate_grids
                       (dataset_id, observed_at, init_at, leadtime_hr, bbox, digest,
                        s3_uri, pmtiles_uri, raw_size_bytes, collected_at)
                     VALUES (%s,%s,%s,%s, ST_GeomFromText(%s,4326), %s::jsonb, %s,%s,%s,%s)

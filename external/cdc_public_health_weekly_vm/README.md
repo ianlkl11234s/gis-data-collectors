@@ -6,7 +6,7 @@
 
 ## 寫入
 
-- Supabase `realtime.public_health_weekly`（與主 repo 同表 + 同 schema）
+- Supabase `live.public_health_weekly`（與主 repo 同表 + 同 schema）
 - `UNIQUE(disease_code, iso_year, iso_week, county_code, township_code, age_group, gender, is_imported)` + `ON CONFLICT DO NOTHING`
 
 ## 3 個 dataset
@@ -56,7 +56,7 @@ psql "$SUPABASE_DB_URL" -c "
 SELECT disease_code,
        MAX(iso_year*100+iso_week) AS latest_week,
        COUNT(*) AS rows
-  FROM realtime.public_health_weekly
+  FROM live.public_health_weekly
  GROUP BY disease_code;
 "
 ```

@@ -9,7 +9,7 @@
   範圍：台灣 bbox 117-126°E × 19-27°N，surface only
 
 寫入：
-  - realtime.global_climate_grids (一個 NetCDF time slice = 一筆 row)
+  - live.global_climate_grids (一個 NetCDF time slice = 一筆 row)
   - 原檔上傳 S3 → s3_uri
 """
 

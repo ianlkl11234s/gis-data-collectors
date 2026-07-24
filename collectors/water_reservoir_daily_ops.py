@@ -10,7 +10,7 @@
   - 單位：容量類為萬立方公尺，雨量 mm
 
 寫入：
-  - realtime.reservoir_daily_ops  (時序，ON CONFLICT (reservoir_id, observed_at) DO NOTHING)
+  - live.reservoir_daily_ops  (時序，ON CONFLICT (reservoir_id, observed_at) DO NOTHING)
 
 與 water_reservoir（45501 每小時）互補：本 collector 取每日統計量
 """

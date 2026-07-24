@@ -10,7 +10,7 @@
     - 風速 1-min sustained（JMA 是 10-min，JTWC 高 12-15%）
     - 無 TC 時 RSS 仍可拿但無 <item>
 
-寫入：realtime.typhoon_positions (source='jtwc')
+寫入：live.typhoon_positions (source='jtwc')
   - UNIQUE(storm_id, source, valid_at, point_type, advisory_number)
   - ON CONFLICT DO NOTHING
 """

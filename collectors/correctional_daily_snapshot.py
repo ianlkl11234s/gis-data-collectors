@@ -18,7 +18,7 @@
   data.gov.tw nid 101185 對應，本 collector 直走原 XML 端點。
 
 寫入：
-  - realtime.prison_population_daily (UPSERT by observed_date)
+  - live.prison_population_daily (UPSERT by observed_date)
 """
 
 from __future__ import annotations

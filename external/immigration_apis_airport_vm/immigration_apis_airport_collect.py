@@ -3,7 +3,7 @@
 
 跟主 repo (data-collectors) 完全一致的儲存規格：
   ┌── Supabase ──────────────────────────────────
-  │  history : realtime.border_airport_snapshot  (INSERT, append-only)
+  │  history : live.border_airport_snapshot  (INSERT, append-only)
   │  columns : airport, terminal, in_out, in_out_code,
   │            gender, nationality, age_band, pax_count,
   │            endpoint_code, collected_at
@@ -139,7 +139,7 @@ def save_snapshot(result: dict, ts: datetime) -> Path:
 # ────────────────────────────────────────────────────────────────────
 # Supabase write — append-only, no upsert
 # ────────────────────────────────────────────────────────────────────
-HISTORY_TABLE = "realtime.border_airport_snapshot"
+HISTORY_TABLE = "live.border_airport_snapshot"
 COLUMNS = [
     "airport", "terminal", "in_out", "in_out_code",
     "gender", "nationality", "age_band", "pax_count",

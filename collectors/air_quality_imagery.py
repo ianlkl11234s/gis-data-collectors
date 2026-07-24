@@ -10,7 +10,7 @@ PRIMARY KEY (product_type, observed_at) 天然去重。
 
 產品類型: AQI / PM25 / PM10 / O3 / NO2 （airtw 首頁實際發布的 5 種）
 
-寫入: realtime.aqi_imagery_frames (PK: product_type, observed_at)
+寫入: live.aqi_imagery_frames (PK: product_type, observed_at)
 """
 
 import base64

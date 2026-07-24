@@ -12,7 +12,7 @@
 
 CREATE SCHEMA IF NOT EXISTS realtime;
 
-CREATE TABLE IF NOT EXISTS realtime.cwa_imagery_frames (
+CREATE TABLE IF NOT EXISTS live.cwa_imagery_frames (
     dataset_id     text        NOT NULL,
     observed_at    timestamptz NOT NULL,
     image_bytes    bytea       NOT NULL,
@@ -34,13 +34,13 @@ CREATE TABLE IF NOT EXISTS realtime.cwa_imagery_frames (
 
 -- 查詢索引：依 dataset 取最近 N 張
 CREATE INDEX IF NOT EXISTS idx_cwa_imagery_dataset_observed
-    ON realtime.cwa_imagery_frames (dataset_id, observed_at DESC);
+    ON live.cwa_imagery_frames (dataset_id, observed_at DESC);
 
-COMMENT ON TABLE realtime.cwa_imagery_frames IS
+COMMENT ON TABLE live.cwa_imagery_frames IS
     'CWA Open Data 衛星雲圖 / 雷達回波 PNG 影像幀。bytea 直存，前端轉 base64 → blob → texture。';
 
 -- ============================================================
 -- 可選：保留 N 天的清理函式（cron 或 pg_cron 呼叫）
 -- ============================================================
--- DELETE FROM realtime.cwa_imagery_frames
+-- DELETE FROM live.cwa_imagery_frames
 -- WHERE observed_at < now() - interval '7 days';

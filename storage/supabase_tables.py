@@ -20,41 +20,41 @@ SupabaseWriter class 拆出，讓 writer 專注在寫入邏輯、設定集中管
 # collector_name → 配置 dict
 TABLE_MAP = {
     'youbike': {
-        'history': 'realtime.youbike_snapshots',
-        'current': 'realtime.youbike_current',
+        'history': 'live.youbike_snapshots',
+        'current': 'live.youbike_current',
         'current_key': 'station_uid',
         'columns': ['station_uid', 'city', 'available_rent', 'available_return', 'total', 'collected_at'],
     },
     'bus': {
-        'history': 'realtime.bus_positions',
-        'current': 'realtime.bus_current',
+        'history': 'live.bus_positions',
+        'current': 'live.bus_current',
         'current_key': 'plate_numb',
         'columns': ['plate_numb', 'route_uid', 'route_name', 'direction', 'bus_lat', 'bus_lng', 'speed', 'city', 'collected_at'],
     },
     'bus_intercity': {
-        'history': 'realtime.bus_intercity_positions',
-        'current': 'realtime.bus_intercity_current',
+        'history': 'live.bus_intercity_positions',
+        'current': 'live.bus_intercity_current',
         'current_key': 'plate_numb',
         'columns': ['plate_numb', 'route_uid', 'route_name', 'direction', 'bus_lat', 'bus_lng', 'speed', 'city', 'collected_at'],
     },
     'weather': {
-        'history': 'realtime.weather_observations',
-        'current': 'realtime.weather_current',
+        'history': 'live.weather_observations',
+        'current': 'live.weather_current',
         'current_key': 'station_id',
         'columns': ['station_id', 'station_name', 'temperature', 'humidity', 'pressure', 'wind_speed', 'wind_direction', 'rainfall', 'observed_at', 'collected_at', 'geom'],
         'current_columns': ['station_id', 'station_name', 'temperature', 'humidity', 'pressure', 'wind_speed', 'wind_direction', 'rainfall', 'observed_at', 'geom'],
     },
     'temperature': {
-        'history': 'realtime.temperature_grids',
+        'history': 'live.temperature_grids',
         'columns': ['grid_lat', 'grid_lng', 'temperature', 'observed_at', 'collected_at'],
     },
     'tra_train': {
-        'history': 'realtime.train_positions',
+        'history': 'live.train_positions',
         'columns': ['train_no', 'train_type', 'station_id', 'delay_minutes', 'collected_at'],
     },
     'tourist_shuttle': {
-        'history': 'realtime.tourist_shuttle_positions',
-        'current': 'realtime.tourist_shuttle_current',
+        'history': 'live.tourist_shuttle_positions',
+        'current': 'live.tourist_shuttle_current',
         'current_key': 'plate_numb',
         'columns': [
             'plate_numb', 'operator_id', 'route_uid', 'sub_route_uid',
@@ -64,8 +64,8 @@ TABLE_MAP = {
     },
     'parking': {
         # OnStreet 路邊停車（既有 collector parking.py，221 補 Supabase 寫入）
-        'history': 'realtime.parking_segments_availability',
-        'current': 'realtime.parking_segments_current',
+        'history': 'live.parking_segments_availability',
+        'current': 'live.parking_segments_current',
         'current_key': 'segment_id',
         'columns': [
             'segment_id', 'segment_name', 'city',
@@ -76,8 +76,8 @@ TABLE_MAP = {
     },
     'road_congestion': {
         # 省道+市區即時路況統一表（source/city 分流）
-        'history': 'realtime.road_sections_live',
-        'current': 'realtime.road_sections_current',
+        'history': 'live.road_sections_live',
+        'current': 'live.road_sections_current',
         'current_key': 'section_uid',
         'columns': [
             'section_uid', 'section_id', 'source', 'city', 'authority_code',
@@ -87,8 +87,8 @@ TABLE_MAP = {
     },
     'parking_offstreet': {
         # OffStreet 路外場館（新 collector parking_offstreet.py，City/SA/Tourism 3 變體）
-        'history': 'realtime.parking_lots_availability',
-        'current': 'realtime.parking_lots_current',
+        'history': 'live.parking_lots_availability',
+        'current': 'live.parking_lots_current',
         'current_key': 'car_park_uid',
         'columns': [
             'car_park_uid', 'car_park_id', 'car_park_name',
@@ -99,14 +99,14 @@ TABLE_MAP = {
         ],
     },
     'ship_ais': {
-        'history': 'realtime.ship_positions',
-        'current': 'realtime.ship_current',
+        'history': 'live.ship_positions',
+        'current': 'live.ship_current',
         'current_key': 'mmsi',
         'columns': ['mmsi', 'ship_name', 'ship_type', 'lat', 'lng', 'speed', 'heading', 'collected_at', 'geom'],
         'current_columns': ['mmsi', 'ship_name', 'ship_type', 'lat', 'lng', 'speed', 'heading', 'collected_at', 'geom'],
     },
     'earthquake': {
-        'history': 'realtime.earthquake_events',
+        'history': 'live.earthquake_events',
         'columns': ['event_id', 'magnitude', 'depth_km', 'epicenter_lat', 'epicenter_lng', 'location_desc', 'occurred_at', 'report_type', 'geom', 'raw_data'],
         'upsert_key': 'event_id',
     },
@@ -117,19 +117,19 @@ TABLE_MAP = {
         'is_multi_table': True,  # 特殊處理：trail 寫入 flight_trails
     },
     'flight_fr24_zone': {
-        'history': 'realtime.flight_positions',
+        'history': 'live.flight_positions',
         'columns': ['flight_id', 'callsign', 'aircraft_type', 'origin', 'destination', 'lat', 'lng', 'altitude', 'speed', 'heading', 'collected_at', 'geom'],
     },
     'flight_opensky': {
-        'history': 'realtime.flight_positions',
+        'history': 'live.flight_positions',
         'columns': ['flight_id', 'callsign', 'aircraft_type', 'origin', 'destination', 'lat', 'lng', 'altitude', 'speed', 'heading', 'collected_at', 'geom'],
     },
     'freeway_vd': {
         'is_multi_table': True,  # 特殊處理：sections + vd 分兩張表
     },
     'satellite': {
-        'history': 'realtime.satellite_positions',
-        'current': 'realtime.satellite_current',
+        'history': 'live.satellite_positions',
+        'current': 'live.satellite_current',
         'current_key': 'norad_id',
         'columns': ['norad_id', 'name', 'constellation', 'orbit_type', 'lat', 'lng', 'altitude_km', 'velocity_kms', 'inclination', 'period_min', 'tle_epoch', 'collected_at', 'geom'],
         'current_columns': ['norad_id', 'name', 'constellation', 'orbit_type', 'lat', 'lng', 'altitude_km', 'velocity_kms', 'inclination', 'period_min', 'tle_epoch', 'collected_at', 'geom'],
@@ -140,7 +140,7 @@ TABLE_MAP = {
         'is_multi_table': True,  # 特殊處理：launches + pads + events 分三張表
     },
     'ncdr_alerts': {
-        'history': 'realtime.disaster_alerts',
+        'history': 'live.disaster_alerts',
         'columns': [
             'identifier', 'sender', 'sender_name', 'author', 'category', 'event', 'event_term',
             'urgency', 'severity', 'certainty', 'status', 'msg_type', 'scope',
@@ -151,7 +151,7 @@ TABLE_MAP = {
         'upsert_key': 'identifier',
     },
     'cwa_satellite': {
-        'history': 'realtime.cwa_imagery_frames',
+        'history': 'live.cwa_imagery_frames',
         'columns': [
             'dataset_id', 'observed_at', 'image_bytes', 'mime_type',
             'lon_min', 'lon_max', 'lat_min', 'lat_max',
@@ -174,7 +174,7 @@ TABLE_MAP = {
         'upsert_key': 'fsq_place_id',
     },
     'air_quality_imagery': {
-        'history': 'realtime.aqi_imagery_frames',
+        'history': 'live.aqi_imagery_frames',
         'columns': [
             'product_type', 'observed_at', 'image_bytes', 'mime_type',
             'image_size', 'product_url', 'collected_at',
@@ -184,8 +184,8 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'air_quality': {
-        'history': 'realtime.air_quality_observations',
-        'current': 'realtime.air_quality_current',
+        'history': 'live.air_quality_observations',
+        'current': 'live.air_quality_current',
         'current_key': 'station_id',
         'columns': [
             'station_id', 'station_name', 'county', 'aqi', 'pollutant', 'status',
@@ -203,7 +203,7 @@ TABLE_MAP = {
         ],
     },
     'air_quality_microsensors': {
-        'history': 'realtime.micro_sensor_readings',
+        'history': 'live.micro_sensor_readings',
         'columns': [
             'device_id', 'source', 'site_name', 'area', 'app',
             'pm25', 'pm10', 'pm1', 'temperature', 'humidity',
@@ -211,7 +211,7 @@ TABLE_MAP = {
         ],
     },
     'water_reservoir': {
-        'history': 'realtime.reservoir_status',
+        'history': 'live.reservoir_status',
         'columns': [
             'reservoir_id', 'snapshot_at',
             'water_level_m', 'effective_storage_wan_m3',
@@ -223,13 +223,13 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'river_water_level': {
-        'history': 'realtime.river_water_level',
+        'history': 'live.river_water_level',
         'columns': ['station_id', 'observed_at', 'water_level_m', 'check_result', 'collected_at'],
         'upsert_key': 'station_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
     'rain_gauge_realtime': {
-        'history': 'realtime.rain_gauge_readings',
+        'history': 'live.rain_gauge_readings',
         'columns': [
             'station_id', 'station_name', 'county', 'town', 'lat', 'lng',
             'precipitation_10min', 'precipitation_1hr', 'precipitation_3hr',
@@ -240,7 +240,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'npa_traffic_accident_a1': {
-        'history': 'realtime.traffic_accidents_a1',
+        'history': 'live.traffic_accidents_a1',
         'columns': [
             'accident_class', 'occurred_at', 'agency', 'location',
             'lat', 'lon', 'weather', 'light', 'road_type', 'speed_limit',
@@ -254,7 +254,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'immigration_apis_airport': {
-        'history': 'realtime.border_airport_snapshot',
+        'history': 'live.border_airport_snapshot',
         'columns': [
             'airport', 'terminal', 'in_out', 'in_out_code',
             'gender', 'nationality', 'age_band', 'pax_count',
@@ -263,7 +263,7 @@ TABLE_MAP = {
         # append-only：每次 snapshot 全寫進去（無 upsert key）
     },
     'correctional_daily_snapshot': {
-        'history': 'realtime.prison_population_daily',
+        'history': 'live.prison_population_daily',
         'columns': [
             'observed_date', 'total_inmates', 'male_inmates', 'female_inmates',
             'approved_capacity', 'over_capacity_pct', 'new_in_count', 'new_out_count',
@@ -273,8 +273,8 @@ TABLE_MAP = {
         'upsert_strategy': 'update',  # 同日多次抓取覆寫，最新值勝
     },
     'er_hospital_realtime': {
-        'history': 'realtime.er_hospital_status',
-        'current': 'realtime.er_hospital_current',
+        'history': 'live.er_hospital_status',
+        'current': 'live.er_hospital_current',
         'current_key': 'hosp_id',
         'columns': [
             'hosp_id', 'hosp_name', 'area_no', 'area_name', 'cont_type', 'level_name',
@@ -291,8 +291,8 @@ TABLE_MAP = {
         'current_touch_updated_at': True,
     },
     'tpml_seat': {
-        'history': 'realtime.tpml_seat_status',
-        'current': 'realtime.tpml_seat_current',
+        'history': 'live.tpml_seat_status',
+        'current': 'live.tpml_seat_current',
         'current_key': 'area_id',
         'columns': [
             'area_id', 'branch_name', 'floor_name', 'area_name',
@@ -309,7 +309,7 @@ TABLE_MAP = {
         'current_touch_updated_at': True,
     },
     'groundwater_level': {
-        'history': 'realtime.groundwater_level_readings',
+        'history': 'live.groundwater_level_readings',
         'columns': [
             'station_id', 'well_name', 'agency_unit',
             'water_level_m', 'voltage',
@@ -319,7 +319,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'water_reservoir_daily_ops': {
-        'history': 'realtime.reservoir_daily_ops',
+        'history': 'live.reservoir_daily_ops',
         'columns': [
             'reservoir_id', 'reservoir_name', 'observed_at',
             'effective_capacity_wan', 'dead_water_level_m', 'normal_water_level_max',
@@ -345,7 +345,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'iot_wra': {
-        'history': 'realtime.iot_wra_measurements',
+        'history': 'live.iot_wra_measurements',
         'columns': [
             'iow_station_id', 'physical_quantity_id', 'station_type',
             'observed_at', 'name', 'full_name', 'si_unit', 'value',
@@ -355,7 +355,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'uswg': {
-        'history': 'realtime.uswg_measurements',
+        'history': 'live.uswg_measurements',
         'columns': [
             'iow_station_id', 'physical_quantity_id', 'observed_at',
             'name', 'si_unit', 'value', 'collected_at',
@@ -364,7 +364,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'wic_sewer': {
-        'history': 'realtime.taipei_sewer_measurements',
+        'history': 'live.taipei_sewer_measurements',
         'columns': [
             'station_no', 'observed_at', 'level_out', 'ground_far', 'voltage', 'collected_at',
         ],
@@ -372,7 +372,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'wic_evacuate': {
-        'history': 'realtime.taipei_evacuate_status',
+        'history': 'live.taipei_evacuate_status',
         'columns': [
             'station_no', 'observed_at',
             'fo01', 'fc01', 'flt01', 'fo02', 'fc02', 'flt02', 'collected_at',
@@ -381,7 +381,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'wic_pumb': {
-        'history': 'realtime.taipei_pumb_status',
+        'history': 'live.taipei_pumb_status',
         'columns': [
             'stn_id', 'observed_at', 'inner_value', 'outer_value',
             'pumb_status', 'door_status', 'collected_at',
@@ -390,7 +390,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'precipitation_raster': {
-        'history': 'realtime.precipitation_raster_frames',
+        'history': 'live.precipitation_raster_frames',
         'columns': [
             'cumulative_hours', 'observed_at', 'image_bytes', 'mime_type',
             'image_size', 'ul_lat', 'ul_lng', 'br_lat', 'br_lng',
@@ -419,10 +419,10 @@ TABLE_MAP = {
         'is_multi_table': True,
     },
     'news_events': {
-        # 表 schema 見 gis-platform/migrations/162（realtime.news_events）+ 164（v2 三維度）
+        # 表 schema 見 gis-platform/migrations/162（live.news_events）+ 164（v2 三維度）
         # geom 不由 collector 提供：DB trigger 由 admin_code 查 township centroid
         # url_norm 有 UNIQUE constraint → ON CONFLICT DO NOTHING（重複抓不更新）
-        'history': 'realtime.news_events',
+        'history': 'live.news_events',
         'columns': [
             'source', 'url', 'url_norm', 'title', 'summary', 'category',
             'location_name', 'county', 'admin_code',
@@ -435,16 +435,16 @@ TABLE_MAP = {
     },
     'power_taipower': {
         # 台電即時電力供需：單一 collector 寫 3 張表
-        #   realtime.power_system_status   UNIQUE(observed_at)             DO NOTHING
-        #   realtime.power_generation_unit UNIQUE(unit_name, observed_at)  DO NOTHING
-        #   realtime.power_region_demand   UNIQUE(region, observed_at)     DO NOTHING
+        #   live.power_system_status   UNIQUE(observed_at)             DO NOTHING
+        #   live.power_generation_unit UNIQUE(unit_name, observed_at)  DO NOTHING
+        #   live.power_region_demand   UNIQUE(region, observed_at)     DO NOTHING
         # 表 schema 見 gis-platform/migrations/145_power_taipower_realtime.sql
         'is_multi_table': True,
     },
     'global_climate_usgs_earthquake': {
         # USGS 全球地震 hourly feed — gis-platform migration 261
         # UNIQUE(event_id) + UNIQUE(dedup_hash) 雙保險，ON CONFLICT DO NOTHING
-        'history': 'realtime.earthquakes_global',
+        'history': 'live.earthquakes_global',
         'columns': [
             'event_id', 'mag', 'place', 'observed_at', 'depth_km',
             'raw_json', 'dedup_hash', 'geom', 'collected_at',
@@ -455,7 +455,7 @@ TABLE_MAP = {
     'global_climate_jma_typhoon': {
         # JMA RSMC Tokyo 颱風 time-point decomposed — gis-platform migration 261
         # UNIQUE(storm_id, source, valid_at, point_type, advisory_number) DO NOTHING
-        'history': 'realtime.typhoon_positions',
+        'history': 'live.typhoon_positions',
         'columns': [
             'storm_id', 'source', 'valid_at', 'point_type', 'advisory_number',
             'advisory_issued_at', 'name_local', 'name_en',
@@ -468,7 +468,7 @@ TABLE_MAP = {
     'global_climate_jtwc': {
         # JTWC ATCF 颱風 time-point decomposed — gis-platform migration 261
         # 跟 jma 共表，靠 source='jtwc' 區分
-        'history': 'realtime.typhoon_positions',
+        'history': 'live.typhoon_positions',
         'columns': [
             'storm_id', 'source', 'valid_at', 'point_type', 'advisory_number',
             'advisory_issued_at', 'name_local', 'name_en',
@@ -481,7 +481,7 @@ TABLE_MAP = {
     'global_climate_cmems': {
         # CMEMS NetCDF digest — gis-platform migration 261
         # 每 time slice 一筆 row
-        'history': 'realtime.global_climate_grids',
+        'history': 'live.global_climate_grids',
         'columns': [
             'dataset_id', 'observed_at', 'init_at', 'leadtime_hr',
             'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
@@ -490,7 +490,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'global_climate_cams': {
-        'history': 'realtime.global_climate_grids',
+        'history': 'live.global_climate_grids',
         'columns': [
             'dataset_id', 'observed_at', 'init_at', 'leadtime_hr',
             'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
@@ -499,7 +499,7 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
     },
     'global_climate_noaa_gfs': {
-        'history': 'realtime.global_climate_grids',
+        'history': 'live.global_climate_grids',
         'columns': [
             'dataset_id', 'observed_at', 'init_at', 'leadtime_hr',
             'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
@@ -511,7 +511,7 @@ TABLE_MAP = {
         # 台電落雷 nid 61139（snapshot 1 分鐘覆寫，collector 5 分 cron 去重累積）
         # 表 schema 見 gis-platform/migrations/183_realtime_lightning_events.sql
         # UNIQUE(event_id) + UNIQUE(dedup_hash) 雙保險，ON CONFLICT DO NOTHING
-        'history': 'realtime.lightning_events',
+        'history': 'live.lightning_events',
         'columns': [
             'event_id', 'strike_time', 'lon', 'lat',
             'intensity_ka', 'strike_type', 'dedup_hash',
@@ -523,10 +523,10 @@ TABLE_MAP = {
     'nuclear_radiation': {
         # 核設施環境輻射劑量 nid 42326（51 站，15 分 cron）
         # 表 schema 見 gis-platform/migrations/184_realtime_nuclear_radiation.sql
-        # history: realtime.nuclear_radiation_measurements UNIQUE(station_id, observed_at) DO NOTHING
-        # current: realtime.nuclear_radiation_stations PK=station_id UPSERT
-        'history': 'realtime.nuclear_radiation_measurements',
-        'current': 'realtime.nuclear_radiation_stations',
+        # history: live.nuclear_radiation_measurements UNIQUE(station_id, observed_at) DO NOTHING
+        # current: live.nuclear_radiation_stations PK=station_id UPSERT
+        'history': 'live.nuclear_radiation_measurements',
+        'current': 'live.nuclear_radiation_stations',
         'current_key': 'station_id',
         'columns': [
             'station_id', 'station_name', 'dose_usvh', 'observed_at',
@@ -542,10 +542,10 @@ TABLE_MAP = {
     },
     'twse_market_index': {
         # TWSE 加權指數 ticker — gis-platform migration 204
-        # history: realtime.market_index_tick UNIQUE(index_code, observed_at) DO NOTHING
-        # current: realtime.market_index_current PK=index_code UPSERT
-        'history': 'realtime.market_index_tick',
-        'current': 'realtime.market_index_current',
+        # history: live.market_index_tick UNIQUE(index_code, observed_at) DO NOTHING
+        # current: live.market_index_current PK=index_code UPSERT
+        'history': 'live.market_index_tick',
+        'current': 'live.market_index_current',
         'current_key': 'index_code',
         'columns': [
             'index_code', 'index_name', 'current_value', 'prev_close',
@@ -566,7 +566,7 @@ TABLE_MAP = {
     'pla_activity_daily': {
         # 共機每日通報 — gis-platform migration 205
         # 單表，PK = report_date，每日重抓同一日要 UPSERT（內容可能修正）
-        'history': 'realtime.pla_activity_daily',
+        'history': 'live.pla_activity_daily',
         'columns': [
             'report_date', 'aircraft_sorties', 'crossed_median_line_cnt',
             'plan_vessels', 'official_ships',
@@ -578,10 +578,10 @@ TABLE_MAP = {
     },
     'yt_live_video_resolver': {
         # YouTube 14 家新聞台直播 videoId 解析 — gis-platform migration 209
-        # history: realtime.yt_live_history UNIQUE(handle, video_id, observed_at) DO NOTHING
-        # current: realtime.yt_live_current PK=handle UPSERT
-        'history': 'realtime.yt_live_history',
-        'current': 'realtime.yt_live_current',
+        # history: live.yt_live_history UNIQUE(handle, video_id, observed_at) DO NOTHING
+        # current: live.yt_live_current PK=handle UPSERT
+        'history': 'live.yt_live_history',
+        'current': 'live.yt_live_current',
         'current_key': 'handle',
         'columns': [
             'handle', 'channel_id', 'video_id', 'title',
@@ -600,7 +600,7 @@ TABLE_MAP = {
         # CDC 公衛週報 — gis-platform migration 206
         # UNIQUE(disease_code, iso_year, iso_week, county_code, township_code, age_group, gender, is_imported)
         # 同週重抓 DO NOTHING（CDC 確認後不會回修）
-        'history': 'realtime.public_health_weekly',
+        'history': 'live.public_health_weekly',
         'columns': [
             'disease_code', 'iso_year', 'iso_week',
             'county_code', 'county_name', 'township_code', 'township_name',

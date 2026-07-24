@@ -10,13 +10,13 @@
 ### 三層結構
 1. **本地 (Zeabur Volume `/data`)**: 收集器即時寫入 JSON
 2. **S3 (`migu-gis-data-collector` bucket)**: 每日 03:00 (Taipei) 將前一天的資料打包成 `<collector>/archives/YYYY-MM-DD.tar.gz` 上傳，本地保留 7 天
-3. **Supabase (`gis-platform`)**: 旁路寫入 `realtime.*_positions` 等分區表
+3. **Supabase (`gis-platform`)**: 旁路寫入 `live.*_positions` 等分區表
 
 ### Supabase 連線
 - **DB URL**: 在 `gis-platform/.env` 的 `DATABASE_POOL_URL`（Supavisor Transaction mode, port 6543）
 - **Session timezone**: UTC（重要！詳見 timezone pitfall）
-- **分區管理**: `realtime.manage_all_partitions()` 每日 00:05 (Taipei) 預建未來 7 天 + 清理 30 天前
-- **自動建分區 trigger**: `realtime.auto_create_partition()` 在 INSERT 找不到分區時自動建立
+- **分區管理**: `live.manage_all_partitions()` 每日 00:05 (Taipei) 預建未來 7 天 + 清理 30 天前
+- **自動建分區 trigger**: `live.auto_create_partition()` 在 INSERT 找不到分區時自動建立
 
 ### S3 為冷備份的真理之源
 - 即使 Supabase 寫入失敗，本地 → S3 流程仍會繼續

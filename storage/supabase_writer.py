@@ -380,7 +380,7 @@ class SupabaseWriter:
         return records
 
     def _transform_road_congestion(self, result: dict, ts: datetime) -> list[dict]:
-        """省道+市區路況 → realtime.road_sections_live/_current"""
+        """省道+市區路況 → live.road_sections_live/_current"""
         import json
         records = []
         for r in result.get('data', []):
@@ -408,7 +408,7 @@ class SupabaseWriter:
         return list(seen.values())
 
     def _transform_parking(self, result: dict, ts: datetime) -> list[dict]:
-        """OnStreet 路邊停車 → realtime.parking_segments_availability/_current
+        """OnStreet 路邊停車 → live.parking_segments_availability/_current
         資料來自 collectors/parking.py 的 _parse_segment（已 normalize），這邊只做 JSONB 化 + 去重。
         """
         import json
@@ -439,7 +439,7 @@ class SupabaseWriter:
         return list(seen.values())
 
     def _transform_parking_offstreet(self, result: dict, ts: datetime) -> list[dict]:
-        """OffStreet 路外場館 → realtime.parking_lots_availability/_current"""
+        """OffStreet 路外場館 → live.parking_lots_availability/_current"""
         import json
         records = []
         for r in result.get('data', []):
@@ -469,7 +469,7 @@ class SupabaseWriter:
         return list(seen.values())
 
     def _transform_tourist_shuttle(self, result: dict, ts: datetime) -> list[dict]:
-        """台灣好行 A1 → realtime.tourist_shuttle_positions/_current"""
+        """台灣好行 A1 → live.tourist_shuttle_positions/_current"""
         records = []
         for r in result.get('data', []):
             pos = r.get('BusPosition') or {}
@@ -1175,7 +1175,7 @@ class SupabaseWriter:
 
         collector 已在 collect() 結束前呼叫 _upsert_iot_wra_stations()
         將靜態 metadata 寫入 public.iot_wra_stations，
-        這裡只回傳 measurements 以寫入 realtime.iot_wra_measurements。
+        這裡只回傳 measurements 以寫入 live.iot_wra_measurements。
         """
         return result.get('data', [])
 
@@ -1250,7 +1250,7 @@ class SupabaseWriter:
 
         collector 已在 collect() 結束前呼叫 _upsert_uswg_stations()
         將靜態 metadata 寫入 public.uswg_stations，
-        這裡只回傳 measurements 以寫入 realtime.uswg_measurements。
+        這裡只回傳 measurements 以寫入 live.uswg_measurements。
         """
         return result.get('data', [])
 
@@ -1974,15 +1974,15 @@ class SupabaseWriter:
                 if sections:
                     cols = ['section_id', 'travel_speed', 'travel_time', 'congestion_level', 'collected_at']
                     values = [tuple(r.get(c) for c in cols) for r in sections]
-                    execute_values(cur, f"INSERT INTO realtime.freeway_sections ({','.join(cols)}) VALUES %s", values, page_size=1000)
+                    execute_values(cur, f"INSERT INTO live.freeway_sections ({','.join(cols)}) VALUES %s", values, page_size=1000)
                     # current 表
                     update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in cols if c != 'section_id')
-                    execute_values(cur, f"INSERT INTO realtime.freeway_sections_current ({','.join(cols)}) VALUES %s ON CONFLICT (section_id) DO UPDATE SET {update_set}", values, page_size=1000)
+                    execute_values(cur, f"INSERT INTO live.freeway_sections_current ({','.join(cols)}) VALUES %s ON CONFLICT (section_id) DO UPDATE SET {update_set}", values, page_size=1000)
 
                 if vds:
                     cols = ['vd_id', 'total_volume', 'avg_speed', 'avg_occupancy', 'volume_small_car', 'volume_large_car', 'volume_trailer', 'lane_count', 'status', 'collected_at']
                     values = [tuple(r.get(c) for c in cols) for r in vds]
-                    execute_values(cur, f"INSERT INTO realtime.freeway_vd_traffic ({','.join(cols)}) VALUES %s", values, page_size=1000)
+                    execute_values(cur, f"INSERT INTO live.freeway_vd_traffic ({','.join(cols)}) VALUES %s", values, page_size=1000)
 
             logger.info(f"[freeway_vd] ✓ sections {len(sections)} + vd {len(vds)} 筆寫入")
 
@@ -1992,7 +1992,7 @@ class SupabaseWriter:
                 if trails:
                     cols = ['flight_id', 'callsign', 'aircraft_type', 'registration', 'origin', 'destination', 'status', 'trail', 'trail_points', 'geom', 'collected_at']
                     values = [tuple(r.get(c) for c in cols) for r in trails]
-                    execute_values(cur, f"INSERT INTO realtime.flight_trails ({','.join(cols)}) VALUES %s", values, page_size=100)
+                    execute_values(cur, f"INSERT INTO live.flight_trails ({','.join(cols)}) VALUES %s", values, page_size=100)
             logger.info(f"[flight_fr24] ✓ {len(trails)} 筆航跡寫入")
 
         elif collector_name in ('road_event_live', 'road_event_planned'):
@@ -2040,7 +2040,7 @@ class SupabaseWriter:
                 src_set = list({r['source'] for r in dedup})
                 cur.execute(
                     f"SELECT event_id, source, {','.join(CONTENT_COLS)} "
-                    f"FROM realtime.road_events_current "
+                    f"FROM live.road_events_current "
                     f"WHERE event_id = ANY(%s) AND source = ANY(%s)",
                     (ev_ids, src_set),
                 )
@@ -2062,7 +2062,7 @@ class SupabaseWriter:
                     new_values = [tuple(r.get(c) for c in cols) for r in new_records]
                     execute_values(
                         cur,
-                        f"INSERT INTO realtime.road_events ({','.join(cols)}) VALUES %s",
+                        f"INSERT INTO live.road_events ({','.join(cols)}) VALUES %s",
                         new_values, page_size=500,
                     )
 
@@ -2070,14 +2070,14 @@ class SupabaseWriter:
                 all_values = [tuple(r.get(c) for c in cols) for r in dedup]
                 execute_values(
                     cur,
-                    f"INSERT INTO realtime.road_events_current ({','.join(cols)}) VALUES %s "
+                    f"INSERT INTO live.road_events_current ({','.join(cols)}) VALUES %s "
                     f"ON CONFLICT (event_id, source) DO UPDATE SET {update_set}",
                     all_values, page_size=500,
                 )
 
                 # 4. cleanup current — 過期事件移除
                 cur.execute(
-                    "DELETE FROM realtime.road_events_current "
+                    "DELETE FROM live.road_events_current "
                     "WHERE expire_time IS NOT NULL AND expire_time < now()"
                 )
                 expired = cur.rowcount
@@ -2108,7 +2108,7 @@ class SupabaseWriter:
                     update_cols = [c for c in cols if c != 'id']
                     update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
                     execute_values(cur,
-                        f"INSERT INTO realtime.launches ({','.join(cols)}) VALUES %s "
+                        f"INSERT INTO live.launches ({','.join(cols)}) VALUES %s "
                         f"ON CONFLICT (id) DO UPDATE SET {update_set}",
                         values, page_size=500)
 
@@ -2121,7 +2121,7 @@ class SupabaseWriter:
                     update_cols = [c for c in cols if c != 'id']
                     update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
                     execute_values(cur,
-                        f"INSERT INTO realtime.launch_pads ({','.join(cols)}) VALUES %s "
+                        f"INSERT INTO live.launch_pads ({','.join(cols)}) VALUES %s "
                         f"ON CONFLICT (id) DO UPDATE SET {update_set}",
                         values, page_size=500)
 
@@ -2134,7 +2134,7 @@ class SupabaseWriter:
                     update_cols = [c for c in cols if c != 'id']
                     update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
                     execute_values(cur,
-                        f"INSERT INTO realtime.launch_events ({','.join(cols)}) VALUES %s "
+                        f"INSERT INTO live.launch_events ({','.join(cols)}) VALUES %s "
                         f"ON CONFLICT (id) DO UPDATE SET {update_set}",
                         values, page_size=500)
 
@@ -2165,7 +2165,7 @@ class SupabaseWriter:
                     if values:
                         execute_values(
                             cur,
-                            f"INSERT INTO realtime.power_system_status ({','.join(cols)}) VALUES %s "
+                            f"INSERT INTO live.power_system_status ({','.join(cols)}) VALUES %s "
                             f"ON CONFLICT (observed_at) DO NOTHING",
                             values, page_size=100,
                         )
@@ -2183,7 +2183,7 @@ class SupabaseWriter:
                     if values:
                         execute_values(
                             cur,
-                            f"INSERT INTO realtime.power_generation_unit ({','.join(cols)}) VALUES %s "
+                            f"INSERT INTO live.power_generation_unit ({','.join(cols)}) VALUES %s "
                             f"ON CONFLICT (fuel_type, unit_name, observed_at) DO NOTHING",
                             values, page_size=1000,
                         )
@@ -2200,7 +2200,7 @@ class SupabaseWriter:
                     if values:
                         execute_values(
                             cur,
-                            f"INSERT INTO realtime.power_region_demand ({','.join(cols)}) VALUES %s "
+                            f"INSERT INTO live.power_region_demand ({','.join(cols)}) VALUES %s "
                             f"ON CONFLICT (region, observed_at) DO NOTHING",
                             values, page_size=100,
                         )
@@ -2247,7 +2247,7 @@ class SupabaseWriter:
 
         if values:
             with self._txn(conn) as cur:
-                sql = f"INSERT INTO realtime.satellite_tle ({','.join(cols)}) VALUES %s ON CONFLICT (norad_id) DO UPDATE SET {update_set}"
+                sql = f"INSERT INTO live.satellite_tle ({','.join(cols)}) VALUES %s ON CONFLICT (norad_id) DO UPDATE SET {update_set}"
                 execute_values(cur, sql, values, page_size=1000)
             decayed = sum(1 for v in values if v[12])
             logger.info(f"[satellite] ✓ TLE 表已更新 {len(values)} 筆（其中失效 {decayed} 筆）")
@@ -2273,7 +2273,7 @@ class SupabaseWriter:
 
         try:
             with self._txn(conn) as cur:
-                sql = (f"INSERT INTO realtime.satellite_tle_history ({','.join(hist_cols)}) "
+                sql = (f"INSERT INTO live.satellite_tle_history ({','.join(hist_cols)}) "
                        f"VALUES %s ON CONFLICT (norad_id, tle_epoch) DO NOTHING")
                 execute_values(cur, sql, hist_values, page_size=1000)
             logger.info(f"[satellite] ✓ TLE 歷史已追加（新 epoch 才寫入）")

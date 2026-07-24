@@ -19,7 +19,7 @@
   ⚠ 台電憑證缺 Subject Key Identifier，Python TLS 預設驗證會失敗 → verify=False
 
 寫入（schema=realtime）：
-  - realtime.lightning_events  (event_id UNIQUE, dedup_hash UNIQUE 兩鍵保險)
+  - live.lightning_events  (event_id UNIQUE, dedup_hash UNIQUE 兩鍵保險)
     ON CONFLICT DO NOTHING
 """
 

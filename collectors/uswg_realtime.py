@@ -13,7 +13,7 @@
 
 寫入：
   - public.uswg_stations       （站點 metadata，upsert）
-  - realtime.uswg_measurements （時序讀值，ON CONFLICT DO NOTHING）
+  - live.uswg_measurements （時序讀值，ON CONFLICT DO NOTHING）
 
 備註：
   - 憑證缺 SKI → verify=False（同 NHI ER、iot_wra 同站不同分支已 ack）
@@ -210,7 +210,7 @@ class UswgCollector(BaseCollector):
                 print(f"[uswg] 站點 metadata upsert 失敗：{e}")
 
         return {
-            "data":               measurements,   # → realtime.uswg_measurements
+            "data":               measurements,   # → live.uswg_measurements
             "total_stations":     len(stations),
             "total_measurements": len(measurements),
             "collected_at":       now.isoformat(),

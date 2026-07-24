@@ -9,8 +9,8 @@ TWSE 加權指數即時 ticker 收集器
   盤後 / 週末 / 國定假日回傳上一交易日收盤值（rtcode 仍 0000，靠 d 欄判斷 stale）。
 
 寫入：
-  - realtime.market_index_tick    （append-only，UNIQUE(index_code, observed_at) DO NOTHING）
-  - realtime.market_index_current （UPSERT by index_code）
+  - live.market_index_tick    （append-only，UNIQUE(index_code, observed_at) DO NOTHING）
+  - live.market_index_current （UPSERT by index_code）
 """
 
 from __future__ import annotations

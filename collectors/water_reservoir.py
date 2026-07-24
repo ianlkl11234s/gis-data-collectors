@@ -7,7 +7,7 @@
 
 寫入：
   - public.water_reservoirs       (靜態，UPSERT)
-  - realtime.reservoir_status     (時序，INSERT ON CONFLICT DO NOTHING)
+  - live.reservoir_status     (時序，INSERT ON CONFLICT DO NOTHING)
 
 API 文件：https://opendata.wra.gov.tw/openapi/swagger/index.html
 無需 API Key，公開免費。

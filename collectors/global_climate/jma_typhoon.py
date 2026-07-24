@@ -9,7 +9,7 @@
     - forecast.json 含 preTyphoon + typhoon + forecast 段，每段是 [[lat, lon], ...]
     - 同一 advisory 拉到後展開過去軌跡 + 現在 + 預報為多筆 typhoon_position row
 
-寫入：realtime.typhoon_positions (source='jma')
+寫入：live.typhoon_positions (source='jma')
   - UNIQUE(storm_id, source, valid_at, point_type, advisory_number)
   - ON CONFLICT DO NOTHING
 """

@@ -3,7 +3,7 @@
 
 跟主 repo (data-collectors/collectors/cdc_public_health_weekly.py) 完全一致的 schema：
   ┌── Supabase ──────────────────────────────────
-  │  table   : realtime.public_health_weekly
+  │  table   : live.public_health_weekly
   │  UNIQUE  : (disease_code, iso_year, iso_week, county_code,
   │             township_code, age_group, gender, is_imported)
   │  conflict: DO NOTHING
@@ -203,7 +203,7 @@ def save_snapshot(result: dict, ts: datetime) -> Path:
     return fp
 
 
-TABLE = "realtime.public_health_weekly"
+TABLE = "live.public_health_weekly"
 COLUMNS = [
     "disease_code", "iso_year", "iso_week",
     "county_code", "county_name", "township_code", "township_name",

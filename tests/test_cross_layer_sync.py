@@ -69,8 +69,8 @@ def test_derive_tables_from_table_map():
     """supabase_tables 從 TABLE_MAP 推導：一般表回 list、multi_table/無對應回 None。"""
     # 一般 history+current
     assert derive_tables("road_congestion") == [
-        "realtime.road_sections_live",
-        "realtime.road_sections_current",
+        "live.road_sections_live",
+        "live.road_sections_current",
     ]
     # is_multi_table → 無法推導
     assert derive_tables("power_taipower") is None
@@ -85,23 +85,23 @@ def test_derive_tables_from_table_map():
 # 刻意不列入 realtime_tables.yaml 的表（每張都有 current / 心跳表代為監控，
 # 或本質恆空）。新增豁免前先確認：該表壞掉時，誰會發現？
 _REALTIME_TABLES_EXEMPT = {
-    "realtime.market_index_tick":              # tick 表大、MAX() 貴；由 market_index_current 代監控
+    "live.market_index_tick":              # tick 表大、MAX() 貴；由 market_index_current 代監控
         "market_index_current 代監控",
-    "realtime.tourist_shuttle_positions":      # 由 tourist_shuttle_current 代監控
+    "live.tourist_shuttle_positions":      # 由 tourist_shuttle_current 代監控
         "tourist_shuttle_current 代監控",
-    "realtime.parking_lots_availability":      # 由 parking_lots_current 代監控
+    "live.parking_lots_availability":      # 由 parking_lots_current 代監控
         "parking_lots_current 代監控",
-    "realtime.parking_segments_availability":  # 由 parking_segments_current 代監控
+    "live.parking_segments_availability":  # 由 parking_segments_current 代監控
         "parking_segments_current 代監控",
     "public.drought_alert_history":            # 與 current 同批寫入（hash 去重、事件驅動），單獨列只會 DEAD 噪音
         "drought_alert_current 代監控",
-    "realtime.road_sections_live":             # MAX() 會 timeout；只監控 road_sections_current
+    "live.road_sections_live":             # MAX() 會 timeout；只監控 road_sections_current
         "road_sections_current 代監控",
-    "realtime.yt_live_history":                # 由 yt_live_current 代監控
+    "live.yt_live_history":                # 由 yt_live_current 代監控
         "yt_live_current 代監控",
-    "realtime.nuclear_radiation_measurements": # 由 nuclear_radiation_stations（updated_at touch 心跳）代監控
+    "live.nuclear_radiation_measurements": # 由 nuclear_radiation_stations（updated_at touch 心跳）代監控
         "nuclear_radiation_stations 代監控",
-    "realtime.flight_trails":                  # partitioned parent 恆空，NEVER 是預期，已刻意移除
+    "live.flight_trails":                  # partitioned parent 恆空，NEVER 是預期，已刻意移除
         "partitioned parent 恆空，刻意移除",
 }
 

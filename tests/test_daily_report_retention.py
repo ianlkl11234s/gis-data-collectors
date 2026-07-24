@@ -25,16 +25,16 @@ def test_section_with_gaps(monkeypatch, task):
         lambda: {
             "status": "ok",
             "rows": [
-                ("realtime.public_health_weekly", "no pg_cron cleanup job"),
-                ("realtime.news_events", "no retention policy"),
+                ("live.public_health_weekly", "no pg_cron cleanup job"),
+                ("live.news_events", "no retention policy"),
             ],
         },
     )
     out = task._section_retention_coverage()
     assert "2 表缺覆蓋" in out
-    assert "realtime.public_health_weekly" in out
+    assert "live.public_health_weekly" in out
     assert "no pg_cron cleanup job" in out
-    assert "realtime.news_events" in out
+    assert "live.news_events" in out
 
 
 def test_section_all_covered(monkeypatch, task):

@@ -3,8 +3,8 @@
 
 跟主 repo (data-collectors) 完全一致的儲存規格：
   ┌── Supabase ──────────────────────────────────
-  │  history : realtime.ship_positions  (INSERT)
-  │  current : realtime.ship_current    (UPSERT by mmsi)
+  │  history : live.ship_positions  (INSERT)
+  │  current : live.ship_current    (UPSERT by mmsi)
   │  columns : mmsi, ship_name, ship_type, lat, lng,
   │            speed, heading, collected_at, geom (SRID 4326)
   └─────────────────────────────────────────────
@@ -141,8 +141,8 @@ def save_snapshot(result: dict, ts: datetime) -> Path:
 # ────────────────────────────────────────────────────────────────────
 # Supabase write (規格與主 repo TABLE_MAP['ship_ais'] + _write_to_db 一致)
 # ────────────────────────────────────────────────────────────────────
-HISTORY_TABLE = "realtime.ship_positions"
-CURRENT_TABLE = "realtime.ship_current"
+HISTORY_TABLE = "live.ship_positions"
+CURRENT_TABLE = "live.ship_current"
 CURRENT_KEY = "mmsi"
 COLUMNS = ["mmsi", "ship_name", "ship_type", "lat", "lng", "speed", "heading", "collected_at", "geom"]
 

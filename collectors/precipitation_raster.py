@@ -14,7 +14,7 @@
   - 多 cumulativeHours：1=最新 1 小時雨量、3=最新 3 小時、6/12/24 ...
 
 寫入：
-  - realtime.precipitation_raster_frames（PK: cumulative_hours, observed_at）
+  - live.precipitation_raster_frames（PK: cumulative_hours, observed_at）
   - ON CONFLICT DO NOTHING：同 ts × ch 不重寫
 
 Standalone usage（dry-run，不寫 DB）：

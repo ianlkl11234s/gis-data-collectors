@@ -2,10 +2,10 @@
 中國軍偵衛星每日通過台灣彙總
 
 每日跑一次，補算「昨天 + 前天」（前天用來蓋掉昨天跑時 TLE 還沒到齊的）：
-1. 從 realtime.satellite_tle_history 撈出當天每顆中國軍偵衛星最新 TLE
-2. SGP4 採樣 30s 一整天，偵測進出台灣 bbox → 寫進 realtime.satellite_passes
+1. 從 live.satellite_tle_history 撈出當天每顆中國軍偵衛星最新 TLE
+2. SGP4 採樣 30s 一整天，偵測進出台灣 bbox → 寫進 live.satellite_passes
 3. UPDATE counties[] = 對 spatial.county_boundaries 做 ST_Intersects
-4. 重算 realtime.satellite_passes_daily 那兩天的彙總
+4. 重算 live.satellite_passes_daily 那兩天的彙總
 
 這個 collector 不寫 supabase_writer 表（直接用 SQL），run() 回 dict 給 base 統計用。
 """

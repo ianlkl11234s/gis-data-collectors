@@ -1,5 +1,5 @@
 -- ============================================================
--- realtime.disaster_alerts_daily — 預聚合每日災害示警（含幾何解析結果）
+-- live.disaster_alerts_daily — 預聚合每日災害示警（含幾何解析結果）
 --
 -- 動機：原 get_disaster_alerts_day 每次 call 都要：
 --   1. scan disaster_alerts (cross-day 過濾)
@@ -21,9 +21,9 @@ SET statement_timeout = 0;
 -- ------------------------------------------------------------
 -- 1) Table
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS realtime.disaster_alerts_daily;
+DROP TABLE IF EXISTS live.disaster_alerts_daily;
 
-CREATE TABLE realtime.disaster_alerts_daily (
+CREATE TABLE live.disaster_alerts_daily (
     day            date NOT NULL,
     identifier     text NOT NULL,
     event          text,
@@ -49,9 +49,9 @@ CREATE TABLE realtime.disaster_alerts_daily (
 );
 
 CREATE INDEX disaster_alerts_daily_day_idx
-    ON realtime.disaster_alerts_daily (day);
+    ON live.disaster_alerts_daily (day);
 
-COMMENT ON TABLE realtime.disaster_alerts_daily IS
+COMMENT ON TABLE live.disaster_alerts_daily IS
     '每日災害示警預聚合（含已解析 ST_Union + ST_SimplifyPreserveTopology 幾何）。pg_cron 每 10 分鐘 refresh today+yesterday。';
 
 -- ------------------------------------------------------------
@@ -67,7 +67,7 @@ DECLARE
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtext('refresh_disaster_alerts_daily:' || target_day::text));
 
-    DELETE FROM realtime.disaster_alerts_daily WHERE day = target_day;
+    DELETE FROM live.disaster_alerts_daily WHERE day = target_day;
 
     WITH bounds AS (
         SELECT
@@ -77,7 +77,7 @@ BEGIN
     base AS (
         SELECT a.*,
                translate(COALESCE(a.area_desc, ''), '台', '臺') AS area_desc_norm
-        FROM realtime.disaster_alerts a, bounds b
+        FROM live.disaster_alerts a, bounds b
         WHERE COALESCE(a.effective, a.sent, a.onset) < b.day_end
           AND COALESCE(a.expires, a.effective, a.sent) >= b.day_start
           AND a.msg_type IS DISTINCT FROM 'Cancel'
@@ -111,7 +111,7 @@ BEGIN
         LEFT JOIN township_geoms tg USING (identifier)
         LEFT JOIN county_geoms   cg USING (identifier)
     )
-    INSERT INTO realtime.disaster_alerts_daily (
+    INSERT INTO live.disaster_alerts_daily (
         day, identifier, event, event_term, category, severity, urgency, certainty,
         msg_type, headline, description, instruction, area_desc, sender_name, author,
         sent_ts, effective_ts, onset_ts, expires_ts, geom
@@ -143,7 +143,7 @@ AS $function$
 DECLARE
     deleted_count integer;
 BEGIN
-    DELETE FROM realtime.disaster_alerts_daily WHERE day < (current_date - keep_days);
+    DELETE FROM live.disaster_alerts_daily WHERE day < (current_date - keep_days);
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;
@@ -167,7 +167,7 @@ AS $function$
         identifier, event, event_term, category, severity, urgency, certainty,
         msg_type, headline, description, instruction, area_desc, sender_name, author,
         sent_ts, effective_ts, onset_ts, expires_ts, geom
-    FROM realtime.disaster_alerts_daily
+    FROM live.disaster_alerts_daily
     WHERE day = target_date
     ORDER BY COALESCE(effective_ts, sent_ts) ASC
 $function$;
