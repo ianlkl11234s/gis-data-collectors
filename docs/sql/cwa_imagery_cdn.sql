@@ -5,7 +5,7 @@
 -- 本檔為「留檔」，待之後同步回 gis-platform repo 補上正式 migration 編號。
 --
 -- 內容：
---   1) realtime.cwa_imagery_frames 加 image_key 欄（R2 object key，nullable，
+--   1) live.cwa_imagery_frames 加 image_key 欄（R2 object key，nullable，
 --      新寫入必填、歷史列由 scripts/backfill_imagery_r2.py 回填）
 --   2) 新 RPC public.get_cwa_imagery_manifest — 語意同 get_cwa_imagery_frames_batch
 --      （含 p_step_minutes 抽稀），差別在只回 key、不回 bytes，且 image_key IS NOT NULL
@@ -15,7 +15,7 @@
 -- 既有 base64 RPC（get_cwa_imagery_frames_batch）保留不動，穩定一週後走 AR-11e 下架。
 -- ============================================================
 
-ALTER TABLE realtime.cwa_imagery_frames ADD COLUMN IF NOT EXISTS image_key text;
+ALTER TABLE live.cwa_imagery_frames ADD COLUMN IF NOT EXISTS image_key text;
 
 CREATE OR REPLACE FUNCTION public.get_cwa_imagery_manifest(
     p_dataset_ids text[],
@@ -33,7 +33,7 @@ AS $fn$
     SELECT dataset_id, observed_at, mime_type,
            lon_min, lon_max, lat_min, lat_max,
            image_key, image_size
-    FROM realtime.cwa_imagery_frames
+    FROM live.cwa_imagery_frames
     WHERE dataset_id = ANY(p_dataset_ids)
       AND observed_at >= p_since
       AND observed_at < p_until

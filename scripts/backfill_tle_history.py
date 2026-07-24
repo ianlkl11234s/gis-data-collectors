@@ -103,7 +103,7 @@ def backfill_date(s3: S3Storage, conn, date_str: str):
     batches = parse_archive(archive_bytes, date_str)
     total = 0
 
-    sql = (f"INSERT INTO realtime.satellite_tle_history ({','.join(HIST_COLS)}) "
+    sql = (f"INSERT INTO live.satellite_tle_history ({','.join(HIST_COLS)}) "
            f"VALUES %s ON CONFLICT (norad_id, tle_epoch) DO NOTHING")
 
     with conn.cursor() as cur:
@@ -138,7 +138,7 @@ def main():
 
     # 統計結果
     with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*), COUNT(DISTINCT norad_id) FROM realtime.satellite_tle_history")
+        cur.execute("SELECT COUNT(*), COUNT(DISTINCT norad_id) FROM live.satellite_tle_history")
         total_rows, unique_sats = cur.fetchone()
 
     conn.close()

@@ -18,7 +18,7 @@
   data.gov.tw nid 對應：88851 / 88856 / 167537 / 167549 / 88857 / 88769
 
 寫入：
-  - realtime.border_airport_snapshot (append-only by collected_at)
+  - live.border_airport_snapshot (append-only by collected_at)
 """
 
 from __future__ import annotations

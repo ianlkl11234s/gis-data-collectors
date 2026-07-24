@@ -11,7 +11,7 @@
     「三、上述期間未偵獲共機，故無提供航跡圖。」（共機為 0 時）
 
 寫入：
-  - realtime.pla_activity_daily（PK = report_date，UPSERT by date）
+  - live.pla_activity_daily（PK = report_date，UPSERT by date）
 
 ⚠ 政治敏感：用「中共解放軍臺海周邊海、空域動態」官方語彙，不用「擾台」「侵擾」。
 """

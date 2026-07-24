@@ -1,7 +1,7 @@
 -- ============================================================
--- realtime.freeway_congestion_daily — 預聚合每日國道路段壅塞 timeline
+-- live.freeway_congestion_daily — 預聚合每日國道路段壅塞 timeline
 --
--- 動機：原 get_freeway_congestion_day 每次被呼叫就對 realtime.freeway_sections
+-- 動機：原 get_freeway_congestion_day 每次被呼叫就對 live.freeway_sections
 -- 當日全範圍掃描 + per-section string_agg(... ORDER BY collected_at) + JOIN
 -- freeway_sections_current，已經被逼到 60s statement_timeout。
 --
@@ -22,9 +22,9 @@ SET statement_timeout = 0;
 -- ------------------------------------------------------------
 -- 1) Table
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS realtime.freeway_congestion_daily;
+DROP TABLE IF EXISTS live.freeway_congestion_daily;
 
-CREATE TABLE realtime.freeway_congestion_daily (
+CREATE TABLE live.freeway_congestion_daily (
     day              date NOT NULL,
     section_id       text NOT NULL,
     section_name     text,
@@ -38,9 +38,9 @@ CREATE TABLE realtime.freeway_congestion_daily (
 );
 
 CREATE INDEX freeway_congestion_daily_day_idx
-    ON realtime.freeway_congestion_daily (day);
+    ON live.freeway_congestion_daily (day);
 
-COMMENT ON TABLE realtime.freeway_congestion_daily IS
+COMMENT ON TABLE live.freeway_congestion_daily IS
     '每日國道路段壅塞 timeline 預聚合（7 天）。由 refresh_freeway_congestion_daily(date) 維護，pg_cron 每 10 分鐘 refresh today+yesterday。';
 
 -- ------------------------------------------------------------
@@ -57,7 +57,7 @@ BEGIN
     -- advisory xact lock 防止並發（cron + 手動同時 call）
     PERFORM pg_advisory_xact_lock(hashtext('refresh_freeway_congestion_daily:' || target_day::text));
 
-    DELETE FROM realtime.freeway_congestion_daily WHERE day = target_day;
+    DELETE FROM live.freeway_congestion_daily WHERE day = target_day;
 
     WITH agg AS (
         SELECT
@@ -69,12 +69,12 @@ BEGIN
                 ';' ORDER BY s.collected_at
             ) AS timeline,
             COUNT(*)::int AS point_count
-        FROM realtime.freeway_sections s
+        FROM live.freeway_sections s
         WHERE s.collected_at >= (target_day::text || ' 00:00:00+08')::timestamptz
           AND s.collected_at <  ((target_day + 1)::text || ' 00:00:00+08')::timestamptz
         GROUP BY s.section_id
     )
-    INSERT INTO realtime.freeway_congestion_daily
+    INSERT INTO live.freeway_congestion_daily
         (day, section_id, section_name, road_name, direction_label, geom, timeline, point_count)
     SELECT
         target_day,
@@ -86,7 +86,7 @@ BEGIN
         a.timeline,
         a.point_count
     FROM agg a
-    JOIN realtime.freeway_sections_current c USING (section_id)
+    JOIN live.freeway_sections_current c USING (section_id)
     WHERE c.geom IS NOT NULL;
 
     GET DIAGNOSTICS inserted_count = ROW_COUNT;
@@ -107,7 +107,7 @@ AS $function$
 DECLARE
     deleted_count integer;
 BEGIN
-    DELETE FROM realtime.freeway_congestion_daily
+    DELETE FROM live.freeway_congestion_daily
     WHERE day < (current_date - keep_days);
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
@@ -124,7 +124,7 @@ STABLE
 SET statement_timeout TO '60s'
 AS $function$
     SELECT section_id, section_name, road_name, direction_label, geom, timeline
-    FROM realtime.freeway_congestion_daily
+    FROM live.freeway_congestion_daily
     WHERE day = target_date
 $function$;
 

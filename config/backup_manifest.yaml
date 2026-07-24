@@ -30,7 +30,7 @@ overrides:
     storage_class: STANDARD
     notes: "48k fire incidents; permanent archive (民國 111–113)"
 
-  realtime.lightning_events:
+  live.lightning_events:
     cadence: daily_yesterday
     storage_class: STANDARD
     notes: "Permanent table; 200-500 events/day; analytics.lightning_daily_summary also kept"
@@ -47,82 +47,82 @@ exclude:
   - opendata.sync_runs              # sync metadata; ephemeral
 
   # Realtime rolling views (not partitioned, reconstructible from snapshots)
-  - realtime.youbike_current        # reconstructible from youbike_snapshots
-  - realtime.bus_current            # reconstructible from bus_positions
-  - realtime.bus_intercity_current  # reconstructible from bus_intercity_positions
-  - realtime.weather_current        # reconstructible from weather_observations
-  - realtime.air_quality_current    # reconstructible from air_quality_observations
-  - realtime.ship_current           # reconstructible from ship_positions
-  - realtime.market_index_current   # market tick; reconstructible from tick table
-  - realtime.parking_lots_current   # reconstructible from availability
-  - realtime.parking_segments_current
-  - realtime.tourist_shuttle_current
-  - realtime.er_hospital_current
-  - realtime.satellite_current      # reconstructible from positions
+  - live.youbike_current        # reconstructible from youbike_snapshots
+  - live.bus_current            # reconstructible from bus_positions
+  - live.bus_intercity_current  # reconstructible from bus_intercity_positions
+  - live.weather_current        # reconstructible from weather_observations
+  - live.air_quality_current    # reconstructible from air_quality_observations
+  - live.ship_current           # reconstructible from ship_positions
+  - live.market_index_current   # market tick; reconstructible from tick table
+  - live.parking_lots_current   # reconstructible from availability
+  - live.parking_segments_current
+  - live.tourist_shuttle_current
+  - live.er_hospital_current
+  - live.satellite_current      # reconstructible from positions
 
 # Tables ALREADY covered by data-collectors/tasks/archive.py (JSON archive to S3)
 # Expanded 2026-06-21 from real S3 audit (49 collector archives found vs 16 documented).
 # Sourced from `aws s3 ls s3://migu-gis-data-collector/` actual coverage.
 archive_py_covered:
   # Transportation
-  - realtime.youbike_snapshots         # youbike, 2026-02-28 起
-  - realtime.bus_positions             # bus, 2026-02-28 起
-  - realtime.bus_intercity_positions   # bus_intercity, 2026-04-14 起
-  - realtime.train_positions           # tra_train, 2026-02-28 起
-  - realtime.flight_positions          # flight_fr24_zone + flight_opensky, 2026-03-03 起
-  - realtime.freeway_vd_traffic        # freeway_vd, 2026-03-03 起
-  - realtime.freeway_sections          # freeway_vd, 2026-03-03 起 (same collector)
-  - realtime.road_events               # road_event_live + _planned, 2026-05-09 起
-  - realtime.road_sections_live        # road_congestion, 2026-06-19 起
-  - realtime.parking_lots_availability # parking_offstreet, 2026-06-19 起
-  - realtime.parking_segments_availability  # parking, 2026-06-19 起
-  - realtime.tourist_shuttle_positions # tourist_shuttle, 2026-06-19 起
-  - realtime.ship_positions            # ship_ais (HiCloud VM), 2026-02-28 起 (8-day retention)
+  - live.youbike_snapshots         # youbike, 2026-02-28 起
+  - live.bus_positions             # bus, 2026-02-28 起
+  - live.bus_intercity_positions   # bus_intercity, 2026-04-14 起
+  - live.train_positions           # tra_train, 2026-02-28 起
+  - live.flight_positions          # flight_fr24_zone + flight_opensky, 2026-03-03 起
+  - live.freeway_vd_traffic        # freeway_vd, 2026-03-03 起
+  - live.freeway_sections          # freeway_vd, 2026-03-03 起 (same collector)
+  - live.road_events               # road_event_live + _planned, 2026-05-09 起
+  - live.road_sections_live        # road_congestion, 2026-06-19 起
+  - live.parking_lots_availability # parking_offstreet, 2026-06-19 起
+  - live.parking_segments_availability  # parking, 2026-06-19 起
+  - live.tourist_shuttle_positions # tourist_shuttle, 2026-06-19 起
+  - live.ship_positions            # ship_ais (HiCloud VM), 2026-02-28 起 (8-day retention)
   # Weather / environment
-  - realtime.weather_observations      # weather, 2026-02-28 起
-  - realtime.temperature_grids         # temperature, 2026-02-28 起
-  - realtime.air_quality_observations  # air_quality, 2026-04-14 起
-  - realtime.aqi_imagery_frames        # air_quality_imagery, 2026-04-14 起
-  - realtime.micro_sensor_readings     # air_quality_microsensors, 2026-04-14 起
-  - realtime.cwa_imagery_frames        # cwa_satellite, 2026-04-07 起
-  - realtime.precipitation_raster_frames  # precipitation_raster, 2026-06-08 起
+  - live.weather_observations      # weather, 2026-02-28 起
+  - live.temperature_grids         # temperature, 2026-02-28 起
+  - live.air_quality_observations  # air_quality, 2026-04-14 起
+  - live.aqi_imagery_frames        # air_quality_imagery, 2026-04-14 起
+  - live.micro_sensor_readings     # air_quality_microsensors, 2026-04-14 起
+  - live.cwa_imagery_frames        # cwa_satellite, 2026-04-07 起
+  - live.precipitation_raster_frames  # precipitation_raster, 2026-06-08 起
   # Water
-  - realtime.groundwater_level_readings  # groundwater_level, 2026-04-20 起
-  - realtime.rain_gauge_readings       # rain_gauge_realtime, 2026-04-19 起
-  - realtime.river_water_level         # river_water_level, 2026-04-19 起
-  - realtime.reservoir_status          # water_reservoir, 2026-04-18 起
-  - realtime.reservoir_daily_ops       # water_reservoir_daily_ops, 2026-04-21 起
-  - realtime.iot_wra_measurements      # iot_wra, 2026-04-24 起
-  - realtime.uswg_measurements         # uswg, 2026-06-05 起
-  - realtime.taipei_sewer_measurements # wic_sewer, 2026-06-08 起
-  - realtime.taipei_evacuate_status    # wic_evacuate, 2026-06-08 起
-  - realtime.taipei_pumb_status        # wic_pumb, 2026-06-08 起
+  - live.groundwater_level_readings  # groundwater_level, 2026-04-20 起
+  - live.rain_gauge_readings       # rain_gauge_realtime, 2026-04-19 起
+  - live.river_water_level         # river_water_level, 2026-04-19 起
+  - live.reservoir_status          # water_reservoir, 2026-04-18 起
+  - live.reservoir_daily_ops       # water_reservoir_daily_ops, 2026-04-21 起
+  - live.iot_wra_measurements      # iot_wra, 2026-04-24 起
+  - live.uswg_measurements         # uswg, 2026-06-05 起
+  - live.taipei_sewer_measurements # wic_sewer, 2026-06-08 起
+  - live.taipei_evacuate_status    # wic_evacuate, 2026-06-08 起
+  - live.taipei_pumb_status        # wic_pumb, 2026-06-08 起
   # Disaster / alerts
-  - realtime.earthquake_events         # earthquake, 2026-03-06 起
-  - realtime.disaster_alerts           # ncdr_alerts + wra_drought_alert, 2026-04-07 起
-  - realtime.lightning_events          # lightning_events, 2026-06-15 起
-  - realtime.nuclear_radiation_measurements  # nuclear_radiation, 2026-06-15 起
-  - realtime.nuclear_radiation_stations  # 同上
+  - live.earthquake_events         # earthquake, 2026-03-06 起
+  - live.disaster_alerts           # ncdr_alerts + wra_drought_alert, 2026-04-07 起
+  - live.lightning_events          # lightning_events, 2026-06-15 起
+  - live.nuclear_radiation_measurements  # nuclear_radiation, 2026-06-15 起
+  - live.nuclear_radiation_stations  # 同上
   # Satellite / launch
-  - realtime.satellite_positions       # satellite, 2026-03-28 起
-  - realtime.satellite_tle             # 同 satellite collector
-  - realtime.satellite_passes_daily    # satellite_passes_daily, 2026-06-14 起
-  - realtime.launch_events             # launch, 2026-03-31 起
-  - realtime.launches                  # 同上
-  - realtime.launch_pads               # 同上
+  - live.satellite_positions       # satellite, 2026-03-28 起
+  - live.satellite_tle             # 同 satellite collector
+  - live.satellite_passes_daily    # satellite_passes_daily, 2026-06-14 起
+  - live.launch_events             # launch, 2026-03-31 起
+  - live.launches                  # 同上
+  - live.launch_pads               # 同上
   # Energy / market
-  - realtime.power_system_status       # power_taipower, 2026-06-05 起
-  - realtime.power_generation_unit     # 同上
-  - realtime.power_region_demand       # 同上
-  - realtime.market_index_tick         # twse_market_index, 2026-06-16 起
+  - live.power_system_status       # power_taipower, 2026-06-05 起
+  - live.power_generation_unit     # 同上
+  - live.power_region_demand       # 同上
+  - live.market_index_tick         # twse_market_index, 2026-06-16 起
   # News / media / social
-  - realtime.news_events               # news_events, 2026-06-12 起
-  - realtime.yt_live_current           # yt_live_video_resolver, 2026-06-17 起
-  - realtime.yt_live_history           # 同上
-  - realtime.pla_activity_daily        # pla_activity_daily, 2026-06-16 起
+  - live.news_events               # news_events, 2026-06-12 起
+  - live.yt_live_current           # yt_live_video_resolver, 2026-06-17 起
+  - live.yt_live_history           # 同上
+  - live.pla_activity_daily        # pla_activity_daily, 2026-06-16 起
   # Health
-  - realtime.er_hospital_status        # er_hospital_realtime, 2026-06-02 起
-  # realtime.public_health_weekly 已移除（2026-07-07 稽核發現）：CDC VM
+  - live.er_hospital_status        # er_hospital_realtime, 2026-06-02 起
+  # live.public_health_weekly 已移除（2026-07-07 稽核發現）：CDC VM
   # (external/cdc_public_health_weekly_vm/) 沒有任何 archive 腳本、cross_layer_map
   # s3_prefixes 為空 → 列在此處會讓 Robot B 跳過 = 該表零備份。移除後改由
   # Robot B 每日 snapshot 備份（週更表，非週四後一天多為 skipped_empty_day 屬預期）。
@@ -146,7 +146,7 @@ classification:
     - analytics        # daily/monthly summaries
 
   realtime_schemas:
-    - realtime
+    - live
 
   exclude_schemas:
     - metadata
@@ -163,7 +163,7 @@ statistics:
   realtime_backup_targets: 67
   description:
     - "Total static schemas: 12 (reference, spatial, admin, rail, maritime, demographics, fire, energy, public, safety, medical, analytics)"
-    - "Total realtime schema: 1 (realtime)"
+    - "Total realtime schema: 1 (live)"
     - "Realtime targets for daily S3 backup: 83 - 16 (archive_py_covered) = 67 tables"
     - "Critical static tables: foursquare_poi, statistical_areas, village_demographics_yearly, power_facilities/units, villages"
 

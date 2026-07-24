@@ -10,7 +10,7 @@
   ⚠ 每筆事故 N 個當事者 → N row（party_order=1..N）
 
 寫入：
-  - realtime.traffic_accidents_a1 (UNIQUE dedup_hash, ON CONFLICT DO NOTHING)
+  - live.traffic_accidents_a1 (UNIQUE dedup_hash, ON CONFLICT DO NOTHING)
 """
 
 from __future__ import annotations

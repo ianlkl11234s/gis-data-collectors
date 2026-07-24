@@ -10,7 +10,7 @@
 覆蓋：臺北市 233 站雨水下水道水位
 寫入：
   - public.taipei_sewer_stations         （站點 metadata，upsert）
-  - realtime.taipei_sewer_measurements   （時序讀值，ON CONFLICT DO NOTHING）
+  - live.taipei_sewer_measurements   （時序讀值，ON CONFLICT DO NOTHING）
 
 Standalone usage（dry-run，不寫 DB）：
   cd data-collectors

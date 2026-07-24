@@ -1,15 +1,15 @@
-# Supabase realtime / spatial / reference 表清冊
+# Supabase live / spatial / reference 表清冊
 #
 # 用途：
 #   tasks/daily_report.py 的 _section_supabase_realtime 用此清單呼叫 RPC
-#   realtime.health_snapshot()（見 gis-platform/migrations/149_realtime_health_snapshot.sql）
+#   live.health_snapshot()（見 gis-platform/migrations/149_realtime_health_snapshot.sql）
 #   一次撈所有表的寫入新鮮度，依 expected_interval_min 判定 STALE / OK / DEAD。
 #
 # 維護規則（重要）：
 #   每次 cross_layer_map.yaml 改動後，務必同步本檔！見 .claude/CLAUDE.md
 #
 # 欄位：
-#   schema                : 'realtime' | 'spatial' | 'reference' | 'public'
+#   schema                : 'live' | 'spatial' | 'reference' | 'public'
 #   table                 : 表名
 #   time_column           : 用什麼欄位算 max() 看新鮮度（預設 collected_at，部分表是 observed_at / occurred_at 等）
 #   owner_collector       : cross_layer_map.yaml 裡的 collector key
@@ -19,78 +19,78 @@
 
 tables:
   # ── 交通 ────────────────────────────────
-  - {schema: realtime, table: youbike_snapshots,         time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
-  - {schema: realtime, table: youbike_current,           time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
-  - {schema: realtime, table: bus_positions,             time_column: collected_at, owner_collector: bus, expected_interval_min: 2, critical: true}
-  - {schema: realtime, table: bus_current,               time_column: collected_at, owner_collector: bus, expected_interval_min: 2, critical: true}
-  - {schema: realtime, table: bus_intercity_positions,   time_column: collected_at, owner_collector: bus_intercity, expected_interval_min: 2, critical: false}
-  - {schema: realtime, table: bus_intercity_current,     time_column: collected_at, owner_collector: bus_intercity, expected_interval_min: 2, critical: false}
-  - {schema: realtime, table: freeway_sections,          time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
-  - {schema: realtime, table: freeway_sections_current,  time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
-  - {schema: realtime, table: freeway_vd_traffic,        time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
-  - {schema: realtime, table: train_positions,           time_column: collected_at, owner_collector: tra_train, expected_interval_min: 2, critical: true}
-  - {schema: realtime, table: ship_positions,            time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
-  - {schema: realtime, table: ship_current,              time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
+  - {schema: live, table: youbike_snapshots,         time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
+  - {schema: live, table: youbike_current,           time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
+  - {schema: live, table: bus_positions,             time_column: collected_at, owner_collector: bus, expected_interval_min: 2, critical: true}
+  - {schema: live, table: bus_current,               time_column: collected_at, owner_collector: bus, expected_interval_min: 2, critical: true}
+  - {schema: live, table: bus_intercity_positions,   time_column: collected_at, owner_collector: bus_intercity, expected_interval_min: 2, critical: false}
+  - {schema: live, table: bus_intercity_current,     time_column: collected_at, owner_collector: bus_intercity, expected_interval_min: 2, critical: false}
+  - {schema: live, table: freeway_sections,          time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
+  - {schema: live, table: freeway_sections_current,  time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
+  - {schema: live, table: freeway_vd_traffic,        time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
+  - {schema: live, table: train_positions,           time_column: collected_at, owner_collector: tra_train, expected_interval_min: 2, critical: true}
+  - {schema: live, table: ship_positions,            time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
+  - {schema: live, table: ship_current,              time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
   - {schema: reference, table: daily_schedules,          time_column: created_at,   owner_collector: rail_timetable, expected_interval_min: 1440, critical: false}
-  - {schema: realtime, table: parking_segments_current,  time_column: collected_at, owner_collector: parking, expected_interval_min: 15, critical: false, notes: OnStreet 路邊停車；availability 由 current 代監控（測試豁免）}
+  - {schema: live, table: parking_segments_current,  time_column: collected_at, owner_collector: parking, expected_interval_min: 15, critical: false, notes: OnStreet 路邊停車；availability 由 current 代監控（測試豁免）}
 
   # ── 航空 ────────────────────────────────
-  - {schema: realtime, table: flight_positions,          time_column: collected_at, owner_collector: flight_fr24, expected_interval_min: 5, critical: false, notes: 多 collector 共用}
+  - {schema: live, table: flight_positions,          time_column: collected_at, owner_collector: flight_fr24, expected_interval_min: 5, critical: false, notes: 多 collector 共用}
   - {schema: air_tickets, table: fare_offers,             time_column: observed_at, owner_collector: air_ticket_radar, expected_interval_min: 2880, critical: false, notes: 每 48 小時掃描；private SSOT。未配置 writer 或尚無首筆資料時屬預期，不升事故}
   # flight_trails — partitioned parent，本來就為空，NEVER 是預期。從清冊移除避免干擾顯示。
 
   # ── 氣象 / 地震 ─────────────────────────
-  - {schema: realtime, table: weather_observations,      time_column: collected_at, owner_collector: weather, expected_interval_min: 60, critical: true}
-  - {schema: realtime, table: weather_current,           time_column: observed_at,  owner_collector: weather, expected_interval_min: 60, critical: true}
-  - {schema: realtime, table: temperature_grids,         time_column: collected_at, owner_collector: temperature, expected_interval_min: 60, critical: false}
-  - {schema: realtime, table: cwa_imagery_frames,        time_column: observed_at,  owner_collector: cwa_satellite, expected_interval_min: 10, critical: false}
-  - {schema: realtime, table: earthquake_events,         time_column: occurred_at,  owner_collector: earthquake, expected_interval_min: 1440, critical: false, notes: 事件驅動可能很久才一次（critical=false 避免無震時誤觸 🔴 嚴重）}
-  - {schema: realtime, table: disaster_alerts,           time_column: collected_at, owner_collector: ncdr_alerts, expected_interval_min: 15, critical: true}
+  - {schema: live, table: weather_observations,      time_column: collected_at, owner_collector: weather, expected_interval_min: 60, critical: true}
+  - {schema: live, table: weather_current,           time_column: observed_at,  owner_collector: weather, expected_interval_min: 60, critical: true}
+  - {schema: live, table: temperature_grids,         time_column: collected_at, owner_collector: temperature, expected_interval_min: 60, critical: false}
+  - {schema: live, table: cwa_imagery_frames,        time_column: observed_at,  owner_collector: cwa_satellite, expected_interval_min: 10, critical: false}
+  - {schema: live, table: earthquake_events,         time_column: occurred_at,  owner_collector: earthquake, expected_interval_min: 1440, critical: false, notes: 事件驅動可能很久才一次（critical=false 避免無震時誤觸 🔴 嚴重）}
+  - {schema: live, table: disaster_alerts,           time_column: collected_at, owner_collector: ncdr_alerts, expected_interval_min: 15, critical: true}
 
   # ── 太空 ────────────────────────────────
-  - {schema: realtime, table: satellite_positions,       time_column: collected_at, owner_collector: satellite, expected_interval_min: 120, critical: false}
-  - {schema: realtime, table: satellite_current,         time_column: collected_at, owner_collector: satellite, expected_interval_min: 120, critical: false}
-  - {schema: realtime, table: satellite_tle,             time_column: updated_at,   owner_collector: satellite, expected_interval_min: 1440, critical: false}
-  - {schema: realtime, table: satellite_tle_history,     time_column: fetched_at,   owner_collector: satellite, expected_interval_min: 1440, critical: false}
-  - {schema: realtime, table: launches,                  time_column: collected_at, owner_collector: launch, expected_interval_min: 15, critical: false}
-  - {schema: realtime, table: launch_events,             time_column: collected_at, owner_collector: launch, expected_interval_min: 15, critical: false}
-  - {schema: realtime, table: launch_pads,               time_column: collected_at, owner_collector: launch, expected_interval_min: 1440, critical: false}
+  - {schema: live, table: satellite_positions,       time_column: collected_at, owner_collector: satellite, expected_interval_min: 120, critical: false}
+  - {schema: live, table: satellite_current,         time_column: collected_at, owner_collector: satellite, expected_interval_min: 120, critical: false}
+  - {schema: live, table: satellite_tle,             time_column: updated_at,   owner_collector: satellite, expected_interval_min: 1440, critical: false}
+  - {schema: live, table: satellite_tle_history,     time_column: fetched_at,   owner_collector: satellite, expected_interval_min: 1440, critical: false}
+  - {schema: live, table: launches,                  time_column: collected_at, owner_collector: launch, expected_interval_min: 15, critical: false}
+  - {schema: live, table: launch_events,             time_column: collected_at, owner_collector: launch, expected_interval_min: 15, critical: false}
+  - {schema: live, table: launch_pads,               time_column: collected_at, owner_collector: launch, expected_interval_min: 1440, critical: false}
 
   # ── 空氣品質 ────────────────────────────
-  - {schema: realtime, table: air_quality_observations,  time_column: collected_at, owner_collector: air_quality, expected_interval_min: 60, critical: false}
-  - {schema: realtime, table: air_quality_current,       time_column: observed_at,  owner_collector: air_quality, expected_interval_min: 60, critical: false}
-  - {schema: realtime, table: aqi_imagery_frames,        time_column: observed_at,  owner_collector: air_quality_imagery, expected_interval_min: 60, critical: false}
-  - {schema: realtime, table: micro_sensor_readings,     time_column: collected_at, owner_collector: air_quality_microsensors, expected_interval_min: 5, critical: false}
+  - {schema: live, table: air_quality_observations,  time_column: collected_at, owner_collector: air_quality, expected_interval_min: 60, critical: false}
+  - {schema: live, table: air_quality_current,       time_column: observed_at,  owner_collector: air_quality, expected_interval_min: 60, critical: false}
+  - {schema: live, table: aqi_imagery_frames,        time_column: observed_at,  owner_collector: air_quality_imagery, expected_interval_min: 60, critical: false}
+  - {schema: live, table: micro_sensor_readings,     time_column: collected_at, owner_collector: air_quality_microsensors, expected_interval_min: 5, critical: false}
 
   # ── 水利 ────────────────────────────────
-  - {schema: realtime, table: reservoir_status,          time_column: snapshot_at,  owner_collector: water_reservoir, expected_interval_min: 60, critical: false}
-  - {schema: realtime, table: reservoir_daily_ops,       time_column: observed_at,  owner_collector: water_reservoir_daily_ops, expected_interval_min: 1440, critical: false}
-  - {schema: realtime, table: river_water_level,         time_column: observed_at,  owner_collector: river_water_level, expected_interval_min: 10, critical: false}
-  - {schema: realtime, table: rain_gauge_readings,       time_column: observed_at,  owner_collector: rain_gauge_realtime, expected_interval_min: 10, critical: false}
-  - {schema: realtime, table: groundwater_level_readings, time_column: observed_at, owner_collector: groundwater_level, expected_interval_min: 60, critical: false}
-  - {schema: realtime, table: iot_wra_measurements,      time_column: observed_at,  owner_collector: iot_wra, expected_interval_min: 60, critical: false}
-  - {schema: realtime, table: uswg_measurements,         time_column: observed_at,  owner_collector: uswg, expected_interval_min: 10, critical: false}
+  - {schema: live, table: reservoir_status,          time_column: snapshot_at,  owner_collector: water_reservoir, expected_interval_min: 60, critical: false}
+  - {schema: live, table: reservoir_daily_ops,       time_column: observed_at,  owner_collector: water_reservoir_daily_ops, expected_interval_min: 1440, critical: false}
+  - {schema: live, table: river_water_level,         time_column: observed_at,  owner_collector: river_water_level, expected_interval_min: 10, critical: false}
+  - {schema: live, table: rain_gauge_readings,       time_column: observed_at,  owner_collector: rain_gauge_realtime, expected_interval_min: 10, critical: false}
+  - {schema: live, table: groundwater_level_readings, time_column: observed_at, owner_collector: groundwater_level, expected_interval_min: 60, critical: false}
+  - {schema: live, table: iot_wra_measurements,      time_column: observed_at,  owner_collector: iot_wra, expected_interval_min: 60, critical: false}
+  - {schema: live, table: uswg_measurements,         time_column: observed_at,  owner_collector: uswg, expected_interval_min: 10, critical: false}
   # drought_alert_current — 2026-07-08 確認 collector 在主站實際運作，加回監控。
   # 事件驅動（hash 未變即不寫，18 天未變屬常態）→ interval 比照 foursquare_poi 放寬 43200
   # 避免天天 DEAD 噪音；drought_alert_history 同批寫入，由 current 代監控（測試豁免）。
   - {schema: public,   table: drought_alert_current,     time_column: fetched_at,   owner_collector: wra_drought_alert, expected_interval_min: 43200, critical: false, notes: 事件驅動 hash 去重，上游不定期公告}
 
   # ── 道路 / 廢棄物 / 急診 / 電力 ─────────
-  - {schema: realtime, table: road_events,               time_column: collected_at, owner_collector: road_event_live, expected_interval_min: 5, critical: false}
-  - {schema: realtime, table: road_events_current,       time_column: collected_at, owner_collector: road_event_live, expected_interval_min: 5, critical: false}
+  - {schema: live, table: road_events,               time_column: collected_at, owner_collector: road_event_live, expected_interval_min: 5, critical: false}
+  - {schema: live, table: road_events_current,       time_column: collected_at, owner_collector: road_event_live, expected_interval_min: 5, critical: false}
   - {schema: spatial,  table: waste_positions_realtime,  time_column: observed_at,  owner_collector: waste_positions, expected_interval_min: 2, critical: true}
-  - {schema: realtime, table: er_hospital_status,        time_column: observed_at,  owner_collector: er_hospital_realtime, expected_interval_min: 15, critical: false}
-  - {schema: realtime, table: er_hospital_current,       time_column: observed_at,  owner_collector: er_hospital_realtime, expected_interval_min: 15, critical: false}
-  - {schema: realtime, table: power_system_status,       time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
-  - {schema: realtime, table: power_generation_unit,     time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
-  - {schema: realtime, table: power_region_demand,       time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
+  - {schema: live, table: er_hospital_status,        time_column: observed_at,  owner_collector: er_hospital_realtime, expected_interval_min: 15, critical: false}
+  - {schema: live, table: er_hospital_current,       time_column: observed_at,  owner_collector: er_hospital_realtime, expected_interval_min: 15, critical: false}
+  - {schema: live, table: power_system_status,       time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
+  - {schema: live, table: power_generation_unit,     time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
+  - {schema: live, table: power_region_demand,       time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
 
   # ── 新聞 ────────────────────────────────
-  - {schema: realtime, table: news_events,               time_column: created_at,   owner_collector: news_events, expected_interval_min: 20, critical: false}
+  - {schema: live, table: news_events,               time_column: created_at,   owner_collector: news_events, expected_interval_min: 20, critical: false}
 
   # ── 公衛 ────────────────────────────────
   # cdc_public_health_weekly 跑在 HiCloud VM 上，每週四 11:00 一次
-  - {schema: realtime, table: public_health_weekly,      time_column: collected_at, owner_collector: cdc_public_health_weekly, expected_interval_min: 10080, critical: false, notes: 週四 11:00 跑一次}
+  - {schema: live, table: public_health_weekly,      time_column: collected_at, owner_collector: cdc_public_health_weekly, expected_interval_min: 10080, critical: false, notes: 週四 11:00 跑一次}
 
   # ── 其他 reference ──────────────────────
   - {schema: reference, table: foursquare_poi,           time_column: imported_at,  owner_collector: foursquare_poi, expected_interval_min: 43200, critical: false, notes: disabled reference dataset；不參與即時 freshness 事故判定}
@@ -98,25 +98,25 @@ tables:
   # ── 2026-07-02 production 實測補齊（AR-05，與 cross_layer_map.yaml 自動補回區同步）──
   # 挑表原則：有 current 表優先（小、可 MAX）；current_touch_updated_at 的表用 updated_at
   # 當 collector 心跳；事件驅動表比照 earthquake_events（interval 1440 + critical false + notes）。
-  - {schema: realtime, table: road_sections_current,      time_column: collected_at, owner_collector: road_congestion, expected_interval_min: 5, critical: false, notes: road_sections_live MAX 會 timeout，只監控 current}
-  - {schema: realtime, table: parking_lots_current,       time_column: collected_at, owner_collector: parking_offstreet, expected_interval_min: 15, critical: false}
-  - {schema: realtime, table: tourist_shuttle_current,    time_column: collected_at, owner_collector: tourist_shuttle, expected_interval_min: 2, critical: false}
-  - {schema: realtime, table: nuclear_radiation_stations, time_column: updated_at,   owner_collector: nuclear_radiation, expected_interval_min: 15, critical: false, notes: current 表 updated_at 每輪 touch＝collector 心跳（來源 stale 由 is_stale 欄位表達）}
-  - {schema: realtime, table: taipei_sewer_measurements,  time_column: observed_at,  owner_collector: wic_sewer, expected_interval_min: 10, critical: false}
-  - {schema: realtime, table: taipei_evacuate_status,     time_column: observed_at,  owner_collector: wic_evacuate, expected_interval_min: 10, critical: false}
-  - {schema: realtime, table: taipei_pumb_status,         time_column: observed_at,  owner_collector: wic_pumb, expected_interval_min: 10, critical: false}
-  - {schema: realtime, table: pla_activity_daily,         time_column: collected_at, owner_collector: pla_activity_daily, expected_interval_min: 1440, critical: false, notes: 每日通報 1 row/day}
-  - {schema: realtime, table: yt_live_current,            time_column: updated_at,   owner_collector: yt_live_video_resolver, expected_interval_min: 5, critical: false}
-  - {schema: realtime, table: precipitation_raster_frames, time_column: collected_at, owner_collector: precipitation_raster, expected_interval_min: 120, critical: false, notes: 上游柵格發布常延遲 1-2h，interval 放寬 120}
-  - {schema: realtime, table: earthquakes_global,         time_column: collected_at, owner_collector: global_climate_usgs_earthquake, expected_interval_min: 60, critical: false}
-  - {schema: realtime, table: typhoon_positions,          time_column: collected_at, owner_collector: global_climate_jma_typhoon, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（jma/jtwc）；事件驅動，颱風季外 DEAD 屬預期}
-  - {schema: realtime, table: global_climate_grids,       time_column: collected_at, owner_collector: global_climate_cmems, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（cmems/cams/noaa_gfs），日級模型}
-  - {schema: realtime, table: border_airport_snapshot,    time_column: collected_at, owner_collector: immigration_apis_airport, expected_interval_min: 60, critical: false, notes: 跑在 HiCloud VM}
-  - {schema: realtime, table: lightning_events,           time_column: collected_at, owner_collector: lightning_events, expected_interval_min: 1440, critical: false, notes: 事件驅動（無落雷即無資料），比照 earthquake_events 放寬}
-  - {schema: realtime, table: market_index_current,       time_column: updated_at,   owner_collector: twse_market_index, expected_interval_min: 1440, critical: false, notes: 僅開盤時段有資料，1440x3＝3 天蓋過週末；連假誤報屬預期}
-  - {schema: realtime, table: prison_population_daily,    time_column: collected_at, owner_collector: correctional_daily_snapshot, expected_interval_min: 1440, critical: false, notes: 每日 1 row（2026-07-03 啟用）}
-  - {schema: realtime, table: traffic_accidents_a1,       time_column: collected_at, owner_collector: npa_traffic_accident_a1, expected_interval_min: 720, critical: false, notes: dedup by hash，僅新事故推進 MAX；久無新事故告警屬預期（2026-07-03 啟用）}
+  - {schema: live, table: road_sections_current,      time_column: collected_at, owner_collector: road_congestion, expected_interval_min: 5, critical: false, notes: road_sections_live MAX 會 timeout，只監控 current}
+  - {schema: live, table: parking_lots_current,       time_column: collected_at, owner_collector: parking_offstreet, expected_interval_min: 15, critical: false}
+  - {schema: live, table: tourist_shuttle_current,    time_column: collected_at, owner_collector: tourist_shuttle, expected_interval_min: 2, critical: false}
+  - {schema: live, table: nuclear_radiation_stations, time_column: updated_at,   owner_collector: nuclear_radiation, expected_interval_min: 15, critical: false, notes: current 表 updated_at 每輪 touch＝collector 心跳（來源 stale 由 is_stale 欄位表達）}
+  - {schema: live, table: taipei_sewer_measurements,  time_column: observed_at,  owner_collector: wic_sewer, expected_interval_min: 10, critical: false}
+  - {schema: live, table: taipei_evacuate_status,     time_column: observed_at,  owner_collector: wic_evacuate, expected_interval_min: 10, critical: false}
+  - {schema: live, table: taipei_pumb_status,         time_column: observed_at,  owner_collector: wic_pumb, expected_interval_min: 10, critical: false}
+  - {schema: live, table: pla_activity_daily,         time_column: collected_at, owner_collector: pla_activity_daily, expected_interval_min: 1440, critical: false, notes: 每日通報 1 row/day}
+  - {schema: live, table: yt_live_current,            time_column: updated_at,   owner_collector: yt_live_video_resolver, expected_interval_min: 5, critical: false}
+  - {schema: live, table: precipitation_raster_frames, time_column: collected_at, owner_collector: precipitation_raster, expected_interval_min: 120, critical: false, notes: 上游柵格發布常延遲 1-2h，interval 放寬 120}
+  - {schema: live, table: earthquakes_global,         time_column: collected_at, owner_collector: global_climate_usgs_earthquake, expected_interval_min: 60, critical: false}
+  - {schema: live, table: typhoon_positions,          time_column: collected_at, owner_collector: global_climate_jma_typhoon, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（jma/jtwc）；事件驅動，颱風季外 DEAD 屬預期}
+  - {schema: live, table: global_climate_grids,       time_column: collected_at, owner_collector: global_climate_cmems, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（cmems/cams/noaa_gfs），日級模型}
+  - {schema: live, table: border_airport_snapshot,    time_column: collected_at, owner_collector: immigration_apis_airport, expected_interval_min: 60, critical: false, notes: 跑在 HiCloud VM}
+  - {schema: live, table: lightning_events,           time_column: collected_at, owner_collector: lightning_events, expected_interval_min: 1440, critical: false, notes: 事件驅動（無落雷即無資料），比照 earthquake_events 放寬}
+  - {schema: live, table: market_index_current,       time_column: updated_at,   owner_collector: twse_market_index, expected_interval_min: 1440, critical: false, notes: 僅開盤時段有資料，1440x3＝3 天蓋過週末；連假誤報屬預期}
+  - {schema: live, table: prison_population_daily,    time_column: collected_at, owner_collector: correctional_daily_snapshot, expected_interval_min: 1440, critical: false, notes: 每日 1 row（2026-07-03 啟用）}
+  - {schema: live, table: traffic_accidents_a1,       time_column: collected_at, owner_collector: npa_traffic_accident_a1, expected_interval_min: 720, critical: false, notes: dedup by hash，僅新事故推進 MAX；久無新事故告警屬預期（2026-07-03 啟用）}
 
   # ── 文化場館 ────────────────────────────
-  - {schema: realtime, table: tpml_seat_status,            time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false, notes: 北市圖座位；閉館時段仍寫入（is_closed=true）}
-  - {schema: realtime, table: tpml_seat_current,           time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false}
+  - {schema: live, table: tpml_seat_status,            time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false, notes: 北市圖座位；閉館時段仍寫入（is_closed=true）}
+  - {schema: live, table: tpml_seat_current,           time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false}

@@ -15,7 +15,7 @@
 
 寫入：
   - public.iot_wra_stations       （站點 metadata，upsert）
-  - realtime.iot_wra_measurements （時序讀值，ON CONFLICT DO NOTHING）
+  - live.iot_wra_measurements （時序讀值，ON CONFLICT DO NOTHING）
 
 備註：
   - 免授權（Swagger 聲稱需 Bearer，實際端點免授權回應）
@@ -185,7 +185,7 @@ class IotWraCollector(BaseCollector):
                 print(f"[iot_wra] 站點 metadata upsert 失敗：{e}")
 
         return {
-            "data":               measurements,   # 時序讀值 → realtime.iot_wra_measurements
+            "data":               measurements,   # 時序讀值 → live.iot_wra_measurements
             "per_type":           per_type_counts,
             "total_stations":     len(stations),
             "total_measurements": len(measurements),

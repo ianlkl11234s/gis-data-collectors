@@ -10,9 +10,9 @@
 單位：162595 / 162596 原始為「萬瓩」→ ×10 轉 MW；8931 本身即 MW，不轉。
 
 寫入（schema=realtime）：
-  - realtime.power_system_status     (每 10 分一列，UNIQUE(observed_at) DO NOTHING)
-  - realtime.power_generation_unit   (每 10 分 ×N 機組，UNIQUE(unit_name, observed_at) DO NOTHING)
-  - realtime.power_region_demand     (每 10 分 ×4 區，UNIQUE(region, observed_at) DO NOTHING)
+  - live.power_system_status     (每 10 分一列，UNIQUE(observed_at) DO NOTHING)
+  - live.power_generation_unit   (每 10 分 ×N 機組，UNIQUE(unit_name, observed_at) DO NOTHING)
+  - live.power_region_demand     (每 10 分 ×4 區，UNIQUE(region, observed_at) DO NOTHING)
 
 注意：base.py 只在 result 含 'data' 鍵時才 save + 寫 Supabase，
 故 collect() 回傳必含 'data'（= system_status 列），多表資料另以

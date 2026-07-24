@@ -7,7 +7,7 @@
   - 無需 API Key，公開免費
 
 寫入：
-  - realtime.groundwater_level_readings  (時序，ON CONFLICT DO NOTHING)
+  - live.groundwater_level_readings  (時序，ON CONFLICT DO NOTHING)
 """
 
 from __future__ import annotations

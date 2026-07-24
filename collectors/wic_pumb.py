@@ -11,7 +11,7 @@
 
 寫入：
   - public.taipei_pumb_stations  （站點 + 警戒線，upsert）
-  - realtime.taipei_pumb_status  （時序狀態，ON CONFLICT DO NOTHING）
+  - live.taipei_pumb_status  （時序狀態，ON CONFLICT DO NOTHING）
 
 衍生 RPC：public.get_taipei_pumb_latest()
   → 含 risk_ratio = inner_value / max_allowable，>0.8 即將淹水

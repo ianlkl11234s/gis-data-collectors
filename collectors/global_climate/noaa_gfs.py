@@ -15,7 +15,7 @@
   - UGRD/VGRD @ 10m above ground
   - UGRD/VGRD @ 250 mb (噴流)
 
-寫入：realtime.global_climate_grids（每 leadtime × 每變數一筆 row）
+寫入：live.global_climate_grids（每 leadtime × 每變數一筆 row）
 """
 
 from __future__ import annotations

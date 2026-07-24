@@ -36,7 +36,7 @@
 
 其餘編號（1–4、14–31、35–61）回「存取檔案有誤」= 無效。
 
-## 3. 總和 feed 實際涵蓋（DB `realtime.disaster_alerts` 2026-04-07 起 4,416 筆）
+## 3. 總和 feed 實際涵蓋（DB `live.disaster_alerts` 2026-04-07 起 4,416 筆）
 
 27 種：停水(2257)、淹水(543)、水庫放流(218)、雷雨(198)、強風(168)、高溫(166)、
 火災(163，內政部消防署)、降雨(155)、消防安全檢查重大不合格場所(149)、淹水感測(115)、
@@ -62,7 +62,7 @@
 ## 5. 既有管線狀態（2026-06-12 驗證）
 
 - Collector：`ncdr_alerts.py`，15 分鐘，identifier UPSERT 去重，CAP polygon → MULTIPOLYGON
-- DB：`realtime.disaster_alerts`（migration 023），不刪歷史，過期自然掉出 `disaster_alerts_active` view
+- DB：`live.disaster_alerts`（migration 023），不刪歷史，過期自然掉出 `disaster_alerts_active` view
 - S3：每日 03:00 歸檔 `s3://migu-gis-data-collector/ncdr_alerts/archives/YYYY-MM-DD.tar.gz`（已驗證至 06-10）
 - 前端：mini-taiwan-pulse `disasterAlertLoader.ts` → RPC `get_disaster_alerts_day`（不過濾類型，
   停電/停水/火災資料已可達前端；視覺呈現是否分類上色是前端 backlog）

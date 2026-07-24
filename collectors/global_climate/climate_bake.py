@@ -67,7 +67,7 @@ class ClimateBakeCollector(BaseCollector):
             cur.execute(
                 """
                 SELECT s3_uri, observed_at
-                  FROM realtime.global_climate_grids
+                  FROM live.global_climate_grids
                  WHERE dataset_id = %s AND s3_uri IS NOT NULL
                  ORDER BY init_at DESC NULLS LAST, leadtime_hr ASC NULLS LAST
                  LIMIT 1
@@ -318,7 +318,7 @@ class ClimateBakeCollector(BaseCollector):
             cur.execute(
                 """
                 SELECT s3_uri, observed_at, init_at
-                  FROM realtime.global_climate_grids
+                  FROM live.global_climate_grids
                  WHERE dataset_id='gfs_wind10m' AND leadtime_hr=0 AND s3_uri IS NOT NULL
                    AND observed_at >= now() - make_interval(days => %s)
                    AND EXTRACT(hour FROM observed_at AT TIME ZONE 'UTC') = 0
@@ -335,13 +335,13 @@ class ClimateBakeCollector(BaseCollector):
             # grids 唯一鍵是 (dataset_id, observed_at) + ON CONFLICT DO NOTHING，
             # 舊 cycle 的 f120 會先佔住某些 valid-time → 新 cycle 同 observed_at 被拒；
             # 用 DISTINCT ON (observed_at) ORDER BY init_at DESC 補滿整條 6h 序列（取最鮮）。
-            cur.execute("SELECT max(init_at) FROM realtime.global_climate_grids WHERE dataset_id='gfs_wind10m'")
+            cur.execute("SELECT max(init_at) FROM live.global_climate_grids WHERE dataset_id='gfs_wind10m'")
             latest_init = cur.fetchone()[0]
             if latest_init:
                 cur.execute(
                     """
                     SELECT DISTINCT ON (observed_at) s3_uri, observed_at, init_at, leadtime_hr
-                      FROM realtime.global_climate_grids
+                      FROM live.global_climate_grids
                      WHERE dataset_id='gfs_wind10m' AND s3_uri IS NOT NULL
                        AND observed_at >= %s
                        AND observed_at <= %s + make_interval(hours => 120)
@@ -365,7 +365,7 @@ class ClimateBakeCollector(BaseCollector):
             cur.execute(
                 """
                 SELECT DISTINCT ON (observed_at) observed_at, s3_uri, init_at
-                  FROM realtime.global_climate_grids
+                  FROM live.global_climate_grids
                  WHERE dataset_id='cmems_currents' AND s3_uri IS NOT NULL
                    AND observed_at >= now() - make_interval(days => %s)
                  ORDER BY observed_at, collected_at DESC

@@ -7,7 +7,7 @@
   - 無需 API Key，公開免費
 
 寫入：
-  - realtime.river_water_level  (時序，ON CONFLICT DO NOTHING)
+  - live.river_water_level  (時序，ON CONFLICT DO NOTHING)
 """
 
 from __future__ import annotations

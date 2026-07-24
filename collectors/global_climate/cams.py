@@ -6,7 +6,7 @@
   變數：pm2p5, pm10, duaod550（沙塵 AOD）
   範圍：東亞 5-50°N × 100-145°E
 
-寫入：realtime.global_climate_grids（leadtime 多筆 row）
+寫入：live.global_climate_grids（leadtime 多筆 row）
   - 原檔上傳 S3
   - ⚠ 排隊延遲 5-30 min（cdsapi 內部 poll）
 """

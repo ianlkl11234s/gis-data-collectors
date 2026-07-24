@@ -16,7 +16,7 @@ spatial.parking_segments_ref + spatial.parking_lots_ref（不走 supabase_writer
     /v1/Parking/OffStreet/CarPark/Tourism
 
 uid 對齊（關鍵）：car_park_uid = <頂層 AuthorityCode>_<CarParkID>，
-    與 realtime.parking_lots_current.car_park_uid 同構（例：TPE_TPE0032 / NFB_01F0502 /
+    與 live.parking_lots_current.car_park_uid 同構（例：TPE_TPE0032 / NFB_01F0502 /
     TBROC_SWC-02001）。頂層 AuthorityCode 對 ServiceArea=NFB、Tourism=TBROC，
     即使個別 record 的 CityCode 是縣市碼也一律用頂層碼（與即時收集器一致）。
 

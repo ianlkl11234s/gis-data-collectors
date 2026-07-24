@@ -33,8 +33,8 @@
 ```
 [每 10 分鐘] cron → ship_ais_collect.py
                     ├─ GET 航港局 GeoJSON
-                    ├─ 寫 Supabase realtime.ship_positions (INSERT)
-                    ├─ 寫 Supabase realtime.ship_current  (UPSERT by mmsi)
+                    ├─ 寫 Supabase live.ship_positions (INSERT)
+                    ├─ 寫 Supabase live.ship_current  (UPSERT by mmsi)
                     └─ 寫本地 JSON snapshot
                         /var/lib/ship-ais/data/ship_ais/YYYY/MM/DD/ship_ais_HHMM.json
 
@@ -111,7 +111,7 @@ crontab -l | sed '/ship_ais_collect/s/^/#/' | crontab -
 主 repo 的 `collectors/ship_ais.py` 改動後（vessel_type 對照、欄位 mapping），手動同步到這邊的 `ship_ais_collect.py`。歷史顯示這檔案一年改 0–1 次，同步成本極低。
 
 ### 改 Supabase schema
-若 `realtime.ship_positions` / `ship_current` 的欄位 / PK 改了：
+若 `live.ship_positions` / `ship_current` 的欄位 / PK 改了：
 1. 改主 repo 的 `storage/supabase_tables.py` 和 `_transform_ship_ais`
 2. 改這邊 `ship_ais_collect.py` 的 `COLUMNS` / `transform` / SQL
 3. 一起部署（先改 Supabase migrations → 改主 repo → 改 VM）

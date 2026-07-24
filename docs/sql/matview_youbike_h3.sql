@@ -1,7 +1,7 @@
 -- ============================================================
--- realtime.youbike_h3_daily — 預聚合每日 YouBike H3 快照
+-- live.youbike_h3_daily — 預聚合每日 YouBike H3 快照
 --
--- 動機：原 get_youbike_h3_snapshots 每次 call 都對 realtime.youbike_snapshots
+-- 動機：原 get_youbike_h3_snapshots 每次 call 都對 live.youbike_snapshots
 -- (~36 萬筆/日) JOIN station_h3_mapping + 雙層 GROUP BY + jsonb_agg，
 -- 實測 6.4 秒（anon role 3s timeout 必爆，且吃 30s function timeout 的 1/5）。
 --
@@ -20,9 +20,9 @@ SET statement_timeout = 0;
 -- ------------------------------------------------------------
 -- 1) Table
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS realtime.youbike_h3_daily;
+DROP TABLE IF EXISTS live.youbike_h3_daily;
 
-CREATE TABLE realtime.youbike_h3_daily (
+CREATE TABLE live.youbike_h3_daily (
     day          date NOT NULL,
     resolution   smallint NOT NULL,
     time_key     text NOT NULL,
@@ -32,9 +32,9 @@ CREATE TABLE realtime.youbike_h3_daily (
 );
 
 CREATE INDEX youbike_h3_daily_day_res_idx
-    ON realtime.youbike_h3_daily (day, resolution);
+    ON live.youbike_h3_daily (day, resolution);
 
-COMMENT ON TABLE realtime.youbike_h3_daily IS
+COMMENT ON TABLE live.youbike_h3_daily IS
     '每日 YouBike H3 聚合快照（7 天，含 res 7/8）。refresh_youbike_h3_daily(date) 同時跑兩個 resolution。pg_cron 每 10 分鐘 refresh today+yesterday。';
 
 -- ------------------------------------------------------------
@@ -50,7 +50,7 @@ DECLARE
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtext('refresh_youbike_h3_daily:' || target_day::text));
 
-    DELETE FROM realtime.youbike_h3_daily WHERE day = target_day;
+    DELETE FROM live.youbike_h3_daily WHERE day = target_day;
 
     -- 一次跑 res=7 和 res=8（JOIN 會自動處理，因為 station_h3_mapping 有兩個 resolution）
     WITH quarter_agg AS (
@@ -64,14 +64,14 @@ BEGIN
             ) AS tkey,
             SUM(y.available_rent)::float / NULLIF(SUM(y.total), 0) AS fullness,
             AVG(y.total) AS avg_total
-        FROM realtime.youbike_snapshots y
+        FROM live.youbike_snapshots y
         JOIN reference.station_h3_mapping m
             ON m.station_uid = y.station_uid
         WHERE y.collected_at >= (target_day::text || ' 00:00:00+08')::timestamptz
           AND y.collected_at <  ((target_day + 1)::text || ' 00:00:00+08')::timestamptz
         GROUP BY m.resolution, m.h3_index, tkey
     )
-    INSERT INTO realtime.youbike_h3_daily (day, resolution, time_key, cells)
+    INSERT INTO live.youbike_h3_daily (day, resolution, time_key, cells)
     SELECT
         target_day,
         resolution,
@@ -105,7 +105,7 @@ AS $function$
 DECLARE
     deleted_count integer;
 BEGIN
-    DELETE FROM realtime.youbike_h3_daily WHERE day < (current_date - keep_days);
+    DELETE FROM live.youbike_h3_daily WHERE day < (current_date - keep_days);
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;
@@ -121,7 +121,7 @@ STABLE
 SET statement_timeout TO '60s'
 AS $function$
     SELECT time_key, cells
-    FROM realtime.youbike_h3_daily
+    FROM live.youbike_h3_daily
     WHERE day = target_date AND resolution = h3_resolution
     ORDER BY time_key
 $function$;

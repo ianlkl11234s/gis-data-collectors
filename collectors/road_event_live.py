@@ -6,7 +6,7 @@
   - /v1/Traffic/RoadEvent/LiveEvent/City/{City}（10 縣市輪詢）
 
 啟動時載入 Section 快取（freeway+highway），每筆事件做 normalize match 富化。
-寫入 realtime.road_events（partition history） + realtime.road_events_current（snapshot）。
+寫入 live.road_events（partition history） + live.road_events_current（snapshot）。
 """
 
 from __future__ import annotations

@@ -29,7 +29,7 @@
 ```
 [每 60 分鐘 :07] cron → immigration_apis_airport_collect.py
                         ├─ GET 6 個 APIS endpoint (TPE1/5/51/52 + RMQ5 + TSA1)
-                        ├─ 寫 Supabase realtime.border_airport_snapshot (INSERT)
+                        ├─ 寫 Supabase live.border_airport_snapshot (INSERT)
                         └─ 寫本地 JSON snapshot
                             /var/lib/immigration-apis-airport/data/immigration_apis_airport/YYYY/MM/DD/iaa_HHMM.json
 

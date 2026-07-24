@@ -45,11 +45,11 @@ DB_URL = (
 # ── 表定義 ──
 
 SHIP_COLS = ['mmsi', 'ship_name', 'ship_type', 'lat', 'lng', 'speed', 'heading', 'collected_at', 'geom']
-SHIP_SQL = f"INSERT INTO realtime.ship_positions ({','.join(SHIP_COLS)}) VALUES %s ON CONFLICT DO NOTHING"
+SHIP_SQL = f"INSERT INTO live.ship_positions ({','.join(SHIP_COLS)}) VALUES %s ON CONFLICT DO NOTHING"
 
 FLIGHT_COLS = ['flight_id', 'callsign', 'aircraft_type', 'origin', 'destination',
                'lat', 'lng', 'altitude', 'speed', 'heading', 'collected_at', 'geom']
-FLIGHT_SQL = f"INSERT INTO realtime.flight_positions ({','.join(FLIGHT_COLS)}) VALUES %s ON CONFLICT DO NOTHING"
+FLIGHT_SQL = f"INSERT INTO live.flight_positions ({','.join(FLIGHT_COLS)}) VALUES %s ON CONFLICT DO NOTHING"
 
 
 # ── Transform ──

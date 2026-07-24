@@ -1,7 +1,7 @@
 -- ============================================================
--- realtime.temperature_dates_cache — 預聚合 temperature_grids 的日期清單
+-- live.temperature_dates_cache — 預聚合 temperature_grids 的日期清單
 --
--- 動機：原 get_temperature_dates 直接對 realtime.temperature_grids（~61 萬/月）
+-- 動機：原 get_temperature_dates 直接對 live.temperature_grids（~61 萬/月）
 -- 做 GROUP BY to_char + COUNT(DISTINCT)，掃全部 partition + 跨 partition Sort。
 -- 現況 ~1.9s（anon role 3s timeout 的 2/3），partition 累積後會越撐越慢。
 --
@@ -16,16 +16,16 @@ SET statement_timeout = 0;
 -- ------------------------------------------------------------
 -- 1) Cache table
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS realtime.temperature_dates_cache;
+DROP TABLE IF EXISTS live.temperature_dates_cache;
 
-CREATE TABLE realtime.temperature_dates_cache (
+CREATE TABLE live.temperature_dates_cache (
     date         text PRIMARY KEY,
     frames       bigint NOT NULL,
     cells        bigint NOT NULL,
     refreshed_at timestamptz NOT NULL DEFAULT now()
 );
 
-COMMENT ON TABLE realtime.temperature_dates_cache IS
+COMMENT ON TABLE live.temperature_dates_cache IS
     'temperature_grids 的日期清單快取。由 refresh_temperature_dates() 維護，pg_cron 每 15 分鐘刷新。';
 
 -- ------------------------------------------------------------
@@ -41,14 +41,14 @@ DECLARE
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtext('refresh_temperature_dates'));
 
-    DELETE FROM realtime.temperature_dates_cache;
+    DELETE FROM live.temperature_dates_cache;
 
-    INSERT INTO realtime.temperature_dates_cache (date, frames, cells)
+    INSERT INTO live.temperature_dates_cache (date, frames, cells)
     SELECT
         to_char(observed_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') AS date,
         COUNT(DISTINCT observed_at) AS frames,
         COUNT(*) AS cells
-    FROM realtime.temperature_grids
+    FROM live.temperature_grids
     GROUP BY 1;
 
     GET DIAGNOSTICS inserted_count = ROW_COUNT;
@@ -69,7 +69,7 @@ STABLE
 SET statement_timeout TO '30s'
 AS $function$
     SELECT date, frames, cells
-    FROM realtime.temperature_dates_cache
+    FROM live.temperature_dates_cache
     ORDER BY date
 $function$;
 

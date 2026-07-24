@@ -5,8 +5,8 @@
     每站每小時一筆，含 AQI + PM2.5/PM10/O3/O3_8hr/NO2/SO2/CO/NOx/風向風速
 
 寫入:
-    - realtime.air_quality_observations (分區表)
-    - realtime.air_quality_current (最新快照)
+    - live.air_quality_observations (分區表)
+    - live.air_quality_current (最新快照)
 
 註：站點靜態資料（名稱、類型、座標）由同 API 回傳，因此不需另一個 collector；
 但 reference.stations 的 system='air_quality' 由 migration 初次匯入，

@@ -5,7 +5,7 @@ Input:
     spatial.waste_positions_realtime
 
 Output:
-    realtime.waste_trails_matched_daily
+    live.waste_trails_matched_daily
 
 此 collector 不抓外部政府 API；它把已收進 DB 的 GPS trail 批次送 OSRM
 `/match`，產出沿 OSM 路網的 LineString 與每個 GPS 點在該 LineString 上的
@@ -310,7 +310,7 @@ class WasteMatchCollector(BaseCollector):
         FROM grouped g
         WHERE NOT EXISTS (
             SELECT 1
-            FROM realtime.waste_trails_matched_daily m
+            FROM live.waste_trails_matched_daily m
             WHERE m.day = %(target_day)s::date
               AND m.city = g.city
               AND m.vehicle_no = g.vehicle_no
@@ -318,7 +318,7 @@ class WasteMatchCollector(BaseCollector):
         )
         AND NOT EXISTS (
             SELECT 1
-            FROM realtime.waste_match_attempts a
+            FROM live.waste_match_attempts a
             WHERE a.day = %(target_day)s::date
               AND a.city = g.city
               AND a.vehicle_no = g.vehicle_no
@@ -449,7 +449,7 @@ class WasteMatchCollector(BaseCollector):
             ))
 
         sql = """
-        INSERT INTO realtime.waste_trails_matched_daily (
+        INSERT INTO live.waste_trails_matched_daily (
             day, city, vehicle_no, route_id, trip_id, segment_seq,
             started_at, ended_at, geometry, timeline, point_count, confidence, matched_at
         )
@@ -490,7 +490,7 @@ class WasteMatchCollector(BaseCollector):
         ON CONFLICT 更新 attempted_at + reason，保留最新狀態。
         """
         sql = """
-        INSERT INTO realtime.waste_match_attempts
+        INSERT INTO live.waste_match_attempts
             (day, city, vehicle_no, trip_id, attempted_at, success, reason)
         VALUES (%s, %s, %s, %s, NOW(), %s, %s)
         ON CONFLICT (day, city, vehicle_no, trip_id)

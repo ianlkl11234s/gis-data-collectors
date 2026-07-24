@@ -7,7 +7,7 @@
   (3) /v1/Parking/OffStreet/ParkingAvailability/Tourism — 觀光景點停車場
 
 三變體 response schema 一致（ParkingAvailabilities[] + CarParkID/CarParkName...），
-unified 寫入 realtime.parking_lots_availability 與 _current。
+unified 寫入 live.parking_lots_availability 與 _current。
 """
 
 import time

@@ -1,6 +1,6 @@
 -- ============================================================
 -- CWA Imagery 前端存取 RPC
--- 目的：讓前端 supabase-js（anon role）可以讀 realtime.cwa_imagery_frames
+-- 目的：讓前端 supabase-js（anon role）可以讀 live.cwa_imagery_frames
 -- realtime schema 不公開給 PostgREST，所以透過 public schema 的 RPC 包裝
 -- ============================================================
 
@@ -26,7 +26,7 @@ SET search_path = realtime, public
 AS $$
     SELECT dataset_id, observed_at, mime_type,
            lon_min, lon_max, lat_min, lat_max, image_size
-    FROM realtime.cwa_imagery_frames
+    FROM live.cwa_imagery_frames
     WHERE dataset_id = ANY(p_dataset_ids)
       AND observed_at >= p_since
     ORDER BY dataset_id, observed_at;
@@ -44,7 +44,7 @@ SECURITY DEFINER
 SET search_path = realtime, public
 AS $$
     SELECT encode(image_bytes, 'base64')
-    FROM realtime.cwa_imagery_frames
+    FROM live.cwa_imagery_frames
     WHERE dataset_id = p_dataset_id
       AND observed_at = p_observed_at;
 $$;
@@ -76,7 +76,7 @@ AS $$
     SELECT dataset_id, observed_at, mime_type,
            lon_min, lon_max, lat_min, lat_max,
            encode(image_bytes, 'base64')
-    FROM realtime.cwa_imagery_frames
+    FROM live.cwa_imagery_frames
     WHERE dataset_id = ANY(p_dataset_ids)
       AND observed_at >= p_since
     ORDER BY dataset_id, observed_at;

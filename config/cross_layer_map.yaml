@@ -26,7 +26,7 @@ youbike:
   enabled: true
   deployment: zeabur
   expected_interval_min: 15
-  supabase_tables: [realtime.youbike_snapshots, realtime.youbike_current]
+  supabase_tables: [live.youbike_snapshots, live.youbike_current]
   s3_prefixes:
     - {prefix: youbike/archives/, expected_daily: true}
   critical: true
@@ -35,7 +35,7 @@ bus:
   enabled: true
   deployment: zeabur
   expected_interval_min: 2
-  supabase_tables: [realtime.bus_positions, realtime.bus_current]
+  supabase_tables: [live.bus_positions, live.bus_current]
   s3_prefixes:
     - {prefix: bus/archives/, expected_daily: true}
   critical: true
@@ -44,7 +44,7 @@ bus_intercity:
   enabled: true
   deployment: zeabur
   expected_interval_min: 2
-  supabase_tables: [realtime.bus_intercity_positions, realtime.bus_intercity_current]
+  supabase_tables: [live.bus_intercity_positions, live.bus_intercity_current]
   s3_prefixes:
     - {prefix: bus_intercity/archives/, expected_daily: false}
   critical: false
@@ -63,9 +63,9 @@ freeway_vd:
   deployment: zeabur
   expected_interval_min: 10
   supabase_tables:
-    - realtime.freeway_sections
-    - realtime.freeway_sections_current
-    - realtime.freeway_vd_traffic
+    - live.freeway_sections
+    - live.freeway_sections_current
+    - live.freeway_vd_traffic
   s3_prefixes:
     - {prefix: freeway_vd/archives/, expected_daily: true}
   critical: true
@@ -74,7 +74,7 @@ parking:
   enabled: true
   deployment: zeabur
   expected_interval_min: 15
-  supabase_tables: [realtime.parking_segments_availability, realtime.parking_segments_current]
+  supabase_tables: [live.parking_segments_availability, live.parking_segments_current]
   s3_prefixes:
     - {prefix: parking/archives/, expected_daily: false}
   critical: false
@@ -84,7 +84,7 @@ tra_train:
   enabled: true
   deployment: zeabur
   expected_interval_min: 2
-  supabase_tables: [realtime.train_positions]
+  supabase_tables: [live.train_positions]
   s3_prefixes:
     - {prefix: tra_train/archives/, expected_daily: true}
   critical: true
@@ -120,7 +120,7 @@ ship_ais:
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP required，跑在 HiCloud VM
   expected_interval_min: 10
-  supabase_tables: [realtime.ship_positions, realtime.ship_current]
+  supabase_tables: [live.ship_positions, live.ship_current]
   s3_prefixes:
     # VM archive 保留 7 天本地，第 8 天才上 S3 — 監控需把預期最新日期往前推 8 天
     - {prefix: ship_ais/archives/, expected_daily: true, archive_lag_days: 8}
@@ -133,7 +133,7 @@ flight_fr24:
   enabled: false
   deployment: disabled
   expected_interval_min: 5
-  supabase_tables: [realtime.flight_positions, realtime.flight_trails]
+  supabase_tables: [live.flight_positions, live.flight_trails]
   s3_prefixes:
     - {prefix: flight_fr24/archives/, expected_daily: false}
   critical: false
@@ -143,7 +143,7 @@ flight_fr24_zone:
   enabled: true
   deployment: zeabur
   expected_interval_min: 5
-  supabase_tables: [realtime.flight_positions]
+  supabase_tables: [live.flight_positions]
   s3_prefixes:
     - {prefix: flight_fr24_zone/archives/, expected_daily: false}
   critical: false
@@ -152,7 +152,7 @@ flight_opensky:
   enabled: true
   deployment: zeabur
   expected_interval_min: 5
-  supabase_tables: [realtime.flight_positions]
+  supabase_tables: [live.flight_positions]
   s3_prefixes:
     - {prefix: flight_opensky/archives/, expected_daily: false}
   critical: false
@@ -164,7 +164,7 @@ weather:
   enabled: true
   deployment: zeabur
   expected_interval_min: 60
-  supabase_tables: [realtime.weather_observations, realtime.weather_current]
+  supabase_tables: [live.weather_observations, live.weather_current]
   s3_prefixes:
     - {prefix: weather/archives/, expected_daily: true}
   critical: true
@@ -173,7 +173,7 @@ temperature:
   enabled: true
   deployment: zeabur
   expected_interval_min: 60
-  supabase_tables: [realtime.temperature_grids]
+  supabase_tables: [live.temperature_grids]
   s3_prefixes:
     - {prefix: temperature/archives/, expected_daily: true}
   critical: false
@@ -182,7 +182,7 @@ cwa_satellite:
   enabled: true
   deployment: zeabur
   expected_interval_min: 10
-  supabase_tables: [realtime.cwa_imagery_frames]
+  supabase_tables: [live.cwa_imagery_frames]
   s3_prefixes:
     - {prefix: cwa_satellite/archives/, expected_daily: true}
   critical: false
@@ -191,7 +191,7 @@ earthquake:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.earthquake_events]
+  supabase_tables: [live.earthquake_events]
   s3_prefixes:
     - {prefix: earthquake/archives/, expected_daily: false}
   critical: true
@@ -201,7 +201,7 @@ ncdr_alerts:
   enabled: true
   deployment: zeabur
   expected_interval_min: 15
-  supabase_tables: [realtime.disaster_alerts]
+  supabase_tables: [live.disaster_alerts]
   s3_prefixes:
     - {prefix: ncdr_alerts/archives/, expected_daily: true}
   critical: true
@@ -210,7 +210,7 @@ news_events:
   enabled: true
   deployment: zeabur
   expected_interval_min: 20
-  supabase_tables: [realtime.news_events]
+  supabase_tables: [live.news_events]
   s3_prefixes:
     - {prefix: news_events/archives/, expected_daily: true}
   critical: false
@@ -224,10 +224,10 @@ satellite:
   deployment: zeabur
   expected_interval_min: 120
   supabase_tables:
-    - realtime.satellite_positions
-    - realtime.satellite_current
-    - realtime.satellite_tle
-    - realtime.satellite_tle_history
+    - live.satellite_positions
+    - live.satellite_current
+    - live.satellite_tle
+    - live.satellite_tle_history
   s3_prefixes:
     - {prefix: satellite/archives/, expected_daily: false}
   critical: false
@@ -236,7 +236,7 @@ launch:
   enabled: true
   deployment: zeabur
   expected_interval_min: 15
-  supabase_tables: [realtime.launches, realtime.launch_events, realtime.launch_pads]
+  supabase_tables: [live.launches, live.launch_events, live.launch_pads]
   # launches 每輪 poll upsert（upcoming 清單恆有資料）→ interval 15 不會誤報；
   # launch_events 事件驅動，但跨層 B 檢查 any() 由 launches 撐即可
   s3_prefixes:
@@ -250,7 +250,7 @@ air_quality:
   enabled: true
   deployment: zeabur
   expected_interval_min: 60
-  supabase_tables: [realtime.air_quality_observations, realtime.air_quality_current]
+  supabase_tables: [live.air_quality_observations, live.air_quality_current]
   s3_prefixes:
     - {prefix: air_quality/archives/, expected_daily: false}
   critical: false
@@ -259,7 +259,7 @@ air_quality_imagery:
   enabled: true
   deployment: zeabur
   expected_interval_min: 60
-  supabase_tables: [realtime.aqi_imagery_frames]
+  supabase_tables: [live.aqi_imagery_frames]
   s3_prefixes:
     - {prefix: air_quality_imagery/archives/, expected_daily: false}
   critical: false
@@ -268,7 +268,7 @@ air_quality_microsensors:
   enabled: true
   deployment: zeabur
   expected_interval_min: 5
-  supabase_tables: [realtime.micro_sensor_readings]
+  supabase_tables: [live.micro_sensor_readings]
   s3_prefixes:
     - {prefix: air_quality_microsensors/archives/, expected_daily: false}
   critical: false
@@ -280,7 +280,7 @@ water_reservoir:
   enabled: true
   deployment: zeabur
   expected_interval_min: 60
-  supabase_tables: [realtime.reservoir_status]
+  supabase_tables: [live.reservoir_status]
   s3_prefixes:
     - {prefix: water_reservoir/archives/, expected_daily: false}
   critical: false
@@ -289,7 +289,7 @@ water_reservoir_daily_ops:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.reservoir_daily_ops]
+  supabase_tables: [live.reservoir_daily_ops]
   s3_prefixes:
     - {prefix: water_reservoir_daily_ops/archives/, expected_daily: false}
   critical: false
@@ -299,7 +299,7 @@ river_water_level:
   enabled: true
   deployment: zeabur
   expected_interval_min: 10
-  supabase_tables: [realtime.river_water_level]
+  supabase_tables: [live.river_water_level]
   s3_prefixes:
     - {prefix: river_water_level/archives/, expected_daily: false}
   critical: false
@@ -308,7 +308,7 @@ rain_gauge_realtime:
   enabled: true
   deployment: zeabur
   expected_interval_min: 10
-  supabase_tables: [realtime.rain_gauge_readings]
+  supabase_tables: [live.rain_gauge_readings]
   s3_prefixes:
     - {prefix: rain_gauge_realtime/archives/, expected_daily: false}
   critical: false
@@ -317,7 +317,7 @@ groundwater_level:
   enabled: true
   deployment: zeabur
   expected_interval_min: 60
-  supabase_tables: [realtime.groundwater_level_readings]
+  supabase_tables: [live.groundwater_level_readings]
   s3_prefixes:
     - {prefix: groundwater_level/archives/, expected_daily: false}
   critical: false
@@ -339,7 +339,7 @@ iot_wra:
   enabled: true
   deployment: zeabur
   expected_interval_min: 60
-  supabase_tables: [realtime.iot_wra_measurements]
+  supabase_tables: [live.iot_wra_measurements]
   s3_prefixes:
     - {prefix: iot_wra/archives/, expected_daily: false}
   critical: false
@@ -348,7 +348,7 @@ uswg:
   enabled: true
   deployment: zeabur
   expected_interval_min: 10
-  supabase_tables: [realtime.uswg_measurements]
+  supabase_tables: [live.uswg_measurements]
   s3_prefixes:
     - {prefix: uswg/archives/, expected_daily: false}
   critical: false
@@ -360,7 +360,7 @@ road_event_live:
   enabled: true
   deployment: zeabur
   expected_interval_min: 5
-  supabase_tables: [realtime.road_events, realtime.road_events_current]
+  supabase_tables: [live.road_events, live.road_events_current]
   s3_prefixes:
     - {prefix: road_event_live/archives/, expected_daily: false}
   critical: false
@@ -369,7 +369,7 @@ road_event_planned:
   enabled: true
   deployment: zeabur
   expected_interval_min: 720
-  supabase_tables: [realtime.road_events, realtime.road_events_current]
+  supabase_tables: [live.road_events, live.road_events_current]
   s3_prefixes:
     - {prefix: road_event_planned/archives/, expected_daily: false}
   critical: false
@@ -388,7 +388,7 @@ cdc_public_health_weekly:
   enabled: true
   deployment: hicloud_vm        # 跑在 HiCloud VM，週四 11:00 一次
   expected_interval_min: 10080  # 一週
-  supabase_tables: [realtime.public_health_weekly]
+  supabase_tables: [live.public_health_weekly]
   s3_prefixes: []               # 無 S3 archive，直接寫 SB
   critical: false
   notes: CDC 開放資料每週更新，僅週四 11:00 抓一次寫 SB
@@ -406,7 +406,7 @@ er_hospital_realtime:
   enabled: true
   deployment: zeabur
   expected_interval_min: 15
-  supabase_tables: [realtime.er_hospital_status, realtime.er_hospital_current]
+  supabase_tables: [live.er_hospital_status, live.er_hospital_current]
   s3_prefixes:
     - {prefix: er_hospital_realtime/archives/, expected_daily: false}
   critical: false
@@ -416,9 +416,9 @@ power_taipower:
   deployment: zeabur
   expected_interval_min: 10
   supabase_tables:
-    - realtime.power_system_status
-    - realtime.power_generation_unit
-    - realtime.power_region_demand
+    - live.power_system_status
+    - live.power_generation_unit
+    - live.power_region_demand
   s3_prefixes:
     - {prefix: power_taipower/archives/, expected_daily: false}
   critical: false
@@ -447,7 +447,7 @@ correctional_daily_snapshot:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.prison_population_daily]
+  supabase_tables: [live.prison_population_daily]
   s3_prefixes:
     - {prefix: correctional_daily_snapshot/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -457,7 +457,7 @@ global_climate_bake:
   enabled: true
   deployment: zeabur
   expected_interval_min: 360
-  supabase_tables: []  # 烤圖 job 只讀 realtime.global_climate_grids（挑最新 cycle），不寫 DB
+  supabase_tables: []  # 烤圖 job 只讀 live.global_climate_grids（挑最新 cycle），不寫 DB
   s3_prefixes:
     - {prefix: deploy-assets/climate/frames/, expected_daily: false}  # 非 {name}/archives/ tar.gz 模式，直接寫 raster+manifest.json；另有 deploy-assets/climate/*_latest.{png,json} 單幀
   critical: false  # TODO(sync): 人工確認 criticality
@@ -467,7 +467,7 @@ global_climate_cams:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.global_climate_grids]
+  supabase_tables: [live.global_climate_grids]
   s3_prefixes:
     - {prefix: global_climate_cams/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -477,7 +477,7 @@ global_climate_cmems:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.global_climate_grids]
+  supabase_tables: [live.global_climate_grids]
   s3_prefixes:
     - {prefix: global_climate_cmems/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -487,7 +487,7 @@ global_climate_jma_typhoon:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.typhoon_positions]
+  supabase_tables: [live.typhoon_positions]
   s3_prefixes:
     - {prefix: global_climate_jma_typhoon/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -497,7 +497,7 @@ global_climate_jtwc:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.typhoon_positions]
+  supabase_tables: [live.typhoon_positions]
   s3_prefixes:
     - {prefix: global_climate_jtwc/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -507,7 +507,7 @@ global_climate_noaa_gfs:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.global_climate_grids]
+  supabase_tables: [live.global_climate_grids]
   s3_prefixes:
     - {prefix: global_climate_noaa_gfs/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -517,7 +517,7 @@ global_climate_usgs_earthquake:
   enabled: true
   deployment: zeabur
   expected_interval_min: 60
-  supabase_tables: [realtime.earthquakes_global]
+  supabase_tables: [live.earthquakes_global]
   s3_prefixes:
     - {prefix: global_climate_usgs_earthquake/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -527,7 +527,7 @@ immigration_apis_airport:
   enabled: true
   deployment: hicloud_vm
   expected_interval_min: 60
-  supabase_tables: [realtime.border_airport_snapshot]
+  supabase_tables: [live.border_airport_snapshot]
   s3_prefixes:
     - {prefix: immigration_apis_airport/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -537,7 +537,7 @@ lightning_events:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.lightning_events]
+  supabase_tables: [live.lightning_events]
   s3_prefixes:
     - {prefix: lightning_events/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -547,7 +547,7 @@ npa_traffic_accident_a1:
   enabled: true
   deployment: zeabur
   expected_interval_min: 720
-  supabase_tables: [realtime.traffic_accidents_a1]
+  supabase_tables: [live.traffic_accidents_a1]
   s3_prefixes:
     - {prefix: npa_traffic_accident_a1/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -557,7 +557,7 @@ nuclear_radiation:
   enabled: true
   deployment: zeabur
   expected_interval_min: 15
-  supabase_tables: [realtime.nuclear_radiation_measurements, realtime.nuclear_radiation_stations]
+  supabase_tables: [live.nuclear_radiation_measurements, live.nuclear_radiation_stations]
   s3_prefixes:
     - {prefix: nuclear_radiation/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -567,7 +567,7 @@ parking_offstreet:
   enabled: true
   deployment: zeabur
   expected_interval_min: 15
-  supabase_tables: [realtime.parking_lots_availability, realtime.parking_lots_current]
+  supabase_tables: [live.parking_lots_availability, live.parking_lots_current]
   s3_prefixes:
     - {prefix: parking_offstreet/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -580,13 +580,13 @@ parking_ref:
   supabase_tables: [spatial.parking_segments_ref, spatial.parking_lots_ref]
   s3_prefixes: []               # 直接 SQL 寫 spatial.*_ref，不走 supabase_writer / 無 S3 archive
   critical: false
-  notes: 停車靜態座標 ref（TDX v1 OnStreet ParkingSegment + OffStreet CarPark/ServiceArea/Tourism）。前端 join realtime.parking_*_current（migration 286）。ref 表 updated_at 監控待人工設計
+  notes: 停車靜態座標 ref（TDX v1 OnStreet ParkingSegment + OffStreet CarPark/ServiceArea/Tourism）。前端 join live.parking_*_current（migration 286）。ref 表 updated_at 監控待人工設計
 
 pla_activity_daily:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.pla_activity_daily]
+  supabase_tables: [live.pla_activity_daily]
   s3_prefixes:
     - {prefix: pla_activity_daily/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -596,7 +596,7 @@ precipitation_raster:
   enabled: true
   deployment: zeabur
   expected_interval_min: 120
-  supabase_tables: [realtime.precipitation_raster_frames]
+  supabase_tables: [live.precipitation_raster_frames]
   s3_prefixes:
     - {prefix: precipitation_raster/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -606,7 +606,7 @@ road_congestion:
   enabled: true
   deployment: zeabur
   expected_interval_min: 5
-  supabase_tables: [realtime.road_sections_live, realtime.road_sections_current]
+  supabase_tables: [live.road_sections_live, live.road_sections_current]
   s3_prefixes:
     - {prefix: road_congestion/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -616,7 +616,7 @@ satellite_passes_daily:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: []  # 直接 SQL 寫 realtime.satellite_passes / satellite_passes_daily（不走 supabase_writer TABLE_MAP）→ B 層跳過，TODO 補表級監控設計
+  supabase_tables: []  # 直接 SQL 寫 live.satellite_passes / satellite_passes_daily（不走 supabase_writer TABLE_MAP）→ B 層跳過，TODO 補表級監控設計
   s3_prefixes:
     - {prefix: satellite_passes_daily/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -626,7 +626,7 @@ tourist_shuttle:
   enabled: true
   deployment: zeabur
   expected_interval_min: 2
-  supabase_tables: [realtime.tourist_shuttle_positions, realtime.tourist_shuttle_current]
+  supabase_tables: [live.tourist_shuttle_positions, live.tourist_shuttle_current]
   s3_prefixes:
     - {prefix: tourist_shuttle/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -636,7 +636,7 @@ twse_market_index:
   enabled: true
   deployment: zeabur
   expected_interval_min: 1440
-  supabase_tables: [realtime.market_index_tick, realtime.market_index_current]
+  supabase_tables: [live.market_index_tick, live.market_index_current]
   s3_prefixes:
     - {prefix: twse_market_index/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -646,7 +646,7 @@ wic_evacuate:
   enabled: true
   deployment: zeabur
   expected_interval_min: 10
-  supabase_tables: [realtime.taipei_evacuate_status]
+  supabase_tables: [live.taipei_evacuate_status]
   s3_prefixes:
     - {prefix: wic_evacuate/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -656,7 +656,7 @@ wic_pumb:
   enabled: true
   deployment: zeabur
   expected_interval_min: 10
-  supabase_tables: [realtime.taipei_pumb_status]
+  supabase_tables: [live.taipei_pumb_status]
   s3_prefixes:
     - {prefix: wic_pumb/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -666,7 +666,7 @@ wic_sewer:
   enabled: true
   deployment: zeabur
   expected_interval_min: 10
-  supabase_tables: [realtime.taipei_sewer_measurements]
+  supabase_tables: [live.taipei_sewer_measurements]
   s3_prefixes:
     - {prefix: wic_sewer/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -676,7 +676,7 @@ yt_live_video_resolver:
   enabled: true
   deployment: zeabur
   expected_interval_min: 5
-  supabase_tables: [realtime.yt_live_history, realtime.yt_live_current]
+  supabase_tables: [live.yt_live_history, live.yt_live_current]
   s3_prefixes:
     - {prefix: yt_live_video_resolver/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
@@ -686,7 +686,7 @@ tpml_seat:
   enabled: true  # 2026-07-16 上線（migration 290 已 apply + Zeabur TPML_SEAT_ENABLED=true）
   deployment: zeabur
   expected_interval_min: 10
-  supabase_tables: [realtime.tpml_seat_status, realtime.tpml_seat_current]
+  supabase_tables: [live.tpml_seat_status, live.tpml_seat_current]
   s3_prefixes:
     - {prefix: tpml_seat/archives/, expected_daily: false}
   critical: false

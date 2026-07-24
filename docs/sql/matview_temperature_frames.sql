@@ -1,7 +1,7 @@
 -- ============================================================
--- realtime.temperature_frames_daily — 預聚合每日溫度 frames
+-- live.temperature_frames_daily — 預聚合每日溫度 frames
 --
--- 動機：原 get_temperature_frames 對 realtime.temperature_grids
+-- 動機：原 get_temperature_frames 對 live.temperature_grids
 -- 做 GROUP BY observed_at + string_agg(... ORDER BY grid_lat, grid_lng)。
 -- 現況 ~550ms（尚 OK），但 per-frame sort 依賴 planner 選對 plan，
 -- 一旦 stats stale 或 partition 量增加，可能惡化。
@@ -18,9 +18,9 @@ SET statement_timeout = 0;
 -- ------------------------------------------------------------
 -- 1) Table
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS realtime.temperature_frames_daily;
+DROP TABLE IF EXISTS live.temperature_frames_daily;
 
-CREATE TABLE realtime.temperature_frames_daily (
+CREATE TABLE live.temperature_frames_daily (
     day          date NOT NULL,
     observed_at  timestamptz NOT NULL,
     cell_count   integer NOT NULL,
@@ -30,9 +30,9 @@ CREATE TABLE realtime.temperature_frames_daily (
 );
 
 CREATE INDEX temperature_frames_daily_day_idx
-    ON realtime.temperature_frames_daily (day);
+    ON live.temperature_frames_daily (day);
 
-COMMENT ON TABLE realtime.temperature_frames_daily IS
+COMMENT ON TABLE live.temperature_frames_daily IS
     '每日 CWA 溫度網格 frames 預聚合（string_agg 已完成）。pg_cron 每 30 分鐘 refresh today+yesterday（CWA 每小時更新一次）。';
 
 -- ------------------------------------------------------------
@@ -48,9 +48,9 @@ DECLARE
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtext('refresh_temperature_frames_daily:' || target_day::text));
 
-    DELETE FROM realtime.temperature_frames_daily WHERE day = target_day;
+    DELETE FROM live.temperature_frames_daily WHERE day = target_day;
 
-    INSERT INTO realtime.temperature_frames_daily (day, observed_at, cell_count, temps)
+    INSERT INTO live.temperature_frames_daily (day, observed_at, cell_count, temps)
     SELECT
         target_day,
         observed_at,
@@ -59,7 +59,7 @@ BEGIN
             round(temperature::numeric, 1)::text,
             ',' ORDER BY grid_lat, grid_lng
         )
-    FROM realtime.temperature_grids
+    FROM live.temperature_grids
     WHERE observed_at >= (target_day::text || ' 00:00:00+08')::timestamptz
       AND observed_at <  ((target_day + 1)::text || ' 00:00:00+08')::timestamptz
     GROUP BY observed_at;
@@ -79,7 +79,7 @@ AS $function$
 DECLARE
     deleted_count integer;
 BEGIN
-    DELETE FROM realtime.temperature_frames_daily WHERE day < (current_date - keep_days);
+    DELETE FROM live.temperature_frames_daily WHERE day < (current_date - keep_days);
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;
@@ -95,7 +95,7 @@ STABLE
 SET statement_timeout TO '60s'
 AS $function$
     SELECT observed_at, cell_count, temps
-    FROM realtime.temperature_frames_daily
+    FROM live.temperature_frames_daily
     WHERE day = target_date
     ORDER BY observed_at
 $function$;

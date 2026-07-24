@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-補跑 realtime.news_events 的 v2 三維度欄位（gis_relevance / severity / is_event）。
+補跑 live.news_events 的 v2 三維度欄位（gis_relevance / severity / is_event）。
 
 migration 164 加欄位之前累積的舊資料這三欄都是 NULL，
 RPC v2（migration 165）的 NULL 寬鬆放行讓「重要」級會吃到本來不該進的政策／非事件。
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 SELECT_NULL_SQL = """
     SELECT id, title, COALESCE(summary, '') AS summary, county
-    FROM realtime.news_events
+    FROM live.news_events
     WHERE gis_relevance IS NULL
        OR severity      IS NULL
        OR is_event      IS NULL
@@ -39,12 +39,12 @@ SELECT_NULL_SQL = """
 """
 
 COUNT_NULL_SQL = """
-    SELECT COUNT(*) FROM realtime.news_events
+    SELECT COUNT(*) FROM live.news_events
     WHERE gis_relevance IS NULL OR severity IS NULL OR is_event IS NULL
 """
 
 UPDATE_SQL = """
-    UPDATE realtime.news_events
+    UPDATE live.news_events
     SET gis_relevance = %s,
         severity      = %s,
         is_event      = %s

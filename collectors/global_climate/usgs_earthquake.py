@@ -12,7 +12,7 @@
 自然鍵：event_id = feature.id（USGS 全球唯一）
 保險：dedup_hash = md5(event_id||observed_at)
 
-寫入：realtime.earthquakes_global（migration 261）
+寫入：live.earthquakes_global（migration 261）
   - UNIQUE(event_id) + UNIQUE(dedup_hash) 雙保險
   - ON CONFLICT DO NOTHING
 """

@@ -9,7 +9,7 @@ CWA 衛星雲圖 / 雷達回波圖 PNG 收集器
 - O-A0058-005: 雷達整合回波圖（較大範圍、透明底）
 
 每個資料集每 10 分鐘更新一次，PNG 大小約 100-500 KB。
-存入 realtime.cwa_imagery_frames（PRIMARY KEY: dataset_id, observed_at）
+存入 live.cwa_imagery_frames（PRIMARY KEY: dataset_id, observed_at）
 天然去重，重複觀測不會重複寫入。
 
 CWA 影像類資料集 metadata 端點:
