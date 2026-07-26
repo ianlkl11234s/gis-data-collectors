@@ -13,7 +13,7 @@
   └─────────────────────────────────────────────
 
 來源：移民署 APIS https://opendata.immigration.gov.tw/APIS/{code}
-  6 active 端點：TPE1/TPE5/TPE51/TPE52/RMQ5/TSA1
+  8 active 端點：TPE1/TPE5/TPE51/TPE52/RMQ5/TSA1/KHH1/KHH5
 
 ⚠️ Taiwan IP required — opendata.immigration.gov.tw 擋 Zeabur 等國際雲商出口 IP，
    本檔必須在 HiCloud VM 跑。對應主 repo 的 IMMIGRATION_APIS_AIRPORT_ENABLED 須設 false。
@@ -50,7 +50,7 @@ APIS_BASE = "https://opendata.immigration.gov.tw/APIS"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# 6 個 active 端點（探勘 2026-06-28 確認）
+# 8 個 active 端點（探勘 2026-06-28 確認；KHH1/KHH5 2026-07-26 補上）
 ENDPOINTS = [
     {"code": "TPE1",  "airport": "TPE", "terminal": None, "in_out": "in"},
     {"code": "TPE5",  "airport": "TPE", "terminal": None, "in_out": "out"},
@@ -58,6 +58,8 @@ ENDPOINTS = [
     {"code": "TPE52", "airport": "TPE", "terminal": "2",  "in_out": "out"},
     {"code": "RMQ5",  "airport": "RMQ", "terminal": None, "in_out": "out"},
     {"code": "TSA1",  "airport": "TSA", "terminal": None, "in_out": "in"},
+    {"code": "KHH1",  "airport": "KHH", "terminal": None, "in_out": "in"},
+    {"code": "KHH5",  "airport": "KHH", "terminal": None, "in_out": "out"},
 ]
 
 HEADERS = {

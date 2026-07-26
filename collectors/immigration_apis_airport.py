@@ -1,13 +1,15 @@
 """移民署機場入出境 APIS 收集器（免金鑰）
 
 資料來源：opendata.immigration.gov.tw/APIS/{code}
-  端點清單（探勘後實際 active 6 個）：
+  端點清單（探勘後實際 active 8 個）：
     TPE1   桃園機場入境
     TPE5   桃園機場出境
     TPE51  桃園機場 T2 入境（細分航廈）
     TPE52  桃園機場 T2 出境
     RMQ5   臺中機場出境
     TSA1   松山機場入境
+    KHH1   高雄機場入境
+    KHH5   高雄機場出境
 
   ⚠ 來源是「當下細格快照」— 每細格 (航廈×in_out×性別×國籍×年齡段) 對應人數 paxCnt。
   ⚠ 來源不提供時間戳，整批 snapshot 用 collected_at 標記。
@@ -36,7 +38,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 APIS_BASE = "https://opendata.immigration.gov.tw/APIS"
 
-# 6 個 active 端點（探勘 2026-06-28 確認 HTTP 200）
+# 8 個 active 端點（探勘 2026-06-28 確認 HTTP 200；KHH1/KHH5 2026-07-26 補上）
 ENDPOINTS = [
     {"code": "TPE1",  "airport": "TPE", "terminal": None, "in_out": "in"},
     {"code": "TPE5",  "airport": "TPE", "terminal": None, "in_out": "out"},
@@ -44,6 +46,8 @@ ENDPOINTS = [
     {"code": "TPE52", "airport": "TPE", "terminal": "2",  "in_out": "out"},
     {"code": "RMQ5",  "airport": "RMQ", "terminal": None, "in_out": "out"},
     {"code": "TSA1",  "airport": "TSA", "terminal": None, "in_out": "in"},
+    {"code": "KHH1",  "airport": "KHH", "terminal": None, "in_out": "in"},
+    {"code": "KHH5",  "airport": "KHH", "terminal": None, "in_out": "out"},
 ]
 
 
