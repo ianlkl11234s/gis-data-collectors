@@ -680,7 +680,7 @@ yt_live_video_resolver:
   s3_prefixes:
     - {prefix: yt_live_video_resolver/archives/, expected_daily: false}  # TODO(sync): 人工確認 expected_daily 與 prefix
   critical: false  # TODO(sync): 人工確認 criticality
-  notes: production 實測 2026-07-02 15:59 UTC
+  notes: 2026-07-26 由 HTML 爬取改 YouTube Data API v3 — Zeabur 必設 YOUTUBE_API_KEY（缺 key 會 silent skip）；sticky 寫入，API 失敗不清空既有 video_id
 
 tpml_seat:
   enabled: true  # 2026-07-16 上線（migration 290 已 apply + Zeabur TPML_SEAT_ENABLED=true）

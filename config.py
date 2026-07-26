@@ -69,6 +69,13 @@ COPERNICUSMARINE_SERVICE_PASSWORD = os.getenv('COPERNICUSMARINE_SERVICE_PASSWORD
 CAMS_API_KEY = os.getenv('CAMS_API_KEY')
 
 # ============================================================
+# YouTube Data API v3（yt_live_video_resolver）
+# ============================================================
+# GCP 專案需啟用 YouTube Data API v3，建 API key 並限制到該 service。
+# 配額：search.list 獨立桶 100 calls/day/專案；其餘端點共用 10,000 units/day，PT 午夜重置。
+YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
+
+# ============================================================
 # 儲存設定
 # ============================================================
 

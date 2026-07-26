@@ -85,6 +85,17 @@
     "TPML_SEAT_INTERVAL": {
       "description": "北市圖座位收集間隔（分鐘），對應 data.taipei 官方標示 10 分鐘",
       "default": "10"
+    },
+    "YOUTUBE_API_KEY": {
+      "description": "YouTube Data API v3 key（yt_live_video_resolver 必需，缺了會 silent skip）；GCP 專案需啟用 YouTube Data API v3"
+    },
+    "YT_LIVE_VIDEO_RESOLVER_ENABLED": {
+      "description": "13 家新聞台當前直播 videoId 解析（需 YOUTUBE_API_KEY；search.list 獨立配額 100 calls/day/專案，多實例只在一個實例設 true）",
+      "default": "false"
+    },
+    "YT_LIVE_VIDEO_RESOLVER_INTERVAL": {
+      "description": "直播 videoId 解析間隔（分鐘）；每輪 1 次 videos.list ≈ 1 unit",
+      "default": "5"
     }
   }
 }
