@@ -98,7 +98,12 @@ archive_py_covered:
   - live.taipei_evacuate_status    # wic_evacuate, 2026-06-08 起
   - live.taipei_pumb_status        # wic_pumb, 2026-06-08 起
   # Disaster / alerts
-  - live.earthquake_events         # earthquake, 2026-03-06 起
+  - live.earthquake_events         # earthquake（+ earthquake_catalog 的 report_type='catalog'）, 2026-03-06 起
+  - live.earthquake_station_obs    # earthquake（逐測站觀測），migration 321，2026-07 起
+  - live.tsunami_alerts            # earthquake（海嘯資訊 E-A0014-001），migration 321，2026-07 起
+  - live.earthquake_town_intensity # earthquake_town_intensity，migration 321，collector 待啟用
+  - live.earthquake_shakemap_grid  # earthquake_shakemap_grid，migration 321，collector 待啟用
+  - live.earthquake_moment_tensor  # earthquake_moment_tensor，migration 321，collector 待啟用
   - live.disaster_alerts           # ncdr_alerts + wra_drought_alert, 2026-04-07 起
   - live.lightning_events          # lightning_events, 2026-06-15 起
   - live.nuclear_radiation_measurements  # nuclear_radiation, 2026-06-15 起

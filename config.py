@@ -245,7 +245,11 @@ _COLLECTOR_TOGGLES = (
     ('FLIGHT_FR24',                  False, 5),
     ('FLIGHT_FR24_ZONE',             False, 5),
     ('FLIGHT_OPENSKY',               False, 5),
-    ('EARTHQUAKE',                   True,  1440),
+    ('EARTHQUAKE',                   True,  15),   # 有感地震報告 + 逐站觀測 + 海嘯資訊（事件驅動，15 分鐘才追得上）
+    ('EARTHQUAKE_CATALOG',           False, 1440), # CWA E-A0073-001 本年度正式地震目錄（含無感，半年更新一批）；每日比對有新才寫
+    ('EARTHQUAKE_TOWN_INTENSITY',    False, 15),   # CWA E-A0015-005 全台 368 鄉鎮震度（S3 免金鑰，只留最新一次 → 靠本表存歷史）
+    ('EARTHQUAKE_SHAKEMAP_GRID',     False, 15),   # NCDR EQ1 全台 2.5km 網格 4,377 格（免金鑰，只留最新一次；event_time 守門避免重寫）
+    ('EARTHQUAKE_MOMENT_TENSOR',     False, 30),   # 中研院 AutoBATS 震源機制解（無清單端點，靠 CWA 事件清單逐一查；UTC 秒級對時）
     ('SATELLITE',                    False, 120),  # TLE 每 8-24h 更新，2 小時足夠
     ('LAUNCH',                       False, 15),  # LL2 免費 tier ~15 calls/hr，15min 安全（4 calls/hr）
     ('CWA_SATELLITE',                True,  10),

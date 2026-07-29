@@ -7,8 +7,7 @@ Foursquare OS Places POI 收集器
 資料來源：https://huggingface.co/datasets/foursquare/fsq-os-places
 授權：Apache 2.0
 
-注意：此 collector 執行時間較長（下載 + 解析約 5-10 分鐘），
-      已加入 BACKGROUND_COLLECTORS 避免阻塞高頻 collector。
+注意：此 collector 執行時間較長（下載 + 解析約 5-10 分鐘）。
 """
 
 from datetime import datetime

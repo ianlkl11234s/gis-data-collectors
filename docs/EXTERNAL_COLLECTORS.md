@@ -60,7 +60,7 @@
 ## 新增「外部 collector」的 SOP
 
 ### Step 1：在主 repo 照常實作
-依照 `.claude/CLAUDE.md` 的 7 步流程把 collector 寫好（registry、config、table_map、transform、data-inventory…）。
+依照 `.claude/CLAUDE.md` 的 12 步流程把 collector 寫好（registry、config、table_map、transform、data-inventory…）。
 **不要為了「反正會放外部」而簡化 — 主 repo 仍要有完整實作**，理由：
 - transform 邏輯 + table schema 是 **唯一真相來源**，VM 的單檔版照抄它
 - 如果哪天封鎖解除，主 repo 改回 `_ENABLED=true` 就能直接跑

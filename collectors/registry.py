@@ -18,6 +18,10 @@ from .bus import BusCollector
 from .bus_intercity import BusIntercityCollector
 from .cwa_satellite import CWASatelliteCollector
 from .earthquake import EarthquakeCollector
+from .earthquake_catalog import EarthquakeCatalogCollector
+from .earthquake_town_intensity import EarthquakeTownIntensityCollector
+from .earthquake_shakemap_grid import EarthquakeShakemapGridCollector
+from .earthquake_moment_tensor import EarthquakeMomentTensorCollector
 from .er_hospital_realtime import ERHospitalRealtimeCollector
 from .twse_market_index import TwseMarketIndexCollector
 from .pla_activity_daily import PlaActivityDailyCollector
@@ -111,6 +115,10 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(FlightFR24Collector, "Flight FR24 收集器", "FLIGHT_FR24"),
     CollectorEntry(FlightFR24ZoneCollector, "FR24 Zone 收集器", "FLIGHT_FR24_ZONE"),
     CollectorEntry(EarthquakeCollector, "Earthquake 收集器", "EARTHQUAKE", ("CWA_API_KEY",)),
+    CollectorEntry(EarthquakeCatalogCollector, "地震目錄（含無感）收集器", "EARTHQUAKE_CATALOG", ("CWA_API_KEY",)),
+    CollectorEntry(EarthquakeTownIntensityCollector, "鄉鎮震度收集器", "EARTHQUAKE_TOWN_INTENSITY"),
+    CollectorEntry(EarthquakeShakemapGridCollector, "地震網格 shakemap 收集器", "EARTHQUAKE_SHAKEMAP_GRID"),
+    CollectorEntry(EarthquakeMomentTensorCollector, "震源機制解（AutoBATS）收集器", "EARTHQUAKE_MOMENT_TENSOR", ("CWA_API_KEY",)),
     CollectorEntry(FlightOpenSkyCollector, "OpenSky 收集器", "FLIGHT_OPENSKY"),
     CollectorEntry(SatelliteCollector, "Satellite 收集器", "SATELLITE"),
     CollectorEntry(SatellitePassesDailyCollector, "中國軍偵衛星通過台灣每日彙總", "SATELLITE_PASSES_DAILY"),

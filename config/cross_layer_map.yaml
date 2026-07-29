@@ -190,12 +190,57 @@ cwa_satellite:
 earthquake:
   enabled: true
   deployment: zeabur
-  expected_interval_min: 1440
-  supabase_tables: [live.earthquake_events]
+  expected_interval_min: 15
+  supabase_tables: [live.earthquake_events, live.earthquake_station_obs, live.tsunami_alerts]
   s3_prefixes:
     - {prefix: earthquake/archives/, expected_daily: false}
   critical: true
-  notes: 事件驅動，每日 archive 可能為空
+  notes: >-
+    事件驅動，每日 archive 可能為空。2026-07 起 interval 1440→15，並多寫逐測站觀測
+    （E-A0015-001/E-A0016-001 的 EqStation）與海嘯資訊（E-A0014-001）。
+    完整地震目錄 E-A0073-001 已拆到 earthquake_catalog collector。
+
+earthquake_catalog:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 1440
+  supabase_tables: [live.earthquake_events]
+  s3_prefixes:
+    - {prefix: earthquake_catalog/archives/, expected_daily: false}
+  critical: false
+  notes: CWA E-A0073-001 本年度正式地震目錄（含無感），半年更新一批；每日比對 DB 筆數，有新才寫
+
+earthquake_town_intensity:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 15
+  supabase_tables: [live.earthquake_town_intensity]
+  s3_prefixes:
+    - {prefix: earthquake_town_intensity/archives/, expected_daily: false}
+  critical: false
+  notes: CWA E-A0015-005（S3 免金鑰）368 鄉鎮震度；上游只留最新一次地震，origin_time 守門
+
+earthquake_shakemap_grid:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 15
+  supabase_tables: [live.earthquake_shakemap_grid]
+  s3_prefixes:
+    - {prefix: earthquake_shakemap_grid/archives/, expected_daily: false}
+  critical: false
+  notes: NCDR EQ1（免金鑰）全台 2.5km 共 4,377 格；event_time 守門避免每輪重寫
+
+earthquake_moment_tensor:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 30
+  supabase_tables: [live.earthquake_moment_tensor]
+  s3_prefixes:
+    - {prefix: earthquake_moment_tensor/archives/, expected_daily: false}
+  critical: false
+  notes: >-
+    中研院 AutoBATS 震源機制解；無清單端點，靠 CWA 事件清單逐一查（時間為 UTC、秒級須吻合）。
+    查無回 HTTP 200 空殼 JSON 不是 404；只有規模較大事件有解，查無屬常態。
 
 ncdr_alerts:
   enabled: true

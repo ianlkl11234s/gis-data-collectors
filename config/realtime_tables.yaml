@@ -45,6 +45,12 @@ tables:
   - {schema: live, table: temperature_grids,         time_column: collected_at, owner_collector: temperature, expected_interval_min: 60, critical: false}
   - {schema: live, table: cwa_imagery_frames,        time_column: observed_at,  owner_collector: cwa_satellite, expected_interval_min: 10, critical: false}
   - {schema: live, table: earthquake_events,         time_column: occurred_at,  owner_collector: earthquake, expected_interval_min: 1440, critical: false, notes: 事件驅動可能很久才一次（critical=false 避免無震時誤觸 🔴 嚴重）}
+  # 地震擴充 5 表（migration 321）— 全部事件驅動，無震時空表/停滯屬預期，一律 critical=false
+  - {schema: live, table: earthquake_station_obs,    time_column: collected_at, owner_collector: earthquake, expected_interval_min: 1440, critical: false, notes: 逐測站觀測；只在「新事件」才寫（collector 端查 DB 守門），比照 earthquake_events 放寬}
+  - {schema: live, table: tsunami_alerts,            time_column: collected_at, owner_collector: earthquake, expected_interval_min: 43200, critical: false, notes: 海嘯報告一年數則；長期無新 row 屬預期，不參與事故判定}
+  - {schema: live, table: earthquake_town_intensity, time_column: collected_at, owner_collector: earthquake_town_intensity, expected_interval_min: 10080, critical: false, notes: 368 鄉鎮震度；上游只留最新一次有感地震，無新震即不寫}
+  - {schema: live, table: earthquake_shakemap_grid,  time_column: collected_at, owner_collector: earthquake_shakemap_grid, expected_interval_min: 10080, critical: false, notes: NCDR 2.5km 網格 4,377 格/次；event_time 守門，無新震即不寫}
+  - {schema: live, table: earthquake_moment_tensor,  time_column: collected_at, owner_collector: earthquake_moment_tensor, expected_interval_min: 43200, critical: false, notes: AutoBATS 只對規模較大事件出解；查無屬常態}
   - {schema: live, table: disaster_alerts,           time_column: collected_at, owner_collector: ncdr_alerts, expected_interval_min: 15, critical: true}
 
   # ── 太空 ────────────────────────────────
