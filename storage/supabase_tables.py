@@ -106,9 +106,56 @@ TABLE_MAP = {
         'current_columns': ['mmsi', 'ship_name', 'ship_type', 'lat', 'lng', 'speed', 'heading', 'collected_at', 'geom'],
     },
     'earthquake': {
+        # 一支 collector 寫 3 張表（gis-platform migration 321）：
+        #   live.earthquake_events      UNIQUE(event_id)              DO UPDATE（報告會修訂）
+        #   live.earthquake_station_obs UNIQUE(event_id, station_id)  DO NOTHING
+        #   live.tsunami_alerts         UNIQUE(tsunami_no, report_no, issued_at) DO NOTHING
+        'is_multi_table': True,
+    },
+    'earthquake_catalog': {
+        # CWA E-A0073-001 完整地震目錄（含無感）— 與 earthquake 共用 earthquake_events，
+        # 靠 report_type='catalog' 區分；event_id 沿用 cat_{OriginTime}_{lat}_{lon}
         'history': 'live.earthquake_events',
         'columns': ['event_id', 'magnitude', 'depth_km', 'epicenter_lat', 'epicenter_lng', 'location_desc', 'occurred_at', 'report_type', 'geom', 'raw_data'],
         'upsert_key': 'event_id',
+        'upsert_strategy': 'do_nothing',
+    },
+    'earthquake_town_intensity': {
+        # CWA E-A0015-005 鄉鎮震度（368 列/次）— UNIQUE(origin_time, town_code)
+        'history': 'live.earthquake_town_intensity',
+        'columns': [
+            'origin_time', 'report_id', 'earthquake_no', 'magnitude', 'depth_km',
+            'epicenter_lat', 'epicenter_lon',
+            'county_name', 'county_code', 'county_max_intensity',
+            'town_name', 'town_code', 'lat', 'lon',
+            'intensity', 'intensity_value', 'geom', 'collected_at',
+        ],
+        'upsert_key': 'origin_time,town_code',
+        'upsert_strategy': 'do_nothing',
+    },
+    'earthquake_shakemap_grid': {
+        # NCDR EQ1 2.5km 網格（4,377 列/次）— UNIQUE(event_time, lon, lat)
+        'history': 'live.earthquake_shakemap_grid',
+        'columns': [
+            'event_name', 'event_time', 'magnitude', 'eq_lon', 'eq_lat', 'depth',
+            'lon', 'lat', 'pga', 'pgv', 'intensity', 'geom', 'collected_at',
+        ],
+        'upsert_key': 'event_time,lon,lat',
+        'upsert_strategy': 'do_nothing',
+    },
+    'earthquake_moment_tensor': {
+        # AutoBATS 震源機制解 — UNIQUE(origin_time_utc, solution_type)
+        # 走 DO UPDATE：Final(A) 解晚到、Quick(R) 解重算都要能覆蓋
+        'history': 'live.earthquake_moment_tensor',
+        'columns': [
+            'origin_time_utc', 'origin_time_local', 'event_id', 'lat', 'lon',
+            'ml', 'mw', 'm0',
+            'strike1', 'dip1', 'rake1', 'strike2', 'dip2', 'rake2',
+            'centroid_depth', 'cwb_depth', 'clvd_pct', 'iso_pct',
+            'misfit', 'gap', 'nsta', 'quality', 'tensor',
+            'solution_type', 'beachball_url', 'raw', 'geom', 'collected_at',
+        ],
+        'upsert_key': 'origin_time_utc,solution_type',
     },
     'rail_timetable': {
         'is_reference': True,

@@ -524,31 +524,102 @@ class SupabaseWriter:
         return records
 
     def _transform_earthquake(self, result: dict, ts: datetime) -> list[dict]:
-        """地震：合併 felt_reports + catalog"""
+        """地震：事件 + 逐站觀測 + 海嘯，攤平為單一 list 由 _write_multi_table 依 _type 分派
+
+        相容性：2026-07 之前的 buffer 檔還帶 'catalog' key（目錄那時混在本 collector），
+        補寫時仍照舊寫進 earthquake_events（report_type='catalog'）。
+        """
         data = result.get('data', {})
         if isinstance(data, list):
             return []
 
         records = []
-        # 有感地震
+
+        # 1) 有感地震事件
         for r in data.get('felt_reports', []):
+            lat = r.get('epicenter_latitude')
+            lng = r.get('epicenter_longitude')
             records.append({
-                'event_id': str(r.get('earthquake_no', '')),
+                '_type': 'event',
+                # 舊 buffer 沒有 event_id → 退回 earthquake_no（維持可補寫）
+                'event_id': r.get('event_id') or str(r.get('earthquake_no', '')),
                 'magnitude': r.get('magnitude_value'),
                 'depth_km': r.get('focal_depth_km'),
-                'epicenter_lat': r.get('epicenter_latitude'),
-                'epicenter_lng': r.get('epicenter_longitude'),
+                'epicenter_lat': lat,
+                'epicenter_lng': lng,
                 'location_desc': r.get('epicenter_location', ''),
                 'occurred_at': r.get('origin_time', ts.isoformat()),
                 'report_type': r.get('source_type', 'felt'),
-                'geom': f"SRID=4326;POINT({r.get('epicenter_longitude')} {r.get('epicenter_latitude')})" if r.get('epicenter_latitude') and r.get('epicenter_longitude') else None,
+                'geom': f'SRID=4326;POINT({lng} {lat})' if lat and lng else None,
                 'raw_data': json.dumps(r, ensure_ascii=False, default=str),
             })
-        # 完整目錄
+
+        # 2) 逐測站觀測
+        for r in data.get('station_obs', []):
+            lat = r.get('lat')
+            lon = r.get('lon')
+            records.append({
+                '_type': 'station',
+                'event_id': r.get('event_id'),
+                'earthquake_no': r.get('earthquake_no'),
+                'origin_time': r.get('origin_time'),
+                'source_type': r.get('source_type'),
+                'station_id': r.get('station_id'),
+                'station_name': r.get('station_name'),
+                'county_name': r.get('county_name'),
+                'area_desc': r.get('area_desc'),
+                'area_intensity': r.get('area_intensity'),
+                'lat': lat,
+                'lon': lon,
+                'epicenter_distance_km': r.get('epicenter_distance_km'),
+                'back_azimuth': r.get('back_azimuth'),
+                'seismic_intensity': r.get('seismic_intensity'),
+                'intensity_value': r.get('intensity_value'),
+                'pga_ew': r.get('pga_ew'), 'pga_ns': r.get('pga_ns'),
+                'pga_v': r.get('pga_v'), 'pga_int': r.get('pga_int'),
+                'pgv_ew': r.get('pgv_ew'), 'pgv_ns': r.get('pgv_ns'),
+                'pgv_v': r.get('pgv_v'), 'pgv_int': r.get('pgv_int'),
+                'wave_image_uri': r.get('wave_image_uri') or None,
+                'geom': f'SRID=4326;POINT({lon} {lat})' if lat is not None and lon is not None else None,
+                'collected_at': ts.isoformat(),
+            })
+
+        # 3) 海嘯報告
+        for r in data.get('tsunami', []):
+            lat = r.get('epicenter_lat')
+            lon = r.get('epicenter_lon')
+            records.append({
+                '_type': 'tsunami',
+                'tsunami_no': r.get('tsunami_no'),
+                'report_no': r.get('report_no'),
+                'report_type': r.get('report_type'),
+                'report_color': r.get('report_color'),
+                'report_content': r.get('report_content'),
+                'issued_at': r.get('issued_at'),
+                'valid_end_at': r.get('valid_end_at'),
+                'origin_time': r.get('origin_time'),
+                'source': r.get('source'),
+                'epicenter_location': r.get('epicenter_location'),
+                'epicenter_lat': lat,
+                'epicenter_lon': lon,
+                'focal_depth_km': r.get('focal_depth_km'),
+                'magnitude': r.get('magnitude'),
+                'web_url': r.get('web_url'),
+                'station_details': (
+                    json.dumps(r['station_details'], ensure_ascii=False, default=str)
+                    if r.get('station_details') is not None else None
+                ),
+                'raw': json.dumps(r.get('raw'), ensure_ascii=False, default=str),
+                'geom': f'SRID=4326;POINT({lon} {lat})' if lat is not None and lon is not None else None,
+                'collected_at': ts.isoformat(),
+            })
+
+        # 4) 舊格式 buffer 的完整目錄（新流程已搬到 earthquake_catalog collector）
         for r in data.get('catalog', []):
             lat = r.get('latitude')
             lng = r.get('longitude')
             records.append({
+                '_type': 'event',
                 'event_id': f"cat_{r.get('origin_time', '')}_{lat}_{lng}",
                 'magnitude': r.get('local_magnitude'),
                 'depth_km': r.get('focal_depth_km'),
@@ -559,6 +630,118 @@ class SupabaseWriter:
                 'report_type': 'catalog',
                 'geom': f'SRID=4326;POINT({lng} {lat})' if lat and lng else None,
                 'raw_data': json.dumps(r, ensure_ascii=False, default=str),
+            })
+
+        return records
+
+    def _transform_earthquake_catalog(self, result: dict, ts: datetime) -> list[dict]:
+        """完整地震目錄（含無感）→ live.earthquake_events，report_type='catalog'"""
+        records: list[dict] = []
+        for r in result.get('data', []):
+            lat = r.get('latitude')
+            lng = r.get('longitude')
+            records.append({
+                'event_id': r.get('event_id') or f"cat_{r.get('origin_time', '')}_{lat}_{lng}",
+                'magnitude': r.get('local_magnitude'),
+                'depth_km': r.get('focal_depth_km'),
+                'epicenter_lat': lat,
+                'epicenter_lng': lng,
+                'location_desc': '',
+                'occurred_at': r.get('origin_time', ts.isoformat()),
+                'report_type': 'catalog',
+                'geom': f'SRID=4326;POINT({lng} {lat})' if lat and lng else None,
+                'raw_data': json.dumps(r, ensure_ascii=False, default=str),
+            })
+        return records
+
+    def _transform_earthquake_town_intensity(self, result: dict, ts: datetime) -> list[dict]:
+        """鄉鎮震度：collector 已產出 JSON-safe dict；補 geom WKT。"""
+        records: list[dict] = []
+        for r in result.get('data', []):
+            lat = r.get('lat')
+            lon = r.get('lon')
+            records.append({
+                'origin_time':          r.get('origin_time'),
+                'report_id':            r.get('report_id'),
+                'earthquake_no':        r.get('earthquake_no'),
+                'magnitude':            r.get('magnitude'),
+                'depth_km':             r.get('depth_km'),
+                'epicenter_lat':        r.get('epicenter_lat'),
+                'epicenter_lon':        r.get('epicenter_lon'),
+                'county_name':          r.get('county_name'),
+                'county_code':          r.get('county_code'),
+                'county_max_intensity': r.get('county_max_intensity'),
+                'town_name':            r.get('town_name'),
+                'town_code':            r.get('town_code'),
+                'lat':                  lat,
+                'lon':                  lon,
+                'intensity':            r.get('intensity'),
+                'intensity_value':      r.get('intensity_value'),
+                'geom': f'SRID=4326;POINT({lon} {lat})' if lat is not None and lon is not None else None,
+                'collected_at':         ts.isoformat(),
+            })
+        return records
+
+    def _transform_earthquake_shakemap_grid(self, result: dict, ts: datetime) -> list[dict]:
+        """NCDR 2.5km 網格 shakemap：補 geom WKT（含 PGA=0 的外海格，前端要完整面）。"""
+        records: list[dict] = []
+        for r in result.get('data', []):
+            lat = r.get('lat')
+            lon = r.get('lon')
+            if lat is None or lon is None:
+                continue
+            records.append({
+                'event_name':   r.get('event_name'),
+                'event_time':   r.get('event_time'),
+                'magnitude':    r.get('magnitude'),
+                'eq_lon':       r.get('eq_lon'),
+                'eq_lat':       r.get('eq_lat'),
+                'depth':        r.get('depth'),
+                'lon':          lon,
+                'lat':          lat,
+                'pga':          r.get('pga'),
+                'pgv':          r.get('pgv'),
+                'intensity':    r.get('intensity'),
+                'geom':         f'SRID=4326;POINT({lon} {lat})',
+                'collected_at': ts.isoformat(),
+            })
+        return records
+
+    def _transform_earthquake_moment_tensor(self, result: dict, ts: datetime) -> list[dict]:
+        """AutoBATS 震源機制解：tensor / raw 已是 JSON 字串；補 geom WKT。"""
+        records: list[dict] = []
+        for r in result.get('data', []):
+            lat = r.get('lat')
+            lon = r.get('lon')
+            records.append({
+                'origin_time_utc':   r.get('origin_time_utc'),
+                'origin_time_local': r.get('origin_time_local'),
+                'event_id':          r.get('event_id'),
+                'lat':               lat,
+                'lon':               lon,
+                'ml':                r.get('ml'),
+                'mw':                r.get('mw'),
+                'm0':                r.get('m0'),
+                'strike1':           r.get('strike1'),
+                'dip1':              r.get('dip1'),
+                'rake1':             r.get('rake1'),
+                'strike2':           r.get('strike2'),
+                'dip2':              r.get('dip2'),
+                'rake2':             r.get('rake2'),
+                'centroid_depth':    r.get('centroid_depth'),
+                'cwb_depth':         r.get('cwb_depth'),
+                'clvd_pct':          r.get('clvd_pct'),
+                'iso_pct':           r.get('iso_pct'),
+                'misfit':            r.get('misfit'),
+                'gap':               r.get('gap'),
+                'nsta':              r.get('nsta'),
+                'quality':           r.get('quality'),
+                'tensor':            r.get('tensor'),
+                'solution_type':     r.get('solution_type'),
+                'beachball_url':     r.get('beachball_url'),
+                'raw':               r.get('raw'),
+                'geom': f'SRID=4326;POINT({lon} {lat})' if lat is not None and lon is not None else None,
+                'collected_at':      ts.isoformat(),
             })
         return records
 
@@ -1825,6 +2008,10 @@ class SupabaseWriter:
         'road_congestion': _transform_road_congestion,
         'ship_ais': _transform_ship_ais,
         'earthquake': _transform_earthquake,
+        'earthquake_catalog': _transform_earthquake_catalog,
+        'earthquake_town_intensity': _transform_earthquake_town_intensity,
+        'earthquake_shakemap_grid': _transform_earthquake_shakemap_grid,
+        'earthquake_moment_tensor': _transform_earthquake_moment_tensor,
         'rail_timetable': _transform_rail_timetable,
         'flight_fr24': _transform_flight_fr24,
         'flight_fr24_zone': _transform_flight_fr24_zone,
@@ -2139,6 +2326,74 @@ class SupabaseWriter:
                         values, page_size=500)
 
             logger.info(f"[launch] ✓ {len(launches)} launches + {len(pads)} pads + {len(events)} events 寫入")
+
+        elif collector_name == 'earthquake':
+            # 地震：事件 / 逐站觀測 / 海嘯 三張表（gis-platform migration 321）
+            #   live.earthquake_events      UNIQUE(event_id) → DO UPDATE（報告會修訂）
+            #   live.earthquake_station_obs UNIQUE(event_id, station_id) → DO NOTHING
+            #   live.tsunami_alerts         UNIQUE(tsunami_no, report_no, issued_at) → DO NOTHING
+            events = [r for r in records if r.get('_type') == 'event']
+            stations = [r for r in records if r.get('_type') == 'station']
+            tsunami = [r for r in records if r.get('_type') == 'tsunami']
+
+            with self._txn(conn) as cur:
+                if events:
+                    cols = ['event_id', 'magnitude', 'depth_km', 'epicenter_lat', 'epicenter_lng',
+                            'location_desc', 'occurred_at', 'report_type', 'geom', 'raw_data']
+                    # 同批去重：同 event_id 取最後一筆（ON CONFLICT 不能在同一 INSERT 更新同列兩次）
+                    seen = {r['event_id']: tuple(r.get(c) for c in cols)
+                            for r in events if r.get('event_id')}
+                    values = list(seen.values())
+                    if values:
+                        update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in cols if c != 'event_id')
+                        execute_values(
+                            cur,
+                            f"INSERT INTO live.earthquake_events ({','.join(cols)}) VALUES %s "
+                            f"ON CONFLICT (event_id) DO UPDATE SET {update_set}",
+                            values, page_size=500,
+                        )
+
+                if stations:
+                    cols = ['event_id', 'earthquake_no', 'origin_time', 'source_type',
+                            'station_id', 'station_name', 'county_name', 'area_desc',
+                            'area_intensity', 'lat', 'lon', 'epicenter_distance_km',
+                            'back_azimuth', 'seismic_intensity', 'intensity_value',
+                            'pga_ew', 'pga_ns', 'pga_v', 'pga_int',
+                            'pgv_ew', 'pgv_ns', 'pgv_v', 'pgv_int',
+                            'wave_image_uri', 'geom', 'collected_at']
+                    seen = {(r.get('event_id'), r.get('station_id')): tuple(r.get(c) for c in cols)
+                            for r in stations if r.get('event_id') and r.get('station_id')}
+                    values = list(seen.values())
+                    if values:
+                        execute_values(
+                            cur,
+                            f"INSERT INTO live.earthquake_station_obs ({','.join(cols)}) VALUES %s "
+                            f"ON CONFLICT (event_id, station_id) DO NOTHING",
+                            values, page_size=1000,
+                        )
+
+                if tsunami:
+                    cols = ['tsunami_no', 'report_no', 'report_type', 'report_color',
+                            'report_content', 'issued_at', 'valid_end_at', 'origin_time',
+                            'source', 'epicenter_location', 'epicenter_lat', 'epicenter_lon',
+                            'focal_depth_km', 'magnitude', 'web_url', 'station_details',
+                            'raw', 'geom', 'collected_at']
+                    seen = {(r.get('tsunami_no'), r.get('report_no'), r.get('issued_at')):
+                            tuple(r.get(c) for c in cols)
+                            for r in tsunami if r.get('tsunami_no') and r.get('issued_at')}
+                    values = list(seen.values())
+                    if values:
+                        execute_values(
+                            cur,
+                            f"INSERT INTO live.tsunami_alerts ({','.join(cols)}) VALUES %s "
+                            f"ON CONFLICT (tsunami_no, report_no, issued_at) DO NOTHING",
+                            values, page_size=200,
+                        )
+
+            logger.info(
+                f"[earthquake] ✓ events {len(events)} + stations {len(stations)} "
+                f"+ tsunami {len(tsunami)} 筆寫入"
+            )
 
         elif collector_name == 'power_taipower':
             # 台電即時電力供需：單一 collector 寫 3 張表，皆 ON CONFLICT DO NOTHING
