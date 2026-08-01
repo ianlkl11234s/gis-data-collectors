@@ -61,6 +61,35 @@ def test_current_no_median_is_zero_crossed():
     assert p["period_end"] == "2026-08-01"
 
 
+NO_CLAUSE = (  # 有共機但無括號子句 = 當日未逾越中線／未進入我空域（2026-07-25 實例）
+    _HEADER
+    + "中華民國115年7月25日（星期五）0600時至7月26日（星期六）0600時止。 "
+    "二、活動動態： 迄0600時止，偵獲共機4架次、共艦7艘及公務船3艘，持續在臺海周邊活動。"
+)
+
+
+def test_no_clause_means_zero_crossed_not_null():
+    p = parse_pla_detail(NO_CLAUSE)
+    assert p is not None
+    assert p["aircraft_sorties"] == 4
+    assert p["crossed_median_line_cnt"] == 0     # 0 ≠ NULL（NULL 保留給「未知」）
+    assert not any(p[k] for k in ("adiz_north", "adiz_central",
+                                  "adiz_southwestern", "adiz_eastern"))
+    assert p["period_end"] == "2026-07-26"       # 第二個日期不帶年份
+
+
+def test_year_rollover_period_end():
+    text = (
+        _HEADER
+        + "中華民國114年12月31日（星期三）0600時至1月1日（星期四）0600時止。 "
+        "二、活動動態： 迄0600時止，偵獲共機2架次、共艦3艘，持續在臺海周邊活動。"
+    )
+    p = parse_pla_detail(text)
+    assert p is not None
+    assert p["report_date"] == "2025-12-31"
+    assert p["period_end"] == "2026-01-01"       # 月份回捲 → 年 +1
+
+
 def test_zero_aircraft_day():
     p = parse_pla_detail(ZERO_AIRCRAFT)
     assert p is not None

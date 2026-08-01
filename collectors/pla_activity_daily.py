@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import requests
@@ -47,10 +47,11 @@ _RE_DATE_ROC = re.compile(
     r"中華民國\s*(\d+)\s*年\s*(\d+)\s*月\s*(\d+)\s*日"
 )
 # 一、日期：「中華民國115年7月31日（星期五）0600時至115年8月1日（星期六）0600時止」
-# → 起訖兩個 ROC 日期（第二個日期通常不帶「中華民國」前綴）
+# ⚠ 第二個日期多數**不帶年份**（「0600時至6月19日」），僅跨年時才寫年
+#   → 年份群組設為可選，缺年時沿用起始年並在月份回捲時 +1 年
 _RE_PERIOD = re.compile(
     r"中華民國\s*(\d+)\s*年\s*(\d+)\s*月\s*(\d+)\s*日[^0-9]{0,12}?0600\s*時至"
-    r"(?:中華民國)?\s*(\d+)\s*年\s*(\d+)\s*月\s*(\d+)\s*日"
+    r"(?:中華民國)?\s*(?:(\d+)\s*年\s*)?(\d+)\s*月\s*(\d+)\s*日"
 )
 # ⚠ 單架時國防部寫「1架」不是「1架次」，同一句還會混用
 #   （「偵獲共機3架次（逾越中線進入西南空域1架）」）→ 一律吃「架」「架次」
@@ -66,6 +67,15 @@ _RE_CLAUSE_CNT = re.compile(r"(\d+)\s*架")
 _RE_CROSSED_OLD = re.compile(r"(\d+)\s*架(?:次)?\s*逾越.{0,10}中線")
 # 航跡圖（臺海周邊海、空域活動示意圖）
 _RE_TRACK_IMG = re.compile(r'src="(https?://www\.mnd\.gov\.tw/NewUpload/[^"]+)"', re.I)
+
+# ── 圖片版通報（~2025-02-02 以前）─────────────────────────────
+# 該時代 maincontent 為空，內容全在兩張 JPG 附件：
+#   「臺海周邊海、空域活動」＝ 數字表格圖（待 OCR/VLM）
+#   「臺海周邊海、空域活動示意圖」＝ 航跡圖
+# 頁面另有發布日期（113.11.09 格式）；report_date = 發布日 - 1（統計窗起算日）。
+_RE_ATTACH = re.compile(
+    r'download-text[^>]*>([^<]+)</span>.*?href="(File/\d+)"', re.S)
+_RE_PUBDATE = re.compile(r"\b(1\d{2})\.(\d{2})\.(\d{2})\b")
 
 # ADIZ 分區：括號子句內以子字串逐區判斷（頓號列舉「北部、中部、西南及東部空域」
 # 舊版 adjacency regex 只會命中緊貼「空域」的最後一區 → 系統性漏標）
@@ -121,8 +131,14 @@ def parse_pla_detail(text: str) -> dict | None:
     # （活動主要發生日；與既有資料一致，migration 326 已更正欄位註解）
     pm = _RE_PERIOD.search(text)
     if pm:
-        period_start = date(int(pm.group(1)) + 1911, int(pm.group(2)), int(pm.group(3)))
-        period_end   = date(int(pm.group(4)) + 1911, int(pm.group(5)), int(pm.group(6)))
+        start_roc = int(pm.group(1))
+        period_start = date(start_roc + 1911, int(pm.group(2)), int(pm.group(3)))
+        end_roc = int(pm.group(4)) if pm.group(4) else start_roc
+        end_mon, end_day = int(pm.group(5)), int(pm.group(6))
+        # 未寫年份且月份回捲（12月→1月）= 跨年，年 +1
+        if not pm.group(4) and end_mon < period_start.month:
+            end_roc += 1
+        period_end = date(end_roc + 1911, end_mon, end_day)
     else:
         m = _RE_DATE_ROC.search(text)
         if not m:
@@ -147,7 +163,10 @@ def parse_pla_detail(text: str) -> dict | None:
         crossed = n if ("逾越" in clause and "中線" in clause) else 0
     if crossed is None:
         crossed = _int_match(_RE_CROSSED_OLD.search(text))
-    if crossed is None and sorties == 0:
+    # 無括號子句、也無舊句型 → 當日共機未逾越中線／未進入我空域（如
+    # 「偵獲共機4架次、共艦7艘及公務船3艘」）。已知架次即可斷定為 0，
+    # 只有連架次都沒解出來（sorties None）才留 NULL 表示「未知」。
+    if crossed is None and sorties is not None and "逾越" not in text:
         crossed = 0
 
     if clause:
@@ -169,6 +188,54 @@ def parse_pla_detail(text: str) -> dict | None:
     }
 
 
+def parse_pla_image_page(html: str) -> dict | None:
+    """圖片版通報（maincontent 空、內容在 JPG 附件）→ 日期 + 兩張圖 URL。
+
+    數值欄一律 None（待 OCR/VLM 補），`needs_ocr=True` 供上層辨識。
+    回傳 None 表示不是圖片版通報。
+    """
+    import html as _html
+
+    text = _html.unescape(html)
+    attaches = _RE_ATTACH.findall(text)
+    activity_url = track_url = None
+    for name, href in attaches:
+        n = name.strip()
+        if "臺海周邊" not in n:
+            continue
+        url = "https://www.mnd.gov.tw/" + href
+        if "示意圖" in n:
+            track_url = url
+        elif activity_url is None:
+            activity_url = url
+    if not (activity_url or track_url):
+        return None
+
+    pm = _RE_PUBDATE.search(text)
+    if not pm:
+        return None
+    pub = date(int(pm.group(1)) + 1911, int(pm.group(2)), int(pm.group(3)))
+    # 通報統計「前一日 0600 至發布日 0600」→ report_date = 起算日 = 發布日 - 1
+    report_date = pub - timedelta(days=1)
+
+    return {
+        "report_date":             report_date.isoformat(),
+        "period_start":            report_date.isoformat(),
+        "period_end":              pub.isoformat(),
+        "aircraft_sorties":        None,
+        "plan_vessels":            None,
+        "official_ships":          None,
+        "crossed_median_line_cnt": None,
+        "adiz_north": None, "adiz_central": None,
+        "adiz_southwestern": None, "adiz_eastern": None,
+        "raw_text":                None,
+        "track_chart_url":         track_url,
+        "activity_chart_url":      activity_url,   # 數字表格圖，供 OCR
+        "source_lang":             "zh",
+        "needs_ocr":               True,
+    }
+
+
 def parse_pla_page(html: str) -> dict | None:
     """整頁 HTML → 抽 maincontent 內文 → 解析（含航跡圖 URL）。
 
@@ -184,7 +251,10 @@ def parse_pla_page(html: str) -> dict | None:
     if parsed:
         img = _RE_TRACK_IMG.search(content_html)
         parsed["track_chart_url"] = img.group(1) if img else None
-    return parsed
+        parsed["needs_ocr"] = False
+        return parsed
+    # 文字解析不出來 → 可能是圖片版時代（~2025-02-02 以前）
+    return parse_pla_image_page(html)
 
 
 class PlaActivityDailyCollector(BaseCollector):

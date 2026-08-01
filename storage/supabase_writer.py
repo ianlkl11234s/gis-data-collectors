@@ -1945,6 +1945,7 @@ class SupabaseWriter:
                 'adiz_eastern':            r.get('adiz_eastern'),
                 'raw_text':                r.get('raw_text'),
                 'track_chart_url':         r.get('track_chart_url'),
+                'activity_chart_url':      r.get('activity_chart_url'),
                 'source_lang':             r.get('source_lang'),
                 'source_url':              r.get('source_url'),
                 'collected_at':            r.get('collected_at') or ts.isoformat(),

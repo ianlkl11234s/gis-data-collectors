@@ -41,30 +41,35 @@ logger = logging.getLogger(__name__)
 LIST_PAGE_URL = LIST_URL + "/{page}"
 REQ_DELAY = 0.5          # 溫柔速率
 S3_PREFIX = "pla/track_charts"
+S3_ACTIVITY_PREFIX = "pla/activity_charts"   # 圖片版時代的數字表格圖（待 OCR）
 
 UPSERT_SQL = """
 INSERT INTO live.pla_activity_daily (
     report_date, period_start, period_end,
     aircraft_sorties, crossed_median_line_cnt, plan_vessels, official_ships,
     adiz_north, adiz_central, adiz_southwestern, adiz_eastern,
-    raw_text, track_chart_url, source_lang, source_url, collected_at, updated_at
+    raw_text, track_chart_url, activity_chart_url,
+    source_lang, source_url, collected_at, updated_at
 ) VALUES (%(report_date)s, %(period_start)s, %(period_end)s,
     %(aircraft_sorties)s, %(crossed_median_line_cnt)s, %(plan_vessels)s, %(official_ships)s,
     %(adiz_north)s, %(adiz_central)s, %(adiz_southwestern)s, %(adiz_eastern)s,
-    %(raw_text)s, %(track_chart_url)s, %(source_lang)s, %(source_url)s, now(), now())
+    %(raw_text)s, %(track_chart_url)s, %(activity_chart_url)s,
+    %(source_lang)s, %(source_url)s, now(), now())
 ON CONFLICT (report_date) DO UPDATE SET
     period_start            = EXCLUDED.period_start,
     period_end              = EXCLUDED.period_end,
-    aircraft_sorties        = EXCLUDED.aircraft_sorties,
-    crossed_median_line_cnt = EXCLUDED.crossed_median_line_cnt,
-    plan_vessels            = EXCLUDED.plan_vessels,
-    official_ships          = EXCLUDED.official_ships,
-    adiz_north              = EXCLUDED.adiz_north,
-    adiz_central            = EXCLUDED.adiz_central,
-    adiz_southwestern       = EXCLUDED.adiz_southwestern,
-    adiz_eastern            = EXCLUDED.adiz_eastern,
-    raw_text                = EXCLUDED.raw_text,
-    track_chart_url         = EXCLUDED.track_chart_url,
+    -- 圖片版數值全 NULL，不得覆蓋既有已解析的文字版數值 → COALESCE 保留舊值
+    aircraft_sorties        = COALESCE(EXCLUDED.aircraft_sorties, live.pla_activity_daily.aircraft_sorties),
+    crossed_median_line_cnt = COALESCE(EXCLUDED.crossed_median_line_cnt, live.pla_activity_daily.crossed_median_line_cnt),
+    plan_vessels            = COALESCE(EXCLUDED.plan_vessels, live.pla_activity_daily.plan_vessels),
+    official_ships          = COALESCE(EXCLUDED.official_ships, live.pla_activity_daily.official_ships),
+    adiz_north              = COALESCE(EXCLUDED.adiz_north, live.pla_activity_daily.adiz_north),
+    adiz_central            = COALESCE(EXCLUDED.adiz_central, live.pla_activity_daily.adiz_central),
+    adiz_southwestern       = COALESCE(EXCLUDED.adiz_southwestern, live.pla_activity_daily.adiz_southwestern),
+    adiz_eastern            = COALESCE(EXCLUDED.adiz_eastern, live.pla_activity_daily.adiz_eastern),
+    raw_text                = COALESCE(EXCLUDED.raw_text, live.pla_activity_daily.raw_text),
+    track_chart_url         = COALESCE(EXCLUDED.track_chart_url, live.pla_activity_daily.track_chart_url),
+    activity_chart_url      = COALESCE(EXCLUDED.activity_chart_url, live.pla_activity_daily.activity_chart_url),
     source_lang             = EXCLUDED.source_lang,
     source_url              = EXCLUDED.source_url,
     updated_at              = now()
@@ -94,11 +99,12 @@ def fetch_list_page(sess: requests.Session, page: int) -> list[int]:
     return ids
 
 
-def upload_chart(s3, sess: requests.Session, url: str, report_date: str) -> str | None:
-    """下載航跡圖並上傳 S3，回傳 object key（失敗回 None）。已存在則跳過下載。"""
+def upload_chart(s3, sess: requests.Session, url: str, report_date: str,
+                 prefix: str = S3_PREFIX) -> str | None:
+    """下載圖並上傳 S3，回傳 object key（失敗回 None）。已存在則跳過下載。"""
     y, m = report_date[:4], report_date[5:7]
     ext = os.path.splitext(url.split("?")[0])[1] or ".jpg"
-    key = f"{S3_PREFIX}/{y}/{m}/{report_date}{ext}"
+    key = f"{prefix}/{y}/{m}/{report_date}{ext}"
     try:
         s3.s3.head_object(Bucket=s3.bucket, Key=key)
         return key                      # 已備份，冪等跳過
@@ -138,9 +144,10 @@ def main():
         conn = psycopg2.connect(config.SUPABASE_DB_URL)
 
     rows, seen_dates = [], set()
-    stats = {"pages": 0, "nid": 0, "parsed": 0, "skip_old": 0, "unparsed": 0,
-             "charts": 0, "no_chart": 0}
+    stats = {"pages": 0, "nid": 0, "text": 0, "image": 0, "skip_old": 0, "unparsed": 0,
+             "charts": 0, "activity_charts": 0, "no_chart": 0}
     page, stop = 1, False
+    consec_old = 0          # 連續多少則早於 cutoff（列表順序未必嚴格單調 → 連 2 頁才停）
 
     while not stop:
         if args.pages and page > args.pages:
@@ -172,12 +179,19 @@ def main():
             rd = p["report_date"]
             if cutoff and date.fromisoformat(rd) < cutoff:
                 stats["skip_old"] += 1
-                stop = True                     # 列表新→舊，越過 cutoff 即可停
-                break
+                consec_old += 1
+                if consec_old >= 18:            # 連 2 頁全過期才停（列表順序未必單調）
+                    stop = True
+                    break
+                continue
+            consec_old = 0
             if rd in seen_dates:
                 continue
             seen_dates.add(rd)
             p["source_url"] = DETAIL_URL.format(nid=nid)
+            p.setdefault("activity_chart_url", None)
+            stats["image" if p.get("needs_ocr") else "text"] += 1
+
             chart = p.get("track_chart_url")
             if chart:
                 stats["charts"] += 1
@@ -185,27 +199,33 @@ def main():
                     upload_chart(s3, sess, chart, rd)
             else:
                 stats["no_chart"] += 1
-            stats["parsed"] += 1
+            act = p.get("activity_chart_url")     # 圖片版的數字表格圖（OCR 原料）
+            if act:
+                stats["activity_charts"] += 1
+                if s3:
+                    upload_chart(s3, sess, act, rd, prefix=S3_ACTIVITY_PREFIX)
             rows.append(p)
 
-        logger.info("page %-3d 累計 parsed=%d（最舊 %s）", page, stats["parsed"],
-                    min(seen_dates) if seen_dates else "-")
+        logger.info("page %-3d text=%d image=%d（最舊 %s）", page, stats["text"],
+                    stats["image"], min(seen_dates) if seen_dates else "-")
         page += 1
 
     logger.info("爬取結束：%s", stats)
 
     if args.dry_run:
-        for p in rows[:5]:
-            logger.info("  %s sorties=%s crossed=%s adiz=%s chart=%s", p["report_date"],
+        for p in rows[:5] + rows[-3:]:
+            logger.info("  %s %s sorties=%s crossed=%s adiz=%s chart=%s act=%s",
+                        p["report_date"], "IMG" if p.get("needs_ocr") else "TXT",
                         p["aircraft_sorties"], p["crossed_median_line_cnt"],
                         [k[5:] for k in ("adiz_north", "adiz_central", "adiz_southwestern",
                                          "adiz_eastern") if p[k]],
-                        bool(p.get("track_chart_url")))
+                        bool(p.get("track_chart_url")), bool(p.get("activity_chart_url")))
         logger.info("dry-run：不寫 DB（共 %d 列）", len(rows))
         return
 
     for p in rows:
         p.setdefault("track_chart_url", None)
+        p.setdefault("activity_chart_url", None)
     with conn:
         with conn.cursor() as cur:
             execute_batch(cur, UPSERT_SQL, rows, page_size=100)
