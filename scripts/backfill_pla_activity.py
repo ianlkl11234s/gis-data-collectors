@@ -14,6 +14,7 @@
 用法：
     python3 scripts/backfill_pla_activity.py --dry-run --pages 2      # 只看解析結果
     python3 scripts/backfill_pla_activity.py --days 730               # 近兩年（預設）
+    python3 scripts/backfill_pla_activity.py --days 730 --resume      # 中斷後續跑
     python3 scripts/backfill_pla_activity.py --days 730 --no-s3       # 不上傳圖
     python3 scripts/backfill_pla_activity.py --all                    # 全量 5 年
 """
@@ -111,7 +112,9 @@ def upload_chart(s3, sess: requests.Session, url: str, report_date: str,
     except Exception:
         pass
     try:
-        r = sess.get(url, timeout=config.REQUEST_TIMEOUT)
+        # ⚠ 必須覆寫 Accept — session 預設只收 text/html，抓 JPG 會被 mnd 回 406
+        r = sess.get(url, timeout=config.REQUEST_TIMEOUT,
+                     headers={"Accept": "image/*,*/*"})
         r.raise_for_status()
         s3.s3.put_object(Bucket=s3.bucket, Key=key, Body=r.content,
                          ContentType=r.headers.get("Content-Type", "image/jpeg"))
@@ -128,6 +131,8 @@ def main():
     ap.add_argument("--pages", type=int, help="只掃前 N 頁（測試用）")
     ap.add_argument("--dry-run", action="store_true", help="只解析不寫 DB / 不上傳")
     ap.add_argument("--no-s3", action="store_true", help="不上傳航跡圖")
+    ap.add_argument("--resume", action="store_true",
+                    help="跳過已由新版解析器處理過的 nid（period_end 或 activity_chart_url 非空）")
     args = ap.parse_args()
 
     cutoff = None if args.all else (date.today() - timedelta(days=args.days))
@@ -140,8 +145,32 @@ def main():
         logger.info("S3 bucket=%s prefix=%s", s3.bucket, S3_PREFIX)
 
     conn = None
+    done_nids: set[int] = set()
     if not args.dry_run:
         conn = psycopg2.connect(config.SUPABASE_DB_URL)
+        if args.resume:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT source_url FROM live.pla_activity_daily
+                     WHERE source_url IS NOT NULL
+                       AND (period_end IS NOT NULL OR activity_chart_url IS NOT NULL)
+                """)
+                for (u,) in cur.fetchall():
+                    m = re.search(r"/plaact/(\d+)", u or "")
+                    if m:
+                        done_nids.add(int(m.group(1)))
+            logger.info("resume：跳過 %d 個已處理 nid", len(done_nids))
+
+    def flush(batch: list[dict]) -> None:
+        """每頁即時寫入 — 中斷不丟進度（原本累積到最後才寫，被 kill 就全丟）。"""
+        if not batch or conn is None:
+            return
+        for r in batch:
+            r.setdefault("track_chart_url", None)
+            r.setdefault("activity_chart_url", None)
+        with conn:
+            with conn.cursor() as cur:
+                execute_batch(cur, UPSERT_SQL, batch, page_size=100)
 
     rows, seen_dates = [], set()
     stats = {"pages": 0, "nid": 0, "text": 0, "image": 0, "skip_old": 0, "unparsed": 0,
@@ -162,8 +191,12 @@ def main():
             break
         stats["pages"] += 1
 
+        page_rows: list[dict] = []
         for nid in nids:
             stats["nid"] += 1
+            if nid in done_nids:
+                stats["resumed"] = stats.get("resumed", 0) + 1
+                continue
             time.sleep(REQ_DELAY)
             try:
                 r = sess.get(DETAIL_URL.format(nid=nid), timeout=config.REQUEST_TIMEOUT)
@@ -205,7 +238,10 @@ def main():
                 if s3:
                     upload_chart(s3, sess, act, rd, prefix=S3_ACTIVITY_PREFIX)
             rows.append(p)
+            page_rows.append(p)
 
+        if not args.dry_run:
+            flush(page_rows)          # 每頁落地，被 kill 也不丟已爬的部分
         logger.info("page %-3d text=%d image=%d（最舊 %s）", page, stats["text"],
                     stats["image"], min(seen_dates) if seen_dates else "-")
         page += 1
@@ -223,13 +259,7 @@ def main():
         logger.info("dry-run：不寫 DB（共 %d 列）", len(rows))
         return
 
-    for p in rows:
-        p.setdefault("track_chart_url", None)
-        p.setdefault("activity_chart_url", None)
-    with conn:
-        with conn.cursor() as cur:
-            execute_batch(cur, UPSERT_SQL, rows, page_size=100)
-    logger.info("✅ upsert %d 列進 live.pla_activity_daily", len(rows))
+    logger.info("✅ 已 upsert %d 列進 live.pla_activity_daily（每頁即時落地）", len(rows))
     conn.close()
 
 
