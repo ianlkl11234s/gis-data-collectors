@@ -40,7 +40,12 @@ DETAIL_URL = "https://www.mnd.gov.tw/news/plaact/{nid}"
 _RE_LIST_ITEM = re.compile(r'<a\s+href="news/plaact/(\d+)"', re.IGNORECASE)
 
 # 詳細頁內文容器（避免 raw_text 存到頁面 chrome；抓不到時 fallback 全頁）
-_RE_MAINCONTENT = re.compile(r'<div class="maincontent">(.*?)</div>', re.S | re.I)
+# ⚠ 不可用 `(.*?)</div>` — 內文若含巢狀 div／table 會在第一個 </div> 提早截斷，
+#   導致內文不完整而退回全頁 fallback（實測 729 天中有 80 天中招）。
+#   改以「內文區之後的固定區塊」為終點。
+_RE_MAINCONTENT = re.compile(
+    r'<div class="maincontent">(.*?)(?:<div class="keyword|<div class="page-share|<footer|\Z)',
+    re.S | re.I)
 
 # 詳細頁解析
 _RE_DATE_ROC = re.compile(
@@ -55,13 +60,14 @@ _RE_PERIOD = re.compile(
 )
 # ⚠ 單架時國防部寫「1架」不是「1架次」，同一句還會混用
 #   （「偵獲共機3架次（逾越中線進入西南空域1架）」）→ 一律吃「架」「架次」
-_RE_AIRCRAFT = re.compile(r"偵獲\s*共機\s*(\d+)\s*架")
+#   「機」字可缺 — 2025-01-09 原文即寫「偵獲共4架次」（國防部漏字）
+_RE_AIRCRAFT = re.compile(r"偵獲\s*共機?\s*(\d+)\s*架")
 _RE_VESSELS  = re.compile(r"(?:偵獲\s*)?共艦\s*(\d+)\s*艘")
 _RE_OFFICIAL = re.compile(r"公務船\s*(\d+)\s*艘")
 # 現行句型：架次後接括號子句，數字在句尾 —
 #   「偵獲共機27架次（逾越中線進入北部、中部、西南及東部空域22架次）」
 #   「偵獲共機5架次（進入西南及東部空域5架次）」← 未提逾越中線 = 當日 0 逾越
-_RE_AIR_CLAUSE = re.compile(r"偵獲\s*共機\s*\d+\s*架(?:次)?\s*[（(]([^（）()]{0,120})[)）]")
+_RE_AIR_CLAUSE = re.compile(r"偵獲\s*共機?\s*\d+\s*架(?:次)?\s*[（(]([^（）()]{0,120})[)）]")
 _RE_CLAUSE_CNT = re.compile(r"(\d+)\s*架")
 # 舊句型 fallback：「其中共機 N 架次逾越海峽中線…」（數字在前）
 _RE_CROSSED_OLD = re.compile(r"(\d+)\s*架(?:次)?\s*逾越.{0,10}中線")
@@ -121,10 +127,13 @@ def _strip_html(html: str) -> str:
 
 def parse_pla_detail(text: str) -> dict | None:
     """從詳細頁文字解析結構化欄位。回傳 None 表示不是通報內容。"""
-    if "中共解放軍臺海周邊" not in text and "區域動態" not in text:
-        return None
     if "活動動態" not in text:
         # 不是通報、可能是其他類型新聞
+        return None
+    # ⚠ 標題「中共解放軍臺海周邊…」不一定在內文區（部分日期的 maincontent
+    #   直接由「一、日期」起頭）。過去把標題列為必要條件，使這些日期的內文
+    #   解析被擋下而退回全頁 fallback，raw_text 因此存到頁面 chrome（80/729 天）。
+    if not any(k in text for k in ("中共解放軍臺海周邊", "區域動態", "一、日期", "日期")):
         return None
 
     # 起訖日：「M/D 0600 時至 M+1/D 0600 時止」。report_date = 起算日
@@ -148,9 +157,13 @@ def parse_pla_detail(text: str) -> dict | None:
     report_date = period_start
 
     sorties  = _int_match(_RE_AIRCRAFT.search(text))
-    if sorties is None and _RE_NO_AIRCRAFT.search(text):
-        sorties = 0
     vessels  = _int_match(_RE_VESSELS.search(text))
+    if sorties is None:
+        # 「未偵獲共機」明示，或整段只列共艦未提共機（2026-02 起數見，如
+        # 「偵獲共艦7艘」）→ 當日 0 架次。有解析到共艦才敢斷定，避免把
+        # 「整段沒解析到」誤記為 0。
+        if _RE_NO_AIRCRAFT.search(text) or (vessels is not None and "共機" not in text):
+            sorties = 0
     official = _int_match(_RE_OFFICIAL.search(text))
 
     # 逾越中線（官方合併語意「逾越中線及進入空域」架次）＋ ADIZ 分區

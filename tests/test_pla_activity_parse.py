@@ -90,6 +90,37 @@ def test_year_rollover_period_end():
     assert p["period_end"] == "2026-01-01"       # 月份回捲 → 年 +1
 
 
+def test_upstream_typo_missing_ji_char():
+    """2025-01-09 國防部原文漏「機」字：「偵獲共4架次」。"""
+    text = (
+        _HEADER
+        + "中華民國114年1月9日（星期四）0600時至1月10日（星期五）0600時止。 "
+        "二、活動動態： 迄0600時止，偵獲共4架次（逾越中線進入北部空域2架次）、共艦7艘，"
+        "持續在臺海周邊活動。"
+    )
+    p = parse_pla_detail(text)
+    assert p is not None
+    assert p["aircraft_sorties"] == 4
+    assert p["crossed_median_line_cnt"] == 2
+    assert p["adiz_north"]
+
+
+def test_vessels_only_day_is_zero_sorties():
+    """2026-02 起數見：整段只列共艦、完全未提共機 = 當日 0 架次（非未知）。"""
+    text = (
+        _HEADER
+        + "中華民國115年2月7日（星期六）0600時至2月8日（星期日）0600時止。 "
+        "二、活動動態： 迄0600時止，偵獲共艦7艘，持續在臺海周邊活動。"
+        "國軍運用任務機、艦及岸置飛彈系統嚴密監控與應處。 "
+        "三、中共空飄氣球活動： 中共空飄氣球計偵獲1顆。"
+    )
+    p = parse_pla_detail(text)
+    assert p is not None
+    assert p["aircraft_sorties"] == 0
+    assert p["crossed_median_line_cnt"] == 0
+    assert p["plan_vessels"] == 7
+
+
 def test_zero_aircraft_day():
     p = parse_pla_detail(ZERO_AIRCRAFT)
     assert p is not None
