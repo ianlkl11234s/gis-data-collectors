@@ -615,10 +615,12 @@ TABLE_MAP = {
         # 單表，PK = report_date，每日重抓同一日要 UPSERT（內容可能修正）
         'history': 'live.pla_activity_daily',
         'columns': [
-            'report_date', 'aircraft_sorties', 'crossed_median_line_cnt',
+            'report_date', 'period_start', 'period_end',
+            'aircraft_sorties', 'crossed_median_line_cnt',
             'plan_vessels', 'official_ships',
             'adiz_north', 'adiz_central', 'adiz_southwestern', 'adiz_eastern',
-            'raw_text', 'source_lang', 'source_url', 'collected_at',
+            'raw_text', 'track_chart_url', 'activity_chart_url',
+            'source_lang', 'source_url', 'collected_at',
         ],
         'upsert_key': 'report_date',
         'upsert_strategy': 'update',

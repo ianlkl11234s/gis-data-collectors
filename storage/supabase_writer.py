@@ -1933,6 +1933,8 @@ class SupabaseWriter:
                 continue
             records.append({
                 'report_date':             r.get('report_date'),
+                'period_start':            r.get('period_start'),
+                'period_end':              r.get('period_end'),
                 'aircraft_sorties':        r.get('aircraft_sorties'),
                 'crossed_median_line_cnt': r.get('crossed_median_line_cnt'),
                 'plan_vessels':            r.get('plan_vessels'),
@@ -1942,6 +1944,8 @@ class SupabaseWriter:
                 'adiz_southwestern':       r.get('adiz_southwestern'),
                 'adiz_eastern':            r.get('adiz_eastern'),
                 'raw_text':                r.get('raw_text'),
+                'track_chart_url':         r.get('track_chart_url'),
+                'activity_chart_url':      r.get('activity_chart_url'),
                 'source_lang':             r.get('source_lang'),
                 'source_url':              r.get('source_url'),
                 'collected_at':            r.get('collected_at') or ts.isoformat(),
