@@ -1,73 +1,3 @@
-# CLAUDE.md
-
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
----
-
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
-
----
-
-> **與上方 Karpathy 4 條的優先級**：以下為本專案具體化規則。遇衝突時，下方規則 override 上方通則（特別是 §2 Simplicity 對「強制多步驟」、§3 Surgical 對「跨檔修改」的例外）。不確定算不算違反專案鐵則時，先問用戶。
-
 # Data Collectors - Claude 專案指引
 
 ## 專案概述
@@ -95,6 +25,8 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 ### 新增 Collector 的必要步驟（跨 repo）
 
+SSOT 為 `../taipei-gis-analytics/docs/DATA_LIFECYCLE.md` §5.2，本表為 data-collectors 側細化，兩邊同步維護。
+
 重構後（registry + config dataclass + TABLE_MAP 拆出），每次新增需改以下檔案：
 
 | 步驟 | Repo | 檔案 | 說明 |
@@ -109,6 +41,8 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 | 8 | data-collectors | `config/realtime_tables.yaml` | **新增所有 Supabase 表條目**（每張 history / current / multi-table 都要列）— 漏寫 RPC 撈不到 |
 | 9 | gis-platform | `docs/data-inventory.md` | 更新資料清冊（含 `部署位置` 欄：Zeabur / HiCloud VM / Disabled） |
 | 10 | taipei-gis-analytics | `docs/data-sources.md` | 更新 pipeline 狀態 |
+| 11 | gis-platform | `docs/data-safety-inventory.md` | 加進動態/靜態表清單＋S3 archive 起始日＋健康度 |
+| 12 | data-collectors | `config/backup_manifest.yaml` | 加進 `archive_py_covered` |
 
 > 步驟 7 + 8 是監控系統（daily_report）的真相來源，漏寫不會立刻爆炸但會默默漏報，加新 collector 時請務必同步。
 
@@ -130,19 +64,16 @@ Registry + toggle list 自動處理：
 
 ## 常見踩雷（新增 collector 前必讀）
 
-- **TDX 必用 `TDXSession`**，不要 `requests.Session`，否則 429（5 req/sec/金鑰）— ref: `reference_tdx_api_limits.md`
-- **`required_env` 必須在 `config.py` 用 `os.getenv` 宣告**，否則 `main.py` 會 silent skip（USWG 燒一小時的雷）— ref: `feedback_collector_required_env_silent_skip.md`
-- **Zeabur env 變更後必須 restart service** 才生效（程式啟動才讀 env）— ref: `reference_zeabur_env_needs_restart.md`
-- **部分 Zeabur project 出口 IP 被高雄/台南 SOA WAF 擋**（100% timeout 穩定發生）— 換 project 才解，retry 救不回 — ref: `feedback_zeabur_ip_blocked_by_gov.md`
 - **政府憑證缺 SKI** → requests 用 `verify=False`（NHI ER / 台電核安 / IoW USWG 都踩過）
 - **二進位資料走 base64 轉接 Supabase**（CWA imagery 模式）— 不要直接 bytea
-- **Supabase retention 與 S3 archive 是兩件獨立的事**：ArchiveTask 03:00 → S3 自動歸檔；Supabase 刪舊資料走 pg_cron `cleanup_*_daily`，要分別設定 — ref: `reference_zeabur_archive_pattern.md`
 - **`cleanup_expired_partitions()` 是硬編碼清單，不會自動掃新分區表**（migration 220 錯誤假設踩過）— 新分區表沒加進清單 = 永遠不清理，2026-07 因此 7 張表累到 DB 52GB 產生磁碟費。用 `select * from metadata.check_retention_coverage()` 查漏網
-- **realtime schema 2026-07-23 起「可用不可建」**（平台收權：owner=supabase_admin、postgres 無 CREATE，Dashboard SQL Editor 同）——既有表照常讀寫，但新表/新函式一律建 `public`；migration 撞 `42501 permission denied for schema realtime` 即此因 — ref: `2026-07-23-disk-io-cron-spiral.md`、ADR-0009
-- **高頻 pg_cron 聚合是 Disk IO 頭號殺手**：date-1 資料不會再變、一天重算一次就好；單次執行時間 > 間隔 1/3 必須降頻或增量化，否則表長大後自我重疊成死亡螺旋（2026-07/16-23 IO burst 預算連日燒穿事故主因）— ref: `2026-07-23-disk-io-cron-spiral.md`
-- **分區表監控/聚合查詢，時間條件必須寫在 WHERE 且落在分區鍵**：`COUNT(*) FILTER (WHERE time>…)` 不做 partition pruning 會全掃所有分區（舊 health_snapshot 單次 29 分鐘的根因）；`p IS NULL OR col = p` catch-all 條件讓索引失效（get_waste_stops 193k 全表掃的根因）— ref: gis-platform mig 303/304/306
-- **表已全量搬到 live schema（2026-07-24）**：realtime schema 只剩 Supabase 系統物件；新即時收集表一律建 live、RPC/view 建 public — ref: ADR-0010、gis-platform mig 312/313
-- **走 Supavisor transaction pool（6543）絕不可下 session 級 SET**（含 psycopg2 set_session）：會殘留在共享 backend 毒到其他 client（2026-07-24 collector 唯讀爆炸事故）；只讀查詢用 autocommit 或 SET LOCAL，長 session 走 5432
+- **schema 現況**：表已全量在 `live` schema（ADR-0010，2026-07-24），新表建 live、RPC 建 public；歷程見 ADR-0009/0010
+- **走 Supavisor transaction pool（6543）絕不可下 session 級 SET**（含 psycopg2 set_session）：會殘留在共享 backend 毒到其他 client（2026-07-24 collector 唯讀爆炸事故）；只讀查詢用 autocommit 或 SET LOCAL，長 session 走 5432 — 詳見 `pitfalls/2026-07-24-supavisor-session-set-poisoning.md`
+
+事故與踩雷詳情：
+- 本地 [.claude/pitfalls/](pitfalls/)——含 disk IO cron spiral（高頻聚合鐵則：單次執行時間 > 間隔 1/3 必降頻或增量化）、分區表 pruning、required_env silent skip
+- 架構級決策 `.gis-agent-system/decisions/`——ADR-0009 高頻聚合三鐵則、ADR-0010 live schema 遷移
+- TDX / Zeabur 類（TDXSession、env 改後要 restart、出口 IP 被政府 WAF 擋）→ 全域記憶與 [docs/TDX_RATE_LIMITING.md](../docs/TDX_RATE_LIMITING.md)
 
 ---
 
@@ -206,23 +137,22 @@ collect() → BaseCollector.run() → supabase_writer.write()
 
 ## 開發注意事項
 
-0. **新增 collector 屬 Karpathy §2/§3 的合法例外** — 10 步全跑、不要嫌多，跨檔修改是本工作型態的必要複雜度，不是 over-engineering
+0. **新增 collector 的多步驟 SOP 是刻意設計** — 12 步全跑、不要嫌多，跨檔修改是本工作型態的必要複雜度，不屬過度流程
 1. **新 collector 預設 ENABLED=false**，避免部署後立即啟動
-2. **排程**：無須特別標記，pool 內每個 collector 都獨立一條 thread；耗時 collector 記得設 `COLLECT_TIMEOUT`（只是觀察值，不強制中斷）
-3. **SupabaseWriter 是單例**，所有 collector 共用，內部有 `RLock` 保護
-4. **Buffer 機制**：DB 寫入失敗會暫存到 `data/buffer/`，每 5 分鐘重試
-5. **測試**：本地 `python3 main.py` 可執行，只要有 `.env`
-6. **AWS 變動同步**：動到 S3 storage class / lifecycle / prefix 增刪後，**務必更新 [docs/AWS_INVENTORY.md](../docs/AWS_INVENTORY.md)**（避免日後忘記哪些資料在哪個 tier、為何而存）
+2. **排程**：見上方「排程模型」；耗時 collector 記得設 `COLLECT_TIMEOUT`（只是觀察值，不強制中斷）
+3. **SupabaseWriter 是單例**（所有 collector 共用、`RLock` 保護），DB 寫入失敗會暫存 `data/buffer/` 每 5 分鐘重試
+4. **本地測試**：見 [.claude/principles.md](principles.md)
+5. **AWS 變動同步**：動到 S3 storage class / lifecycle / prefix 增刪後，**務必更新 [docs/AWS_INVENTORY.md](../docs/AWS_INVENTORY.md)**（避免日後忘記哪些資料在哪個 tier、為何而存）
 
 ---
 
 ## 上線前驗收四連
 
-對齊 Karpathy §4「Goal-Driven Execution」— 新 collector 上線前四件事都要綠：
+對齊目標導向驗證原則 — 新 collector 上線前四件事都要綠：
 
 1. **本地跑一輪**：`python3 main.py` 不報錯，看到 collector 被 schedule + collect 成功 log
 2. **DB 有新 row**：`select count(*) from {table} where collected_at > now() - interval '1h'` > 0
-3. **日報列入**：`daily_report` 排程列出該 collector（步驟 7 `cross_layer_map.yaml` 寫對才會生效）
+3. **日報列入**：`daily_report` 排程列出該 collector（步驟 7 `cross_layer_map.yaml` 寫對才會生效）（daily_report 機制見 [docs/MONITORING.md](../docs/MONITORING.md)）
 4. **Retention 有覆蓋**：`select * from metadata.check_retention_coverage()` 沒列出新表（分區表要進 `cleanup_expired_partitions()` 清單、非分區表要有 cleanup pg_cron）
 
 任何一條沒綠都算未上線。
