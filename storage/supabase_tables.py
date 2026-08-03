@@ -610,6 +610,19 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
         'current_touch_updated_at': True,
     },
+    'food_prices': {
+        # 農業部四類批發價（蔬果/漁產/毛豬/家禽）— gis-platform migration 334
+        # 單表 append-only；同一 (source, trade_date, category, item_name, market_name)
+        # 只保留首次寫入（上游 T+1 定版後不再變動，重抓視為重複）
+        'history': 'live.food_price_daily',
+        'columns': [
+            'trade_date', 'category', 'item_code', 'item_name', 'market_name',
+            'price_avg', 'price_high', 'price_mid', 'price_low',
+            'quantity', 'unit', 'source', 'collected_at',
+        ],
+        'upsert_key': 'source,trade_date,category,item_name,market_name',
+        'upsert_strategy': 'do_nothing',
+    },
     'pla_activity_daily': {
         # 共機每日通報 — gis-platform migration 205
         # 單表，PK = report_date，每日重抓同一日要 UPSERT（內容可能修正）

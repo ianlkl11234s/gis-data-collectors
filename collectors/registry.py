@@ -24,6 +24,7 @@ from .earthquake_shakemap_grid import EarthquakeShakemapGridCollector
 from .earthquake_moment_tensor import EarthquakeMomentTensorCollector
 from .er_hospital_realtime import ERHospitalRealtimeCollector
 from .twse_market_index import TwseMarketIndexCollector
+from .food_prices import FoodPricesCollector
 from .pla_activity_daily import PlaActivityDailyCollector
 from .cdc_public_health_weekly import CdcPublicHealthWeeklyCollector
 from .yt_live_video_resolver import YtLiveVideoResolverCollector
@@ -151,6 +152,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(WicPumbCollector, "北市抽水站運轉收集器", "WIC_PUMB"),
     CollectorEntry(NewsEventsCollector, "News Events 新聞事件收集器", "NEWS_EVENTS", ("GEMINI_API_KEY",)),
     CollectorEntry(TwseMarketIndexCollector, "TWSE 加權指數即時收集器", "TWSE_MARKET_INDEX"),
+    CollectorEntry(FoodPricesCollector, "食品價格（菜/魚/肉/蛋批發價）收集器", "FOOD_PRICES"),
     CollectorEntry(PlaActivityDailyCollector, "中共解放軍臺海周邊動態每日收集器", "PLA_ACTIVITY_DAILY"),
     CollectorEntry(CdcPublicHealthWeeklyCollector, "CDC 公衛週報收集器", "CDC_PUBLIC_HEALTH_WEEKLY"),
     CollectorEntry(YtLiveVideoResolverCollector, "YouTube 新聞直播 videoId 解析器", "YT_LIVE_VIDEO_RESOLVER",
