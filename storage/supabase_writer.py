@@ -15,7 +15,7 @@ import json
 import logging
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -1895,6 +1895,40 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_food_prices(self, result: dict, ts: datetime) -> list[dict]:
+        """食品價格：collector 已產出與 TABLE_MAP 同名 dict。
+        trade_date 為 date 物件、collected_at 為 datetime → 序列化為 ISO 字串。
+        price_avg 缺值或 <=0 的列不寫（「休市」在 collector 端已轉 None）。"""
+        def _iso(v):
+            if v is None:
+                return None
+            return v.isoformat() if isinstance(v, (datetime, date)) else v
+
+        records = []
+        for r in result.get('data', []):
+            trade_date = _iso(r.get('trade_date'))
+            price = r.get('price_avg')
+            if not trade_date or price is None or price <= 0:
+                continue
+            if not r.get('item_name') or not r.get('market_name'):
+                continue
+            records.append({
+                'trade_date':  trade_date,
+                'category':    r.get('category'),
+                'item_code':   r.get('item_code'),
+                'item_name':   r.get('item_name'),
+                'market_name': r.get('market_name'),
+                'price_avg':   price,
+                'price_high':  r.get('price_high'),
+                'price_mid':   r.get('price_mid'),
+                'price_low':   r.get('price_low'),
+                'quantity':    r.get('quantity'),
+                'unit':        r.get('unit'),
+                'source':      r.get('source'),
+                'collected_at': _iso(r.get('collected_at')) or ts.isoformat(),
+            })
+        return records
+
     def _transform_twse_market_index(self, result: dict, ts: datetime) -> list[dict]:
         """TWSE 加權指數：collector 已產出與 TABLE_MAP 同名 dict，observed_at/collected_at 為 datetime
         物件 → 序列化。"""
@@ -1998,6 +2032,7 @@ class SupabaseWriter:
         return records
 
     TRANSFORMERS = {
+        'food_prices': _transform_food_prices,
         'groundwater_level': _transform_groundwater_level,
         'water_reservoir_daily_ops': _transform_water_reservoir_daily_ops,
         'youbike': _transform_youbike,

@@ -288,6 +288,7 @@ _COLLECTOR_TOGGLES = (
     ('IMMIGRATION_APIS_AIRPORT',     False, 60),   # 移民署機場入出境 6 端點 demographic snapshot（無時間戳，每細格 paxCnt，無金鑰）
     ('NPA_TRAFFIC_ACCIDENT_A1',      False, 720),  # 警政署即時 A1 交通事故（24h 死亡，累積年度，每日 1-2 次抓 dedup by hash）
     ('TPML_SEAT',                    False, 10),   # 北市圖座位即時 (seat.tpml.edu.tw，6 分館 29 區，無金鑰；來源無 timestamp → observed_at=收集時刻；閉館全 0 → is_closed)
+    ('FOOD_PRICES',                  False, 1440), # 農業部四類批發價（蔬果/漁產/毛豬/家禽，無金鑰）；T+1 更新故每日 1 次即可，約 52 次請求/日、~2,000 row/日
     # === 全球氣候（plan-misty-fog 2026-06-28）===
     ('GLOBAL_CLIMATE_USGS_EARTHQUAKE', False, 60),  # USGS hourly feed M≥任意（無認證、GeoJSON），全球地震寫 live.earthquakes_global；台灣周邊 1y M≥4.0 約 172 筆
     ('GLOBAL_CLIMATE_JMA_TYPHOON',     False, 180), # JMA RSMC Tokyo 颱風（無認證、JSON）；targetTc.json 空就 idle；展開為 typhoon_positions row source='jma'
@@ -305,6 +306,11 @@ for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
 # ------------------------------------------------------------
 # 各 collector 的「額外設定」（city list、API 金鑰、參數）
 # ------------------------------------------------------------
+
+# 食品價格（農業部四類批發價）
+# 每次抓最近 N 天而非只抓昨天——上游偶有補登；DB 端 UNIQUE DO NOTHING 吸收重複。
+# 加大此值會等比放大請求數（蔬果走市場 × 類別迴圈），7 天約 52 次請求。
+FOOD_PRICES_LOOKBACK_DAYS = int(os.getenv('FOOD_PRICES_LOOKBACK_DAYS', '7'))
 
 # YouBike — 2026-06 實測 12 縣市有 YouBike/Moovo 站點（共 ~9,100 站）
 # 其他 10 縣市（Keelung/Changhua/Yunlin/Pingtung/NantouCounty/YilanCounty/HualienCounty/PenghuCounty/KinmenCounty/LienchiangCounty）TDX 回 0 站
