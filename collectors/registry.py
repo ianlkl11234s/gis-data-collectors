@@ -26,6 +26,7 @@ from .er_hospital_realtime import ERHospitalRealtimeCollector
 from .twse_market_index import TwseMarketIndexCollector
 from .food_prices import FoodPricesCollector
 from .pla_activity_daily import PlaActivityDailyCollector
+from .pla_tracks_vectorize import PlaTracksVectorizeCollector
 from .cdc_public_health_weekly import CdcPublicHealthWeeklyCollector
 from .yt_live_video_resolver import YtLiveVideoResolverCollector
 from .flight_fr24 import FlightFR24Collector
@@ -154,6 +155,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(TwseMarketIndexCollector, "TWSE 加權指數即時收集器", "TWSE_MARKET_INDEX"),
     CollectorEntry(FoodPricesCollector, "食品價格（菜/魚/肉/蛋批發價）收集器", "FOOD_PRICES"),
     CollectorEntry(PlaActivityDailyCollector, "中共解放軍臺海周邊動態每日收集器", "PLA_ACTIVITY_DAILY"),
+    CollectorEntry(PlaTracksVectorizeCollector, "共機航跡示意圖向量化收集器", "PLA_TRACKS_VECTORIZE"),
     CollectorEntry(CdcPublicHealthWeeklyCollector, "CDC 公衛週報收集器", "CDC_PUBLIC_HEALTH_WEEKLY"),
     CollectorEntry(YtLiveVideoResolverCollector, "YouTube 新聞直播 videoId 解析器", "YT_LIVE_VIDEO_RESOLVER",
                    ("YOUTUBE_API_KEY",)),

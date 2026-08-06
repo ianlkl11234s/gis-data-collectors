@@ -1986,6 +1986,14 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_pla_tracks_vectorize(self, result: dict, ts: datetime) -> list[dict]:
+        """航跡向量化：collector 已產出 DB-ready records（帶 _type 分派標記），直接透傳。
+
+        不在此補 collected_at —— 三張表都以 report_date 為時間軸，
+        ledger 的 run_at 由 DB default / ON CONFLICT 時的 now() 給。
+        """
+        return result.get('data', [])
+
     def _transform_cdc_public_health_weekly(self, result: dict, ts: datetime) -> list[dict]:
         """CDC 公衛週報：collector 已產出與 TABLE_MAP 同名 dict。
         UNIQUE 含 township_code/gender/age_group/is_imported；rods 類別這些欄位用空字串/NULL 佔位。"""
@@ -2076,6 +2084,7 @@ class SupabaseWriter:
         'npa_traffic_accident_a1': _transform_npa_traffic_accident_a1,
         'twse_market_index': _transform_twse_market_index,
         'pla_activity_daily': _transform_pla_activity_daily,
+        'pla_tracks_vectorize': _transform_pla_tracks_vectorize,
         'cdc_public_health_weekly': _transform_cdc_public_health_weekly,
         'iot_wra': _transform_iot_wra,
         'uswg': _transform_uswg,
@@ -2502,6 +2511,74 @@ class SupabaseWriter:
             logger.info(
                 f"[power_taipower] ✓ system {len(system)} + units {len(units)} "
                 f"+ regions {len(regions)} 筆寫入"
+            )
+
+        elif collector_name == 'pla_tracks_vectorize':
+            # 共機航跡向量化：形狀 + 表格項次 + ledger 三張表
+            tracks = [r for r in records if r.get('_type') == 'track']
+            items = [r for r in records if r.get('_type') == 'item']
+            runs = [r for r in records if r.get('_type') == 'run']
+            days = sorted({r['report_date'] for r in runs})
+
+            with self._txn(conn) as cur:
+                # 1) 活動區多邊形 — 先清該日再寫。
+                #    UPSERT 不夠：重跑若抽出較少形狀，舊的多餘 shape_no 會殘留成幽靈多邊形。
+                if days:
+                    cur.execute("DELETE FROM spatial.pla_tracks WHERE report_date = ANY(%s::date[])",
+                                (days,))
+                if tracks:
+                    cols = [
+                        'report_date', 'shape_no', 'geom', 'shape_kind', 'vertices',
+                        'table_items', 'balloon_items', 'needs_review', 'guided',
+                        'edge_precision', 'red_recall',
+                    ]
+                    values = [tuple(r.get(c) for c in cols) for r in tracks]
+                    execute_values(
+                        cur,
+                        f"INSERT INTO spatial.pla_tracks ({','.join(cols)}) VALUES %s",
+                        values, page_size=500,
+                    )
+                    # chart_url 是 daily 表的欄位，不在 GeoJSON 重複存 → 寫完回填
+                    cur.execute(
+                        "UPDATE spatial.pla_tracks t SET chart_url = d.track_chart_url "
+                        "FROM live.pla_activity_daily d "
+                        "WHERE d.report_date = t.report_date AND t.report_date = ANY(%s::date[])",
+                        (days,),
+                    )
+
+                # 2) 表格項次（機型／架次／時段）— PK (report_date, item_no)
+                if items:
+                    cols = ['report_date', 'item_no', 'sorties', 'kinds',
+                            'is_balloon', 'balloon_count', 'time_window', 'ocr_text']
+                    values = [tuple(r.get(c) for c in cols) for r in items]
+                    update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in cols[2:])
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.pla_activity_items ({','.join(cols)}) VALUES %s "
+                        f"ON CONFLICT (report_date, item_no) DO UPDATE SET {update_set}",
+                        values, page_size=500,
+                    )
+
+                # 3) ledger — 每個處理過的日子一列，是本 collector 真正的心跳
+                #    （0 形狀是合法結果，光看 pla_tracks 分不出「沒共機」與「沒跑」）
+                if runs:
+                    cols = [
+                        'report_date', 'plate_ok', 'plate_size', 'georef_dev',
+                        'expected', 'extracted', 'balloon_items', 'guided', 'ok',
+                        'edge_precision', 'red_recall', 'chart_s3_key', 'error',
+                    ]
+                    values = [tuple(r.get(c) for c in cols) for r in runs]
+                    update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in cols[1:])
+                    execute_values(
+                        cur,
+                        f"INSERT INTO spatial.pla_tracks_runs ({','.join(cols)}) VALUES %s "
+                        f"ON CONFLICT (report_date) DO UPDATE SET {update_set}, run_at = now()",
+                        values, page_size=100,
+                    )
+
+            logger.info(
+                f"[pla_tracks_vectorize] ✓ {len(days)} 天 / 形狀 {len(tracks)} "
+                f"+ 項次 {len(items)} 筆寫入"
             )
 
     def _write_satellite_tle(self, conn, result: dict, timestamp: datetime):
