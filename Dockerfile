@@ -8,9 +8,14 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # 設定工作目錄
 WORKDIR /app
 
-# eccodes 系統庫：cfgrib 讀 GRIB2（global_climate NOAA GFS）必需
+# 系統庫：
+#   libeccodes*    cfgrib 讀 GRIB2（global_climate NOAA GFS）必需
+#   tesseract-ocr  共機航跡圖左上表格判項次（pla_tracks_vectorize）；只需 eng，
+#                  表格是中英雙語但中文行本來就只當雜訊，不裝 chi_tra
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libeccodes0 libeccodes-data \
+    && apt-get install -y --no-install-recommends \
+        libeccodes0 libeccodes-data \
+        tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # 先複製依賴檔案（利用 Docker cache）

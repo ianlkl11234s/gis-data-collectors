@@ -38,6 +38,12 @@ cdsapi>=0.7.2            # CAMS ADS API client
 copernicusmarine>=2.0.0  # CMEMS subset CLI（cmems.py 以 subprocess 呼叫）
 Pillow>=10.0.0          # climate_bake 烤 RGBA PNG texture
 
+# 共機航跡示意圖向量化（collectors/pla_tracks/）
+# numpy / shapely / Pillow 已於上方宣告；此處補影像處理專用的兩個
+scipy>=1.11.0            # ndimage：形態學、連通元件、標記移除
+scikit-image>=0.22.0     # probabilistic_hough_line（矩形走廊偵測）、measure、morphology
+# ⚠ 另需系統 tesseract（讀圖左上表格的英文行判項次類型）→ 見 Dockerfile
+
 # 未來擴充
 # pandas>=2.0.0
 # aiohttp>=3.8.0

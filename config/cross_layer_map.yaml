@@ -637,6 +637,20 @@ pla_activity_daily:
   critical: false  # TODO(sync): 人工確認 criticality
   notes: production 實測 2026-07-02 15:34 UTC；資料為每日通報 → interval 用 1440（collector 輪詢 30min）
 
+pla_tracks_vectorize:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
+  supabase_tables: [spatial.pla_tracks, live.pla_activity_items, spatial.pla_tracks_runs]
+  s3_prefixes:
+    - {prefix: pla/track_charts/, expected_daily: true}
+  critical: false
+  notes: >-
+    共機航跡示意圖 CV 向量化（非 API collector）。上游 pla_activity_daily 只寫
+    track_chart_url，本 collector 負責下載原圖上 S3 + 抽多邊形 + 表格 OCR。
+    2026-08-06 從 taipei-gis-analytics 的手動批次腳本轉為每日自動化 —— 手動時代
+    曾斷 5 天無告警。監控看 spatial.pla_tracks_runs（ledger），不看 pla_tracks。
+
 precipitation_raster:
   enabled: true
   deployment: zeabur

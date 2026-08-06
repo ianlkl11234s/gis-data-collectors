@@ -638,6 +638,14 @@ TABLE_MAP = {
         'upsert_key': 'report_date',
         'upsert_strategy': 'update',
     },
+    'pla_tracks_vectorize': {
+        # 共機航跡圖向量化：單一 collector 寫 3 張表
+        #   spatial.pla_tracks       活動區多邊形 — 先 DELETE 該日再 INSERT（避免幽靈形狀）
+        #   live.pla_activity_items  表格 OCR 項次 — PK(report_date, item_no) UPSERT
+        #   spatial.pla_tracks_runs  ledger — PK(report_date) UPSERT，本 collector 的心跳
+        # 表 schema 見 gis-platform/migrations/330（tracks）／333（items）／337（runs）
+        'is_multi_table': True,
+    },
     'yt_live_video_resolver': {
         # YouTube 14 家新聞台直播 videoId 解析 — gis-platform migration 209
         # history: live.yt_live_history UNIQUE(handle, video_id, observed_at) DO NOTHING
