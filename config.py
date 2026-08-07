@@ -274,6 +274,7 @@ _COLLECTOR_TOGGLES = (
     ('ER_HOSPITAL_REALTIME',         False, 15),   # 健保署重度級急診即時量能（來源每 15 分更新，無金鑰，無歷史）
     ('POWER_TAIPOWER',               False, 10),   # 台電即時電力供需（系統供需+各機組+區域用電，來源每 10 分更新，無金鑰）
     ('LIGHTNING_EVENTS',             False, 1),    # 台電落雷即時 (nid 61139，上游 1min snapshot 整檔覆寫→必 1min cron 才不漏；event_id+dedup_hash 去重；S3 archive 3 天/Supabase raw 7 天 + analytics.lightning_daily_summary 永久)
+    ('LIGHTNING_CWA',                False, 5),    # 氣象署落雷 O-A0039-001（KMZ，滾動 1hr 視窗每 5 分更新）；寫同表 source='cwa'。台電自 2026-07-10 起端點活著但永遠空檔 → 本源為替代兼交叉驗證
     ('NUCLEAR_RADIATION',            False, 15),   # 核設施環境輻射劑量 (nid 42326，51 站，UTF-8 BOM，>30min stale；S3 archive 14 天/Supabase measurements 30 天 + analytics.nuclear_radiation_daily 永久)
     ('WIC_SEWER',                    False, 10),   # 北市雨水下水道水位 (233 站，wic.gov.taipei，無金鑰)
     ('WIC_EVACUATE',                 False, 10),   # 北市疏散門狀態 (35 站，wic.gov.taipei，無金鑰)

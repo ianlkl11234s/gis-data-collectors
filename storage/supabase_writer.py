@@ -1854,7 +1854,12 @@ class SupabaseWriter:
         return records
 
     def _transform_lightning_events(self, result: dict, ts: datetime) -> list[dict]:
-        """落雷事件：collector 已產出 JSON-safe dict；補 geom WKT。"""
+        """落雷事件：collector 已產出 JSON-safe dict；補 geom WKT。
+
+        台電 / 氣象署兩源共用（migration 338 起 live.lightning_events 有 source 欄位，
+        UNIQUE 也改成 (source, event_id) / (source, dedup_hash) —— 兩源各自去重）。
+        source 由 collector 在 record 裡帶，沒帶就當台電（本欄位加入前的舊行為）。
+        """
         records: list[dict] = []
         for r in result.get('data', []):
             lon = r.get('lon')
@@ -1869,6 +1874,7 @@ class SupabaseWriter:
                 'intensity_ka': r.get('intensity_ka'),
                 'strike_type':  r.get('strike_type'),
                 'dedup_hash':   r.get('dedup_hash'),
+                'source':       r.get('source', 'taipower'),
                 'geom':         f'SRID=4326;POINT({lon} {lat})',
                 'observed_at':  r.get('observed_at'),
                 'collected_at': r.get('collected_at') or ts.isoformat(),
@@ -2094,6 +2100,7 @@ class SupabaseWriter:
         'wra_drought_alert': _transform_wra_drought_alert,
         'power_taipower': _transform_power_taipower,
         'lightning_events': _transform_lightning_events,
+        'lightning_cwa': _transform_lightning_events,  # 同一張表，source 由 collector 帶
         'global_climate_usgs_earthquake': _transform_global_climate_usgs_earthquake,
         'global_climate_jma_typhoon': _transform_global_climate_typhoon_positions,
         'global_climate_jtwc': _transform_global_climate_typhoon_positions,
