@@ -142,6 +142,8 @@ class LightningEventsCollector(BaseCollector):
                 "intensity_ka": intensity,
                 "strike_type":  stype,
                 "dedup_hash":   _make_dedup_hash(strike_iso, lon, lat, stype),
+                # 雙源標記（migration 338）—— 另一源見 collectors/lightning_cwa.py
+                "source":       "taipower",
                 # geom 由 writer 端用 ST_SetSRID(ST_MakePoint(lon,lat),4326) 組
                 "observed_at":  strike_iso,  # = strike_time，作為時序欄位
                 "collected_at": collected_iso,

@@ -44,6 +44,7 @@ from .parking_offstreet import ParkingOffStreetCollector
 from .parking_ref import ParkingRefCollector
 from .power_taipower import PowerTaipowerCollector
 from .lightning_events import LightningEventsCollector
+from .lightning_cwa import LightningCwaCollector
 from .nuclear_radiation import NuclearRadiationCollector
 from .rail_timetable import RailTimetableCollector
 from .rain_gauge_realtime import RainGaugeRealtimeCollector
@@ -147,6 +148,8 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(ERHospitalRealtimeCollector, "急診即時量能收集器", "ER_HOSPITAL_REALTIME"),
     CollectorEntry(PowerTaipowerCollector, "台電即時電力供需收集器", "POWER_TAIPOWER"),
     CollectorEntry(LightningEventsCollector, "台電落雷即時收集器", "LIGHTNING_EVENTS"),
+    CollectorEntry(LightningCwaCollector, "氣象署落雷即時收集器", "LIGHTNING_CWA",
+                   ("CWA_API_KEY",)),
     CollectorEntry(NuclearRadiationCollector, "核設施環境輻射劑量收集器", "NUCLEAR_RADIATION"),
     CollectorEntry(WicSewerCollector, "北市雨水下水道水位收集器", "WIC_SEWER"),
     CollectorEntry(WicEvacuateCollector, "北市疏散門狀態收集器", "WIC_EVACUATE"),

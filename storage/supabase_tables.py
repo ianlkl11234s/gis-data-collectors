@@ -557,14 +557,28 @@ TABLE_MAP = {
     'lightning_events': {
         # 台電落雷 nid 61139（snapshot 1 分鐘覆寫，collector 5 分 cron 去重累積）
         # 表 schema 見 gis-platform/migrations/183_realtime_lightning_events.sql
-        # UNIQUE(event_id) + UNIQUE(dedup_hash) 雙保險，ON CONFLICT DO NOTHING
+        #             + 338_lightning_dual_source.sql（加 source，UNIQUE 改含 source）
+        # UNIQUE(source, event_id) + UNIQUE(source, dedup_hash) 雙保險，ON CONFLICT DO NOTHING
         'history': 'live.lightning_events',
         'columns': [
             'event_id', 'strike_time', 'lon', 'lat',
-            'intensity_ka', 'strike_type', 'dedup_hash',
+            'intensity_ka', 'strike_type', 'dedup_hash', 'source',
             'geom', 'observed_at', 'collected_at',
         ],
-        'upsert_key': 'event_id',
+        'upsert_key': 'source,event_id',
+        'upsert_strategy': 'do_nothing',
+    },
+    'lightning_cwa': {
+        # 氣象署落雷 O-A0039-001（滾動 1 小時視窗，每 5 分更新）— 寫**同一張表**，
+        # 靠 source='cwa' 區分。台電自 2026-07-10 起端點活著但永遠回空檔，
+        # 這一源同時是替代與交叉驗證（單邊靜默斷供會立刻現形）。
+        'history': 'live.lightning_events',
+        'columns': [
+            'event_id', 'strike_time', 'lon', 'lat',
+            'intensity_ka', 'strike_type', 'dedup_hash', 'source',
+            'geom', 'observed_at', 'collected_at',
+        ],
+        'upsert_key': 'source,event_id',
         'upsert_strategy': 'do_nothing',
     },
     'nuclear_radiation': {
