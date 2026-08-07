@@ -750,3 +750,29 @@ tpml_seat:
     - {prefix: tpml_seat/archives/, expected_daily: false}
   critical: false
   notes: 北市圖 6 分館 29 區座位（seat.tpml.edu.tw，無金鑰）；閉館全 0 → is_closed=true
+
+food_prices:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 1440
+  supabase_tables: [live.food_price_daily]
+  s3_prefixes:
+    - {prefix: food_prices/archives/, expected_daily: false}
+  critical: false
+  notes: >-
+    農業部四類批發價（蔬果/漁產/毛豬/家禽）。2026-08-03 併入時漏加本檔，CI 自那時起
+    一直紅著 —— 補回時依 production 實況標 enabled/zeabur（實測 2026-08-07 11:43 有寫入）。
+
+lightning_cwa:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 5
+  supabase_tables: [live.lightning_events]
+  s3_prefixes:
+    - {prefix: lightning_cwa/archives/, expected_daily: false}
+  critical: false
+  notes: >-
+    氣象署落雷 O-A0039-001（KMZ，滾動 1hr 視窗每 5 分更新），與 lightning_events
+    寫同一張表、靠 source='cwa' 區分。台電源自 2026-07-10 起端點活著但永遠回空檔，
+    本源為替代兼交叉驗證。production 實測 2026-08-07 12:52 有寫入。
+    ⚠️ 事件驅動：無雷雨時 0 筆屬正常，兩源的新鮮度要一起看而非各自判死。

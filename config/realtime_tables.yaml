@@ -112,6 +112,7 @@ tables:
   - {schema: live, table: taipei_evacuate_status,     time_column: observed_at,  owner_collector: wic_evacuate, expected_interval_min: 10, critical: false}
   - {schema: live, table: taipei_pumb_status,         time_column: observed_at,  owner_collector: wic_pumb, expected_interval_min: 10, critical: false}
   - {schema: live, table: pla_activity_daily,         time_column: collected_at, owner_collector: pla_activity_daily, expected_interval_min: 1440, critical: false, notes: 每日通報 1 row/day}
+  - {schema: live, table: food_price_daily,           time_column: collected_at, owner_collector: food_prices, expected_interval_min: 1440, critical: false, notes: 農業部四類批發價；T+1 更新故每日 1 次}
   # ⚠ 監控的是 ledger 不是 spatial.pla_tracks —— 「共機 0 架次」是合法的 0 形狀，
   #   pla_tracks 該日沒有任何 row，拿它當心跳會把「沒共機」誤判成「沒跑」。
   #   ledger 每個處理過的日子必有一列。2026-08-06 之前無此監控，向量化斷 5 天沒人知道。

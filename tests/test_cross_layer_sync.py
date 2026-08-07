@@ -103,6 +103,13 @@ _REALTIME_TABLES_EXEMPT = {
         "nuclear_radiation_stations 代監控",
     "live.flight_trails":                  # partitioned parent 恆空，NEVER 是預期，已刻意移除
         "partitioned parent 恆空，刻意移除",
+    # 共機航跡向量化：「共機 0 架次」是合法的 0 形狀，那天這兩張表沒有任何 row —— 拿它們
+    # 當心跳會把「沒共機」誤判成「沒跑」。ledger spatial.pla_tracks_runs 每個處理過的日子
+    # 必有一列，已列入 realtime_tables.yaml 代監控。
+    "spatial.pla_tracks":
+        "pla_tracks_runs（ledger）代監控；0 形狀是合法結果",
+    "live.pla_activity_items":
+        "pla_tracks_runs（ledger）代監控；0 項次是合法結果",
 }
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
