@@ -25,6 +25,9 @@ shapely>=2.0.0
 # YAML 設定檔（監控系統 config/ 資料夾用）
 PyYAML>=6.0
 
+# 每日軌跡凍結匯出（scripts/export_daily_trails.py 寫未壓縮 Arrow IPC）
+pyarrow>=14
+
 # 新聞事件 collector（news_events：RSS parse + Gemini 地點抽取）
 feedparser>=6.0.0
 google-genai>=1.0.0

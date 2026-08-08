@@ -31,7 +31,7 @@ def _as_task(name: str, fn, timeout: int = 300):
     return SimpleNamespace(name=name, run=fn, COLLECT_TIMEOUT=timeout)
 from collectors.registry import COLLECTOR_REGISTRY
 from tasks import ArchiveTask, BackupSupabaseTask, DailyReportTask, MiniTaipeiPublishTask
-from utils.notify import notify_archive_complete
+from utils.notify import notify_archive_complete, notify_trails_export
 
 
 def _init_collector_from_entry(entry, first: bool) -> "BaseCollector | None":
@@ -82,8 +82,8 @@ def run_collectors():
     # Skip-if-running 保護避免同 collector 疊加
     # ============================================================
     # max_workers 預設為 collector 數量 + 緩衝（避免所有 collector 都撞同一 tick 時排隊）
-    # +5 留給 5 個 task（archive/backup/daily_report/mini_taipei/sb_flush）共用 pool
-    max_workers = max(10, len(collectors) + 7)
+    # +6 留給 6 個 task（archive/backup/daily_report/mini_taipei/sb_flush/trails_export）共用 pool
+    max_workers = max(10, len(collectors) + 8)
     sched = get_scheduler(max_workers=max_workers)
 
     print("\n" + "=" * 60)
@@ -265,6 +265,56 @@ def run_backup_task():
         return None
 
 
+def run_trails_export_task():
+    """設定每日軌跡凍結匯出排程（AR-14）
+
+    Supabase 的 live.*_trails_daily 是滾動視窗（bus 3 天 / ship 7 天 / flight 7~9 天），
+    每天把「昨天」凍結成 S3 靜態檔才留得住歷史。時間預設 02:00 為容器本地時間
+    （Dockerfile 已設 TZ=Asia/Taipei）—— summary 表 refreshed_at 顯示每日資料
+    01:00~01:20 才定版，早於此會匯出到半成品。
+    """
+    if not config.TRAILS_EXPORT_ENABLED:
+        print("\n⏸️  軌跡凍結匯出已停用 (TRAILS_EXPORT_ENABLED=false)")
+        return None
+
+    if not config.S3_BUCKET:
+        print("\n⚠️  S3_BUCKET 未設定，軌跡凍結匯出停用")
+        return None
+
+    if not config.SUPABASE_DB_URL:
+        print("\n⚠️  SUPABASE_DB_URL 未設定，軌跡凍結匯出停用")
+        return None
+
+    try:
+        from scripts.export_daily_trails import export_range
+
+        def export_with_notify():
+            try:
+                # 不帶 end_date → 在「執行當下」才解析昨天。排程是啟動時註冊的，
+                # 這裡若把日期算死，之後每晚都會重匯同一天。
+                stats = export_range()
+            except Exception as e:
+                # 整個任務中止（DB 連不上／設定缺漏）也要走同一條 Telegram 告警路徑；
+                # 靜默失敗到隔天才發現的話，bus 只有 3 天保留期，來不及補。
+                notify_trails_export({
+                    'ok': 0, 'failed': 1, 'rows': 0, 'bytes': 0,
+                    'dates': [], 'failures': [f'任務中止: {e}'],
+                })
+                raise
+            notify_trails_export(stats)
+            return stats
+
+        # 全 4 個 dataset 單日約 100MB / 3 分鐘（本機實測），timeout 抓 1200s 留餘裕
+        sched = get_scheduler()
+        schedule.every().day.at(config.TRAILS_EXPORT_TIME).do(
+            sched.submit, _as_task("trails_export", export_with_notify, timeout=1200))
+        print(f"\n✓ 軌跡凍結匯出已設定 (每日 {config.TRAILS_EXPORT_TIME} Asia/Taipei)")
+        return True
+    except Exception as e:
+        print(f"\n✗ 軌跡凍結匯出初始化失敗: {e}")
+        return None
+
+
 def _setup_logging():
     """初始化 logging（讓 scheduler 與其他模組的 logger 輸出）"""
     level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
@@ -308,6 +358,9 @@ def main():
 
     # 設定 Supabase → S3 備份任務
     run_backup_task()
+
+    # 設定每日軌跡凍結匯出任務
+    run_trails_export_task()
 
     # Supabase buffer flush 排程
     if config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:

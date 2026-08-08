@@ -102,6 +102,16 @@ BACKUP_STATIC_STORAGE_CLASS = os.getenv('BACKUP_STATIC_STORAGE_CLASS', 'GLACIER_
 BACKUP_REALTIME_STORAGE_CLASS = os.getenv('BACKUP_REALTIME_STORAGE_CLASS', 'STANDARD')
 BACKUP_STATEMENT_TIMEOUT_MS = int(os.getenv('BACKUP_STATEMENT_TIMEOUT_MS', '300000'))
 
+# === 每日軌跡凍結匯出 (scripts/export_daily_trails.py) ===
+# Supabase 的 live.*_trails_daily 是滾動視窗（bus / bus_intercity 3 天、ship 7 天、
+# flight 7~9 天），不每天凍結成 S3 靜態檔就永久遺失。
+# ⚠️ 預設 false 且只能在「單一實例」開：這個 job 打共用 DB、寫共用 manifest
+#    （get → merge → put 非原子），兩個實例同時跑會互相覆蓋掉對方寫的 dates。
+TRAILS_EXPORT_ENABLED = os.getenv('TRAILS_EXPORT_ENABLED', 'false').lower() in ('true', '1', 'yes')
+# 02:00 為容器本地時間，Dockerfile 已設 TZ=Asia/Taipei。
+# 依據：summary 表 refreshed_at 顯示每日資料 01:00~01:20 才定版，早於此會匯到半成品。
+TRAILS_EXPORT_TIME = os.getenv('TRAILS_EXPORT_TIME', '02:00')
+
 # 歸檔設定
 ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').lower() in ('true', '1', 'yes')
 ARCHIVE_RETENTION_DAYS = int(os.getenv('ARCHIVE_RETENTION_DAYS', '7'))  # 本地保留天數（預設全域）

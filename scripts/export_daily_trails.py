@@ -37,8 +37,11 @@
     s3://<S3_BUCKET>/trails/<dataset>/<YYYY-MM-DD>.<arrow|json.gz>
     s3://<S3_BUCKET>/trails/<dataset>/manifest.json   （merge 既有 dates）
 
+排程：main.py 的 run_trails_export_task() 每日 TRAILS_EXPORT_TIME（預設 02:00
+Asia/Taipei）呼叫 export_range()，失敗走 notify_trails_export → Telegram。
+
 需環境變數：SUPABASE_DB_URL、S3_BUCKET / S3_ACCESS_KEY / S3_SECRET_KEY / S3_REGION
-需套件：pyarrow（尚未在 requirements.txt，部署前請 owner 加）、boto3、psycopg2
+需套件：pyarrow、boto3、psycopg2（皆已列於 requirements.txt）
 
 Exit code：
     0 = 全部 dataset × 日期都成功
@@ -360,6 +363,101 @@ def export_one(conn, s3, bucket: str, ds: Dataset, day: date,
     }
 
 
+def export_range(datasets: Sequence[str] | None = None,
+                 end_date: date | None = None,
+                 backfill: int = 1,
+                 dry_run: bool = False,
+                 out_dir: str = DEFAULT_OUT_DIR,
+                 batch_size: int = DEFAULT_BATCH_SIZE) -> dict:
+    """匯出 datasets × 最近 backfill 天，回傳統計 dict（CLI 與排程共用的入口）。
+
+    ⚠️ `end_date=None` 代表「執行當下的昨天」，而且**一定要在這裡才解析**：
+       排程是在啟動時註冊、每晚才執行的，若在註冊時就把日期算死，之後每一晚
+       都會重複匯出同一天。
+
+    參數錯誤／環境變數缺漏 → raise ValueError（CLI 對應 exit 2）。
+    個別 (dataset, day) 失敗不中斷，跑完在回傳值的 failures 列出（CLI 對應 exit 1）。
+
+    Returns:
+        {'datasets', 'dates', 'ok', 'failed', 'failures', 'rows', 'bytes', 'dry_run'}
+    """
+    today_tpe = datetime.now(TAIPEI).date()
+    if end_date is None:
+        end_date = today_tpe - timedelta(days=1)
+
+    # 凍結「還在寫入中的今天」會產生半天的殘檔，而且 rows>0 防呆抓不到 → 直接擋。
+    if end_date >= today_tpe:
+        raise ValueError(
+            f"拒絕匯出 {end_date}：今天（Asia/Taipei {today_tpe}）資料仍在寫入，"
+            f"凍結會得到不完整的一天。請等到隔天再跑。"
+        )
+    if backfill < 1:
+        raise ValueError('backfill 需 >= 1')
+
+    names = list(datasets) if datasets else list(DATASETS)
+    unknown = [n for n in names if n not in DATASETS]
+    if unknown:
+        raise ValueError(f"未知 dataset：{unknown}；可用：{list(DATASETS)}")
+
+    if not config.SUPABASE_DB_URL:
+        raise ValueError('SUPABASE_DB_URL 未設定')
+
+    bucket = config.S3_BUCKET
+    s3 = None
+    if not dry_run:
+        if not bucket:
+            raise ValueError('S3_BUCKET 未設定（或用 dry_run 只產本地檔）')
+        s3 = get_s3_client()
+
+    days = sorted(end_date - timedelta(days=i) for i in range(backfill))
+
+    logger.info(
+        f"匯出 datasets={names} dates={[d.isoformat() for d in days]} "
+        f"{'[dry-run]' if dry_run else f'→ s3://{bucket}/{S3_PREFIX}/'}"
+    )
+
+    failures: list[str] = []
+    ok = 0
+    total_rows = 0
+    total_bytes = 0
+    conn = connect_supabase(autocommit=True)
+    try:
+        for name in names:
+            ds = DATASETS[name]
+            entries: list[dict] = []
+            for day in days:
+                try:
+                    entry = export_one(conn, s3, bucket, ds, day,
+                                       out_dir, batch_size, dry_run)
+                except Exception as e:
+                    logger.error(f"FAILED dataset={name} date={day.isoformat()}: {e}")
+                    failures.append(f"{name}/{day.isoformat()}: {e}")
+                    continue
+                entries.append(entry)
+                ok += 1
+                total_rows += entry['rows']
+                total_bytes += entry['bytes']
+            if entries and not dry_run:
+                try:
+                    update_manifest(s3, bucket, ds, entries)
+                except Exception as e:
+                    logger.error(f"FAILED manifest dataset={name}: {e}")
+                    failures.append(f"{name}/manifest: {e}")
+    finally:
+        conn.close()
+
+    return {
+        'datasets': names,
+        'dates': [d.isoformat() for d in days],
+        'ok': ok,
+        'failed': len(failures),
+        'failures': failures,
+        'rows': total_rows,
+        'bytes': total_bytes,
+        'dry_run': dry_run,
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description='把單日動態軌跡從 Supabase 凍結成靜態檔上 S3（AR-14）',
@@ -377,84 +475,34 @@ def main() -> int:
                     help=f'keyset 分頁每批列數（預設 {DEFAULT_BATCH_SIZE}）')
     args = ap.parse_args()
 
-    today_tpe = datetime.now(TAIPEI).date()
+    end_date = None
     if args.date:
         try:
             end_date = date.fromisoformat(args.date)
         except ValueError:
             logger.error(f"--date 格式錯誤：{args.date}（需 YYYY-MM-DD）")
             return 2
-    else:
-        end_date = today_tpe - timedelta(days=1)
 
-    # 凍結「還在寫入中的今天」會產生半天的殘檔，而且 rows>0 防呆抓不到 → 直接擋。
-    if end_date >= today_tpe:
-        logger.error(
-            f"拒絕匯出 {end_date}：今天（Asia/Taipei {today_tpe}）資料仍在寫入，"
-            f"凍結會得到不完整的一天。請等到隔天再跑。"
-        )
-        return 2
-    if args.backfill < 1:
-        logger.error('--backfill 需 >= 1')
-        return 2
-
-    names = [n.strip() for n in args.datasets.split(',') if n.strip()]
-    unknown = [n for n in names if n not in DATASETS]
-    if unknown:
-        logger.error(f"未知 dataset：{unknown}；可用：{list(DATASETS)}")
-        return 2
-
-    days = [end_date - timedelta(days=i) for i in range(args.backfill)]
-    days.sort()
-
-    if not config.SUPABASE_DB_URL:
-        logger.error('SUPABASE_DB_URL 未設定')
-        return 2
-
-    bucket = config.S3_BUCKET
-    s3 = None
-    if not args.dry_run:
-        if not bucket:
-            logger.error('S3_BUCKET 未設定（或加 --dry-run 只產本地檔）')
-            return 2
-        s3 = get_s3_client()
-
-    logger.info(
-        f"匯出 datasets={names} dates={[d.isoformat() for d in days]} "
-        f"{'[dry-run]' if args.dry_run else f'→ s3://{bucket}/{S3_PREFIX}/'}"
-    )
-
-    failures: list[str] = []
-    conn = connect_supabase(autocommit=True)
     try:
-        for name in names:
-            ds = DATASETS[name]
-            entries: list[dict] = []
-            for day in days:
-                try:
-                    entries.append(
-                        export_one(conn, s3, bucket, ds, day,
-                                   args.out_dir, args.batch_size, args.dry_run)
-                    )
-                except Exception as e:
-                    logger.error(f"FAILED dataset={name} date={day.isoformat()}: {e}")
-                    failures.append(f"{name}/{day.isoformat()}: {e}")
-            if entries and not args.dry_run:
-                try:
-                    update_manifest(s3, bucket, ds, entries)
-                except Exception as e:
-                    logger.error(f"FAILED manifest dataset={name}: {e}")
-                    failures.append(f"{name}/manifest: {e}")
-    finally:
-        conn.close()
+        stats = export_range(
+            datasets=[n.strip() for n in args.datasets.split(',') if n.strip()],
+            end_date=end_date,
+            backfill=args.backfill,
+            dry_run=args.dry_run,
+            out_dir=args.out_dir,
+            batch_size=args.batch_size,
+        )
+    except ValueError as e:
+        logger.error(str(e))
+        return 2
 
-    if failures:
-        logger.error(f"完成，但有 {len(failures)} 項失敗：")
-        for f in failures:
+    if stats['failed']:
+        logger.error(f"完成，但有 {stats['failed']} 項失敗：")
+        for f in stats['failures']:
             logger.error(f"  - {f}")
         return 1
 
-    logger.info(f"全部成功（{len(names)} datasets × {len(days)} 天）")
+    logger.info(f"全部成功（{len(stats['datasets'])} datasets × {len(stats['dates'])} 天）")
     return 0
 
 

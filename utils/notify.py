@@ -204,6 +204,40 @@ def notify_archive_complete(stats: dict):
     send_telegram(tg_msg)
 
 
+def notify_trails_export(stats: dict):
+    """通知每日軌跡凍結匯出結果（scripts/export_daily_trails.py 的 export_range 回傳值）
+
+    失敗要顯眼：trails 是滾動視窗資料（bus 只有 3 天），漏掉一晚就永久遺失，
+    所以有任何失敗都換成 🚨 並列出失敗清單，而不是只記 log。
+    """
+    tag = _instance_tag()
+    ok = stats.get('ok', 0)
+    failed = stats.get('failed', 0)
+    dates = stats.get('dates') or []
+    if not dates:
+        span = '-'
+    elif len(dates) == 1:
+        span = dates[0]
+    else:
+        span = f"{dates[0]} ~ {dates[-1]}"
+
+    icon = "🚨" if failed else "🧊"
+    lines = [
+        f"{icon} *軌跡凍結匯出*{tag}\n",
+        f"日期: `{span}`",
+        f"成功: {ok} 個 dataset-day",
+        f"失敗: {failed} 個",
+        f"筆數: {stats.get('rows', 0):,}",
+        f"大小: {stats.get('bytes', 0) / 1024 / 1024:.1f} MB",
+    ]
+    if failed:
+        lines.append("\n失敗清單:")
+        for f in stats.get('failures', [])[:10]:
+            lines.append(f"• {_escape_md(str(f)[:200])}")
+
+    send_telegram("\n".join(lines))
+
+
 def notify_disk_alert(used_mb: float, threshold_mb: int):
     """磁碟空間告警"""
     tag = _instance_tag()

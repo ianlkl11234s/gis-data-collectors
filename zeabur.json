@@ -64,6 +64,14 @@
       "description": "AWS Region",
       "default": "ap-northeast-1"
     },
+    "TRAILS_EXPORT_ENABLED": {
+      "description": "每日軌跡凍結匯出（把昨天的 live.*_trails_daily 存成 S3 靜態檔，抵銷 DB 滾動視窗）；⚠️ 寫共用 manifest 非原子，多實例只能在一個實例設 true",
+      "default": "false"
+    },
+    "TRAILS_EXPORT_TIME": {
+      "description": "軌跡凍結匯出時間 HH:MM（容器 TZ=Asia/Taipei）；不要早於 02:00，每日資料 01:00~01:20 才定版",
+      "default": "02:00"
+    },
     "WEBHOOK_URL": {
       "description": "通知 Webhook URL"
     },
