@@ -128,11 +128,12 @@ def cmd_apply(args):
     with open(args.verdicts, encoding='utf-8') as f:
         verdicts = json.load(f)
 
-    rows, rejected = [], []
+    rows, rejected, stripped = [], [], []
     for v in verdicts:
         mmsi = str(v.get('mmsi') or '').strip()
         by = (v.get('verified_by') or '').strip()
         url = (v.get('evidence_url') or '').strip() or None
+        cls = (v.get('verified_class') or None)
 
         if not mmsi or by not in VALID_BY:
             rejected.append((mmsi, f'verified_by 不合法: {by!r}'))
@@ -141,15 +142,27 @@ def cmd_apply(args):
         if by == 'web_search' and not url:
             rejected.append((mmsi, 'verified_by=web_search 但缺 evidence_url'))
             continue
+        # ⚠️ inconclusive／not_found 不得挾帶分類 —— 實測 haiku 會在 inconclusive
+        #    時填「從 MMSI 國碼推論」的 class（note 自己都寫「無法查到具體船舶」）。
+        #    那是推論不是查證。migration 344 的 effective_class 本來就不採用它，
+        #    但仍要在寫入前清掉，否則 verified_class 欄位的語意會被沒有依據的值污染。
+        if by != 'web_search' and cls:
+            stripped.append((mmsi, cls))
+            cls = None
 
         rows.append((
             mmsi,
-            (v.get('verified_class') or None),
+            cls,
             by,
             url,
             (v.get('evidence_note') or None),
             v.get('is_excluded'),
         ))
+
+    if stripped:
+        print(f'⚠️ 清掉 {len(stripped)} 筆「非 web_search 卻挾帶分類」（推論非查證）：')
+        for m, c in stripped[:6]:
+            print(f'   {m}: {c} → 清空')
 
     if rejected:
         print(f'⚠️ 拒收 {len(rejected)} 筆：')
