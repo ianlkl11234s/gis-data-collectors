@@ -1,10 +1,14 @@
 """USGS 全球地震即時收集器
 
 資料來源：USGS Earthquake Hazards Program（美國地質調查局，免認證、免 key）
-  端點：https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson
+  端點：https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson
   特性：
     - GeoJSON FeatureCollection，每個 feature 一個地震事件
-    - feed 約 1-5 min 更新（內含過去 1 hr 內所有地震）
+    - feed 約 1-5 min 更新（內含過去 24 hr 內所有地震）
+    - 用 all_day 而非 all_hour：collector 每 60 min 跑一次，all_hour 的 1 hr 視窗
+      與 poll 間隔零餘裕，任何排程漂移／重啟都會靜默漏事件（2026-08-14 診斷：
+      表內找到 8 個 1.1~1.32 hr 空洞，以日均 180 筆計不可能是自然安靜期）。
+      all_day 給 24 hr 重疊餘裕，event_id UNIQUE + DO NOTHING 自動去重，成本幾乎不變。
     - 跟 CWA 本地地震 API 互補（CWA 對台灣準、USGS 對海域/國外更全）
     - properties.time 是 unix ms 不是秒
     - geometry.coordinates 是 [lon, lat, depth_km] 不是 [lat, lon]
@@ -29,7 +33,7 @@ import requests
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
 
-URL_USGS_HOUR = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson"
+URL_USGS_DAY = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
 
 
 def _make_dedup_hash(event_id: str, observed_at_iso: str) -> str:
@@ -52,7 +56,7 @@ class UsgsEarthquakeCollector(BaseCollector):
         })
 
     def _fetch_geojson(self) -> dict:
-        resp = self._session.get(URL_USGS_HOUR, timeout=config.REQUEST_TIMEOUT)
+        resp = self._session.get(URL_USGS_DAY, timeout=config.REQUEST_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
