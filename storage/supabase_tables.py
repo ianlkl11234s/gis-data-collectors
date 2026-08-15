@@ -534,7 +534,12 @@ TABLE_MAP = {
             'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
         ],
         'upsert_key': 'dataset_id,observed_at',
-        'upsert_strategy': 'do_nothing',
+        # do_update（不可改回 do_nothing）：唯一鍵是 (dataset_id, observed_at)，
+        # 舊 cycle 的長 leadtime 預報會先佔住某個 valid-time，do_nothing 會讓新 cycle
+        # 的 f000 實況被靜默拒絕 → analysis 幀永遠寫不進來（2026-08-14 診斷：近 14 天
+        # leadtime_hr=0 零筆，前端風場/海流顯示 +1~3 天預報冒充實況）。
+        # 覆蓋方向天然安全：同一 valid-time 一定是較新 cycle 後寫，f000 最後落地。
+        'upsert_strategy': 'do_update',
     },
     'global_climate_cams': {
         'history': 'live.global_climate_grids',
@@ -543,7 +548,7 @@ TABLE_MAP = {
             'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
         ],
         'upsert_key': 'dataset_id,observed_at',
-        'upsert_strategy': 'do_nothing',
+        'upsert_strategy': 'do_update',  # 理由同 global_climate_cmems
     },
     'global_climate_noaa_gfs': {
         'history': 'live.global_climate_grids',
@@ -552,7 +557,7 @@ TABLE_MAP = {
             'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
         ],
         'upsert_key': 'dataset_id,observed_at',
-        'upsert_strategy': 'do_nothing',
+        'upsert_strategy': 'do_update',  # 理由同 global_climate_cmems
     },
     'lightning_events': {
         # 台電落雷 nid 61139（snapshot 1 分鐘覆寫，collector 5 分 cron 去重累積）
