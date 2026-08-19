@@ -499,8 +499,8 @@ correctional_daily_snapshot:
   notes: 破案：6/27 那筆是開發期一次性測試寫入、從未排程；2026-07-03 用戶設 Zeabur env 正式啟用（日更 1 row，啟用當晚已確認寫入）
 
 animal_adoption:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 1440
   supabase_tables:
     - live.animal_adoption_snapshot_runs
@@ -511,12 +511,12 @@ animal_adoption:
     - {prefix: animal_adoption/archives/, expected_daily: false}
   critical: false
   notes: >-
-    農業部待認領養名單完整快照；預設停用，需先套用 platform migration。
+    農業部待認領養名單完整快照；2026-08-20 起由 Zeabur production collector 每日收集。
     僅完整成功 run 才呼叫 finalize 更新 current/daily；原始 payload 留本地 JSON 並由 archive.py 上傳 S3。
 
 animal_shelter_outcomes:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 43200
   supabase_tables:
     - live.animal_shelter_outcome_runs
@@ -525,12 +525,12 @@ animal_shelter_outcomes:
     - {prefix: animal_shelter_outcomes/archives/, expected_daily: false}
   critical: false
   notes: >-
-    農業部 datagov:41236 收容成果歷史月報（目前約 3,764 筆）；完整 root array 才寫入，
+    農業部 datagov:41236 收容成果歷史月報；2026-08-20 起由 Zeabur production collector 定期收集，完整 root array 才寫入，
     canonical key 為來源年/月/縣市，raw payload 由 archive.py 保存。
 
 animal_shelter_pressure:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 43200
   supabase_tables:
     - live.animal_shelter_outcome_runs
@@ -539,7 +539,7 @@ animal_shelter_pressure:
     - {prefix: animal_shelter_pressure/archives/, expected_daily: false}
   critical: false
   notes: >-
-    農業部 datagov:73396 收容壓力/去向歷史月報（目前約 2,372 筆）；保留 source ID 與
+    農業部 datagov:73396 收容壓力/去向歷史月報；2026-08-20 起由 Zeabur production collector 定期收集，保留 source ID 與
     同年/月/縣市的 revision，不以 canonical grain 去重。
 
 global_climate_bake:
