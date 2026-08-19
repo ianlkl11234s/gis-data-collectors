@@ -102,6 +102,29 @@ def test_last_success_at_not_updated_on_failure(_mock_notify):
     assert 'boom' in stats['error']
 
 
+@patch('collectors.base.notify_error')
+@patch('collectors.base.notify_success')
+def test_collector_error_signal_is_persisted_before_existing_error_path(_mock_ok, _mock_err):
+    """完整快照可先保存 failed ledger，再以既有錯誤統計回報失敗。"""
+    collector = DummyCollector(
+        collect_impl=lambda: {
+            'data': [],
+            'run_id': 'failed-run',
+            '_collector_error': 'incomplete snapshot',
+        }
+    )
+    collector.supabase_writer = MagicMock()
+
+    stats = collector.run()
+
+    collector.storage.save.assert_called_once()
+    collector.supabase_writer.write.assert_called_once()
+    _mock_ok.assert_not_called()
+    _mock_err.assert_called_once()
+    assert stats['error'] == 'incomplete snapshot'
+    assert collector.last_success_at is None
+
+
 @patch('collectors.base.notify_success')
 @patch('collectors.base.notify_error')
 def test_consecutive_errors_reset_on_success(_mock_err, _mock_ok):

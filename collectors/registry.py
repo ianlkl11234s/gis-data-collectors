@@ -75,6 +75,8 @@ from .weather import WeatherCollector
 from .wra_drought_alert import WraDroughtAlertCollector
 from .youbike import YouBikeCollector
 from .correctional_daily_snapshot import CorrectionalDailySnapshotCollector
+from .animal_adoption import AnimalAdoptionCollector
+from .animal_shelter_outcomes import AnimalShelterOutcomesCollector, AnimalShelterPressureCollector
 from .immigration_apis_airport import ImmigrationApisAirportCollector
 from .npa_traffic_accident_a1 import NpaTrafficAccidentA1Collector
 from .global_climate.usgs_earthquake import UsgsEarthquakeCollector
@@ -163,6 +165,9 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(YtLiveVideoResolverCollector, "YouTube 新聞直播 videoId 解析器", "YT_LIVE_VIDEO_RESOLVER",
                    ("YOUTUBE_API_KEY",)),
     CollectorEntry(CorrectionalDailySnapshotCollector, "矯正機關每日收容動態收集器", "CORRECTIONAL_DAILY_SNAPSHOT"),
+    CollectorEntry(AnimalAdoptionCollector, "農業部待認領養動物完整快照收集器", "ANIMAL_ADOPTION"),
+    CollectorEntry(AnimalShelterOutcomesCollector, "農業部收容成果月報收集器", "ANIMAL_SHELTER_OUTCOMES"),
+    CollectorEntry(AnimalShelterPressureCollector, "農業部收容壓力月報收集器", "ANIMAL_SHELTER_PRESSURE"),
     CollectorEntry(ImmigrationApisAirportCollector, "移民署機場入出境 APIS 收集器", "IMMIGRATION_APIS_AIRPORT"),
     CollectorEntry(NpaTrafficAccidentA1Collector, "警政署即時 A1 交通事故收集器", "NPA_TRAFFIC_ACCIDENT_A1"),
     CollectorEntry(TpmlSeatCollector, "北市圖座位即時收集器", "TPML_SEAT"),

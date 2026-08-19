@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from psycopg2 import Binary as PgBinary
-from psycopg2.extras import execute_values
+from psycopg2.extras import Json, execute_values
 
 import config
 from storage.db import SupabaseConnectionPool, PoolBorrowTimeout, PoolBreakerOpen
@@ -1751,6 +1751,46 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_animal_adoption(self, result: dict, ts: datetime) -> list[dict]:
+        """待認領養完整快照。
+
+        即使 HTTP/完整性 gate 失敗仍回傳 run ledger，讓資料品質可稽核；只有
+        ``is_complete`` 的 run 才會附動物列，writer 才能呼叫 finalize 更新 current/daily。
+        """
+        run_id = result.get('run_id')
+        if not run_id:
+            return []
+        run = {
+            '_type': 'run',
+            'run_id': run_id,
+            'run_status': result.get('run_status') or 'failed',
+            'is_complete': bool(result.get('is_complete')),
+            'snapshot_date': result.get('snapshot_date'),
+            'row_count': result.get('row_count', 0),
+            'collected_at': result.get('collected_at') or ts.isoformat(),
+            'source_dataset_id': result.get('source_dataset_id'),
+            'source_observed_at': result.get('source_observed_at'),
+            'payload_sha256': result.get('payload_sha256'),
+            'quality_note': result.get('quality_note'),
+        }
+        if not run['is_complete']:
+            return [run]
+        animals = [dict(row) for row in result.get('data', []) if row.get('source_record_key')]
+        return [run, *animals]
+
+    def _transform_animal_shelter_monthly(self, result: dict, ts: datetime) -> list[dict]:
+        """保留月報 collector 已完成驗證的 run＋observation contract。
+
+        兩個月報 source 共用同一個 live staging/finalizer；transformer 的職責只
+        是把已標記 ``_type`` 的資料送進 multi-table writer，不重新計算 grain
+        或 revision，避免 collector 與 DB 契約產生兩套真相。
+        """
+        records = [dict(row) for row in result.get('data', []) if isinstance(row, dict)]
+        runs = [row for row in records if row.get('_type') == 'run']
+        if len(runs) != 1 or not runs[0].get('run_id'):
+            return []
+        return records
+
     def _transform_news_events(self, result: dict, ts: datetime) -> list[dict]:
         """新聞事件：collector 已產出與 TABLE_MAP columns 同名的 dict（JSON-safe），
         published_ts 為 isoformat 字串、title_simhash 為 signed 64-bit int。
@@ -2086,6 +2126,9 @@ class SupabaseWriter:
         'er_hospital_realtime': _transform_er_hospital_realtime,
         'tpml_seat': _transform_tpml_seat,
         'correctional_daily_snapshot': _transform_correctional_daily_snapshot,
+        'animal_adoption': _transform_animal_adoption,
+        'animal_shelter_outcomes': _transform_animal_shelter_monthly,
+        'animal_shelter_pressure': _transform_animal_shelter_monthly,
         'immigration_apis_airport': _transform_immigration_apis_airport,
         'npa_traffic_accident_a1': _transform_npa_traffic_accident_a1,
         'twse_market_index': _transform_twse_market_index,
@@ -2208,7 +2251,144 @@ class SupabaseWriter:
 
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """freeway_vd 和 flight_fr24 的多表寫入"""
-        if collector_name == 'freeway_vd':
+        if collector_name in ('animal_shelter_outcomes', 'animal_shelter_pressure'):
+            # 41236/73396 都是完整歷史月報；run 與 immutable rows 必須同 transaction。
+            # 失敗/部分回應只插入 failed ledger，絕不清空或覆寫既有月報。
+            runs = [r for r in records if r.get('_type') == 'run']
+            if len(runs) != 1:
+                raise ValueError(f'{collector_name} requires exactly one run ledger')
+            run = runs[0]
+            outcomes = [r for r in records if r.get('_type') == 'outcome']
+            if run['is_complete'] and len(outcomes) != run['row_count']:
+                raise ValueError(f'{collector_name} row_count does not match outcomes')
+
+            with self._txn(conn) as cur:
+                run_cols = [
+                    'run_id', 'status', 'started_at', 'completed_at', 'snapshot_date',
+                    'row_count', 'payload_sha256', 'is_complete', 'source_dataset_id',
+                    'source_observed_at', 'quality_note',
+                ]
+                initial_status = 'running' if run['is_complete'] else 'failed'
+                run_values = [(
+                    run['run_id'], initial_status, run['collected_at'],
+                    run['collected_at'] if not run['is_complete'] else None,
+                    run.get('snapshot_date'), run.get('row_count'), run.get('payload_sha256'),
+                    run['is_complete'], run.get('source_dataset_id'),
+                    run.get('source_observed_at'), run.get('quality_note'),
+                )]
+                execute_values(
+                    cur,
+                    f"INSERT INTO live.animal_shelter_outcome_runs ({','.join(run_cols)}) VALUES %s "
+                    "ON CONFLICT (run_id) DO NOTHING",
+                    run_values,
+                )
+                if run['is_complete']:
+                    cols = [
+                        'snapshot_date', 'run_id', 'source_dataset_id', 'source_record_key',
+                        'source_id', 'report_year', 'source_report_year', 'report_month',
+                        'county_code', 'county_name', 'report_grain_key', 'revision_no',
+                        'duplicate_grain_count', 'metrics', 'record_hash', 'collected_at',
+                        'quality_flags',
+                    ]
+                    values = [
+                        tuple(
+                            Json(r.get(c) or []) if c == 'quality_flags'
+                            else Json(r.get(c) or {}) if c == 'metrics'
+                            else r.get(c)
+                            for c in cols
+                        )
+                        for r in outcomes
+                    ]
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.animal_shelter_outcomes ({','.join(cols)}) VALUES %s "
+                        "ON CONFLICT DO NOTHING",
+                        values,
+                        page_size=500,
+                    )
+                    # Finalizer validates source-specific invariants and atomically projects
+                    # live rows to analytics.*_monthly; it also stamps completed/finalized_at.
+                    cur.execute(
+                        "SELECT live.finalize_animal_shelter_outcome_run(%s::uuid)",
+                        (run['run_id'],),
+                    )
+            logger.info(
+                f"[{collector_name}] ✓ run {run['run_id']} "
+                f"status={'succeeded' if run['is_complete'] else 'failed'} outcomes={len(outcomes)}"
+            )
+
+        elif collector_name == 'animal_adoption':
+            # Contract owned with gis-platform migration. A failed/partial response only
+            # writes its ledger; it must never prune current or manufacture a daily zero.
+            runs = [r for r in records if r.get('_type') == 'run']
+            if len(runs) != 1:
+                raise ValueError('animal_adoption requires exactly one run ledger')
+            run = runs[0]
+            animals = [r for r in records if r.get('_type') == 'animal']
+
+            with self._txn(conn) as cur:
+                run_cols = [
+                    'run_id', 'status', 'started_at', 'completed_at', 'snapshot_date',
+                    'row_count', 'payload_sha256', 'is_complete', 'source_dataset_id',
+                    'source_observed_at', 'quality_note',
+                ]
+                # 完整名單也先是 running；只有 snapshots 全插入且 finalize 成功後
+                # platform function 才會把它標成 succeeded。
+                initial_status = 'running' if run['is_complete'] else run['run_status']
+                run_values = [(
+                    run['run_id'], initial_status, run['collected_at'], run['collected_at'],
+                    run.get('snapshot_date'), run.get('row_count'), run.get('payload_sha256'),
+                    run['is_complete'], run.get('source_dataset_id'), run.get('source_observed_at'),
+                    run.get('quality_note'),
+                )]
+                execute_values(
+                    cur,
+                    f"INSERT INTO live.animal_adoption_snapshot_runs ({','.join(run_cols)}) VALUES %s "
+                    "ON CONFLICT (run_id) DO NOTHING",
+                    run_values,
+                )
+
+                if run['is_complete']:
+                    if not animals:
+                        raise ValueError('complete animal_adoption run has no snapshots')
+                    snapshot_cols = [
+                        'collected_at', 'run_id', 'snapshot_date', 'source_dataset_id',
+                        'source_record_key', 'animal_id_raw', 'animal_subid_raw',
+                        'shelter_id', 'shelter_name', 'county_code', 'animal_kind',
+                        'animal_sex', 'animal_age', 'animal_colour', 'animal_breed',
+                        'animal_bodytype', 'animal_sterilization', 'animal_bacterin',
+                        'animal_foundplace', 'animal_place', 'animal_title', 'animal_opendate',
+                        'animal_closeddate', 'animal_remark', 'animal_caption', 'image_url',
+                        'shelter_address', 'shelter_tel', 'source_status', 'source_observed_at',
+                        'record_hash', 'quality_flags',
+                    ]
+                    values = [
+                        tuple(
+                            Json(r.get(c) or []) if c == 'quality_flags'
+                            else (run['collected_at'] if c == 'collected_at' else r.get(c))
+                            for c in snapshot_cols
+                        )
+                        for r in animals
+                    ]
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.animal_adoption_snapshots ({','.join(snapshot_cols)}) VALUES %s "
+                        "ON CONFLICT (snapshot_date, run_id, source_record_key) DO NOTHING",
+                        values,
+                        page_size=500,
+                    )
+                    # Platform function handles missing_once / second-run not_listed,
+                    # current upserts and daily grain atomically with this ledger.
+                    cur.execute(
+                        "SELECT live.finalize_animal_adoption_snapshot(%s::uuid)",
+                        (run['run_id'],),
+                    )
+            logger.info(
+                f"[animal_adoption] ✓ run {run['run_id']} "
+                f"status={initial_status} snapshots={len(animals)}"
+            )
+
+        elif collector_name == 'freeway_vd':
             sections = [r for r in records if r.get('_type') == 'section']
             vds = [r for r in records if r.get('_type') == 'vd']
 

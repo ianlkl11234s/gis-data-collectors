@@ -95,6 +95,13 @@ class BaseCollector(ABC):
                     except Exception as sb_err:
                         print(f"[{self.name}] ⚠ Supabase 寫入異常: {sb_err}")
 
+            # 少數完整快照 collector 需要先將「失敗 run」保存成可稽核 ledger，
+            # 才交給既有錯誤統計／告警路徑。這個 opt-in signal 保持舊 collector
+            # 回傳 dict 即視為成功的相容語意。
+            collector_error = result.get('_collector_error')
+            if collector_error:
+                raise RuntimeError(str(collector_error))
+
             # 統計
             stats = {
                 'timestamp': timestamp.isoformat(),

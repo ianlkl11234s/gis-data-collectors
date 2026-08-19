@@ -112,6 +112,19 @@ TABLE_MAP = {
         #   live.tsunami_alerts         UNIQUE(tsunami_no, report_no, issued_at) DO NOTHING
         'is_multi_table': True,
     },
+    'animal_adoption': {
+        # 一輪完整名單需原子寫 run ledger + snapshots，再由 platform function
+        # 更新 current / analytics daily；不能走通用 current_prune。
+        'is_multi_table': True,
+    },
+    'animal_shelter_outcomes': {
+        # 農業部 41236 月報：run ledger + immutable source rows。
+        'is_multi_table': True,
+    },
+    'animal_shelter_pressure': {
+        # 農業部 73396 月報：ID 唯一，但同月/縣市 revision 必須保留。
+        'is_multi_table': True,
+    },
     'earthquake_catalog': {
         # CWA E-A0073-001 完整地震目錄（含無感）— 與 earthquake 共用 earthquake_events，
         # 靠 report_type='catalog' 區分；event_id 沿用 cat_{OriginTime}_{lat}_{lon}

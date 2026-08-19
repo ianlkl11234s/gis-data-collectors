@@ -300,6 +300,10 @@ _COLLECTOR_TOGGLES = (
     ('CDC_PUBLIC_HEALTH_WEEKLY',     False, 360),  # ⚠️ Taiwan IP required — Zeabur 必設 false（od.cdc.gov.tw 連線 timeout）；實際走 external/cdc_public_health_weekly_vm/
     ('YT_LIVE_VIDEO_RESOLVER',       False, 5),    # YouTube 14 家新聞台當前直播 videoId 解析（cron 5min，video_id 約 1-7 天換一次）
     ('CORRECTIONAL_DAILY_SNAPSHOT',  False, 1440), # 矯正機關每日收容動態（prisonmuseum.moj.gov.tw/jqw_pub/today.xml，全國總計 1 row/day，無金鑰）
+    ('ANIMAL_ADOPTION',              False, 1440), # 農業部待認領養動物完整快照；成功全量才更新 current/daily，保留 S3 raw archive
+    # 農業部動物福利月報：兩個官方資料集各自獨立 job，均為完整歷史月報快照。
+    ('ANIMAL_SHELTER_OUTCOMES',      False, 43200), # datagov:41236 收容成果（約月更）
+    ('ANIMAL_SHELTER_PRESSURE',      False, 43200), # datagov:73396 收容壓力/滯留（約月更）
     ('IMMIGRATION_APIS_AIRPORT',     False, 60),   # 移民署機場入出境 6 端點 demographic snapshot（無時間戳，每細格 paxCnt，無金鑰）
     ('NPA_TRAFFIC_ACCIDENT_A1',      False, 720),  # 警政署即時 A1 交通事故（24h 死亡，累積年度，每日 1-2 次抓 dedup by hash）
     ('TPML_SEAT',                    False, 10),   # 北市圖座位即時 (seat.tpml.edu.tw，6 分館 29 區，無金鑰；來源無 timestamp → observed_at=收集時刻；閉館全 0 → is_closed)
@@ -326,6 +330,16 @@ for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
 # 每次抓最近 N 天而非只抓昨天——上游偶有補登；DB 端 UNIQUE DO NOTHING 吸收重複。
 # 加大此值會等比放大請求數（蔬果走市場 × 類別迴圈），7 天約 52 次請求。
 FOOD_PRICES_LOOKBACK_DAYS = int(os.getenv('FOOD_PRICES_LOOKBACK_DAYS', '7'))
+
+# 動物認領養：首輪（2026-08-19）為 8,190 rows、root JSON array，不能把 API 異常
+# 或部分回應當作真實 0。啟用前可依上游長期基準調整，但不得設為 0。
+ANIMAL_ADOPTION_MIN_ROWS = int(os.getenv('ANIMAL_ADOPTION_MIN_ROWS', '1000'))
+ANIMAL_ADOPTION_HTTP_RETRIES = int(os.getenv('ANIMAL_ADOPTION_HTTP_RETRIES', '3'))
+
+# 動物收容成果／壓力月報：不能把上游空殼或部分回應當成「全國 0」。
+ANIMAL_SHELTER_OUTCOMES_MIN_ROWS = int(os.getenv('ANIMAL_SHELTER_OUTCOMES_MIN_ROWS', '3000'))
+ANIMAL_SHELTER_PRESSURE_MIN_ROWS = int(os.getenv('ANIMAL_SHELTER_PRESSURE_MIN_ROWS', '1800'))
+ANIMAL_SHELTER_HTTP_RETRIES = int(os.getenv('ANIMAL_SHELTER_HTTP_RETRIES', '3'))
 
 # YouBike — 2026-06 實測 12 縣市有 YouBike/Moovo 站點（共 ~9,100 站）
 # 其他 10 縣市（Keelung/Changhua/Yunlin/Pingtung/NantouCounty/YilanCounty/HualienCounty/PenghuCounty/KinmenCounty/LienchiangCounty）TDX 回 0 站
