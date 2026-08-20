@@ -3,10 +3,10 @@
 backfill_vessel_zone.py —— 回補 live.vessel_watch_positions 的
 dist_24nm_nm / zone / zone_region 三欄（Vessel Zone Watch VW-9 P1 資料層）。
 
-搭配 gis-platform/migrations/354~357_vessel_zone_*.sql。設計說明見
+搭配 gis-platform/migrations/362~365_vessel_zone_*.sql。設計說明見
 mini-taiwan-pulse/docs/proposal/vessel-zone-watch.md §3/§4.2。
 
-為什麼要跑這支腳本：354 的 BEFORE INSERT trigger 只覆蓋「本 migration
+為什麼要跑這支腳本：362 的 BEFORE INSERT trigger 只覆蓋「本 migration
 套用之後」新寫入的列。套用當下已存在的 627,306 筆歷史資料三欄全部是
 NULL，需要本腳本一次性 UPDATE 補齊。
 
@@ -18,10 +18,10 @@ NULL，需要本腳本一次性 UPDATE 補齊。
 （zone 有值）不會被重算，中斷後直接重跑同一個指令即可從斷點接續，
 不需要額外的 watermark 狀態。
 
-效能量測（2026-08-20，套用 357 segmentize 修正後）：
+效能量測（2026-08-20，套用 365 segmentize 修正後）：
   最小月份（2026-02，3,036 筆）實測 4.15 秒 ≈ 1.37ms/筆。
-  全表 627,306 筆推算約 14~15 分鐘（357 之前的 354 版本用未簡化幾何，
-  同樣規模的量測是 42ms/筆，推算 7.3 小時——差距來自 357 的
+  全表 627,306 筆推算約 14~15 分鐘（365 之前的 362 版本用未簡化幾何，
+  同樣規模的量測是 42ms/筆，推算 7.3 小時——差距來自 365 的
   ST_Segmentize(ST_SimplifyPreserveTopology(line_geom, 0.0002), 0.05)
   把 twmain 頂點數從 6,503 壓到 365，其餘三個 region 壓到 139~288。
 

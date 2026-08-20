@@ -2,7 +2,7 @@
 """
 load_maritime_zones.py — 灌入海域界線幾何到 spatial.maritime_zones（VW-9 P1 資料層）
 
-搭配 gis-platform/migrations/353_maritime_zones.sql。設計說明見
+搭配 gis-platform/migrations/361_maritime_zones.sql。設計說明見
 mini-taiwan-pulse/docs/proposal/vessel-zone-watch.md §2/§3/§4.1。
 
 只灌三類線 —— baseline / territorial_sea_12nm / contiguous_zone_24nm（共 12 features）。
