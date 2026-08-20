@@ -132,6 +132,8 @@ tables:
   - {schema: analytics, table: animal_adoption_daily, time_column: snapshot_date, owner_collector: animal_adoption, expected_interval_min: 1440, critical: false, notes: 每日最後完整成功快照聚合}
   - {schema: live, table: animal_shelter_outcome_runs, time_column: snapshot_date, owner_collector: animal_shelter_outcomes, expected_interval_min: 43200, critical: false, notes: 41236/73396 月報共用 run ledger；failed/partial 不會覆寫既有 outcomes}
   - {schema: live, table: animal_shelter_outcomes, time_column: snapshot_date, owner_collector: animal_shelter_outcomes, expected_interval_min: 43200, critical: false, notes: immutable 月報 source rows；73396 同 grain revision 保留}
+  - {schema: live, table: animal_welfare_point_runs, time_column: snapshot_date, owner_collector: animal_veterinary_clinics, expected_interval_min: 259200, critical: false, notes: 8705/97070/134283 共用完整快照 ledger；per-source freshness 見 cross_layer_map}
+  - {schema: live, table: animal_welfare_point_snapshots, time_column: snapshot_date, owner_collector: animal_protection_offices, expected_interval_min: 129600, critical: false, notes: 8705/97070/134283 共用據點快照；以 90 日來源作最短 freshness gate}
   - {schema: live, table: traffic_accidents_a1,       time_column: collected_at, owner_collector: npa_traffic_accident_a1, expected_interval_min: 720, critical: false, notes: dedup by hash，僅新事故推進 MAX；久無新事故告警屬預期（2026-07-03 啟用）}
 
   # ── 文化場館 ────────────────────────────

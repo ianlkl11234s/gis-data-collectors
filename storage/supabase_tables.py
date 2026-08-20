@@ -125,6 +125,9 @@ TABLE_MAP = {
         # 農業部 73396 月報：ID 唯一，但同月/縣市 revision 必須保留。
         'is_multi_table': True,
     },
+    'animal_veterinary_clinics': {'is_multi_table': True},
+    'animal_licensed_pet_businesses': {'is_multi_table': True},
+    'animal_protection_offices': {'is_multi_table': True},
     'earthquake_catalog': {
         # CWA E-A0073-001 完整地震目錄（含無感）— 與 earthquake 共用 earthquake_events，
         # 靠 report_type='catalog' 區分；event_id 沿用 cat_{OriginTime}_{lat}_{lon}

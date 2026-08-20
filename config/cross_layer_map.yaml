@@ -542,6 +542,36 @@ animal_shelter_pressure:
     農業部 datagov:73396 收容壓力/去向歷史月報；2026-08-20 起由 Zeabur production collector 定期收集，保留 source ID 與
     同年/月/縣市的 revision，不以 canonical grain 去重。
 
+animal_veterinary_clinics:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 259200
+  supabase_tables: [live.animal_welfare_point_runs, live.animal_welfare_point_snapshots]
+  s3_prefixes:
+    - {prefix: animal_veterinary_clinics/archives/, expected_daily: false}
+  critical: false
+  notes: 農業部 datagov:8705；180 日低頻完整快照，raw 由 archive.py 保存；不寫負責獸醫姓名。
+
+animal_licensed_pet_businesses:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 525600
+  supabase_tables: [live.animal_welfare_point_runs, live.animal_welfare_point_snapshots]
+  s3_prefixes:
+    - {prefix: animal_licensed_pet_businesses/archives/, expected_daily: false}
+  critical: false
+  notes: 農業部 datagov:97070；365 日低頻完整快照，raw 由 archive.py 保存；不寫 own_name/bos_name。
+
+animal_protection_offices:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 129600
+  supabase_tables: [live.animal_welfare_point_runs, live.animal_welfare_point_snapshots]
+  s3_prefixes:
+    - {prefix: animal_protection_offices/archives/, expected_daily: false}
+  critical: false
+  notes: 農業部 datagov:134283；22 個縣市動物保護機關，90 日低頻完整快照。
+
 global_climate_bake:
   enabled: true
   deployment: zeabur

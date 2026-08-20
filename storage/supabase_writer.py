@@ -1791,6 +1791,12 @@ class SupabaseWriter:
             return []
         return records
 
+    def _transform_animal_welfare_points(self, result: dict, ts: datetime) -> list[dict]:
+        """獸醫／寵物業完整快照；raw_payload 僅由 LocalStorage/archive 保存。"""
+        records = [dict(row) for row in result.get('data', []) if isinstance(row, dict)]
+        runs = [row for row in records if row.get('_type') == 'run']
+        return records if len(runs) == 1 and runs[0].get('run_id') else []
+
     def _transform_news_events(self, result: dict, ts: datetime) -> list[dict]:
         """新聞事件：collector 已產出與 TABLE_MAP columns 同名的 dict（JSON-safe），
         published_ts 為 isoformat 字串、title_simhash 為 signed 64-bit int。
@@ -2129,6 +2135,9 @@ class SupabaseWriter:
         'animal_adoption': _transform_animal_adoption,
         'animal_shelter_outcomes': _transform_animal_shelter_monthly,
         'animal_shelter_pressure': _transform_animal_shelter_monthly,
+        'animal_veterinary_clinics': _transform_animal_welfare_points,
+        'animal_licensed_pet_businesses': _transform_animal_welfare_points,
+        'animal_protection_offices': _transform_animal_welfare_points,
         'immigration_apis_airport': _transform_immigration_apis_airport,
         'npa_traffic_accident_a1': _transform_npa_traffic_accident_a1,
         'twse_market_index': _transform_twse_market_index,
@@ -2251,6 +2260,39 @@ class SupabaseWriter:
 
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """freeway_vd 和 flight_fr24 的多表寫入"""
+        if collector_name in ('animal_veterinary_clinics', 'animal_licensed_pet_businesses', 'animal_protection_offices'):
+            runs = [r for r in records if r.get('_type') == 'run']
+            if len(runs) != 1:
+                raise ValueError(f'{collector_name} requires exactly one run ledger')
+            run = runs[0]
+            snapshots = [r for r in records if r.get('_type') == 'snapshot']
+            if run['is_complete'] and len(snapshots) != run['row_count']:
+                raise ValueError(f'{collector_name} row_count does not match snapshots')
+            with self._txn(conn) as cur:
+                run_cols = ['run_id', 'status', 'started_at', 'completed_at', 'snapshot_date',
+                            'row_count', 'payload_sha256', 'is_complete', 'source_dataset_id',
+                            'source_observed_at', 'quality_note']
+                execute_values(cur,
+                    f"INSERT INTO live.animal_welfare_point_runs ({','.join(run_cols)}) VALUES %s",
+                    [(run['run_id'], 'running' if run['is_complete'] else 'failed', run['collected_at'],
+                      None if run['is_complete'] else run['collected_at'], run.get('snapshot_date'),
+                      run.get('row_count'), run.get('payload_sha256'), run['is_complete'],
+                      run.get('source_dataset_id'), run.get('source_observed_at'), run.get('quality_note'))])
+                if run['is_complete']:
+                    cols = ['snapshot_date', 'run_id', 'source_dataset_id', 'source_record_key', 'canonical_entity_key',
+                            'point_type', 'service_tags', 'name', 'county_code', 'county_name', 'address',
+                            'phone', 'status_norm', 'status_raw', 'valid_from', 'valid_to', 'longitude', 'latitude', 'geom',
+                            'geocode_method', 'geocode_confidence', 'details', 'record_hash', 'quality_flags',
+                            'collected_at', 'source_observed_at']
+                    values = [tuple(Json(r.get(c) or []) if c == 'quality_flags'
+                                    else Json(r.get(c) or {}) if c == 'details' else r.get(c) for c in cols)
+                              for r in snapshots]
+                    execute_values(cur,
+                        f"INSERT INTO live.animal_welfare_point_snapshots ({','.join(cols)}) VALUES %s",
+                        values, page_size=500)
+                    cur.execute("SELECT live.finalize_animal_welfare_point_run(%s::uuid)", (run['run_id'],))
+            logger.info(f"[{collector_name}] ✓ run {run['run_id']} status={'succeeded' if run['is_complete'] else 'failed'} snapshots={len(snapshots)}")
+            return
         if collector_name in ('animal_shelter_outcomes', 'animal_shelter_pressure'):
             # 41236/73396 都是完整歷史月報；run 與 immutable rows 必須同 transaction。
             # 失敗/部分回應只插入 failed ledger，絕不清空或覆寫既有月報。
