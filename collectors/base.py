@@ -106,7 +106,7 @@ class BaseCollector(ABC):
             stats = {
                 'timestamp': timestamp.isoformat(),
                 'run_count': self.run_count,
-                **{k: v for k, v in result.items() if k != 'data'}
+                **{k: v for k, v in result.items() if k not in ('data', 'raw_payload')}
             }
 
             self.last_run = timestamp

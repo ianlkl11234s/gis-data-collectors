@@ -82,6 +82,22 @@ def test_last_success_at_set_on_success(_mock_notify):
     assert 'error' not in stats
 
 
+@patch('collectors.base.notify_success')
+def test_raw_payload_is_saved_but_redacted_from_stats_and_success_notice(mock_notify):
+    """完整 raw 供 archive 保存，但不可進入回傳統計或成功通知。"""
+    raw_payload = [{'private_name': 'must stay in storage only'}]
+    collector = DummyCollector(data=[{'normalized': True}])
+    collector.collect = lambda: {'data': collector._data, 'raw_payload': raw_payload, 'row_count': 1}
+
+    stats = collector.run()
+
+    saved_result = collector.storage.save.call_args.args[1]
+    assert saved_result['raw_payload'] is raw_payload
+    assert 'raw_payload' not in stats
+    notified_stats = mock_notify.call_args.args[1]
+    assert 'raw_payload' not in notified_stats
+
+
 @patch('collectors.base.notify_error')
 def test_last_success_at_not_updated_on_failure(_mock_notify):
     """collect() 拋 exception 時，last_success_at 不應更新"""
