@@ -82,6 +82,22 @@ def test_last_success_at_set_on_success(_mock_notify):
     assert 'error' not in stats
 
 
+@patch('collectors.base.notify_success')
+def test_raw_payload_is_saved_but_redacted_from_stats_and_success_notice(mock_notify):
+    """完整 raw 供 archive 保存，但不可進入回傳統計或成功通知。"""
+    raw_payload = [{'private_name': 'must stay in storage only'}]
+    collector = DummyCollector(data=[{'normalized': True}])
+    collector.collect = lambda: {'data': collector._data, 'raw_payload': raw_payload, 'row_count': 1}
+
+    stats = collector.run()
+
+    saved_result = collector.storage.save.call_args.args[1]
+    assert saved_result['raw_payload'] is raw_payload
+    assert 'raw_payload' not in stats
+    notified_stats = mock_notify.call_args.args[1]
+    assert 'raw_payload' not in notified_stats
+
+
 @patch('collectors.base.notify_error')
 def test_last_success_at_not_updated_on_failure(_mock_notify):
     """collect() 拋 exception 時，last_success_at 不應更新"""
@@ -100,6 +116,29 @@ def test_last_success_at_not_updated_on_failure(_mock_notify):
     assert collector.consecutive_errors == 1
     assert 'error' in stats
     assert 'boom' in stats['error']
+
+
+@patch('collectors.base.notify_error')
+@patch('collectors.base.notify_success')
+def test_collector_error_signal_is_persisted_before_existing_error_path(_mock_ok, _mock_err):
+    """完整快照可先保存 failed ledger，再以既有錯誤統計回報失敗。"""
+    collector = DummyCollector(
+        collect_impl=lambda: {
+            'data': [],
+            'run_id': 'failed-run',
+            '_collector_error': 'incomplete snapshot',
+        }
+    )
+    collector.supabase_writer = MagicMock()
+
+    stats = collector.run()
+
+    collector.storage.save.assert_called_once()
+    collector.supabase_writer.write.assert_called_once()
+    _mock_ok.assert_not_called()
+    _mock_err.assert_called_once()
+    assert stats['error'] == 'incomplete snapshot'
+    assert collector.last_success_at is None
 
 
 @patch('collectors.base.notify_success')

@@ -112,6 +112,22 @@ TABLE_MAP = {
         #   live.tsunami_alerts         UNIQUE(tsunami_no, report_no, issued_at) DO NOTHING
         'is_multi_table': True,
     },
+    'animal_adoption': {
+        # 一輪完整名單需原子寫 run ledger + snapshots，再由 platform function
+        # 更新 current / analytics daily；不能走通用 current_prune。
+        'is_multi_table': True,
+    },
+    'animal_shelter_outcomes': {
+        # 農業部 41236 月報：run ledger + immutable source rows。
+        'is_multi_table': True,
+    },
+    'animal_shelter_pressure': {
+        # 農業部 73396 月報：ID 唯一，但同月/縣市 revision 必須保留。
+        'is_multi_table': True,
+    },
+    'animal_veterinary_clinics': {'is_multi_table': True},
+    'animal_licensed_pet_businesses': {'is_multi_table': True},
+    'animal_protection_offices': {'is_multi_table': True},
     'earthquake_catalog': {
         # CWA E-A0073-001 完整地震目錄（含無感）— 與 earthquake 共用 earthquake_events，
         # 靠 report_type='catalog' 區分；event_id 沿用 cat_{OriginTime}_{lat}_{lon}
@@ -534,7 +550,12 @@ TABLE_MAP = {
             'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
         ],
         'upsert_key': 'dataset_id,observed_at',
-        'upsert_strategy': 'do_nothing',
+        # do_update（不可改回 do_nothing）：唯一鍵是 (dataset_id, observed_at)，
+        # 舊 cycle 的長 leadtime 預報會先佔住某個 valid-time，do_nothing 會讓新 cycle
+        # 的 f000 實況被靜默拒絕 → analysis 幀永遠寫不進來（2026-08-14 診斷：近 14 天
+        # leadtime_hr=0 零筆，前端風場/海流顯示 +1~3 天預報冒充實況）。
+        # 覆蓋方向天然安全：同一 valid-time 一定是較新 cycle 後寫，f000 最後落地。
+        'upsert_strategy': 'do_update',
     },
     'global_climate_cams': {
         'history': 'live.global_climate_grids',
@@ -543,7 +564,7 @@ TABLE_MAP = {
             'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
         ],
         'upsert_key': 'dataset_id,observed_at',
-        'upsert_strategy': 'do_nothing',
+        'upsert_strategy': 'do_update',  # 理由同 global_climate_cmems
     },
     'global_climate_noaa_gfs': {
         'history': 'live.global_climate_grids',
@@ -552,7 +573,7 @@ TABLE_MAP = {
             'bbox', 'digest', 's3_uri', 'pmtiles_uri', 'raw_size_bytes', 'collected_at',
         ],
         'upsert_key': 'dataset_id,observed_at',
-        'upsert_strategy': 'do_nothing',
+        'upsert_strategy': 'do_update',  # 理由同 global_climate_cmems
     },
     'lightning_events': {
         # 台電落雷 nid 61139（snapshot 1 分鐘覆寫，collector 5 分 cron 去重累積）

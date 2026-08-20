@@ -59,6 +59,9 @@ exclude:
   - live.tourist_shuttle_current
   - live.er_hospital_current
   - live.satellite_current      # reconstructible from positions
+  - live.animal_adoption_current # reconstructible from complete snapshots; missing_once/not_listed is derived
+  - analytics.animal_shelter_outcomes_monthly  # reprojectable from complete live runs/raw archive
+  - analytics.animal_shelter_pressure_monthly  # reprojectable from complete live runs/raw archive
 
 # Tables ALREADY covered by data-collectors/tasks/archive.py (JSON archive to S3)
 # Expanded 2026-06-21 from real S3 audit (49 collector archives found vs 16 documented).
@@ -101,6 +104,13 @@ archive_py_covered:
   - live.earthquake_events         # earthquake（+ earthquake_catalog 的 report_type='catalog'）, 2026-03-06 起
   - live.earthquake_station_obs    # earthquake（逐測站觀測），migration 321，2026-07 起
   - live.tsunami_alerts            # earthquake（海嘯資訊 E-A0014-001），migration 321，2026-07 起
+  - live.animal_adoption_snapshot_runs # animal_adoption；raw payload S3 archive 可重建 ledger/snapshots
+  - live.animal_adoption_snapshots     # animal_adoption；每次完整名單（production collector 自 2026-08-20 起）
+  - analytics.animal_adoption_daily    # animal_adoption；從完整 snapshots 可重算
+  - live.animal_shelter_outcome_runs   # animal_shelter_*；raw payload S3 archive 可重建 ledger/rows
+  - live.animal_shelter_outcomes       # animal_shelter_*；raw payload S3 archive 可重建
+  - live.animal_welfare_point_runs     # animal_welfare_points；raw payload S3 archive 可重建
+  - live.animal_welfare_point_snapshots # animal_welfare_points；raw payload S3 archive 可重建
   - live.earthquake_town_intensity # earthquake_town_intensity，migration 321，collector 待啟用
   - live.earthquake_shakemap_grid  # earthquake_shakemap_grid，migration 321，collector 待啟用
   - live.earthquake_moment_tensor  # earthquake_moment_tensor，migration 321，collector 待啟用

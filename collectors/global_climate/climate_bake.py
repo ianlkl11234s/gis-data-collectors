@@ -10,7 +10,8 @@
 - 不再鏡像到 public/climate/（container 內無此路徑），只上傳 S3 deploy-assets
 
 PNG 編碼（風場 / 海流）：R=u、G=v、B=0、A=255 valid / 0 無效；min/max 在同名 .json。
-沙塵：預烤棕色色階（與前端 climateRamps.ts DUST_BAKE_STOPS 同值）+ alpha=強度。
+沙塵：預烤棕色色階（與前端 climateRamps.ts DUST_BAKE_STOPS 同值）+ alpha=強度；
+      映射**固定**為 sqrt(aod / DUST_AOD_MAX)（非 per-file normalize）才能跨幀比較。
 
 ⚠ 依賴：xarray + cfgrib（GRIB2）+ netCDF4（.nc）+ Pillow + numpy（見 requirements.txt）。
 """
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +42,41 @@ DUST_STOPS = [
     (0.75, 82, 46, 22),
     (1.00, 40, 20, 10),
 ]
+
+# ── 沙塵色階：固定值域 + sqrt（⚠ 不可改回 per-file normalize）──
+# duaod550（550nm 沙塵光學厚度，無因次）。每張自己算 min/max 的話，
+# 每一幀的最大值都會被染成同一個最深棕 → 跨幀完全不可比，時間軸播起來
+# 會讓人以為濃度天天一樣（或誤判某天特別嚴重）。固定映射才有可比性。
+#
+# 映射：t = sqrt(clip(aod, 0, MAX) / MAX)
+#   - 上限 1.0：CAMS / WMO SDS-WAS 沙塵 AOD 圖慣例的「重度沙塵」量級。
+#     實測 DB 51 筆 cams_dust digest 全域單幀最大值 0.11~0.84（中位 0.34），
+#     夏季不截頂；春季蒙古／塔克拉瑪干事件超過 1.0 時頂端飽和 = 誠實的「≥1.0」。
+#   - sqrt 而非線性：AOD 場是重尾分佈（實測 mean 0.006 vs max 0.085），線性固定
+#     色階會讓整層幾乎全透明（實測可見像素僅 0.1~2.5%、mean alpha 2~4/255，
+#     再乘前端 0.7 opacity 等於看不見）。sqrt 後可見像素 30~37%、mean alpha 23~26。
+#     非線性正是 WMO SDS-WAS 沙塵 AOD 色階的慣例（刻度約略倍增），不是特例。
+#   - ⚠ 動 MAX 或 GAMMA 等於改變所有既有幀的語意，必須手動清掉 S3 frames/dust/
+#     讓全部重烤（_bake_frames 靠 stamp+init_at 判斷重用，不會偵測色階變更）
+DUST_AOD_MIN = 0.0
+DUST_AOD_MAX = 1.0
+DUST_AOD_GAMMA = 0.5  # t = (aod / MAX) ** GAMMA
+
+# CAMS 一個 .nc 檔含這 6 個 leadtime（見 cams.py CAMS_LEADTIMES），daily
+DUST_LEADTIMES = (0, 24, 48, 72, 96, 120)
+
+# 寫進 manifest datasets.dust 的色階說明（前端 normalizeManifest 只讀 .frames，
+# 同層其他 key 會被忽略 → 安全的擴充點，供圖例日後顯示實際 AOD 數值）
+DUST_SCALE_META = {
+    "scale": {
+        "var": "duaod550",
+        "unit": "1",
+        "kind": "fixed-sqrt",       # t = ((aod - min) / (max - min)) ** gamma
+        "min": DUST_AOD_MIN,
+        "max": DUST_AOD_MAX,
+        "gamma": DUST_AOD_GAMMA,    # 反推圖例刻度：aod = min + (max - min) * t ** (1 / gamma)
+    }
+}
 
 
 class ClimateBakeCollector(BaseCollector):
@@ -191,34 +227,99 @@ class ClimateBakeCollector(BaseCollector):
         self._upload(out_png, out_json, "currents_latest")
         return {"dataset": "cmems_currents", "valid_at": valid_at, "valid_pct": round(meta["valid_pct"], 1)}
 
-    def _bake_dust(self, tmp: Path) -> dict:
-        import xarray as xr
-        from PIL import Image
+    # ── 沙塵（CAMS duaod550）：一個 .nc 檔含 6 個 leadtime，latest 與 frames 共用下面三個 helper ──
+    def _latest_dust_source(self) -> Optional[tuple[str, datetime]]:
+        """最新 init 的 CAMS 檔 → (s3_uri, init_at)。
 
-        sel = self._latest_analysis("cams_dust")
-        if not sel:
-            raise RuntimeError("no s3_uri for cams_dust")
-        s3_uri, valid_at = sel
-        local = tmp / "dust.nc"
-        self._download(s3_uri, local)
-        ds = xr.open_dataset(local)
-        da = ds["duaod550"]
-        for dim in ("forecast_reference_time", "forecast_period", "time"):
-            if dim in da.dims:
-                da = da.isel({dim: 0})
-        arr = np.asarray(da.values, dtype=np.float32)
-        lats = ds["latitude"].values if "latitude" in ds else ds["lat"].values
-        lons = ds["longitude"].values if "longitude" in ds else ds["lon"].values
+        ⚠ 刻意不用 _latest_analysis()（它靠 row 的 leadtime_hr 挑最小值）：
+        live.global_climate_grids 唯一鍵是 (dataset_id, observed_at)，過去用
+        ON CONFLICT DO NOTHING，舊 cycle 的 f120 先佔住 valid-time 讓新 cycle 的
+        f000 寫不進來 → 近 14 天 leadtime_hr=0 幾乎零筆（2026-08-14 實測：51 筆
+        cams_dust 只有 06-27、07-01 兩筆 lt=0）。照 row 選會挑到「5 天前 cycle 的
+        +120h 預報」卻標成實況。改成只認最新 init_at，f000 直接從檔案裡取 slice。
+        """
+        import psycopg2
+
+        with psycopg2.connect(config.SUPABASE_DB_URL) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT s3_uri, init_at
+                  FROM live.global_climate_grids
+                 WHERE dataset_id='cams_dust' AND s3_uri IS NOT NULL AND init_at IS NOT NULL
+                 ORDER BY init_at DESC, collected_at DESC
+                 LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+        return (row[0], row[1]) if row else None
+
+    def _open_dust_slice(self, nc_path: Path, leadtime_hr: int) -> tuple[np.ndarray, list, Optional[str]]:
+        """CAMS .nc → 指定 leadtime 的 duaod550 2D 場。回傳 (arr, bbox, valid_at_iso|None)。
+
+        arr 已做 0..360→-180..180 重排 + 南北翻正（與 latest 單張同一套，
+        保證 frames 與 dust_latest.png 同 bbox / 同 grid → 前端換幀不重設 coordinates）。
+        """
+        import xarray as xr
+
+        ds = xr.open_dataset(nc_path)
+        try:
+            da = ds["duaod550"]
+            if "forecast_reference_time" in da.dims:
+                da = da.isel(forecast_reference_time=0)
+            idx = self._dust_leadtime_index(ds, leadtime_hr)
+            for dim in ("forecast_period", "time"):
+                if dim in da.dims:
+                    da = da.isel({dim: idx})
+                    break
+            # 其餘殘留維度（除了 lat/lon）一律取第 0 片
+            for dim in list(da.dims):
+                if dim not in ("latitude", "lat", "longitude", "lon"):
+                    da = da.isel({dim: 0})
+            arr = np.asarray(da.values, dtype=np.float32)
+            lats = ds["latitude"].values if "latitude" in ds else ds["lat"].values
+            lons = ds["longitude"].values if "longitude" in ds else ds["lon"].values
+            valid_at = self._dust_valid_at(ds, idx)
+        finally:
+            ds.close()
         arr, lons = self._lon_to_180(arr, lons)
         bbox = [float(lons.min()), float(lats.min()), float(lons.max()), float(lats.max())]
         if lats[0] < lats[-1]:
             arr = np.flipud(arr)
+        return arr, bbox, valid_at
 
+    @staticmethod
+    def _dust_leadtime_index(ds, leadtime_hr: int) -> int:
+        """forecast_period（timedelta64）座標裡找 leadtime_hr 的 index；找不到退回 lt//24。"""
+        fp = ds.get("forecast_period")
+        if fp is not None and fp.size:
+            try:
+                hours = [int(np.timedelta64(v, "h").astype(int)) for v in np.atleast_1d(fp.values)]
+                if leadtime_hr in hours:
+                    return hours.index(leadtime_hr)
+            except Exception:
+                pass
+        return max(int(leadtime_hr) // 24, 0)
+
+    @staticmethod
+    def _dust_valid_at(ds, idx: int) -> Optional[str]:
+        vt = ds.get("valid_time")
+        if vt is None or vt.size <= idx:
+            return None
+        try:
+            return np.datetime_as_string(np.asarray(vt.values).flatten()[idx], unit="s") + "Z"
+        except Exception:
+            return None
+
+    @staticmethod
+    def _dust_rgba(arr: np.ndarray) -> tuple[np.ndarray, dict]:
+        """AOD 2D 場 → 預烤棕色色階 RGBA + meta。
+
+        ⚠ 映射固定為 t = ((aod - MIN) / (MAX - MIN)) ** GAMMA，**不做 per-file normalize**
+        —— 理由見該組常數註解（每幀各自 normalize 會讓每幀最大值都染成同一深棕，跨幀不可比）。
+        """
         mask = np.isfinite(arr)
-        valid = arr[mask]
-        dust_min = float(valid.min()) if mask.any() else 0.0
-        dust_max = float(valid.max()) if mask.any() else 1.0
-        t = np.where(mask, np.clip((arr - dust_min) / max(dust_max - dust_min, 1e-9), 0, 1), 0)
+        span = max(DUST_AOD_MAX - DUST_AOD_MIN, 1e-9)
+        t = np.where(mask, np.clip((arr - DUST_AOD_MIN) / span, 0, 1) ** DUST_AOD_GAMMA, 0)
 
         rgb = np.zeros((*t.shape, 3), dtype=np.uint8)
         for i in range(len(DUST_STOPS) - 1):
@@ -234,16 +335,46 @@ class ClimateBakeCollector(BaseCollector):
         alpha = (np.where(mask, np.clip(t * 1.4, 0, 1), 0) * 255).astype(np.uint8)
         rgba = np.concatenate([rgb, alpha[..., None]], axis=-1)
 
+        valid = arr[mask]
+        n = max(int(mask.sum()), 1)
+        meta = {
+            "width": int(arr.shape[1]), "height": int(arr.shape[0]),
+            # ⚠ dust_min/dust_max 語意已改為「色階兩端對應的 AOD 值」（固定），
+            # 不再是這張圖的實測 min/max —— 那兩個改放 dust_obs_*。
+            # 前端 useDustForecastLayer 對這兩個欄位呼叫 .toFixed(3)，缺值會 throw。
+            "dust_min": DUST_AOD_MIN, "dust_max": DUST_AOD_MAX,
+            "dust_scale": "fixed-sqrt", "dust_gamma": DUST_AOD_GAMMA,
+            "dust_obs_min": float(valid.min()) if mask.any() else 0.0,
+            "dust_obs_max": float(valid.max()) if mask.any() else 0.0,
+            "dust_clipped_pct": float((valid > DUST_AOD_MAX).sum()) / n * 100 if mask.any() else 0.0,
+        }
+        return rgba, meta
+
+    def _bake_dust(self, tmp: Path) -> dict:
+        from PIL import Image
+
+        sel = self._latest_dust_source()
+        if not sel:
+            raise RuntimeError("no s3_uri for cams_dust")
+        s3_uri, init_at = sel
+        local = tmp / "dust.nc"
+        self._download(s3_uri, local)
+        # f000 = 這個 cycle 的實況場（舊寫法是拿 DB row 的 observed_at 當 valid_at，
+        # 而那筆 row 近期都是 +120h → 畫 f000 卻標成 5 天後，時間標示是錯的）
+        arr, bbox, valid_at = self._open_dust_slice(local, 0)
+        valid_at = valid_at or self._iso_z(init_at)
+        rgba, meta = self._dust_rgba(arr)
+
         out_png, out_json = tmp / "dust.png", tmp / "dust.json"
         Image.fromarray(rgba, "RGBA").save(out_png, format="PNG", optimize=True)
-        meta = {
-            "dataset": "cams_dust", "valid_at": valid_at, "source_s3": s3_uri, "bbox": bbox,
-            "width": int(arr.shape[1]), "height": int(arr.shape[0]),
-            "dust_min": dust_min, "dust_max": dust_max,
-        }
+        meta.update({
+            "dataset": "cams_dust", "valid_at": valid_at,
+            "init_at": self._iso_z(init_at), "source_s3": s3_uri, "bbox": bbox,
+        })
         out_json.write_text(json.dumps(meta, indent=2))
         self._upload(out_png, out_json, "dust_latest")
-        return {"dataset": "cams_dust", "valid_at": valid_at, "dust_max": round(dust_max, 3)}
+        return {"dataset": "cams_dust", "valid_at": valid_at,
+                "dust_obs_max": round(meta["dust_obs_max"], 3)}
 
     # ── 多幀時間軸（frames）──
     @staticmethod
@@ -305,6 +436,20 @@ class ClimateBakeCollector(BaseCollector):
             "png": png_rel,
             "u_min": meta["u_min"], "u_max": meta["u_max"],
             "v_min": meta["v_min"], "v_max": meta["v_max"],
+            "kind": spec["kind"],
+            "init_at": ClimateBakeCollector._iso_z(spec["init_at"]),
+        }
+
+    @staticmethod
+    def _scalar_frame_entry(spec: dict, png_rel: str) -> dict:
+        """scalar 場（PNG 已預烤色階，前端不解 UV）的 entry — 不帶 u/v 值域。
+
+        ⚠ u_min/u_max/v_min/v_max 必須「四個全給」或「一個都不給」：前端
+        normalizeManifest 對 uvPresent ∉ {0, 4} 的 entry 會整筆 continue 丟棄。
+        """
+        return {
+            "t": ClimateBakeCollector._iso_z(spec["t"]),
+            "png": png_rel,
             "kind": spec["kind"],
             "init_at": ClimateBakeCollector._iso_z(spec["init_at"]),
         }
@@ -387,6 +532,60 @@ class ClimateBakeCollector(BaseCollector):
             }
         return sorted(frames.values(), key=lambda f: f["t"])
 
+    def _plan_dust_frames(self) -> list[dict]:
+        """cams_dust：過去 14 天 f000（analysis）＋最新 init 的 0/24/48/72/96/120h。
+
+        CAMS 一個 .nc 就含全部 6 個 leadtime，所以最新 cycle 只要下載一個檔就烤得出 6 幀
+        （download cache 以 s3_uri 為 key，自然去重）。
+
+        ⚠ 這裡刻意**不**套 wind 那招 `DISTINCT ON (observed_at) ORDER BY init_at DESC`：
+        dust 近期每個 valid-time 都只剩舊 cycle 的 f120 殘留（見 _latest_dust_source
+        註解），那樣挑會把「5 天前 cycle 的 +120h 預報」當成實況幀 —— 正是這次要修的病。
+        過去 analysis 只認 leadtime_hr=0 的真 f000，寧可幀數少也不拿預報冒充實況；
+        upsert 改 do_update 後 f000 會每天補進來一筆，窗口自然長回 14 天。
+        """
+        import psycopg2
+
+        frames: dict[str, dict] = {}
+        with psycopg2.connect(config.SUPABASE_DB_URL) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (observed_at) s3_uri, observed_at, init_at
+                  FROM live.global_climate_grids
+                 WHERE dataset_id='cams_dust' AND leadtime_hr=0 AND s3_uri IS NOT NULL
+                   AND observed_at >= now() - make_interval(days => %s)
+                 ORDER BY observed_at, init_at DESC
+                """,
+                (FRAME_PAST_DAYS,),
+            )
+            for s3_uri, obs, init in cur.fetchall():
+                frames[self._stamp(obs)] = {
+                    "t": obs, "s3_uri": s3_uri, "kind": "analysis",
+                    "init_at": init or obs, "leadtime": 0,
+                }
+            cur.execute(
+                """
+                SELECT s3_uri, init_at
+                  FROM live.global_climate_grids
+                 WHERE dataset_id='cams_dust' AND s3_uri IS NOT NULL AND init_at IS NOT NULL
+                 ORDER BY init_at DESC, collected_at DESC
+                 LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+
+        if row:
+            s3_uri, init_at = row
+            now = datetime.now(timezone.utc)
+            for lt in DUST_LEADTIMES:
+                t = init_at + timedelta(hours=lt)
+                frames[self._stamp(t)] = {  # 最新 cycle 覆蓋同 stamp 的舊 analysis
+                    "t": t, "s3_uri": s3_uri,
+                    "kind": "analysis" if t <= now else "forecast",
+                    "init_at": init_at, "leadtime": lt,
+                }
+        return sorted(frames.values(), key=lambda f: f["t"])
+
     def _bake_wind_frame(self, spec: dict, tmp: Path, cache: dict, png_rel: str) -> dict:
         import xarray as xr
 
@@ -440,14 +639,30 @@ class ClimateBakeCollector(BaseCollector):
         self._upload_frame_png(out_png, png_rel)
         return self._frame_entry(spec, png_rel, meta)
 
+    def _bake_dust_frame(self, spec: dict, tmp: Path, cache: dict, png_rel: str) -> dict:
+        from PIL import Image
+
+        local = cache.get(spec["s3_uri"])
+        if local is None:
+            local = tmp / f"src_{len(cache)}.nc"
+            self._download(spec["s3_uri"], local)
+            cache[spec["s3_uri"]] = local
+        arr, _bbox, _valid_at = self._open_dust_slice(local, spec["leadtime"])
+        rgba, _meta = self._dust_rgba(arr)
+        out_png = tmp / f"dust_{spec['leadtime']:03d}_{self._stamp(spec['t'])}.png"
+        Image.fromarray(rgba, "RGBA").save(out_png, format="PNG", optimize=True)
+        self._upload_frame_png(out_png, png_rel)
+        return self._scalar_frame_entry(spec, png_rel)
+
     def _bake_frames(self, tmp: Path) -> dict:
         """建 frames manifest：已存在同 stamp+init_at 的 PNG 跳過重烤；先傳所有 PNG 再傳 manifest。"""
         existing = self._frames_load_manifest()
         cache: dict = {}
         datasets: dict = {}
-        for dataset, planner, baker in [
-            ("wind10m", self._plan_wind_frames, self._bake_wind_frame),
-            ("currents", self._plan_currents_frames, self._bake_currents_frame),
+        for dataset, planner, baker, extra in [
+            ("wind10m", self._plan_wind_frames, self._bake_wind_frame, None),
+            ("currents", self._plan_currents_frames, self._bake_currents_frame, None),
+            ("dust", self._plan_dust_frames, self._bake_dust_frame, DUST_SCALE_META),
         ]:
             specs = planner()
             entries, baked_n, reused_n = [], 0, 0
@@ -465,7 +680,7 @@ class ClimateBakeCollector(BaseCollector):
                 except Exception as e:
                     print(f"[climate_bake] frame ✗ {dataset} {stamp}: {str(e)[:160]}")
             entries.sort(key=lambda e: e["t"])
-            datasets[dataset] = {"frames": entries}
+            datasets[dataset] = {"frames": entries, **(extra or {})}
             print(f"[climate_bake] frames {dataset}: baked={baked_n} reused={reused_n} total={len(entries)}")
         self._upload_manifest(datasets)
         return {d: len(v["frames"]) for d, v in datasets.items()}
@@ -487,7 +702,7 @@ class ClimateBakeCollector(BaseCollector):
                     failed.append({"dataset": label, "error": str(e)})
                     print(f"[climate_bake] ✗ {label}: {e}")
 
-            # 多幀時間軸（frames）：風場 + 海流 → frames/manifest.json（dust 不動）
+            # 多幀時間軸（frames）：風場 + 海流 + 沙塵 → frames/manifest.json
             frame_counts = None
             try:
                 frame_counts = self._bake_frames(tmp)
