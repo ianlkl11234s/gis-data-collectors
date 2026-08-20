@@ -304,6 +304,9 @@ _COLLECTOR_TOGGLES = (
     # 農業部動物福利月報：兩個官方資料集各自獨立 job，均為完整歷史月報快照。
     ('ANIMAL_SHELTER_OUTCOMES',      False, 43200), # datagov:41236 收容成果（約月更）
     ('ANIMAL_SHELTER_PRESSURE',      False, 43200), # datagov:73396 收容壓力/滯留（約月更）
+    ('ANIMAL_VETERINARY_CLINICS',    False, 259200), # datagov:8705 獸醫師/佐開業執照（180日）
+    ('ANIMAL_LICENSED_PET_BUSINESSES', False, 525600), # datagov:97070 合法特定寵物業（365日）
+    ('ANIMAL_PROTECTION_OFFICES',     False, 129600), # datagov:134283 動物保護機關（90日）
     ('IMMIGRATION_APIS_AIRPORT',     False, 60),   # 移民署機場入出境 6 端點 demographic snapshot（無時間戳，每細格 paxCnt，無金鑰）
     ('NPA_TRAFFIC_ACCIDENT_A1',      False, 720),  # 警政署即時 A1 交通事故（24h 死亡，累積年度，每日 1-2 次抓 dedup by hash）
     ('TPML_SEAT',                    False, 10),   # 北市圖座位即時 (seat.tpml.edu.tw，6 分館 29 區，無金鑰；來源無 timestamp → observed_at=收集時刻；閉館全 0 → is_closed)
@@ -340,6 +343,10 @@ ANIMAL_ADOPTION_HTTP_RETRIES = int(os.getenv('ANIMAL_ADOPTION_HTTP_RETRIES', '3'
 ANIMAL_SHELTER_OUTCOMES_MIN_ROWS = int(os.getenv('ANIMAL_SHELTER_OUTCOMES_MIN_ROWS', '3000'))
 ANIMAL_SHELTER_PRESSURE_MIN_ROWS = int(os.getenv('ANIMAL_SHELTER_PRESSURE_MIN_ROWS', '1800'))
 ANIMAL_SHELTER_HTTP_RETRIES = int(os.getenv('ANIMAL_SHELTER_HTTP_RETRIES', '3'))
+ANIMAL_VETERINARY_CLINICS_MIN_ROWS = int(os.getenv('ANIMAL_VETERINARY_CLINICS_MIN_ROWS', '1800'))
+ANIMAL_LICENSED_PET_BUSINESSES_MIN_ROWS = int(os.getenv('ANIMAL_LICENSED_PET_BUSINESSES_MIN_ROWS', '5000'))
+ANIMAL_PROTECTION_OFFICES_MIN_ROWS = int(os.getenv('ANIMAL_PROTECTION_OFFICES_MIN_ROWS', '22'))
+ANIMAL_WELFARE_POINTS_HTTP_RETRIES = int(os.getenv('ANIMAL_WELFARE_POINTS_HTTP_RETRIES', '3'))
 
 # YouBike — 2026-06 實測 12 縣市有 YouBike/Moovo 站點（共 ~9,100 站）
 # 其他 10 縣市（Keelung/Changhua/Yunlin/Pingtung/NantouCounty/YilanCounty/HualienCounty/PenghuCounty/KinmenCounty/LienchiangCounty）TDX 回 0 站

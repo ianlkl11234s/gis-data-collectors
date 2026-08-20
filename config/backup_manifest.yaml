@@ -109,6 +109,8 @@ archive_py_covered:
   - analytics.animal_adoption_daily    # animal_adoption；從完整 snapshots 可重算
   - live.animal_shelter_outcome_runs   # animal_shelter_*；raw payload S3 archive 可重建 ledger/rows
   - live.animal_shelter_outcomes       # animal_shelter_*；raw payload S3 archive 可重建
+  - live.animal_welfare_point_runs     # animal_welfare_points；raw payload S3 archive 可重建
+  - live.animal_welfare_point_snapshots # animal_welfare_points；raw payload S3 archive 可重建
   - live.earthquake_town_intensity # earthquake_town_intensity，migration 321，collector 待啟用
   - live.earthquake_shakemap_grid  # earthquake_shakemap_grid，migration 321，collector 待啟用
   - live.earthquake_moment_tensor  # earthquake_moment_tensor，migration 321，collector 待啟用
