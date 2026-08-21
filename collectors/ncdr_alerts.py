@@ -62,12 +62,26 @@ class NCDRAlertsCollector(BaseCollector):
             entries = [entries]
         return entries
 
-    def _fetch_cap(self, url: str) -> Optional[str]:
-        """下載單一 CAP XML"""
+    def _fetch_cap(self, url: str) -> Optional[bytes]:
+        """
+        下載單一 CAP XML，**回傳 bytes 不回傳 str**。
+
+        ⚠️ 不可用 `r.text`（2026-08-22 修正的中文亂碼根因）：
+        `r.text` 依 HTTP header 的 charset 解碼，NCDR 各機關的 Capstorage
+        伺服器設定不一致，沒送 charset 時 requests 會退回 chardet 猜測 ——
+        對中文 UTF-8 位元組常猜成西里爾單位元組碼頁，整段中文變亂碼。
+        實測壞掉的 95 筆有兩種花樣：utf8→ptcp154、utf8→cp1251
+        （例：「重大火災事件通報」→「йҮҚеӨ§зҒ«зҒҪдәӢд»¶йҖҡе ұ」）。
+        上游檔案本身是乾淨的 UTF-8，是我們這端解錯。
+
+        交給 `ET.fromstring(bytes)` 由 XML 宣告
+        （`<?xml version="1.0" encoding="utf-8"?>`）決定編碼才是 XML 的正解，
+        完全不受 HTTP header 影響。
+        """
         try:
             r = self._session.get(url, timeout=config.REQUEST_TIMEOUT)
             r.raise_for_status()
-            return r.text
+            return r.content
         except Exception as e:
             print(f"   ⚠ CAP 下載失敗 {url}: {e}")
             return None
@@ -125,9 +139,10 @@ class NCDRAlertsCollector(BaseCollector):
             coords.append(coords[0])
         return f"(({', '.join(coords)}))"
 
-    def _parse_cap(self, xml_text: str) -> Optional[dict]:
+    def _parse_cap(self, xml_bytes: bytes) -> Optional[dict]:
+        """xml_bytes 必須是**原始位元組**（見 _fetch_cap 的編碼註解）"""
         try:
-            root = ET.fromstring(xml_text)
+            root = ET.fromstring(xml_bytes)
         except ET.ParseError as e:
             print(f"   ⚠ CAP XML 解析失敗: {e}")
             return None
@@ -232,11 +247,11 @@ class NCDRAlertsCollector(BaseCollector):
             if not cap_url:
                 continue
 
-            xml_text = self._fetch_cap(cap_url)
-            if not xml_text:
+            xml_bytes = self._fetch_cap(cap_url)
+            if not xml_bytes:
                 continue
 
-            parsed = self._parse_cap(xml_text)
+            parsed = self._parse_cap(xml_bytes)
             if not parsed:
                 continue
 
