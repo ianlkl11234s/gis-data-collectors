@@ -6,7 +6,7 @@
   │  table   : live.public_health_weekly
   │  UNIQUE  : (disease_code, iso_year, iso_week, county_code,
   │             township_code, age_group, gender, is_imported)
-  │  conflict: DO NOTHING
+  │  conflict: DO UPDATE（CDC 會回修，見 write_to_supabase）
   └─────────────────────────────────────────────
 
 3 個 dataset：
@@ -214,6 +214,12 @@ CONFLICT_KEY = (
     "(disease_code, iso_year, iso_week, county_code, township_code, "
     "age_group, gender, is_imported)"
 )
+# 衝突時要更新的欄位 = COLUMNS 扣掉 key 欄位
+_KEY_COLS = {
+    "disease_code", "iso_year", "iso_week", "county_code",
+    "township_code", "age_group", "gender", "is_imported",
+}
+UPDATE_COLUMNS = [c for c in COLUMNS if c not in _KEY_COLS]
 
 
 def write_to_supabase(conn, records: list[dict], ts: datetime) -> int:
@@ -228,9 +234,14 @@ def write_to_supabase(conn, records: list[dict], ts: datetime) -> int:
             r["age_group"], r["gender"], r["is_imported"],
             r["metric_value"], r["source_dataset"], ts.isoformat(),
         ))
+    # ⚠️ 2026-08-21 由 DO NOTHING 改成 DO UPDATE，理由同 SSOT
+    # （storage/supabase_tables.py 的 cdc_public_health_weekly 註解）：
+    # CDC 會回修數字，DO NOTHING 會讓數值凍在第一次抓到的未修訂值。
+    # key 欄位不更新，只更新名稱 / 數值 / 來源 / 收集時間。
     sql = (
         f"INSERT INTO {TABLE} ({','.join(COLUMNS)}) VALUES %s "
-        f"ON CONFLICT {CONFLICT_KEY} DO NOTHING"
+        f"ON CONFLICT {CONFLICT_KEY} DO UPDATE SET "
+        f"{','.join(f'{c}=EXCLUDED.{c}' for c in UPDATE_COLUMNS)}"
     )
     with conn.cursor() as cur:
         execute_values(cur, sql, rows, page_size=1000)
