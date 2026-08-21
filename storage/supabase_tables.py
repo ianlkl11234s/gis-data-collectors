@@ -702,9 +702,18 @@ TABLE_MAP = {
         'current_touch_updated_at': True,
     },
     'cdc_public_health_weekly': {
-        # CDC 公衛週報 — gis-platform migration 206
-        # UNIQUE(disease_code, iso_year, iso_week, county_code, township_code, age_group, gender, is_imported)
-        # 同週重抓 DO NOTHING（CDC 確認後不會回修）
+        # CDC 公衛週報 — gis-platform migration 206、去重與約束修正見 migration 367
+        # UNIQUE NULLS NOT DISTINCT(disease_code, iso_year, iso_week, county_code,
+        #                           township_code, age_group, gender, is_imported)
+        #
+        # ⚠️ 2026-08-21 由 do_nothing 改成 DO UPDATE（拿掉 upsert_strategy 即是）：
+        #   1. 原註解「CDC 確認後不會回修」**是錯的** —— 同一 key 的多份副本值不同
+        #      （例：2026-W29 台南市 65+ 431 vs 432），CDC 確實會回修。
+        #      DO NOTHING 會讓數值永遠凍在第一次抓到的未修訂值。
+        #   2. 舊約束的 NULL <> NULL 讓 rods 來源（is_imported 恆為 NULL）
+        #      的 ON CONFLICT 永遠不觸發 → 每週多存一份完整快照，
+        #      2026-08-21 清出 174,002 列 vs 14,730 唯一鍵，畫面數值被灌水 13 倍。
+        #      約束已於 migration 367 改成 NULLS NOT DISTINCT，重複才擋得住。
         'history': 'live.public_health_weekly',
         'columns': [
             'disease_code', 'iso_year', 'iso_week',
@@ -713,6 +722,7 @@ TABLE_MAP = {
             'metric_value', 'source_dataset', 'collected_at',
         ],
         'upsert_key': 'disease_code,iso_year,iso_week,county_code,township_code,age_group,gender,is_imported',
-        'upsert_strategy': 'do_nothing',
+        # 不設 upsert_strategy = 走 DO UPDATE（更新 county_name / township_name /
+        # metric_value / source_dataset / collected_at，key 欄位不動）
     },
 }
