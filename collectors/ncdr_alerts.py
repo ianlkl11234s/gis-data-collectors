@@ -19,6 +19,7 @@ CAP (Common Alerting Protocol) 示警，每 15 分鐘執行一次。
 
 import json
 import math
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional
@@ -30,6 +31,34 @@ from .base import BaseCollector, TAIPEI_TZ
 
 
 CAP_NS = {'cap': 'urn:oasis:names:tc:emergency:cap:1.2'}
+
+# ── 亂碼守門（2026-08-22 加，見 mini-taiwan-pulse INCIDENTS 同日 事件2）──────
+#
+# 這支曾經用 `r.text` 讓 requests 猜編碼，中文 UTF-8 位元組被猜成西里爾單位元組
+# 碼頁。猜對就正常、猜錯就整段亂碼 —— 16,815 筆裡壞 95 筆（0.6%），
+# **從 2022 年零星壞到 2026 年都沒被發現**。
+#
+# 編碼路徑本身已改成 bytes + XML 宣告（見 _fetch_cap），這條守門是第二道：
+# 上游若哪天改用別的編碼、或 parser 被人改回 r.text，寫入前就會被擋下來。
+#
+# 判準：台灣的災害示警不可能合法出現西里爾字母。一出現就是解碼壞掉。
+#
+# ⚠️ 刻意**只擋不修**：反解在雙重壞掉的情況救不回來（實測 95 筆裡有 4 筆），
+# 猜錯了會把壞資料變成另一種壞資料。擋下來 + 報 ERROR，讓人回上游重抓才是對的。
+#
+# ⚠️ 只丟掉「那一筆」，不是整批：一筆壞掉不該讓另外 120 筆乾淨的示警一起進不來。
+CYRILLIC_RE = re.compile(r'[\u0400-\u04FF]')
+MOJIBAKE_CHECK_FIELDS = (
+    'headline', 'description', 'instruction', 'area_desc', 'sender_name', 'event',
+)
+
+
+def _mojibake_fields(parsed: dict) -> list:
+    """回傳含西里爾字母的欄位名清單（空 list = 乾淨）"""
+    return [
+        f for f in MOJIBAKE_CHECK_FIELDS
+        if isinstance(parsed.get(f), str) and CYRILLIC_RE.search(parsed[f])
+    ]
 FEED_URL = "https://alerts.ncdr.nat.gov.tw/JSONAtomFeeds.ashx"
 
 
@@ -241,6 +270,7 @@ class NCDRAlertsCollector(BaseCollector):
 
         alerts = []
         category_counts = {}
+        mojibake_rejected = 0
         for entry in entries:
             link = entry.get('link', {})
             cap_url = link.get('@href') if isinstance(link, dict) else None
@@ -253,6 +283,16 @@ class NCDRAlertsCollector(BaseCollector):
 
             parsed = self._parse_cap(xml_bytes)
             if not parsed:
+                continue
+
+            bad_fields = _mojibake_fields(parsed)
+            if bad_fields:
+                mojibake_rejected += 1
+                print(
+                    f"   ✗ 亂碼擋下 {parsed.get('identifier') or cap_url}："
+                    f"{', '.join(bad_fields)} 含西里爾字母 → 解碼壞掉，不寫入。"
+                    f"（檢查 _fetch_cap 是否被改回 r.text，或上游換了編碼）"
+                )
                 continue
 
             parsed['cap_url'] = cap_url
@@ -277,12 +317,16 @@ class NCDRAlertsCollector(BaseCollector):
 
         with_geom = sum(1 for a in unique if a.get('geom'))
         print(f"   解析成功 {len(unique)} 筆 (含 polygon: {with_geom})")
+        if mojibake_rejected:
+            # 出現在這裡代表編碼路徑壞了，不是資料本身的問題 —— 要有人去看
+            print(f"   ⚠ 因亂碼被擋下 {mojibake_rejected} 筆（見上方 ✗ 行）")
         print(f"   類型分布: {category_counts}")
 
         return {
             'fetch_time': fetch_time.isoformat(),
             'total_alerts': len(unique),
             'with_geom': with_geom,
+            'mojibake_rejected': mojibake_rejected,
             'category_counts': category_counts,
             'data': unique,
         }
