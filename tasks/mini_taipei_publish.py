@@ -160,7 +160,30 @@ def find_matching_track(
     return None
 
 
-def convert_tra_train(train: Dict, track_index: Dict, od_progress: Dict) -> Optional[Dict]:
+def convert_tra_train(
+    train: Dict,
+    track_index: Dict,
+    od_progress: Dict,
+    include_raw_stops: bool = False,
+) -> Optional[Dict]:
+    """轉換單一班次。
+
+    ``include_raw_stops=True`` 時額外輸出 ``stations_raw``：TDX 原始的停靠站序列，
+    **不經 station_id 映射、不經軌道過濾、不去重**。
+
+    這是給「統計用途」的消費者（Supabase ``reference.daily_schedules``）用的。
+    下面的 ``stations`` 欄位服務的是 mini-taipei 3D 前端，必須是「畫得出來」的站
+    ——它經過 ``normalize_station_id``（新站碼→軌道舊站碼）與 ``track_station_set``
+    過濾（只留這條 O-D 軌道有 progress 值的站），所以會系統性地少站：
+
+    - 台中線高架化後的 7 站被映射回舊站碼，其中潭子→栗林、新烏日/成功→烏日，
+      再經下面的去重（同一 station_id 只留一筆），變成兩站互相吃掉而非加總
+    - 嘉北只出現在 271 條軌道中的 3 條，絕大多數經過它的車會把這站濾掉
+      （TDX 原始 79 筆停靠，轉換後只剩 2 筆）
+
+    ``stations`` 的行為刻意保持原樣（3D 前端依賴 progress 定位，動它會壞畫面），
+    修正的方式是另外給一份沒被動過的原始停靠序列。
+    """
     train_info = train.get('TrainInfo', train.get('DailyTrainInfo', {}))
     stops = train.get('StopTimes', [])
 
@@ -189,6 +212,7 @@ def convert_tra_train(train: Dict, track_index: Dict, od_progress: Dict) -> Opti
     track_station_set = set(od_progress.get(track_id, {}).keys())
 
     converted_stations = []
+    raw_stations: List[Dict] = []
     for i, stop in enumerate(stops):
         normalized_sid = normalize_station_id(stop['StationID'])
 
@@ -208,6 +232,14 @@ def convert_tra_train(train: Dict, track_index: Dict, od_progress: Dict) -> Opti
             departure_sec += 86400
         if i == 0:
             arrival_sec = departure_sec = 0
+
+        if include_raw_stops:
+            # 用 TDX 原始 station_id，不做映射／過濾／去重
+            raw_stations.append({
+                'station_id': stop['StationID'],
+                'arrival': arrival_sec,
+                'departure': departure_sec,
+            })
 
         if normalized_sid not in track_station_set:
             continue
@@ -230,7 +262,7 @@ def convert_tra_train(train: Dict, track_index: Dict, od_progress: Dict) -> Opti
     if len(converted_stations) < 2:
         return None
 
-    return {
+    result = {
         'train_id': f"{train_type_code}-{train_no}",
         'train_no': train_no,
         'train_type': train_type_name,
@@ -242,16 +274,29 @@ def convert_tra_train(train: Dict, track_index: Dict, od_progress: Dict) -> Opti
         'total_travel_time': converted_stations[-1]['arrival'],
         'stations': converted_stations,
     }
+    if include_raw_stops:
+        result['stations_raw'] = raw_stations
+    return result
 
 
-def convert_tra_timetable(raw_data: list, date: str, track_index: Dict, od_progress: Dict) -> dict:
-    """將 TDX TRA 原始資料轉換為 Mini Taipei 格式，含覆蓋率分析"""
+def convert_tra_timetable(
+    raw_data: list,
+    date: str,
+    track_index: Dict,
+    od_progress: Dict,
+    include_raw_stops: bool = False,
+) -> dict:
+    """將 TDX TRA 原始資料轉換為 Mini Taipei 格式，含覆蓋率分析
+
+    ``include_raw_stops`` 會往下傳給 :func:`convert_tra_train`，見該函式的說明。
+    S3 發布路徑維持 False（輸出位元組不變），只有 Supabase 統計路徑傳 True。
+    """
     converted = []
     failed = []
     uncovered = []
 
     for train in raw_data:
-        result = convert_tra_train(train, track_index, od_progress)
+        result = convert_tra_train(train, track_index, od_progress, include_raw_stops)
         if result:
             converted.append(result)
         else:

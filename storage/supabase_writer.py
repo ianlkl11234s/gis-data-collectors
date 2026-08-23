@@ -800,8 +800,11 @@ class SupabaseWriter:
             tra_raw = tra_data['data']
             try:
                 od_progress, track_index = self._load_od_progress()
+                # include_raw_stops=True：DB 這條路徑是統計用途，需要未經
+                # station_id 映射／軌道過濾的完整停靠序列（stations_raw）。
+                # S3 給 3D 前端的那條路徑不傳，輸出保持不變。
                 tra_output, _coverage = convert_tra_timetable(
-                    tra_raw, today, track_index, od_progress
+                    tra_raw, today, track_index, od_progress, include_raw_stops=True
                 )
                 records.append({
                     '_system': 'tra_daily',
