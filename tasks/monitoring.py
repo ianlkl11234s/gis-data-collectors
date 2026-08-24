@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -143,14 +144,21 @@ def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[s
         for page in paginator.paginate(Bucket=config.S3_BUCKET, Prefix=""):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                if "/archives/" not in key:
+                if "/archives/" in key and key.endswith(".tar.gz"):
+                    collector_name = key.split("/archives/")[0]
+                    # 日期格式為 YYYY-MM-DD.tar.gz
+                    fname = key.rsplit("/", 1)[-1]
+                    date_part = fname.replace(".tar.gz", "")
+                elif key.startswith("aisstream/raw/v1/") and key.endswith(".manifest.json"):
+                    # AISStream 不是 archive.py 的日 tarball，而是每小時 gzip
+                    # NDJSON + manifest；仍納入 daily report 的日期新鮮度檢查。
+                    match = re.search(r"/date=(\d{4}-\d{2}-\d{2})/", key)
+                    if not match:
+                        continue
+                    collector_name = "aisstream"
+                    date_part = match.group(1)
+                else:
                     continue
-                if not key.endswith(".tar.gz"):
-                    continue
-                collector_name = key.split("/archives/")[0]
-                # 日期格式為 YYYY-MM-DD.tar.gz
-                fname = key.rsplit("/", 1)[-1]
-                date_part = fname.replace(".tar.gz", "")
                 if len(date_part) != 10 or date_part.count("-") != 2:
                     continue
                 if prefix_filter and not collector_name.startswith(prefix_filter):

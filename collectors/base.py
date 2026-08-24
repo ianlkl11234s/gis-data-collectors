@@ -52,6 +52,14 @@ class BaseCollector(ABC):
     # 跑超過這個時間才觸發 GC，避免短任務頻繁觸發 stop-the-world GC
     GC_THRESHOLD_SEC: int = 30
 
+    def should_persist_local(self) -> bool:
+        """Whether normalized collector output may be written to local storage."""
+        return True
+
+    def require_db_write(self) -> bool:
+        """Whether a failed/missing DB write makes the collector run fail closed."""
+        return False
+
     def __init__(self):
         self.storage = get_storage()
         self.supabase_writer = get_supabase_writer()
@@ -85,15 +93,22 @@ class BaseCollector(ABC):
 
             # 儲存資料
             if 'data' in result:
-                filepath = self.storage.save(self.name, result, timestamp)
-                print(f"[{self.name}] ✓ 已儲存: {filepath}")
+                if self.should_persist_local():
+                    filepath = self.storage.save(self.name, result, timestamp)
+                    print(f"[{self.name}] ✓ 已儲存: {filepath}")
 
                 # 旁路寫入 Supabase（不影響本地儲存流程）
                 if self.supabase_writer:
                     try:
-                        self.supabase_writer.write(self.name, result, timestamp)
+                        db_written = self.supabase_writer.write(self.name, result, timestamp)
+                        if self.require_db_write() and not db_written:
+                            raise RuntimeError("required Supabase write failed")
                     except Exception as sb_err:
                         print(f"[{self.name}] ⚠ Supabase 寫入異常: {sb_err}")
+                        if self.require_db_write():
+                            raise
+                elif self.require_db_write():
+                    raise RuntimeError("required Supabase writer is unavailable")
 
             # 少數完整快照 collector 需要先將「失敗 run」保存成可稽核 ledger，
             # 才交給既有錯誤統計／告警路徑。這個 opt-in signal 保持舊 collector

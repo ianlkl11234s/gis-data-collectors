@@ -142,6 +142,10 @@ class ArchiveTask:
                 continue
 
             collector_name = collector_dir.name
+            if collector_name == 'gfw_vessel_presence' and not config.GFW_RAW_ARCHIVE_ENABLED:
+                # Provider raw retention is license-gated.  Skip even if stale
+                # local files exist from a prior build or interrupted run.
+                continue
             date_dirs = self._find_date_dirs(collector_dir)
 
             for date_str, date_dir in date_dirs:

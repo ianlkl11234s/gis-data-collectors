@@ -143,7 +143,7 @@ class SupabaseWriter:
             # Transform 是純函數，不需要 conn / lock
             records = self._transform(collector_name, result, timestamp)
             if not records:
-                return
+                return True
 
             # 借一條連線，把所有 DB 動作（含衛星 TLE 額外表）跑完才還
             with self._pool.borrow() as conn:
@@ -169,19 +169,24 @@ class SupabaseWriter:
                     f"收集器: `{collector_name}`\n"
                     f"之前連續失敗: {prev_errors} 次"
                 )
+            return True
 
         except (PoolBorrowTimeout, PoolBreakerOpen) as e:
             # 池滿 / 斷路器 — 都是「DB 暫時不可用」的訊號。不是 bug，不要 Telegram 洗版。
             logger.warning(f"[{collector_name}] DB 暫時不可用，暫存 buffer: {e}")
-            self._write_to_buffer(collector_name, result, timestamp)
+            if collector_name != 'gfw_vessel_presence' or config.GFW_RAW_ARCHIVE_ENABLED:
+                self._write_to_buffer(collector_name, result, timestamp)
             self._report_heartbeat(collector_name, False, 0, str(e))
             self._record_db_error(collector_name, e)
+            return False
 
         except Exception as e:
             logger.warning(f"[{collector_name}] DB 寫入失敗，暫存 buffer: {e}")
-            self._write_to_buffer(collector_name, result, timestamp)
+            if collector_name != 'gfw_vessel_presence' or config.GFW_RAW_ARCHIVE_ENABLED:
+                self._write_to_buffer(collector_name, result, timestamp)
             self._report_heartbeat(collector_name, False, 0, str(e))
             self._record_db_error(collector_name, e)
+            return False
 
     def _record_db_error(self, collector_name: str, err: Exception) -> None:
         """累計連續錯誤，到達閾值才發 Telegram（避免洗版）。"""
@@ -521,6 +526,15 @@ class SupabaseWriter:
                 'collected_at': ts.isoformat(),
                 'geom': f'SRID=4326;POINT({lng} {lat})' if lat and lng else None,
             })
+        return records
+
+    def _transform_gfw_vessel_presence(self, result: dict, ts: datetime) -> list[dict]:
+        """GFW collector 已完成 defensive normalization；僅保留 multi-table records。"""
+        records = []
+        for row in result.get('data', []):
+            if not isinstance(row, dict) or row.get('_type') not in ('run', 'snapshot'):
+                continue
+            records.append(row)
         return records
 
     def _transform_earthquake(self, result: dict, ts: datetime) -> list[dict]:
@@ -2109,6 +2123,7 @@ class SupabaseWriter:
         'parking_offstreet': _transform_parking_offstreet,
         'road_congestion': _transform_road_congestion,
         'ship_ais': _transform_ship_ais,
+        'gfw_vessel_presence': _transform_gfw_vessel_presence,
         'earthquake': _transform_earthquake,
         'earthquake_catalog': _transform_earthquake_catalog,
         'earthquake_town_intensity': _transform_earthquake_town_intensity,
@@ -2263,6 +2278,94 @@ class SupabaseWriter:
 
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """freeway_vd 和 flight_fr24 的多表寫入"""
+        if collector_name == 'gfw_vessel_presence':
+            runs = [r for r in records if r.get('_type') == 'run']
+            if len(runs) != 1:
+                raise ValueError('gfw_vessel_presence requires exactly one run ledger')
+            run = runs[0]
+            submitted_snapshots = [r for r in records if r.get('_type') == 'snapshot']
+            snapshots = submitted_snapshots if run.get('status') == 'succeeded' else []
+            if run.get('status') == 'succeeded' and len(snapshots) != run.get('result_count'):
+                raise ValueError('GFW result_count does not match snapshots')
+            with self._txn(conn) as cur:
+                if snapshots:
+                    cur.execute(
+                        "SELECT live.create_gfw_vessel_presence_snapshot_partition(%s::date)",
+                        (run.get('snapshot_date'),),
+                    )
+                run_cols = [
+                    'run_id', 'provider', 'source_dataset_id', 'resolved_dataset_version', 'snapshot_date',
+                    'status', 'started_at', 'completed_at', 'source_window_start', 'source_window_end',
+                    'query_parameters', 'result_count', 'duplicate_count', 'rejected_count', 'response_sha256',
+                    'archive_verified_at', 'quality_summary', 'error_message',
+                ]
+                execute_values(cur, f"INSERT INTO live.gfw_vessel_presence_runs ({','.join(run_cols)}) VALUES %s ON CONFLICT (run_id) DO NOTHING", [tuple(
+                    Json(run.get(c)) if c in ('query_parameters', 'quality_summary') else run.get(c) for c in run_cols
+                )])
+                if snapshots:
+                    snapshot_cols = [
+                        'snapshot_date', 'run_id', 'provider', 'source_dataset_id', 'vessel_id', 'mmsi',
+                        'observed_at', 'received_at', 'source_event_key', 'record_hash', 'ship_name',
+                        'vessel_type', 'flag', 'longitude', 'latitude', 'geom', 'presence_quality',
+                        'quality_flags', 'source_properties', 'raw_archive_key',
+                    ]
+                    values = []
+                    for row in snapshots:
+                        lon, lat = row.get('longitude'), row.get('latitude')
+                        wkt = f'POINT({lon} {lat})' if lon is not None and lat is not None else None
+                        values.append(tuple(
+                            Json(row.get(c) or []) if c == 'quality_flags'
+                            else Json(row.get(c) or {}) if c == 'source_properties'
+                            else wkt if c == 'geom'
+                            else row.get(c) if c != 'provider' else run.get('provider')
+                            for c in snapshot_cols
+                        ))
+                    snapshot_template = '(' + ','.join(['%s'] * 15 + ['ST_GeomFromText(%s,4326)'] + ['%s'] * 4) + ')'
+                    execute_values(cur,
+                        f"INSERT INTO live.gfw_vessel_presence_snapshots ({','.join(snapshot_cols)}) VALUES %s ON CONFLICT DO NOTHING",
+                        values, template=snapshot_template, page_size=500)
+
+                    current_cols = [
+                        'provider', 'vessel_id', 'source_dataset_id', 'source_snapshot_date', 'observed_at',
+                        'received_at', 'source_event_key', 'record_hash', 'mmsi', 'ship_name', 'vessel_type',
+                        'flag', 'longitude', 'latitude', 'geom', 'presence_quality', 'quality_flags',
+                        'source_run_id', 'updated_at',
+                    ]
+                    # Same vessel can appear in multiple corridors; keep the latest row per vessel in this run.
+                    latest = {}
+                    for row in snapshots:
+                        latest[row['vessel_id']] = row
+                    current_values = []
+                    for row in latest.values():
+                        lon, lat = row.get('longitude'), row.get('latitude')
+                        wkt = f'POINT({lon} {lat})' if lon is not None and lat is not None else None
+                        current_values.append(tuple(
+                            Json(row.get(c) or []) if c == 'quality_flags'
+                            else wkt if c == 'geom'
+                            else run.get('provider') if c == 'provider'
+                            else run.get('source_dataset_id') if c == 'source_dataset_id'
+                            else row.get('snapshot_date') if c == 'source_snapshot_date'
+                            else row.get('run_id') if c == 'source_run_id'
+                            else datetime.now().isoformat() if c == 'updated_at'
+                            else row.get(c)
+                            for c in current_cols
+                        ))
+                    current_template = '(' + ','.join(['%s'] * 14 + ['ST_GeomFromText(%s,4326)'] + ['%s'] * 4) + ')'
+                    update_cols = [c for c in current_cols if c not in ('provider', 'vessel_id')]
+                    update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
+                    execute_values(cur,
+                        f"INSERT INTO live.gfw_vessel_presence_current ({','.join(current_cols)}) VALUES %s "
+                        f"ON CONFLICT (provider,vessel_id) DO UPDATE SET {update_set} "
+                        "WHERE live.gfw_vessel_presence_current.source_snapshot_date < EXCLUDED.source_snapshot_date "
+                        "OR (live.gfw_vessel_presence_current.source_snapshot_date = EXCLUDED.source_snapshot_date "
+                        "AND live.gfw_vessel_presence_current.observed_at <= EXCLUDED.observed_at)",
+                        current_values, template=current_template, page_size=500)
+            logger.info(
+                f"[gfw_vessel_presence] ✓ run {run['run_id']} status={run.get('status')} "
+                f"snapshots={len(snapshots)} submitted={len(submitted_snapshots)}"
+            )
+            return
+
         if collector_name in ('animal_veterinary_clinics', 'animal_licensed_pet_businesses', 'animal_protection_offices'):
             runs = [r for r in records if r.get('_type') == 'run']
             if len(runs) != 1:

@@ -252,6 +252,8 @@ _COLLECTOR_TOGGLES = (
     ('RAIL_TIMETABLE',               True,  1440),
     ('SHIP_TDX',                     False, 2),
     ('SHIP_AIS',                     False, 10),  # ⚠️ Taiwan IP required — 跑在 HiCloud VM，Zeabur 端強制關閉，見 docs/EXTERNAL_COLLECTORS.md
+    ('AISSTREAM',                    False, 1),   # 常駐 WebSocket；由 main.py 另行啟動，不走 interval scheduler
+    ('GFW_VESSEL_PRESENCE',          False, 1440), # GFW 4Wings daily; token + license gate required
     ('FLIGHT_FR24',                  False, 5),
     ('FLIGHT_FR24_ZONE',             False, 5),
     ('FLIGHT_OPENSKY',               False, 5),
@@ -324,6 +326,41 @@ _COLLECTOR_TOGGLES = (
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
     globals()[f'{_prefix}_ENABLED'] = _env_bool(f'{_prefix}_ENABLED', _en_default)
     globals()[f'{_prefix}_INTERVAL'] = int(os.getenv(f'{_prefix}_INTERVAL', str(_intv_default)))
+
+# AISStream 常駐 WebSocket worker（獨立於既有 ship_ais / SupabaseWriter pipeline）
+# 預設關閉；啟用前需先完成 gis-platform migration、S3 權限與 Zeabur smoke test。
+AISSTREAM_ENABLED = _env_bool('AISSTREAM_ENABLED', False)
+AISSTREAM_API_KEY = os.getenv('AISSTREAM_API_KEY', '')
+AISSTREAM_WS_URL = os.getenv('AISSTREAM_WS_URL', 'wss://stream.aisstream.io/v0/stream')
+AISSTREAM_CAMPAIGN_DAYS = int(os.getenv('AISSTREAM_CAMPAIGN_DAYS', '14'))
+AISSTREAM_RECONNECT_MAX_SECONDS = float(os.getenv('AISSTREAM_RECONNECT_MAX_SECONDS', '60'))
+AISSTREAM_QUEUE_MAXSIZE = int(os.getenv('AISSTREAM_QUEUE_MAXSIZE', '10000'))
+AISSTREAM_SPOOL_ROTATE_MINUTES = int(os.getenv('AISSTREAM_SPOOL_ROTATE_MINUTES', '60'))
+AISSTREAM_SPOOL_MAX_MB = int(os.getenv('AISSTREAM_SPOOL_MAX_MB', '10240'))
+AISSTREAM_DB_BATCH_SIZE = int(os.getenv('AISSTREAM_DB_BATCH_SIZE', '100'))
+AISSTREAM_DB_FLUSH_SECONDS = float(os.getenv('AISSTREAM_DB_FLUSH_SECONDS', '5'))
+AISSTREAM_S3_STORAGE_CLASS = os.getenv('AISSTREAM_S3_STORAGE_CLASS', 'GLACIER_IR')
+AISSTREAM_S3_PREFIX = os.getenv('AISSTREAM_S3_PREFIX', 'aisstream/raw/v1')
+AISSTREAM_HEALTH_INTERVAL_SECONDS = int(os.getenv('AISSTREAM_HEALTH_INTERVAL_SECONDS', '60'))
+
+# Global Fishing Watch：每日 4Wings report；未取得 token 時永遠 disabled。
+GFW_ACCESS_TOKEN = os.getenv('GFW_ACCESS_TOKEN', '')
+GFW_RAW_ARCHIVE_ENABLED = _env_bool('GFW_RAW_ARCHIVE_ENABLED', False)  # license gate; not implemented until approved
+GFW_REPORT_URL = os.getenv('GFW_REPORT_URL', 'https://gateway.api.globalfishingwatch.org/v3/4wings/report')
+GFW_DATA_LAG_DAYS = int(os.getenv('GFW_DATA_LAG_DAYS', '5'))
+if not 4 <= GFW_DATA_LAG_DAYS <= 30:
+    raise ValueError('GFW_DATA_LAG_DAYS 必須介於 4 與 30 天（dataset 約落後 96 小時）')
+
+# AISStream BoundingBoxes 格式為 [[[lat_min, lon_min], [lat_max, lon_max]], ...]。
+# 五個區域刻意保留獨立標籤，日後可依區域比較涵蓋率；collector 仍只開一條 WebSocket。
+AISSTREAM_BBOXES = os.getenv(
+    'AISSTREAM_BBOXES',
+    '[{"name":"taiwan_north_east","box":[[23.3,120.5],[26.5,123.5]]},'
+    '{"name":"yonaguni_ishigaki","box":[[23.5,122.0],[25.5,125.5]]},'
+    '{"name":"miyako_okinawa","box":[[24.4,124.0],[27.6,129.0]]},'
+    '{"name":"amami","box":[[27.0,127.0],[30.2,131.0]]},'
+    '{"name":"kyushu_southwest","box":[[30.0,128.5],[34.5,132.8]]}]'
+)
 
 # ------------------------------------------------------------
 # 各 collector 的「額外設定」（city list、API 金鑰、參數）

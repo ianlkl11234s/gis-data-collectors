@@ -105,6 +105,10 @@ TABLE_MAP = {
         'columns': ['mmsi', 'ship_name', 'ship_type', 'lat', 'lng', 'speed', 'heading', 'collected_at', 'geom'],
         'current_columns': ['mmsi', 'ship_name', 'ship_type', 'lat', 'lng', 'speed', 'heading', 'collected_at', 'geom'],
     },
+    'gfw_vessel_presence': {
+        # GFW run ledger + daily presence snapshots + vessel current are one atomic unit.
+        'is_multi_table': True,
+    },
     'earthquake': {
         # 一支 collector 寫 3 張表（gis-platform migration 321）：
         #   live.earthquake_events      UNIQUE(event_id)              DO UPDATE（報告會修訂）
