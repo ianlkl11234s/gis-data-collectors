@@ -48,6 +48,8 @@ Rule ID: tiered-cold-storage
 | Prefix | 對應 collector | 容量 | Objects | 備註 |
 |---|---|---|---|---|
 | `ship_ais/` | ship_ais (AIS 船舶) | 13.94 GB | 3,566 | 大宗 |
+| `aisstream/raw/v1/` | AISStream raw WebSocket NDJSON + manifest | 待首次啟用盤點 | — | **永久冷 archive；不設定 prefix expiration；預設 GLACIER_IR；以 SHA-256 + HEAD 驗證後才清理本地 spool** |
+| （尚未建立） | GFW `public-global-presence` raw response | — | — | **GFW_ACCESS_TOKEN / license gate 未完成；collector disabled，不得先上傳或宣稱已有 archive** |
 | `youbike/` | youbike (3 城) | 12.60 GB | 7,235 | 大宗 |
 | `bus/` | bus (六都公車) | 6.23 GB | 72 | 全 archives |
 | `satellite/` | satellite | 2.72 GB | 44 | 全 archives |
@@ -205,6 +207,11 @@ aws s3 rm s3://migu-gis-data-collector/parking/ --recursive
 | 更換 bucket / region | §2 |
 
 **最低限度**：每季掃一次（執行 §5 第一條腳本），確認用量沒突然暴增。
+
+> AISStream 特別規則：`aisstream/raw/v1/` 由常駐 worker 直接上傳每小時 gzip
+> NDJSON，不經 `tasks/archive.py`，且不適用本 bucket 的「本地保留後歸檔」清理語意。
+> 不得新增 S3 expiration / delete lifecycle；若要改 storage class 或 bucket policy，
+> 必須先更新本檔並驗證既有 raw manifest 可讀。
 
 ---
 

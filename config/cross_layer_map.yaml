@@ -126,6 +126,38 @@ ship_ais:
     - {prefix: ship_ais/archives/, expected_daily: true, archive_lag_days: 8}
   critical: true
 
+aisstream:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 1
+  supabase_tables:
+    - live.aisstream_ingest_runs
+    - live.aisstream_archive_manifests
+    - live.aisstream_position_observations
+    - live.aisstream_vessel_current
+    - live.aisstream_ingest_health
+  s3_prefixes:
+    - {prefix: aisstream/raw/v1/, expected_daily: true, archive_lag_days: 0}
+  critical: false
+  notes: >-
+    獨立 provider 的常駐 WebSocket；預設關閉。raw gzip NDJSON + manifest 永久冷儲存，
+    collector 只在 upload 與 HEAD 驗證後清理本地 spool，不設定 S3 expiry/lifecycle delete。
+
+gfw_vessel_presence:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 1440
+  supabase_tables:
+    - live.gfw_vessel_presence_runs
+    - live.gfw_vessel_presence_archive_manifests
+    - live.gfw_vessel_presence_snapshots
+    - live.gfw_vessel_presence_current
+  s3_prefixes: []
+  critical: false
+  notes: >-
+    GFW 4Wings public-global-presence 每日一次（dataset 約落後 96h，預設 data_lag_days=5）；GFW_ACCESS_TOKEN 尚未申請時不呼叫 API。
+    raw S3 永久保存需另行確認帳號授權，未通過 license gate 前不建立 raw archive。
+
 # ─────────────────────────────────────────────────────────
 # 航空類
 # ─────────────────────────────────────────────────────────

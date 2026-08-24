@@ -40,6 +40,10 @@ def _init_collector_from_entry(entry, first: bool) -> "BaseCollector | None":
     Returns:
         collector 實例（成功時）或 None（停用、缺 key、初始化失敗）
     """
+    # persistent provider 由自己的 worker 啟動，不應建立一個會被 interval
+    # scheduler 重複觸發的 shim collector。
+    if getattr(entry, 'persistent', False):
+        return None
     prefix = entry.config_prefix
     display = entry.display_name
     enabled = getattr(config, f"{prefix}_ENABLED", False)
@@ -115,6 +119,31 @@ def run_collectors():
         print(f"\n⏰ 下次排程觸發: {next_run.strftime('%H:%M:%S')}")
 
     return collectors
+
+
+def run_aisstream_worker():
+    """啟動 AISStream 長駐 worker；預設 disabled，與排程 collectors 分離。"""
+    if not getattr(config, 'AISSTREAM_ENABLED', False):
+        print("\n⏸️  AISStream 長駐收集器已停用 (AISSTREAM_ENABLED=false)")
+        return None
+    if not config.AISSTREAM_API_KEY:
+        print("\n⚠️  AISSTREAM_API_KEY 未設定，跳過 AISStream 長駐收集器")
+        return None
+    try:
+        from workers.aisstream import AISStreamWorker
+
+        worker = AISStreamWorker()
+        # DB run ledger and S3 cold archive are hard gates.  Prepare on the
+        # main thread so a migration/credential failure cannot kill only the
+        # daemon thread while Zeabur still looks healthy.
+        worker.prepare()
+        thread = threading.Thread(target=worker.run, daemon=True, name='aisstream-worker')
+        thread.start()
+        print(f"\n✓ AISStream 長駐收集器已啟動（{len(worker.boxes)} 個 bbox，campaign {config.AISSTREAM_CAMPAIGN_DAYS} 天）")
+        return worker
+    except Exception as exc:
+        print(f"\n✗ AISStream 長駐收集器初始化失敗: {exc}")
+        raise
 
 
 def run_api_server_thread():
@@ -347,6 +376,9 @@ def main():
     # 啟動收集器
     collectors = run_collectors()
 
+    # AISStream 是長駐 WebSocket，刻意不掛入 interval scheduler，避免被當成 polling job。
+    aisstream_worker = run_aisstream_worker()
+
     # 設定每日報告（先建立，讓歸檔任務可以回傳結果）
     daily_report_task = run_daily_report_task(collectors)
 
@@ -378,9 +410,12 @@ def main():
 
     if not collectors:
         # 如果沒有收集器但有 API，繼續執行
-        if not api_thread:
+        if not api_thread and not aisstream_worker:
             sys.exit(1)
-        print("\n⚠️  沒有收集器，僅執行 API Server")
+        if aisstream_worker:
+            print("\n⚠️  沒有排程型收集器，僅執行 AISStream 長駐 worker" + (" + API Server" if api_thread else ""))
+        else:
+            print("\n⚠️  沒有收集器，僅執行 API Server")
 
     # 設定 graceful shutdown
     running = True
@@ -388,6 +423,8 @@ def main():
     def signal_handler(signum, frame):
         nonlocal running
         print(f"\n\n🛑 收到停止信號，正在結束...")
+        if aisstream_worker:
+            aisstream_worker.stop()
         running = False
 
     signal.signal(signal.SIGINT, signal_handler)

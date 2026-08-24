@@ -13,6 +13,16 @@ defaults:
 
 # Per-table configuration overrides (optional)
 overrides:
+  live.aisstream_position_observations:
+    cadence: daily_yesterday
+    storage_class: GLACIER_IR
+    notes: "AISStream provider 独立 observations；raw event 已另存 aisstream/raw/v1/ 永久冷儲存，DB backup 仍保留作查詢層復原"
+
+  live.gfw_vessel_presence_snapshots:
+    cadence: daily_yesterday
+    storage_class: GLACIER_IR
+    notes: "GFW daily snapshots；DB backup 可保留，raw GFW S3 archive 仍受 license gate 控制"
+
   reference.foursquare_poi:
     fingerprint_strategy: row_count_only
     notes: "Huge table (420k rows, 161MB); HuggingFace gated dataset; monthly collector update"
@@ -53,6 +63,8 @@ exclude:
   - live.weather_current        # reconstructible from weather_observations
   - live.air_quality_current    # reconstructible from air_quality_observations
   - live.ship_current           # reconstructible from ship_positions
+  - live.aisstream_vessel_current # reconstructible from aisstream_position_observations; static fields are sticky
+  - live.aisstream_ingest_health   # heartbeat ephemeral; raw/archive state is authoritative
   - live.market_index_current   # market tick; reconstructible from tick table
   - live.parking_lots_current   # reconstructible from availability
   - live.parking_segments_current

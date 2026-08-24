@@ -1,0 +1,8 @@
+{
+  "entries": [
+    {"vessel_id": "gfw-001", "mmsi": "416000001", "date": "2026-08-23", "lat": 24.5, "lon": 123.1, "shipName": "TEST ONE", "flag": "TW"},
+    {"vessel_id": "gfw-001", "mmsi": "416000001", "date": "2026-08-23", "lat": 24.5, "lon": 123.1, "shipName": "TEST ONE", "flag": "TW"},
+    {"vesselId": "gfw-002", "timestamp": "2026-08-23T03:00:00Z", "latitude": 25.1, "longitude": 124.2, "vesselType": "cargo"},
+    {"vessel_id": "bad-no-position", "date": "2026-08-23"}
+  ]
+}

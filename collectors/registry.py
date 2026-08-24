@@ -55,6 +55,8 @@ from .road_event_planned import RoadEventPlannedCollector
 from .satellite import SatelliteCollector
 from .satellite_passes_daily import SatellitePassesDailyCollector
 from .ship_ais import ShipAISCollector
+from .aisstream import AISStreamCollector
+from .gfw_vessel_presence import GFWVesselPresenceCollector
 from .ship_tdx import ShipTDXCollector
 from .temperature import TemperatureGridCollector
 from .tourist_shuttle import TouristShuttleCollector
@@ -97,6 +99,7 @@ class CollectorEntry:
     display_name: str
     config_prefix: str
     required_env: Tuple[str, ...] = ()
+    persistent: bool = False
 
 
 # 順序 = main.py 啟動訊息的顯示順序（沿用重構前的既有順序）
@@ -118,6 +121,8 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(RailTimetableCollector, "Rail Timetable 收集器", "RAIL_TIMETABLE"),
     CollectorEntry(ShipTDXCollector, "Ship TDX 收集器", "SHIP_TDX"),
     CollectorEntry(ShipAISCollector, "Ship AIS 收集器", "SHIP_AIS"),
+    CollectorEntry(AISStreamCollector, "AISStream 長駐收集器", "AISSTREAM", ("AISSTREAM_API_KEY",), True),
+    CollectorEntry(GFWVesselPresenceCollector, "GFW 船舶 presence 每日收集器", "GFW_VESSEL_PRESENCE", ("GFW_ACCESS_TOKEN",)),
     CollectorEntry(FlightFR24Collector, "Flight FR24 收集器", "FLIGHT_FR24"),
     CollectorEntry(FlightFR24ZoneCollector, "FR24 Zone 收集器", "FLIGHT_FR24_ZONE"),
     CollectorEntry(EarthquakeCollector, "Earthquake 收集器", "EARTHQUAKE", ("CWA_API_KEY",)),
