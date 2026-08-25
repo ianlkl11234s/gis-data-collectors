@@ -1,8 +1,10 @@
 # Global Fishing Watch vessel presence
 
-狀態：**production 仍未部署**。舊 `GFW_VESSEL_PRESENCE_ENABLED` 與新
-`GFW_HOURLY_PUBLISH_ENABLED` 預設都為 `false`；新 job 還需
-`GFW_HOURLY_REDISTRIBUTION_APPROVED=true`、migration 375 與 Cloudflare origin 才會排程。
+狀態（2026-08-25）：舊 `GFW_VESSEL_PRESENCE_ENABLED` 仍刻意保持 `false`；
+新 `gfw_hourly_publish` 已在 Zeabur production 每日 06:30 Asia/Taipei 排程。
+首次已成功發布 `2026-08-20` unified v2 release 至 S3/Cloudflare public origin。
+Root 的 Cache-Control header 已正確，但 Cloudflare 回應仍為 `CF-Cache-Status: DYNAMIC`，
+root edge cache 尚未完成驗收。
 
 ## 冻結的來源契約
 
@@ -64,7 +66,7 @@ Collector 會在寫入 UTC-5 日 snapshot 前呼叫 migration 371 的 service-on
   不使用 broad recursive delete 或 glob。
 - run ledger 只存小型 metadata；不保存 raw GFW response。
 
-## Unified hourly production job（程式已接線，未部署）
+## Unified hourly production job（Zeabur production）
 
 `tasks/gfw_hourly_publish.py` 是每日固定時間 job，deploy 不會立即跑。每次都重抓
 最新完整日往回 7 UTC days，是為了吸收 GFW 延遲修正；不是每天只補一天。
@@ -102,8 +104,10 @@ assets[]: tracks_day | grid_hour | sar_unmatched_hour
 Immutable keys 為 `releases/<release_id>/tracks/days/...`、`grid/hours/...` 與
 `dark_vessels/hours/...`。Root 在所有 immutable objects PUT＋HEAD hash/size 驗證後才
 最後 cutover；三類產品任一缺失就不發布。
+`dark_vessels.hours[].observed_at`、SAR hour GeoJSON metadata 與 feature properties
+一律使用 canonical UTC `YYYY-MM-DDTHH:00:00Z`，不發布等價的 `+00:00` 字串。
 
-### S3 / Cloudflare lifecycle（未連 live S3）
+### S3 / Cloudflare lifecycle
 
 `scripts/gfw_hourly_release.py` 的 `publish_release_to_s3(...)` 接受可注入的
 boto3-compatible client，不在 module 內讀 credentials。`bucket`、`key_prefix`
@@ -151,5 +155,8 @@ DB health RPC 只供運維。
 仍失敗時不會反向寫 `failed`，而是保留
 `cutover_succeeded_ledger_pending` spool 與 `reconcile-ledger.json`供對帳。
 
-當前 truth：程式、env 契約與 fake-client tests 已完成；**migration 375 未套
-production、Zeabur flags 未開、Cloudflare origin 未驗收、live S3 未呼叫**。
+當前 truth：migration 375、Zeabur production flags、S3 manifest-last publish 與
+Cloudflare public origin 已用於首次 `2026-08-20` release；排程為每日 06:30
+Asia/Taipei。尚未驗收的是 Cloudflare **root edge cache**（public URL 可讀且
+Cache-Control 正確，但實測 `CF-Cache-Status: DYNAMIC`），不得寫成整個
+production 或 public origin 尚未部署。
