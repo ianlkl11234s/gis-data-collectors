@@ -30,7 +30,13 @@ def _as_task(name: str, fn, timeout: int = 300):
     """
     return SimpleNamespace(name=name, run=fn, COLLECT_TIMEOUT=timeout)
 from collectors.registry import COLLECTOR_REGISTRY
-from tasks import ArchiveTask, BackupSupabaseTask, DailyReportTask, MiniTaipeiPublishTask
+from tasks import (
+    ArchiveTask,
+    BackupSupabaseTask,
+    DailyReportTask,
+    GFWHourlyPublishTask,
+    MiniTaipeiPublishTask,
+)
 from utils.notify import notify_archive_complete, notify_trails_export
 
 
@@ -305,7 +311,6 @@ def run_trails_export_task():
     if not config.TRAILS_EXPORT_ENABLED:
         print("\n⏸️  軌跡凍結匯出已停用 (TRAILS_EXPORT_ENABLED=false)")
         return None
-
     if not config.S3_BUCKET:
         print("\n⚠️  S3_BUCKET 未設定，軌跡凍結匯出停用")
         return None
@@ -342,6 +347,32 @@ def run_trails_export_task():
     except Exception as e:
         print(f"\n✗ 軌跡凍結匯出初始化失敗: {e}")
         return None
+
+
+def run_gfw_hourly_publish_task():
+    """Set the fixed-time unified GFW hourly release job without an immediate run."""
+    if not getattr(config, 'GFW_HOURLY_PUBLISH_ENABLED', False):
+        print("\n⏸️  GFW hourly unified publish 已停用 (GFW_HOURLY_PUBLISH_ENABLED=false)")
+        return None
+    if not getattr(config, 'GFW_HOURLY_REDISTRIBUTION_APPROVED', False):
+        print("\n⚠️  GFW hourly publish 缺 redistribution approval，停用")
+        return None
+    try:
+        task = GFWHourlyPublishTask()
+        publish_time = config.GFW_HOURLY_PUBLISH_TIME
+        sched = get_scheduler()
+        schedule.every().day.at(publish_time).do(
+            sched.submit,
+            _as_task("gfw_hourly_publish", task.run, timeout=7200),
+        )
+        print(
+            f"\n✓ GFW hourly unified publish 已設定 "
+            f"(每日 {publish_time} Asia/Taipei；不在 deploy 時立即執行)"
+        )
+        return task
+    except Exception as exc:
+        print(f"\n✗ GFW hourly unified publish 初始化失敗: {exc}")
+        raise
 
 
 def _setup_logging():
@@ -394,6 +425,9 @@ def main():
     # 設定每日軌跡凍結匯出任務
     run_trails_export_task()
 
+    # GFW AIS grid/tracks + SAR unmatched 共用單一 root manifest；僅固定每日排程。
+    gfw_hourly_task = run_gfw_hourly_publish_task()
+
     # Supabase buffer flush 排程
     if config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:
         from collectors.base import get_supabase_writer
@@ -410,7 +444,7 @@ def main():
 
     if not collectors:
         # 如果沒有收集器但有 API，繼續執行
-        if not api_thread and not aisstream_worker:
+        if not api_thread and not aisstream_worker and not gfw_hourly_task:
             sys.exit(1)
         if aisstream_worker:
             print("\n⚠️  沒有排程型收集器，僅執行 AISStream 長駐 worker" + (" + API Server" if api_thread else ""))

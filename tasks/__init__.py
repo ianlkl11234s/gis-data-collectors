@@ -4,5 +4,9 @@ from .archive import ArchiveTask
 from .backup_supabase import BackupSupabaseTask
 from .daily_report import DailyReportTask
 from .mini_taipei_publish import MiniTaipeiPublishTask
+from .gfw_hourly_publish import GFWHourlyPublishTask
 
-__all__ = ['ArchiveTask', 'BackupSupabaseTask', 'DailyReportTask', 'MiniTaipeiPublishTask']
+__all__ = [
+    'ArchiveTask', 'BackupSupabaseTask', 'DailyReportTask',
+    'MiniTaipeiPublishTask', 'GFWHourlyPublishTask',
+]

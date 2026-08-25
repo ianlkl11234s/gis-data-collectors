@@ -155,8 +155,22 @@ gfw_vessel_presence:
   s3_prefixes: []
   critical: false
   notes: >-
-    GFW 4Wings public-global-presence 每日一次（dataset 約落後 96h，預設 data_lag_days=5）；GFW_ACCESS_TOKEN 尚未申請時不呼叫 API。
-    raw S3 永久保存需另行確認帳號授權，未通過 license gate 前不建立 raw archive。
+    舊 DAILY DB presence collector，保持 disabled；不得與 gfw_hourly_publish 同時開啟。
+    raw S3 永久保存仍受獨立 license gate 限制。
+
+gfw_hourly_publish:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 1440
+  supabase_tables:
+    - live.gfw_hourly_publish_runs
+  s3_prefixes:
+    - {prefix: deploy-assets/global-maritime/gfw-hourly/, expected_daily: true, archive_lag_days: 5}
+  critical: false
+  notes: >-
+    Production-capable but not deployed. One daily fixed-time job: 16 sequential AIS rolling-7d
+    reports fan out to grid+tracks, then 16 distinct sequential SAR unmatched reports. Single
+    manifest-last root; redistribution approval and Cloudflare public origin are hard gates.
 
 # ─────────────────────────────────────────────────────────
 # 航空類

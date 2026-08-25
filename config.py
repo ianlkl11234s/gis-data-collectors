@@ -351,6 +351,34 @@ GFW_DATA_LAG_DAYS = int(os.getenv('GFW_DATA_LAG_DAYS', '5'))
 if not 4 <= GFW_DATA_LAG_DAYS <= 30:
     raise ValueError('GFW_DATA_LAG_DAYS 必須介於 4 與 30 天（dataset 約落後 96 小時）')
 
+# GFW hourly unified release：AIS grid + approximate tracks 共用一次 normalized
+# rolling fetch；SAR unmatched 是語意獨立的 sequential report。這是可重新散佈的
+# CDN product，因此 enable 與 redistribution approval 必須同時明確開啟。
+GFW_HOURLY_PUBLISH_ENABLED = _env_bool('GFW_HOURLY_PUBLISH_ENABLED', False)
+GFW_HOURLY_REDISTRIBUTION_APPROVED = _env_bool('GFW_HOURLY_REDISTRIBUTION_APPROVED', False)
+GFW_HOURLY_PUBLISH_TIME = os.getenv('GFW_HOURLY_PUBLISH_TIME', '06:30')
+GFW_HOURLY_BBOX = os.getenv(
+    'GFW_HOURLY_BBOX', '122.43400,23.22953,132.85274,34.35812'
+)
+GFW_HOURLY_ROLLING_DAYS = int(os.getenv('GFW_HOURLY_ROLLING_DAYS', '7'))
+GFW_HOURLY_TILE_SIZE_DEGREES = float(os.getenv('GFW_HOURLY_TILE_SIZE_DEGREES', '3'))
+GFW_HOURLY_EXPECTED_TILE_COUNT = int(os.getenv('GFW_HOURLY_EXPECTED_TILE_COUNT', '16'))
+GFW_HOURLY_MAX_TRACK_FEATURES = int(os.getenv('GFW_HOURLY_MAX_TRACK_FEATURES', '5000'))
+GFW_HOURLY_MAX_TRACK_POINTS = int(os.getenv('GFW_HOURLY_MAX_TRACK_POINTS', '150000'))
+GFW_HOURLY_TRACK_GAP_HOURS = float(os.getenv('GFW_HOURLY_TRACK_GAP_HOURS', '2'))
+GFW_HOURLY_MAX_SPEED_KNOTS = float(os.getenv('GFW_HOURLY_MAX_SPEED_KNOTS', '80'))
+GFW_HOURLY_RELEASES_TO_KEEP = int(os.getenv('GFW_HOURLY_RELEASES_TO_KEEP', '2'))
+GFW_HOURLY_FAILED_SPOOL_RETENTION_DAYS = int(
+    os.getenv('GFW_HOURLY_FAILED_SPOOL_RETENTION_DAYS', '7')
+)
+GFW_HOURLY_S3_PREFIX = os.getenv(
+    'GFW_HOURLY_S3_PREFIX', 'deploy-assets/global-maritime/gfw-hourly'
+).strip('/')
+# Must map exactly to the public Cloudflare origin path ending in
+# /global-maritime/gfw-hourly; no public default is safe to guess.
+GFW_HOURLY_PUBLIC_URL_PREFIX = os.getenv('GFW_HOURLY_PUBLIC_URL_PREFIX', '').rstrip('/')
+GFW_HOURLY_SPOOL_DIR = LOCAL_DATA_DIR / 'gfw_hourly_publish_spool'
+
 # AISStream BoundingBoxes 格式為 [[[lat_min, lon_min], [lat_max, lon_max]], ...]。
 # 五個區域刻意保留獨立標籤，日後可依區域比較涵蓋率；collector 仍只開一條 WebSocket。
 AISSTREAM_BBOXES = os.getenv(
@@ -547,6 +575,23 @@ def validate_config():
 
     if not TDX_APP_ID or not TDX_APP_KEY:
         errors.append("TDX_APP_ID 和 TDX_APP_KEY 未設定")
+
+    if GFW_HOURLY_PUBLISH_ENABLED:
+        if not GFW_HOURLY_REDISTRIBUTION_APPROVED:
+            errors.append("GFW hourly publish 需明確設 GFW_HOURLY_REDISTRIBUTION_APPROVED=true")
+        if GFW_VESSEL_PRESENCE_ENABLED:
+            errors.append(
+                "GFW_HOURLY_PUBLISH_ENABLED 與舊 GFW_VESSEL_PRESENCE_ENABLED 不得同時開啟"
+            )
+        required = {
+            'GFW_ACCESS_TOKEN': GFW_ACCESS_TOKEN,
+            'SUPABASE_DB_URL': SUPABASE_DB_URL,
+            'S3_BUCKET': S3_BUCKET,
+            'GFW_HOURLY_PUBLIC_URL_PREFIX': GFW_HOURLY_PUBLIC_URL_PREFIX,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            errors.append(f"GFW hourly publish 缺少: {', '.join(missing)}")
 
     if errors:
         print("⚠️  設定錯誤:")

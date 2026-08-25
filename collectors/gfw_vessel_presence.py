@@ -117,12 +117,12 @@ def _polygon(bbox: tuple[float, float, float, float]) -> dict:
 
 
 def _report_body(polygon: dict) -> dict:
-    """官方 POST schema：geojson 欄位是 FeatureCollection JSON string。"""
+    """官方 POST schema：geojson 欄位是 FeatureCollection object。"""
     feature_collection = {
         "type": "FeatureCollection",
         "features": [{"type": "Feature", "properties": {}, "geometry": polygon}],
     }
-    return {"geojson": json.dumps(feature_collection, ensure_ascii=False, separators=(",", ":"))}
+    return {"geojson": feature_collection}
 
 
 def _next_offset(payload: Any) -> str | None:
