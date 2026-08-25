@@ -72,6 +72,40 @@
       "description": "軌跡凍結匯出時間 HH:MM（容器 TZ=Asia/Taipei）；不要早於 02:00，每日資料 01:00~01:20 才定版",
       "default": "02:00"
     },
+    "GFW_ACCESS_TOKEN": {
+      "description": "Global Fishing Watch backend-only API token（不得暴露給前端）"
+    },
+    "GFW_VESSEL_PRESENCE_ENABLED": {
+      "description": "舊 DAILY presence collector；unified hourly 開啟時必須保持 false",
+      "default": "false"
+    },
+    "GFW_HOURLY_PUBLISH_ENABLED": {
+      "description": "GFW AIS grid/tracks + SAR unmatched unified v2 每日發布；多實例只能一台開",
+      "default": "false"
+    },
+    "GFW_HOURLY_REDISTRIBUTION_APPROVED": {
+      "description": "GFW redistribution/attribution 人工審核閘門；未明確同意不發布",
+      "default": "false"
+    },
+    "GFW_HOURLY_PUBLISH_TIME": {
+      "description": "Unified GFW publish HH:MM（容器 TZ=Asia/Taipei）",
+      "default": "06:30"
+    },
+    "GFW_HOURLY_BBOX": {
+      "description": "west,south,east,north",
+      "default": "122.43400,23.22953,132.85274,34.35812"
+    },
+    "GFW_HOURLY_EXPECTED_TILE_COUNT": {
+      "description": "Report-count fail-closed gate；當前 bbox + 3 degree tiles = 16",
+      "default": "16"
+    },
+    "GFW_HOURLY_PUBLIC_URL_PREFIX": {
+      "description": "Cloudflare public URL ending /global-maritime/gfw-hourly（啟用時必填）"
+    },
+    "GFW_HOURLY_FAILED_SPOOL_RETENTION_DAYS": {
+      "description": "Failed local spool bounded retention；當次失敗不刪",
+      "default": "7"
+    },
     "WEBHOOK_URL": {
       "description": "通知 Webhook URL"
     },

@@ -23,6 +23,11 @@ overrides:
     storage_class: GLACIER_IR
     notes: "GFW daily snapshots；DB backup 可保留，raw GFW S3 archive 仍受 license gate 控制"
 
+  live.gfw_hourly_publish_runs:
+    cadence: daily_yesterday
+    storage_class: GLACIER_IR
+    notes: "Unified GFW v2 小型 publish metadata；GeoJSON 在 S3/CDN，DB cleanup 與 S3 retention 分離"
+
   reference.foursquare_poi:
     fingerprint_strategy: row_count_only
     notes: "Huge table (420k rows, 161MB); HuggingFace gated dataset; monthly collector update"

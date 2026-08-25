@@ -60,6 +60,10 @@ CROSS_LAYER_YAML = _REPO_ROOT / "config" / "cross_layer_map.yaml"
 # 已知跑在 HiCloud VM 的 collector（name）— 需 Taiwan IP，Zeabur 端強制關閉
 HICLOUD_VM_COLLECTORS = frozenset({"ship_ais", "waste_positions", "cdc_public_health_weekly"})
 
+# Fixed-time production tasks live outside _COLLECTOR_TOGGLES/registry but still
+# need cross-layer inventory and health ownership.
+NON_COLLECTOR_TASKS = frozenset({"gfw_hourly_publish"})
+
 # 自動管理區塊的標記（用來判斷是否已寫過區塊標頭，維持冪等）
 _AUTO_SECTION_MARKER = "# 自動同步補回（scripts/sync_cross_layer_map.py）"
 
@@ -127,7 +131,7 @@ def compute_drift() -> tuple[list[str], list[str]]:
     config_names = set(load_config_collectors().keys())
     yaml_keys = load_yaml_keys()
     missing = sorted(config_names - yaml_keys)
-    orphan = sorted(yaml_keys - config_names)
+    orphan = sorted(yaml_keys - config_names - NON_COLLECTOR_TASKS)
     return missing, orphan
 
 

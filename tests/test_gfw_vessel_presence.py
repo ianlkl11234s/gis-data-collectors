@@ -73,7 +73,7 @@ def test_missing_token_never_calls_http(monkeypatch):
         raise AssertionError("missing token must skip")
 
 
-def test_report_request_uses_official_geojson_string_body(monkeypatch):
+def test_report_request_uses_official_geojson_object_body(monkeypatch):
     captured = {}
 
     class Response:
@@ -96,9 +96,11 @@ def test_report_request_uses_official_geojson_string_body(monkeypatch):
     assert resolved == "public-global-presence:v4"
     body = captured["json"]
     assert set(body) == {"geojson"}
-    feature_collection = json.loads(body["geojson"])
+    feature_collection = body["geojson"]
+    assert isinstance(feature_collection, dict)
     assert feature_collection["type"] == "FeatureCollection"
     assert feature_collection["features"][0]["geometry"]["type"] == "Polygon"
+    assert captured["params"]["spatial-resolution"] == "HIGH"
 
 
 def test_nonzero_next_offset_is_detected_as_incomplete():
