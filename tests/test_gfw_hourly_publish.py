@@ -73,7 +73,7 @@ def test_sar_normalizer_accepts_official_wrapper_and_documented_null_empty():
         _sar_payload(), resolved_dataset="public-global-sar-presence:v4.0"
     )
     assert rows == [{
-        "observed_at": "2026-08-19T01:00:00+00:00",
+        "observed_at": "2026-08-19T01:00:00Z",
         "longitude": 122.15,
         "latitude": 23.15,
         "detections": 2,
@@ -114,7 +114,9 @@ def test_sar_finalize_emits_zero_feature_hours_for_complete_window(tmp_path):
     assert len(hours) == 24
     assert counts["detection_count"] == 0
     first = json.loads((output / hours[0]["path"]).read_text())
+    assert hours[0]["observed_at"] == "2026-08-19T00:00:00Z"
     assert first["features"] == []
+    assert first["metadata"]["observed_at"] == "2026-08-19T00:00:00Z"
     assert first["metadata"]["not_proof_of_dark_or_illegal_vessel"] is True
 
 
@@ -159,6 +161,11 @@ def test_unified_manifest_v2_and_migration_ledger_contract(tmp_path):
     assert manifest["tracks"]["days"]
     assert manifest["grid"]["hours"]
     assert len(manifest["dark_vessels"]["hours"]) == 168
+    assert all(
+        entry["observed_at"].endswith("Z")
+        and "+00:00" not in entry["observed_at"]
+        for entry in manifest["dark_vessels"]["hours"]
+    )
     assert {asset["type"] for asset in manifest["assets"]} == {
         "tracks_day", "grid_hour", "sar_unmatched_hour",
     }
@@ -168,7 +175,10 @@ def test_unified_manifest_v2_and_migration_ledger_contract(tmp_path):
         tmp_path / "release" / "2026-08-20" / entry["path"]
         for entry in manifest["dark_vessels"]["hours"] if entry["detections"]
     )
-    feature = json.loads(feature_file.read_text())["features"][0]
+    feature_collection = json.loads(feature_file.read_text())
+    feature = feature_collection["features"][0]
+    assert feature_collection["metadata"]["observed_at"] == "2026-08-19T01:00:00Z"
+    assert feature["properties"]["observed_at"] == "2026-08-19T01:00:00Z"
     assert feature["properties"]["matching_semantics"] == "SAR_detection_not_matched_to_AIS"
     assert feature["properties"]["coordinate_semantics"] == "GFW_HIGH_grid_cell_center"
 

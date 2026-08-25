@@ -159,8 +159,8 @@ gfw_vessel_presence:
     raw S3 永久保存仍受獨立 license gate 限制。
 
 gfw_hourly_publish:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 1440
   supabase_tables:
     - live.gfw_hourly_publish_runs
@@ -168,9 +168,10 @@ gfw_hourly_publish:
     - {prefix: deploy-assets/global-maritime/gfw-hourly/, expected_daily: true, archive_lag_days: 5}
   critical: false
   notes: >-
-    Production-capable but not deployed. One daily fixed-time job: 16 sequential AIS rolling-7d
-    reports fan out to grid+tracks, then 16 distinct sequential SAR unmatched reports. Single
-    manifest-last root; redistribution approval and Cloudflare public origin are hard gates.
+    Zeabur production fixed-time job（每日 06:30 Asia/Taipei）。16 個 sequential AIS
+    rolling-7d reports fan out 到 grid+tracks，再執行 16 個獨立 sequential SAR unmatched
+    reports。2026-08-25 首次成功發布 release 2026-08-20；single manifest-last root。
+    Cloudflare public origin 已可讀，但 root edge cache 是否生效仍待驗收。
 
 # ─────────────────────────────────────────────────────────
 # 航空類

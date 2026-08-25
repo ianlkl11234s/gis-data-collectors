@@ -343,7 +343,8 @@ AISSTREAM_S3_STORAGE_CLASS = os.getenv('AISSTREAM_S3_STORAGE_CLASS', 'GLACIER_IR
 AISSTREAM_S3_PREFIX = os.getenv('AISSTREAM_S3_PREFIX', 'aisstream/raw/v1')
 AISSTREAM_HEALTH_INTERVAL_SECONDS = int(os.getenv('AISSTREAM_HEALTH_INTERVAL_SECONDS', '60'))
 
-# Global Fishing Watch：每日 4Wings report；未取得 token 時永遠 disabled。
+# Global Fishing Watch backend token。Legacy DAILY DB presence collector 維持 disabled；
+# production 由下方 unified hourly publisher 的獨立 enable + redistribution 雙閘門控制。
 GFW_ACCESS_TOKEN = os.getenv('GFW_ACCESS_TOKEN', '')
 GFW_RAW_ARCHIVE_ENABLED = _env_bool('GFW_RAW_ARCHIVE_ENABLED', False)  # license gate; not implemented until approved
 GFW_REPORT_URL = os.getenv('GFW_REPORT_URL', 'https://gateway.api.globalfishingwatch.org/v3/4wings/report')

@@ -285,7 +285,7 @@ def _parse_sar_observed_at(value: Any) -> str:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     parsed = parsed.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
-    return parsed.isoformat()
+    return parsed.strftime("%Y-%m-%dT%H:00:00Z")
 
 
 def normalize_sar_unmatched_entries(
@@ -485,7 +485,7 @@ def finalize_sar_hours(
         latest + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
     )
     while current_hour < end_exclusive:
-        observed_at = current_hour.isoformat()
+        observed_at = current_hour.strftime("%Y-%m-%dT%H:00:00Z")
         features = by_hour.get(observed_at, [])
         stamp = current_hour.strftime("%Y%m%dT%HZ")
         relative = Path("hours") / f"{stamp}.geojson"

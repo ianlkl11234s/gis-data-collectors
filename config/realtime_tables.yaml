@@ -36,11 +36,11 @@ tables:
   - {schema: live, table: aisstream_position_observations,time_column: received_at, owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream independent provider; raw S3 archive is permanent}
   - {schema: live, table: aisstream_vessel_current,time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream current snapshot; sticky static fields and positions}
   - {schema: live, table: aisstream_ingest_health,  time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 5, critical: false, notes: AISStream worker health heartbeat}
-  - {schema: live, table: gfw_vessel_presence_runs, time_column: started_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW daily run ledger; disabled pending token}
+  - {schema: live, table: gfw_vessel_presence_runs, time_column: started_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: Legacy GFW daily DB presence ledger; collector intentionally disabled in favor of the unified hourly publisher}
   - {schema: live, table: gfw_vessel_presence_archive_manifests, time_column: uploaded_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW raw archive ledger; empty until license gate}
   - {schema: live, table: gfw_vessel_presence_snapshots, time_column: received_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW daily vessel presence snapshots}
   - {schema: live, table: gfw_vessel_presence_current, time_column: updated_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW latest vessel presence; reconstructible from snapshots}
-  - {schema: live, table: gfw_hourly_publish_runs, time_column: started_at, owner_collector: gfw_hourly_publish, expected_interval_min: 1440, critical: false, notes: Unified GFW v2 CDN publish metadata; disabled until migration 375 and deploy gates are applied}
+  - {schema: live, table: gfw_hourly_publish_runs, time_column: started_at, owner_collector: gfw_hourly_publish, expected_interval_min: 1440, critical: false, notes: Zeabur production unified GFW v2 CDN publish metadata; daily 06:30 Asia/Taipei}
   - {schema: reference, table: daily_schedules,          time_column: created_at,   owner_collector: rail_timetable, expected_interval_min: 1440, critical: false}
   - {schema: live, table: parking_segments_current,  time_column: collected_at, owner_collector: parking, expected_interval_min: 15, critical: false, notes: OnStreet 路邊停車；availability 由 current 代監控（測試豁免）}
 
