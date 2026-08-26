@@ -16,6 +16,22 @@
     "CWA_API_KEY": {
       "description": "氣象局 API Key（選填）"
     },
+    "CWA_MARINE_OBSERVATION_ENABLED": {
+      "description": "CWA O-B0076 測站 + O-B0075 rolling 48h 海象觀測；migration 378 apply 後才能開啟",
+      "default": "false"
+    },
+    "CWA_MARINE_OBSERVATION_INTERVAL": {
+      "description": "CWA 海象觀測收集間隔（分鐘）",
+      "default": "15"
+    },
+    "CWA_MARINE_OBSERVATION_ARCHIVE_RETENTION_DAYS": {
+      "description": "CWA 海象 raw snapshot 本地保留天數；之後由 S3 archive 接手",
+      "default": "3"
+    },
+    "ISOHE_PORT_MARINE_ENABLED": {
+      "description": "ISOHE 需台灣出口，Zeabur 必須保持 false；production 由 HiCloud runner 執行",
+      "default": "false"
+    },
     "MOENV_API_KEY": {
       "description": "環境部開放資料 API Key（空氣品質用；data.gov.tw 頁面上的公開 key 亦可）"
     },
