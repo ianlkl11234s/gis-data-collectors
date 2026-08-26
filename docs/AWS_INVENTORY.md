@@ -50,7 +50,8 @@ Rule ID: tiered-cold-storage
 | `ship_ais/` | ship_ais (AIS 船舶) | 13.94 GB | 3,566 | 大宗 |
 | `aisstream/raw/v1/` | AISStream raw WebSocket NDJSON + manifest | 待首次啟用盤點 | — | **永久冷 archive；不設定 prefix expiration；預設 GLACIER_IR；以 SHA-256 + HEAD 驗證後才清理本地 spool** |
 | （尚未建立） | GFW `public-global-presence` raw response | — | — | **Legacy raw archive 仍受 license gate 限制且保持 disabled；有 backend token 不等於允許永久保存 raw response** |
-| `deploy-assets/global-maritime/gfw-hourly/` | GFW unified v2 derived GeoJSON（AIS grid/tracks + SAR unmatched） | 首次 release `2026-08-20` 已發布 | 待下次完整 inventory | **Zeabur production 每日 06:30 Asia/Taipei**；只留 current+previous exact releases；root header 為 60s/SWR300，但 Cloudflare root edge cache 尚未驗收；release edge tail 最長 7d；不保存 raw response |
+| `deploy-assets/global-maritime/gfw-hourly/` | GFW unified v2 derived GeoJSON（AIS grid/tracks + SAR unmatched） | 首次 release `2026-08-20` 已發布 | 待下次完整 inventory | **Zeabur production 每日 08:30 Asia/Taipei**（UTC 換日後；保守 lag 避免手動 post-08:00 release 被重複）；只留 current+previous exact releases；root header 為 60s/SWR300，但 Cloudflare root edge cache 尚未驗收；release edge tail 最長 7d；不保存 raw response |
+| `deploy-assets/global-maritime/gfw-hourly/v3-shadow/` | GFW v3 full-fidelity PMTiles/detail shadow candidate | `2026-08-21` root schema 3 / `full_fidelity` audit 完成 | 約 995 MB / 3,313 files（candidate measurement） | root bytes/hash 一致；full 3,311/3,311 HEAD audit 完成，missing/head_errors/bytes/sha mismatches 均 0、`timed_out=false`。migration 377 applied；Supabase `e00` succeeded/is_current、schema 3 shadow、asset/counter 一致。**code 未 deploy，canonical v2 unchanged** |
 | `youbike/` | youbike (3 城) | 12.60 GB | 7,235 | 大宗 |
 | `bus/` | bus (六都公車) | 6.23 GB | 72 | 全 archives |
 | `satellite/` | satellite | 2.72 GB | 44 | 全 archives |
