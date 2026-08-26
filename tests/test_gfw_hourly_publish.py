@@ -299,7 +299,7 @@ class _InterruptedReportClient(_FakeReportClient):
         raise KeyboardInterrupt("operator cancelled")
 
 
-def test_task_uses_one_ais_fetch_for_grid_tracks_then_sar_and_manifest_last(tmp_path):
+def test_task_uses_one_ais_fetch_for_grid_tracks_then_sar_and_manifest_last(tmp_path, fake_gfw_pmtiles):
     settings = _settings(tmp_path)
     client = _FakeReportClient()
     ledger = _FakeLedger()
@@ -375,7 +375,7 @@ def test_keyboard_interrupt_marks_running_attempt_failed_before_cutover(tmp_path
     assert "operator cancelled" in spool["error"]
 
 
-def test_cutover_ledger_failure_retries_without_writing_failed_and_keeps_reconcile_state(tmp_path):
+def test_cutover_ledger_failure_retries_without_writing_failed_and_keeps_reconcile_state(tmp_path, fake_gfw_pmtiles):
     settings = _settings(tmp_path)
     ledger = _CutoverLedgerFailure()
     s3 = _FakeS3()
