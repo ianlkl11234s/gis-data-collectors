@@ -67,6 +67,20 @@ def test_isohe_direction_alias_and_current_unit_are_canonicalized():
     assert direction["value_numeric"] == 180.0
 
 
+def test_isohe_actual_datas_envelope_uses_top_level_coordinates_and_compact_time():
+    payload = [{
+        "Port": "臺北港", "Station_Longitude": 121.37277, "Station_Latitude": 25.18055,
+        "Datas": [{"DateTime": 20260826160000, "Hs_m": 0.7, "Tp_sec": 13.4,
+                   "Wave_Direction_degree": 348.0, "Wave_Direction": "北北西"}],
+    }]
+    stations, rows = isohe_payload_to_long("TP", "wave", payload, "2026-08-26T16:42:00+08:00")
+    assert stations[0]["longitude"] == 121.37277 and stations[0]["latitude"] == 25.18055
+    assert {row["metric_code"] for row in rows} == {"wave_height", "wave_period", "wave_direction_deg"}
+    direction = next(row for row in rows if row["metric_code"] == "wave_direction_deg")
+    assert direction["value_numeric"] == 348.0
+    assert direction["observed_at"] == "2026-08-26T16:00:00+08:00"
+
+
 def test_collectors_are_registered_as_shared_canonical_multi_table_writers():
     assert get_entry_by_name("cwa_marine_observation") is not None
     assert get_entry_by_name("isohe_port_marine") is not None
