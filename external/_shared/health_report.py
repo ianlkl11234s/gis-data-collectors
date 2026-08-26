@@ -78,6 +78,16 @@ DEFAULT_TARGETS: list[dict] = [
         "success_pattern": r"Supabase 寫入: (\d+) 筆",
         "expected_interval_min": 2,
     },
+    {
+        "name": "isohe_port_marine",
+        "log_path": "/var/log/isohe-port-marine/collect.log",
+        "data_dir": "/var/lib/isohe-port-marine/data/isohe_port_marine",
+        "outbound": [
+            {"label": "isohe_tp_wave", "host": "isohe.ihmt.gov.tw", "path": "/opendata/Wave?port=TP&format=JSON"},
+        ],
+        "success_pattern": r"Supabase 寫入: stations=(\d+) readings=\d+",
+        "expected_interval_min": 10,
+    },
 ]
 
 
