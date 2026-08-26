@@ -49,6 +49,10 @@ overrides:
     cadence: daily_yesterday
     storage_class: STANDARD
     notes: "Permanent table; 200-500 events/day; analytics.lightning_daily_summary also kept"
+  live.marine_observation_readings:
+    cadence: daily_yesterday
+    storage_class: STANDARD
+    notes: "CWA/ISOHE canonical long readings; collector raw archives remain replay source"
 
 # analytics.* tables are append-only; row_count fingerprint catches all changes.
 # They belong to static_schemas (fingerprint-driven), so no cadence override needed.
@@ -133,6 +137,7 @@ archive_py_covered:
   - live.earthquake_moment_tensor  # earthquake_moment_tensor，migration 321，collector 待啟用
   - live.disaster_alerts           # ncdr_alerts + wra_drought_alert, 2026-04-07 起
   - live.lightning_events          # lightning_events, 2026-06-15 起
+  - live.marine_observation_readings # cwa_marine_observation / isohe_port_marine, pending first production archive
   - live.nuclear_radiation_measurements  # nuclear_radiation, 2026-06-15 起
   - live.nuclear_radiation_stations  # 同上
   # Satellite / launch

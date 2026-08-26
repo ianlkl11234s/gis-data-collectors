@@ -230,6 +230,14 @@ TABLE_MAP = {
         'upsert_key': 'dataset_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'cwa_marine_observation': {
+        # reference station + long history + current cache + orphan quarantine are one transaction.
+        'is_multi_table': True,
+    },
+    'isohe_port_marine': {
+        # Same canonical tables as CWA; source_network makes instruments non-overwriting.
+        'is_multi_table': True,
+    },
     'foursquare_poi': {
         'history': 'reference.foursquare_poi',
         'columns': [

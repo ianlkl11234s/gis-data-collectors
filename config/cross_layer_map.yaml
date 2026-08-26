@@ -126,6 +126,26 @@ ship_ais:
     - {prefix: ship_ais/archives/, expected_daily: true, archive_lag_days: 8}
   critical: true
 
+cwa_marine_observation:
+  enabled: true
+  deployment: zeabur
+  expected_interval_min: 15
+  supabase_tables: [reference.marine_observation_stations, live.marine_observation_readings, live.marine_observation_current, live.marine_observation_quarantine]
+  s3_prefixes:
+    - {prefix: cwa_marine_observation/archives/, expected_daily: true}
+  critical: false
+  notes: CWA O-B0076 registry plus O-B0075 rolling 48h; 85th orphan StationID is quarantined, never silently dropped
+
+isohe_port_marine:
+  enabled: false
+  deployment: hicloud_vm
+  expected_interval_min: 10
+  supabase_tables: [reference.marine_observation_stations, live.marine_observation_readings, live.marine_observation_current]
+  s3_prefixes:
+    - {prefix: isohe_port_marine/archives/, expected_daily: true, archive_lag_days: 3}
+  critical: false
+  notes: 8 ports x wave/current/tide/wind; Taiwan egress only; MZ legacy XML excluded and tide datums stay separate
+
 aisstream:
   enabled: false
   deployment: disabled

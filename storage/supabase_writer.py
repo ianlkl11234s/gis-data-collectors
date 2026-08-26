@@ -352,6 +352,10 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_marine_observation(self, result: dict, ts: datetime) -> list[dict]:
+        """Collectors already enforce the canonical long-form marine contract."""
+        return [dict(row) for row in result.get("data", []) if isinstance(row, dict)]
+
     def _transform_temperature(self, result: dict, ts: datetime) -> list[dict]:
         """溫度網格：二維陣列展開為 row"""
         grid_data = result.get('data', [])
@@ -2139,6 +2143,8 @@ class SupabaseWriter:
         'ncdr_alerts': _transform_ncdr_alerts,
         'news_events': _transform_news_events,
         'cwa_satellite': _transform_cwa_satellite,
+        'cwa_marine_observation': _transform_marine_observation,
+        'isohe_port_marine': _transform_marine_observation,
         'foursquare_poi': _transform_foursquare_poi,
         'air_quality_imagery': _transform_air_quality_imagery,
         'air_quality': _transform_air_quality,
@@ -2278,6 +2284,76 @@ class SupabaseWriter:
 
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """freeway_vd 和 flight_fr24 的多表寫入"""
+        if collector_name in ('cwa_marine_observation', 'isohe_port_marine'):
+            stations = [r for r in records if r.get('_type') == 'station']
+            readings = [r for r in records if r.get('_type') == 'reading']
+            quarantines = [r for r in records if r.get('_type') == 'quarantine']
+            with self._txn(conn) as cur:
+                if stations:
+                    cols = ['station_uid', 'source_network', 'source_station_id', 'origin_org', 'distribution_org',
+                            'station_type', 'name_zh', 'aliases', 'longitude', 'latitude', 'geom',
+                            'observed_elements', 'source_status', 'source_url', 'license', 'provenance',
+                            'first_seen_at', 'last_seen_at']
+                    values = []
+                    for row in stations:
+                        lon, lat = row.get('longitude'), row.get('latitude')
+                        geom = f'POINT({lon} {lat})' if lon is not None and lat is not None else None
+                        values.append(tuple(Json(row.get(c) or []) if c in ('aliases', 'observed_elements')
+                                            else Json(row.get(c) or {}) if c == 'provenance'
+                                            else geom if c == 'geom' else row.get(c) for c in cols))
+                    template = '(' + ','.join(['%s'] * 10 + ['ST_GeomFromText(%s,4326)'] + ['%s'] * 7) + ')'
+                    updates = ','.join(f'{c}=EXCLUDED.{c}' for c in cols if c != 'station_uid')
+                    execute_values(cur, f"INSERT INTO reference.marine_observation_stations ({','.join(cols)}) VALUES %s "
+                                       f"ON CONFLICT (station_uid) DO UPDATE SET {updates}", values, template=template, page_size=500)
+                if readings:
+                    cols = ['station_uid', 'source_network', 'source_station_id', 'observed_at', 'metric_code', 'depth_key',
+                            'value_raw', 'value_numeric', 'unit_source', 'unit_canonical', 'vertical_datum',
+                            'is_missing', 'is_valid', 'missing_reason', 'source_status', 'quality_flags',
+                            'payload_sha256', 'collected_at', 'geom_at_observation']
+                    values = []
+                    for row in readings:
+                        lon, lat = row.get('longitude'), row.get('latitude')
+                        geom = f'POINT({lon} {lat})' if lon is not None and lat is not None else None
+                        values.append(tuple(Json(row.get(c) or {}) if c == 'quality_flags' else geom if c == 'geom_at_observation' else row.get(c) for c in cols))
+                    template = '(' + ','.join(['%s'] * 18 + ['ST_GeomFromText(%s,4326)']) + ')'
+                    execute_values(cur, f"INSERT INTO live.marine_observation_readings ({','.join(cols)}) VALUES %s "
+                                       "ON CONFLICT (station_uid,observed_at,metric_code,depth_key) DO UPDATE SET "
+                                       "value_raw=EXCLUDED.value_raw,value_numeric=EXCLUDED.value_numeric,unit_source=EXCLUDED.unit_source,"
+                                       "unit_canonical=EXCLUDED.unit_canonical,vertical_datum=EXCLUDED.vertical_datum,"
+                                       "is_missing=EXCLUDED.is_missing,is_valid=EXCLUDED.is_valid,missing_reason=EXCLUDED.missing_reason,"
+                                       "source_status=EXCLUDED.source_status,quality_flags=EXCLUDED.quality_flags,"
+                                       "payload_sha256=EXCLUDED.payload_sha256,collected_at=EXCLUDED.collected_at,geom_at_observation=EXCLUDED.geom_at_observation",
+                                       values, template=template, page_size=1000)
+                    current_cols = [
+                        'station_uid', 'metric_code', 'depth_key', 'observed_at', 'value_raw', 'value_numeric',
+                        'unit_source', 'unit_canonical', 'vertical_datum', 'is_missing', 'is_valid', 'source_status',
+                        'quality_flags', 'payload_sha256', 'collected_at', 'geom_at_observation',
+                    ]
+                    latest = {}
+                    for row in (r for r in readings if r.get('is_valid') and not r.get('is_missing') and r.get('value_numeric') is not None):
+                        key = (row['station_uid'], row['metric_code'], row['depth_key'])
+                        previous = latest.get(key)
+                        if previous is None or str(row['observed_at']) >= str(previous['observed_at']):
+                            latest[key] = row
+                    current_values = []
+                    for row in latest.values():
+                        lon, lat = row.get('longitude'), row.get('latitude')
+                        geom = f'POINT({lon} {lat})' if lon is not None and lat is not None else None
+                        current_values.append(tuple(Json(row.get(c) or {}) if c == 'quality_flags' else geom if c == 'geom_at_observation' else row.get(c) for c in current_cols))
+                    if current_values:
+                        template = '(' + ','.join(['%s'] * (len(current_cols) - 1) + ['ST_GeomFromText(%s,4326)']) + ')'
+                        updates = ','.join(f'{c}=EXCLUDED.{c}' for c in current_cols if c not in ('station_uid', 'metric_code', 'depth_key'))
+                        execute_values(cur, f"INSERT INTO live.marine_observation_current ({','.join(current_cols)}) VALUES %s "
+                                           f"ON CONFLICT (station_uid,metric_code,depth_key) DO UPDATE SET {updates} "
+                                           "WHERE live.marine_observation_current.observed_at <= EXCLUDED.observed_at",
+                                           current_values, template=template, page_size=1000)
+                if quarantines:
+                    cols = ['source_network', 'source_station_id', 'reason', 'row_count', 'collected_at']
+                    execute_values(cur, f"INSERT INTO live.marine_observation_quarantine ({','.join(cols)}) VALUES %s "
+                                       "ON CONFLICT (source_network,source_station_id,reason,collected_at) DO NOTHING",
+                                       [tuple(r.get(c) for c in cols) for r in quarantines])
+            logger.info(f"[{collector_name}] marine transaction stations={len(stations)} readings={len(readings)} quarantine={len(quarantines)}")
+            return
         if collector_name == 'gfw_vessel_presence':
             runs = [r for r in records if r.get('_type') == 'run']
             if len(runs) != 1:

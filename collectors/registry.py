@@ -17,6 +17,8 @@ from .air_quality_microsensors import AirQualityMicroSensorCollector
 from .bus import BusCollector
 from .bus_intercity import BusIntercityCollector
 from .cwa_satellite import CWASatelliteCollector
+from .cwa_marine_observation import CwaMarineObservationCollector
+from .isohe_port_marine import IsohePortMarineCollector
 from .earthquake import EarthquakeCollector
 from .earthquake_catalog import EarthquakeCatalogCollector
 from .earthquake_town_intensity import EarthquakeTownIntensityCollector
@@ -135,6 +137,8 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(SatellitePassesDailyCollector, "中國軍偵衛星通過台灣每日彙總", "SATELLITE_PASSES_DAILY"),
     CollectorEntry(LaunchCollector, "Launch 收集器", "LAUNCH"),
     CollectorEntry(CWASatelliteCollector, "CWA Satellite 影像收集器", "CWA_SATELLITE", ("CWA_API_KEY",)),
+    CollectorEntry(CwaMarineObservationCollector, "CWA 海洋浮標/潮位觀測收集器", "CWA_MARINE_OBSERVATION", ("CWA_API_KEY",)),
+    CollectorEntry(IsohePortMarineCollector, "ISOHE 商港海氣象收集器（HiCloud）", "ISOHE_PORT_MARINE"),
     CollectorEntry(NCDRAlertsCollector, "NCDR Alerts 收集器", "NCDR_ALERTS"),
     CollectorEntry(FoursquarePOICollector, "Foursquare POI 收集器", "FOURSQUARE_POI", ("HF_TOKEN",)),
     CollectorEntry(AirQualityImageryCollector, "Air Quality Imagery 收集器", "AIR_QUALITY_IMAGERY"),

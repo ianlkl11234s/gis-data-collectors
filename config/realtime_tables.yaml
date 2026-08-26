@@ -31,6 +31,10 @@ tables:
   - {schema: live, table: train_positions,           time_column: collected_at, owner_collector: tra_train, expected_interval_min: 2, critical: true}
   - {schema: live, table: ship_positions,            time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
   - {schema: live, table: ship_current,              time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
+  - {schema: reference, table: marine_observation_stations, time_column: last_seen_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: shared station registry; CWA ownership/distribution provenance retained}
+  - {schema: live, table: marine_observation_readings, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: canonical long history; ISOHE writes same table under separate source_network}
+  - {schema: live, table: marine_observation_current, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: serving cache; current update only accepts newer observed_at}
+  - {schema: live, table: marine_observation_quarantine, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: CWA reading IDs absent from metadata roster}
   - {schema: live, table: aisstream_ingest_runs,   time_column: started_at,    owner_collector: aisstream, expected_interval_min: 1440, critical: false, notes: AISStream run ledger}
   - {schema: live, table: aisstream_archive_manifests,time_column: created_at,   owner_collector: aisstream, expected_interval_min: 60, critical: false, notes: S3 permanent raw archive ledger}
   - {schema: live, table: aisstream_position_observations,time_column: received_at, owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream independent provider; raw S3 archive is permanent}

@@ -128,9 +128,14 @@ COLLECTOR_RETENTION_OVERRIDES = {
                  'air_quality', 'air_quality_microsensors', 'air_quality_imagery',
                  'foursquare_poi', 'ncdr_alerts', 'rain_gauge_realtime',
                  'river_water_level', 'groundwater_level', 'water_reservoir',
-                 'water_reservoir_daily_ops', 'news_events')
+                 'water_reservoir_daily_ops', 'news_events', 'cwa_marine_observation',
+                 'isohe_port_marine')
     if os.getenv(f'{name.upper()}_ARCHIVE_RETENTION_DAYS')
 }
+# High-volume marine snapshots use the documented three-day local recovery
+# window even when the deployment dashboard omits an explicit override.
+COLLECTOR_RETENTION_OVERRIDES.setdefault('cwa_marine_observation', 3)
+COLLECTOR_RETENTION_OVERRIDES.setdefault('isohe_port_marine', 3)
 
 
 def get_retention_days(collector_name: str) -> int:
@@ -265,6 +270,8 @@ _COLLECTOR_TOGGLES = (
     ('SATELLITE',                    False, 120),  # TLE 每 8-24h 更新，2 小時足夠
     ('LAUNCH',                       False, 15),  # LL2 免費 tier ~15 calls/hr，15min 安全（4 calls/hr）
     ('CWA_SATELLITE',                True,  10),
+    ('CWA_MARINE_OBSERVATION',       False, 15),  # O-B0076 + O-B0075 rolling 48h; CWA 官方整合入口
+    ('ISOHE_PORT_MARINE',            False, 10),  # Taiwan IP required; production runs through external HiCloud mirror
     ('NCDR_ALERTS',                  True,  15),
     ('FOURSQUARE_POI',               False, 43200),  # 每 30 天
     ('AIR_QUALITY_IMAGERY',          False, 60),
