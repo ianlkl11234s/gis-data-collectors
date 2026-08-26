@@ -132,7 +132,7 @@ def test_sar_finalize_emits_zero_feature_hours_for_complete_window(tmp_path):
     assert first["metadata"]["not_proof_of_dark_or_illegal_vessel"] is True
 
 
-def test_unified_manifest_v3_has_full_fidelity_track_contract(tmp_path):
+def test_unified_manifest_v3_has_full_fidelity_track_contract(tmp_path, fake_gfw_pmtiles):
     settings = _settings(tmp_path)
     ais_work = tmp_path / "ais-work"
     sar_work = tmp_path / "sar-work"
@@ -173,6 +173,12 @@ def test_unified_manifest_v3_has_full_fidelity_track_contract(tmp_path):
     assert manifest["release_id"] == "2026-08-20"
     assert manifest["tracks"]["days"]
     assert manifest["grid"]["hours"]
+    assert len(fake_gfw_pmtiles) == 175
+    assert all(call["layers"] == ("gfw_grid",) for call in fake_gfw_pmtiles[:168])
+    assert all(
+        call["layers"] == ("gfw_track_edges", "gfw_track_singletons")
+        for call in fake_gfw_pmtiles[168:]
+    )
     assert len(manifest["dark_vessels"]["hours"]) == 168
     assert all(
         entry["observed_at"].endswith("Z")

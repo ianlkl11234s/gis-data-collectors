@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import gzip
 import json
-import subprocess
 from datetime import date
 
+import pytest
+
+from scripts import gfw_hourly_browser_assets
 from scripts.gfw_hourly_browser_assets import (
     _edge_features,
     _singleton_feature,
@@ -30,7 +32,7 @@ def _grid_feature():
     }
 
 
-def test_grid_browser_asset_is_inferred_polygon_with_lossless_members(tmp_path):
+def test_grid_browser_asset_is_inferred_polygon_with_lossless_members(tmp_path, fake_gfw_pmtiles):
     browser, members = grid_polygon_feature(_grid_feature())
     assert browser["properties"]["geometry_semantics"] == "inferred_0_01_degree_footprint"
     assert browser["geometry"]["coordinates"][0] == [
@@ -54,13 +56,11 @@ def test_grid_browser_asset_is_inferred_polygon_with_lossless_members(tmp_path):
     assert len(entry["detail_buckets"]) == 16
     assert sum(bucket["vessel_count"] for bucket in entry["detail_buckets"]) == 2
     assert (tmp_path / "assets" / entry["path"]).is_file()
+    assert fake_gfw_pmtiles[0]["layers"] == ("gfw_grid",)
+    assert fake_gfw_pmtiles[0]["minimum_zoom"] == 4
+    assert fake_gfw_pmtiles[0]["maximum_zoom"] == 12
     assert not (tmp_path / "assets" / "grid" / "input").exists()
     bucket = next(item for item in entry["detail_buckets"] if item["vessel_count"] == 2)
-    shown = subprocess.run(
-        ["/opt/homebrew/bin/pmtiles", "show", str(tmp_path / "assets" / entry["path"])],
-        check=True, capture_output=True, text=True,
-    )
-    assert "gfw_grid" in shown.stdout
     with gzip.open(tmp_path / "assets" / bucket["path"], "rt", encoding="utf-8") as handle:
         detail = json.load(handle)
     assert detail["schema_version"] == 1
@@ -76,7 +76,7 @@ def test_grid_browser_asset_is_inferred_polygon_with_lossless_members(tmp_path):
     assert (tmp_path / "assets" / bucket["path"]).read_bytes() == first_gzip
 
 
-def test_track_browser_assets_keep_edges_singletons_and_hour_frames(tmp_path):
+def test_track_browser_assets_keep_edges_singletons_and_hour_frames(tmp_path, fake_gfw_pmtiles):
     shard = tmp_path / "points.ndjson"
     rows = [
         {"vessel_id": "v-1", "observed_at": "2026-08-15T00:00:00Z", "longitude": 125, "latitude": 25, "mmsi": "111", "ship_name": "ONE", "vessel_type": "Cargo", "flag": "TW"},
@@ -102,11 +102,12 @@ def test_track_browser_assets_keep_edges_singletons_and_hour_frames(tmp_path):
     assert counts["frame_count"] == 24
     assert not (root / "tracks" / "input").exists()
     assert (root / days[0]["path"]).is_file()
-    shown = subprocess.run(
-        ["/opt/homebrew/bin/pmtiles", "show", str(root / days[0]["path"])],
-        check=True, capture_output=True, text=True,
-    )
-    assert "gfw_track_edges" in shown.stdout and "gfw_track_singletons" in shown.stdout
+    assert fake_gfw_pmtiles == [{
+        "layers": ("gfw_track_edges", "gfw_track_singletons"),
+        "output": root / days[0]["path"],
+        "minimum_zoom": 5,
+        "maximum_zoom": 12,
+    }]
     first = next(entry for entry in frames if entry["observed_at"] == "2026-08-15T00:00:00+00:00")
     assert first["content_encoding"] == "gzip"
     with gzip.open(root / first["path"], "rt", encoding="utf-8") as handle:
@@ -169,3 +170,16 @@ def test_singleton_feature_has_epoch_bucket_display_date_and_popup_identifiers()
         "ship_type_bucket": "tanker", "display_date": "2026-08-15",
         "observed_at": "2026-08-15T00:00:00+00:00", "observed_epoch": 1786752000,
     }
+
+
+def test_pmtiles_production_boundary_requires_real_binaries(tmp_path, monkeypatch):
+    source = tmp_path / "input.ndjson"
+    source.write_text("", encoding="utf-8")
+    monkeypatch.setattr(gfw_hourly_browser_assets, "TIPPECANOE", tmp_path / "missing-tippecanoe")
+    monkeypatch.setattr(gfw_hourly_browser_assets, "PMTILES", tmp_path / "missing-pmtiles")
+
+    with pytest.raises(RuntimeError, match="executables are required"):
+        gfw_hourly_browser_assets._pmtiles(
+            named_inputs=[("gfw_grid", source)], output=tmp_path / "output.pmtiles",
+            minimum_zoom=4, maximum_zoom=12,
+        )
