@@ -1,10 +1,26 @@
 # Global Fishing Watch vessel presence
 
 狀態（2026-08-25）：舊 `GFW_VESSEL_PRESENCE_ENABLED` 仍刻意保持 `false`；
-新 `gfw_hourly_publish` 已在 Zeabur production 每日 06:30 Asia/Taipei 排程。
+新 `gfw_hourly_publish` 已在 Zeabur production 每日 08:30 Asia/Taipei 排程（UTC 換日後）。
 首次已成功發布 `2026-08-20` unified v2 release 至 S3/Cloudflare public origin。
 Root 的 Cache-Control header 已正確，但 Cloudflare 回應仍為 `CF-Cache-Status: DYNAMIC`，
 root edge cache 尚未完成驗收。
+
+### v3 shadow production candidate（audit 已完成；code 尚未 deploy）
+
+2026-08-15..2026-08-21 UTC 的 local v3 shadow candidate 已完整建立：16 個 sequential
+AIS reports + 16 個 sequential SAR unmatched reports，HTTP 全為 200、retries 為 0。
+計有 points 1,426,359、canonical features 226,830、vessels 64,051、segments 168,936、
+singletons 57,894、grid cells 1,105,448；SAR unmatched 為 0。bundle 約 995 MB、3,313
+files。S3 v3-shadow root `2026-08-21` 已驗 schema 3 / `full_fidelity`、root bytes/hash
+一致，並完成 full 3,311/3,311 HEAD audit：missing/head_errors/bytes/sha mismatches 均為 0、
+`timed_out=false`。migration 377 已 applied；Supabase run `e00` 為 succeeded/is_current、schema 3 shadow，
+asset/counter 皆一致。code 尚未 deploy，canonical v2 root/release 不變。
+
+P0 transition root cause 是 initial `running` ledger row 在 final succeeded metadata 寫入前可能
+繼承 canonical v2 default。migration 377 與 collector defense-in-depth 已修正：`running`
+從一開始即寫 schema 3 與 v3-shadow root key。每日排程維持 08:30 Asia/Taipei（UTC 換日後，
+配合保守 source lag）。
 
 ## 冻結的來源契約
 
@@ -156,7 +172,7 @@ DB health RPC 只供運維。
 `cutover_succeeded_ledger_pending` spool 與 `reconcile-ledger.json`供對帳。
 
 當前 truth：migration 375、Zeabur production flags、S3 manifest-last publish 與
-Cloudflare public origin 已用於首次 `2026-08-20` release；排程為每日 06:30
-Asia/Taipei。尚未驗收的是 Cloudflare **root edge cache**（public URL 可讀且
+Cloudflare public origin 已用於首次 `2026-08-20` release；排程為每日 08:30
+Asia/Taipei（UTC 換日後，避免手動 post-08:00 release 被隔日重複）。尚未驗收的是 Cloudflare **root edge cache**（public URL 可讀且
 Cache-Control 正確，但實測 `CF-Cache-Status: DYNAMIC`），不得寫成整個
 production 或 public origin 尚未部署。

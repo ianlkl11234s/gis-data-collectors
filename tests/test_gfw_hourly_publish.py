@@ -29,6 +29,7 @@ def _settings(tmp_path: Path, *, expected_tiles: int = 1) -> GFWHourlyPublishSet
         db_url="postgresql://test.invalid/db",
         bucket="test-bucket",
         public_url_prefix="https://cdn.example/global-maritime/gfw-hourly",
+        shadow_public_url_prefix="https://cdn.example/global-maritime/gfw-hourly/v3-shadow",
         spool_root=tmp_path / "spool",
         bbox=(122.0, 23.0, 122.2, 23.2),
         expected_tile_count=expected_tiles,
@@ -61,11 +62,22 @@ def test_production_bbox_is_16_tiles_and_two_distinct_sources_mean_32_reports(tm
         token="test-token", db_url="postgresql://test.invalid/db",
         bucket="test-bucket",
         public_url_prefix="https://cdn.example/global-maritime/gfw-hourly",
+        shadow_public_url_prefix="https://cdn.example/global-maritime/gfw-hourly/v3-shadow",
         spool_root=tmp_path, bbox=DEFAULT_BBOX,
     )
     settings.validate()
     assert len(make_tiles(settings.bbox, tile_size_degrees=3.0)) == 16
     assert 16 + 16 == 32  # AIS shared grid/tracks + distinct SAR unmatched.
+
+
+def test_production_release_retention_is_fixed_at_two(tmp_path):
+    settings = _settings(tmp_path)
+    settings.validate()
+    invalid = GFWHourlyPublishSettings(
+        **{**settings.__dict__, "releases_to_keep": 3}
+    )
+    with pytest.raises(ValueError, match="fixed at 2"):
+        invalid.validate()
 
 
 def test_sar_normalizer_accepts_official_wrapper_and_documented_null_empty():
@@ -120,7 +132,7 @@ def test_sar_finalize_emits_zero_feature_hours_for_complete_window(tmp_path):
     assert first["metadata"]["not_proof_of_dark_or_illegal_vessel"] is True
 
 
-def test_unified_manifest_v2_and_migration_ledger_contract(tmp_path):
+def test_unified_manifest_v3_has_full_fidelity_track_contract(tmp_path):
     settings = _settings(tmp_path)
     ais_work = tmp_path / "ais-work"
     sar_work = tmp_path / "sar-work"
@@ -156,7 +168,8 @@ def test_unified_manifest_v2_and_migration_ledger_contract(tmp_path):
         },
         generated_at="2026-08-25T00:00:00+00:00",
     )
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
+    assert manifest["full_fidelity"] is True
     assert manifest["release_id"] == "2026-08-20"
     assert manifest["tracks"]["days"]
     assert manifest["grid"]["hours"]
@@ -167,8 +180,17 @@ def test_unified_manifest_v2_and_migration_ledger_contract(tmp_path):
         for entry in manifest["dark_vessels"]["hours"]
     )
     assert {asset["type"] for asset in manifest["assets"]} == {
-        "tracks_day", "grid_hour", "sar_unmatched_hour",
+        "tracks_day_pmtiles", "grid_hour_pmtiles", "track_frame_hour",
+        "grid_detail_bucket", "track_detail_bucket", "sar_unmatched_hour",
     }
+    assert len(manifest["tracks"]["frames"]) == 168
+    assert len(manifest["grid"]["hours"]) == 168
+    assert all(len(entry["detail_buckets"]) == 16 for entry in manifest["grid"]["hours"])
+    assert all(len(entry["detail_buckets"]) == 16 for entry in manifest["tracks"]["days"])
+    assert manifest["tracks"]["counts"]["cap_applied"] is False
+    assert manifest["tracks"]["counts"]["omitted_by_display_cap"] == 0
+    assert manifest["tracks"]["counts"]["omitted_features"] == 0
+    assert manifest["tracks"]["counts"]["candidate_points"] == manifest["tracks"]["counts"]["published_points"]
     dark_path = manifest["dark_vessels"]["hours"][0]["path"]
     assert dark_path.startswith("dark_vessels/hours/")
     feature_file = next(
@@ -185,8 +207,11 @@ def test_unified_manifest_v2_and_migration_ledger_contract(tmp_path):
     assets, summary = _ledger_release_contract(manifest)
     assert all(asset["path"].startswith("releases/2026-08-20/") for asset in assets)
     assert {asset["type"] for asset in assets} == {
-        "tracks_day", "grid_hour", "sar_unmatched_hour",
+        "tracks_day_pmtiles", "grid_hour_pmtiles", "track_frame_hour",
+        "grid_detail_bucket", "track_detail_bucket", "sar_unmatched_hour",
     }
+    assert summary["full_fidelity"] is True
+    assert summary["candidate_canonical_points"] == summary["published_canonical_points"]
     assert summary["cache_contract"] == {
         "root": "public,max-age=60,s-maxage=60,stale-while-revalidate=300",
         "release": "public,max-age=604800,s-maxage=604800,immutable",
@@ -260,6 +285,14 @@ class _CutoverLedgerFailure(_FakeLedger):
             raise RuntimeError("temporary ledger outage")
 
 
+class _InterruptedReportClient(_FakeReportClient):
+    def __init__(self):
+        super().__init__()
+
+    def fetch(self, *_args, **_kwargs):
+        raise KeyboardInterrupt("operator cancelled")
+
+
 def test_task_uses_one_ais_fetch_for_grid_tracks_then_sar_and_manifest_last(tmp_path):
     settings = _settings(tmp_path)
     client = _FakeReportClient()
@@ -279,12 +312,20 @@ def test_task_uses_one_ais_fetch_for_grid_tracks_then_sar_and_manifest_last(tmp_
         "dataset": SAR_DATASET, "group_by": None, "filters": ("matched='false'",)
     }
     assert [payload["status"] for payload in ledger.payloads] == ["running", "succeeded"]
+    running = ledger.payloads[0]
     succeeded = ledger.payloads[-1]
+    assert running["manifest_schema_version"] == succeeded["manifest_schema_version"] == 3
+    assert running["root_manifest_key"] == (
+        "deploy-assets/global-maritime/gfw-hourly/v3-shadow/manifest.json"
+    )
+    assert running["root_manifest_key"] == succeeded["root_manifest_key"]
+    assert "token" not in running and "token" not in succeeded
     assert {asset["type"] for asset in succeeded["assets"]} == {
-        "tracks_day", "grid_hour", "sar_unmatched_hour",
+        "tracks_day_pmtiles", "grid_hour_pmtiles", "track_frame_hour",
+        "grid_detail_bucket", "track_detail_bucket", "sar_unmatched_hour",
     }
     assert succeeded["root_manifest_bytes"] > 0
-    assert s3.put_order[-1] == "deploy-assets/global-maritime/gfw-hourly/manifest.json"
+    assert s3.put_order[-1] == "deploy-assets/global-maritime/gfw-hourly/v3-shadow/manifest.json"
     assert result["logical_tile_report_count"] == 2
     assert list(settings.spool_root.iterdir()) == []
 
@@ -308,6 +349,26 @@ def test_ledger_gate_fails_before_report_network_and_preserves_failed_spool(tmp_
     assert json.loads((spools[0] / "spool.json").read_text())["status"] == "failed"
 
 
+def test_keyboard_interrupt_marks_running_attempt_failed_before_cutover(tmp_path):
+    settings = _settings(tmp_path)
+    ledger = _FakeLedger()
+    task = GFWHourlyPublishTask(
+        settings,
+        ledger=ledger,
+        report_client_factory=lambda _token: _InterruptedReportClient(),
+        s3_client_factory=lambda: _FakeS3(),
+        now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
+    )
+    with pytest.raises(KeyboardInterrupt, match="operator cancelled"):
+        task.run()
+    assert [payload["status"] for payload in ledger.payloads] == ["running", "failed"]
+    spools = list(settings.spool_root.iterdir())
+    assert len(spools) == 1
+    spool = json.loads((spools[0] / "spool.json").read_text())
+    assert spool["status"] == "failed"
+    assert "operator cancelled" in spool["error"]
+
+
 def test_cutover_ledger_failure_retries_without_writing_failed_and_keeps_reconcile_state(tmp_path):
     settings = _settings(tmp_path)
     ledger = _CutoverLedgerFailure()
@@ -325,7 +386,7 @@ def test_cutover_ledger_failure_retries_without_writing_failed_and_keeps_reconci
     assert [payload["status"] for payload in ledger.payloads] == [
         "running", "succeeded", "succeeded", "succeeded",
     ]
-    assert "deploy-assets/global-maritime/gfw-hourly/manifest.json" in s3.objects
+    assert "deploy-assets/global-maritime/gfw-hourly/v3-shadow/manifest.json" in s3.objects
     spools = list(settings.spool_root.iterdir())
     assert len(spools) == 1
     spool = json.loads((spools[0] / "spool.json").read_text())

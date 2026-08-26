@@ -168,7 +168,7 @@ gfw_hourly_publish:
     - {prefix: deploy-assets/global-maritime/gfw-hourly/, expected_daily: true, archive_lag_days: 5}
   critical: false
   notes: >-
-    Zeabur production fixed-time job（每日 06:30 Asia/Taipei）。16 個 sequential AIS
+    Zeabur production fixed-time job（每日 08:30 Asia/Taipei，UTC 換日後）。16 個 sequential AIS
     rolling-7d reports fan out 到 grid+tracks，再執行 16 個獨立 sequential SAR unmatched
     reports。2026-08-25 首次成功發布 release 2026-08-20；single manifest-last root。
     Cloudflare public origin 已可讀，但 root edge cache 是否生效仍待驗收。

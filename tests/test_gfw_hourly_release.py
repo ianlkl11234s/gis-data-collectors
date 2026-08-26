@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import gzip
 from datetime import date, datetime, timezone
 
 import pytest
@@ -30,6 +31,7 @@ class _FakeS3:
             "Body": body,
             "Metadata": dict(kwargs.get("Metadata") or {}),
             "ContentType": kwargs.get("ContentType"),
+            "ContentEncoding": kwargs.get("ContentEncoding"),
             "CacheControl": kwargs.get("CacheControl"),
         }
 
@@ -248,10 +250,25 @@ def test_s3_uploads_generic_assets_verifies_head_and_puts_root_manifest_last(tmp
         "type": "grid_hour",
         "features": 0,
     }
+    detail_path = release / "hours" / "details" / "20260821T00Z" / "a.json.gz"
+    detail_path.parent.mkdir(parents=True)
+    detail_body = gzip.compress(b'{"entries":{}}', mtime=0)
+    detail_path.write_bytes(detail_body)
+    detail_asset = {
+        "path": "hours/details/20260821T00Z/a.json.gz",
+        "sha256": _sha(detail_body),
+        "bytes": len(detail_body),
+        "type": "grid_detail_bucket",
+        "features": 0,
+    }
     manifest["assets"].append(grid_asset)
+    manifest["assets"].append(detail_asset)
     manifest["tracks"] = {"days": manifest.pop("days")}
     manifest["grid"] = {
-        "hours": [{"observed_at": "2026-08-21T00:00:00Z", **grid_asset}]
+        "hours": [{
+            "observed_at": "2026-08-21T00:00:00Z", **grid_asset,
+            "detail_buckets": [{"bucket": "a", **detail_asset}],
+        }]
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -269,6 +286,7 @@ def test_s3_uploads_generic_assets_verifies_head_and_puts_root_manifest_last(tmp
     assert put_keys[:-1] == [
         "public/gfw-hourly/releases/2026-08-21/days/2026-08-21.geojson",
         "public/gfw-hourly/releases/2026-08-21/hours/20260821T00Z.geojson",
+        "public/gfw-hourly/releases/2026-08-21/hours/details/20260821T00Z/a.json.gz",
         "public/gfw-hourly/releases/2026-08-21/run.json",
         "public/gfw-hourly/releases/2026-08-21/manifest.json",
     ]
@@ -291,7 +309,7 @@ def test_s3_uploads_generic_assets_verifies_head_and_puts_root_manifest_last(tmp
         "path_rule": "public_url_prefix + '/' + key relative to s3_key_prefix",
     }
     assert {asset["type"] for asset in root["assets"]} == {
-        "tracks_day", "grid_hour"
+        "tracks_day", "grid_hour", "grid_detail_bucket"
     }
     assert root["tracks"]["days"][0]["path"] == (
         "releases/2026-08-21/days/2026-08-21.geojson"
@@ -299,6 +317,14 @@ def test_s3_uploads_generic_assets_verifies_head_and_puts_root_manifest_last(tmp
     assert root["grid"]["hours"][0]["path"] == (
         "releases/2026-08-21/hours/20260821T00Z.geojson"
     )
+    assert root["grid"]["hours"][0]["detail_buckets"][0]["path"] == (
+        "releases/2026-08-21/hours/details/20260821T00Z/a.json.gz"
+    )
+    detail_key = "public/gfw-hourly/releases/2026-08-21/hours/details/20260821T00Z/a.json.gz"
+    assert client.objects[detail_key]["ContentType"] == "application/gzip"
+    # The browser verifies the compressed object bytes before using
+    # DecompressionStream; HTTP Content-Encoding would auto-decompress first.
+    assert client.objects[detail_key]["ContentEncoding"] is None
     assert result["public_manifest_url"].endswith("/manifest.json")
 
 

@@ -357,15 +357,15 @@ if not 4 <= GFW_DATA_LAG_DAYS <= 30:
 # CDN product，因此 enable 與 redistribution approval 必須同時明確開啟。
 GFW_HOURLY_PUBLISH_ENABLED = _env_bool('GFW_HOURLY_PUBLISH_ENABLED', False)
 GFW_HOURLY_REDISTRIBUTION_APPROVED = _env_bool('GFW_HOURLY_REDISTRIBUTION_APPROVED', False)
-GFW_HOURLY_PUBLISH_TIME = os.getenv('GFW_HOURLY_PUBLISH_TIME', '06:30')
+# 08:30 Asia/Taipei is safely after the UTC date boundary; keep the 5-day
+# source lag conservative so a manual post-08:00 release is not duplicated.
+GFW_HOURLY_PUBLISH_TIME = os.getenv('GFW_HOURLY_PUBLISH_TIME', '08:30')
 GFW_HOURLY_BBOX = os.getenv(
     'GFW_HOURLY_BBOX', '122.43400,23.22953,132.85274,34.35812'
 )
 GFW_HOURLY_ROLLING_DAYS = int(os.getenv('GFW_HOURLY_ROLLING_DAYS', '7'))
 GFW_HOURLY_TILE_SIZE_DEGREES = float(os.getenv('GFW_HOURLY_TILE_SIZE_DEGREES', '3'))
 GFW_HOURLY_EXPECTED_TILE_COUNT = int(os.getenv('GFW_HOURLY_EXPECTED_TILE_COUNT', '16'))
-GFW_HOURLY_MAX_TRACK_FEATURES = int(os.getenv('GFW_HOURLY_MAX_TRACK_FEATURES', '5000'))
-GFW_HOURLY_MAX_TRACK_POINTS = int(os.getenv('GFW_HOURLY_MAX_TRACK_POINTS', '150000'))
 GFW_HOURLY_TRACK_GAP_HOURS = float(os.getenv('GFW_HOURLY_TRACK_GAP_HOURS', '2'))
 GFW_HOURLY_MAX_SPEED_KNOTS = float(os.getenv('GFW_HOURLY_MAX_SPEED_KNOTS', '80'))
 GFW_HOURLY_RELEASES_TO_KEEP = int(os.getenv('GFW_HOURLY_RELEASES_TO_KEEP', '2'))
@@ -378,6 +378,14 @@ GFW_HOURLY_S3_PREFIX = os.getenv(
 # Must map exactly to the public Cloudflare origin path ending in
 # /global-maritime/gfw-hourly; no public default is safe to guess.
 GFW_HOURLY_PUBLIC_URL_PREFIX = os.getenv('GFW_HOURLY_PUBLIC_URL_PREFIX', '').rstrip('/')
+# Schema v3 is shadow-only until the public consumer and data contract are
+# explicitly promoted.  It must never write the existing v2 root manifest.
+GFW_HOURLY_SHADOW_S3_PREFIX = os.getenv(
+    'GFW_HOURLY_SHADOW_S3_PREFIX', 'deploy-assets/global-maritime/gfw-hourly/v3-shadow'
+).strip('/')
+GFW_HOURLY_SHADOW_PUBLIC_URL_PREFIX = os.getenv(
+    'GFW_HOURLY_SHADOW_PUBLIC_URL_PREFIX', ''
+).rstrip('/')
 GFW_HOURLY_SPOOL_DIR = LOCAL_DATA_DIR / 'gfw_hourly_publish_spool'
 
 # AISStream BoundingBoxes 格式為 [[[lat_min, lon_min], [lat_max, lon_max]], ...]。

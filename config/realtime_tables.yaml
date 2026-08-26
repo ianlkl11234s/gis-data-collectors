@@ -40,7 +40,7 @@ tables:
   - {schema: live, table: gfw_vessel_presence_archive_manifests, time_column: uploaded_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW raw archive ledger; empty until license gate}
   - {schema: live, table: gfw_vessel_presence_snapshots, time_column: received_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW daily vessel presence snapshots}
   - {schema: live, table: gfw_vessel_presence_current, time_column: updated_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW latest vessel presence; reconstructible from snapshots}
-  - {schema: live, table: gfw_hourly_publish_runs, time_column: started_at, owner_collector: gfw_hourly_publish, expected_interval_min: 1440, critical: false, notes: Zeabur production unified GFW v2 CDN publish metadata; daily 06:30 Asia/Taipei}
+  - {schema: live, table: gfw_hourly_publish_runs, time_column: started_at, owner_collector: gfw_hourly_publish, expected_interval_min: 1440, critical: false, notes: Zeabur production unified GFW v2 CDN publish metadata; daily 08:30 Asia/Taipei after UTC boundary}
   - {schema: reference, table: daily_schedules,          time_column: created_at,   owner_collector: rail_timetable, expected_interval_min: 1440, critical: false}
   - {schema: live, table: parking_segments_current,  time_column: collected_at, owner_collector: parking, expected_interval_min: 15, critical: false, notes: OnStreet 路邊停車；availability 由 current 代監控（測試豁免）}
 

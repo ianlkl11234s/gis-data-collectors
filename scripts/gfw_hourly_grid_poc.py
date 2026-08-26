@@ -242,6 +242,7 @@ def _grid_feature(
         "type": "Feature",
         "id": feature_id,
         "properties": {
+            "cell_id": feature_id,
             "observed_at": observed_at,
             "grid_lon": longitude,
             "grid_lat": latitude,

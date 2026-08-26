@@ -88,8 +88,8 @@
       "default": "false"
     },
     "GFW_HOURLY_PUBLISH_TIME": {
-      "description": "Unified GFW publish HH:MM（容器 TZ=Asia/Taipei）",
-      "default": "06:30"
+      "description": "Unified GFW publish HH:MM（容器 TZ=Asia/Taipei；08:30 在 UTC 換日後）",
+      "default": "08:30"
     },
     "GFW_HOURLY_BBOX": {
       "description": "west,south,east,north",

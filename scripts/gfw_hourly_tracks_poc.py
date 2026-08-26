@@ -411,6 +411,43 @@ def _feature(vessel_id: str, rows: list[dict[str, Any]], index: int) -> dict[str
     return feature
 
 
+def _singleton_feature(vessel_id: str, row: dict[str, Any], index: int) -> dict[str, Any]:
+    """Represent a one-point canonical segment without inventing a line."""
+    observed_at = _parse_utc(str(row["observed_at"])).isoformat()
+    coordinate = [float(row["longitude"]), float(row["latitude"])]
+    digest = hashlib.sha256(
+        _canonical({
+            "vessel_id": vessel_id,
+            "observed_at": observed_at,
+            "coordinate": coordinate,
+            "node_type": "singleton",
+        }).encode()
+    ).hexdigest()[:20]
+    return {
+        "type": "Feature",
+        "id": digest,
+        "properties": {
+            "track_id": digest,
+            "vessel_id": vessel_id,
+            "segment_index": index,
+            "node_type": "singleton",
+            "source_dataset": GFW_DATASET,
+            "mmsi": _mode([row], "mmsi"),
+            "ship_name": _mode([row], "ship_name"),
+            "vessel_type": _mode([row], "vessel_type"),
+            "flag": _mode([row], "flag"),
+            "start_at": observed_at,
+            "end_at": observed_at,
+            "observed_times": [observed_at],
+            "point_count": 1,
+            "approximate": True,
+            "coordinate_semantics": "GFW_HIGH_grid_cell_center",
+            "temporal_resolution": "HOURLY",
+        },
+        "geometry": {"type": "Point", "coordinates": coordinate},
+    }
+
+
 def build_track_segments(
     rows: Iterable[dict[str, Any]],
     *,
@@ -449,7 +486,7 @@ def build_track_segments(
         by_vessel[vessel_id].append(normalized)
 
     features: list[dict[str, Any]] = []
-    gap_splits = speed_splits = same_hour_conflicts = dropped_singletons = 0
+    gap_splits = speed_splits = same_hour_conflicts = singleton_nodes = 0
     for vessel_id in sorted(by_vessel):
         ordered = sorted(
             by_vessel[vessel_id],
@@ -469,12 +506,14 @@ def build_track_segments(
         segment_index = 0
 
         def flush() -> None:
-            nonlocal segment, segment_index, dropped_singletons
+            nonlocal segment, segment_index, singleton_nodes
             if len(segment) >= 2:
                 features.append(_feature(vessel_id, segment, segment_index))
                 segment_index += 1
             elif segment:
-                dropped_singletons += 1
+                features.append(_singleton_feature(vessel_id, segment[0], segment_index))
+                segment_index += 1
+                singleton_nodes += 1
             segment = []
 
         for row in unique_hours:
@@ -506,7 +545,10 @@ def build_track_segments(
         "same_hour_conflicts": same_hour_conflicts,
         "gap_splits": gap_splits,
         "speed_splits": speed_splits,
-        "dropped_singletons": dropped_singletons,
+        # Kept as a zero-valued compatibility field: canonical singletons are
+        # now published as Point nodes instead of being silently discarded.
+        "dropped_singletons": 0,
+        "singleton_nodes": singleton_nodes,
     }
 
 
@@ -581,20 +623,101 @@ def _read_points(paths: Iterable[Path]) -> Iterable[dict[str, Any]]:
                     yield json.loads(line)
 
 
-def _finalize_disk_backed(
+class SQLiteTrackStore:
+    """Disposable canonical track/node store with deterministic streaming readers."""
+
+    def __init__(self, path: Path, connection: sqlite3.Connection, *, tile_rows: int, stats: dict[str, int]):
+        self.path = path
+        self.connection = connection
+        self.tile_rows = tile_rows
+        self.stats = stats
+
+    def iter_tracks(self) -> Iterable[dict[str, Any]]:
+        yield from self._iter_nodes("track")
+
+    def iter_singleton_nodes(self) -> Iterable[dict[str, Any]]:
+        yield from self._iter_nodes("singleton")
+
+    def iter_features(self) -> Iterable[dict[str, Any]]:
+        cursor = self.connection.execute("""
+            SELECT feature_json FROM nodes
+            ORDER BY vessel_id, start_at, track_id
+        """)
+        for (feature_json,) in cursor:
+            yield json.loads(feature_json)
+
+    def _iter_nodes(self, node_kind: str) -> Iterable[dict[str, Any]]:
+        cursor = self.connection.execute("""
+            SELECT feature_json FROM nodes
+            WHERE node_kind = ?
+            ORDER BY vessel_id, start_at, track_id
+        """, (node_kind,))
+        for (feature_json,) in cursor:
+            yield json.loads(feature_json)
+
+    def counts(self) -> dict[str, Any]:
+        tracks, track_points, singletons, singleton_points, vessels = self.connection.execute("""
+            SELECT
+                SUM(CASE WHEN node_kind = 'track' THEN 1 ELSE 0 END),
+                COALESCE(SUM(CASE WHEN node_kind = 'track' THEN point_count ELSE 0 END), 0),
+                SUM(CASE WHEN node_kind = 'singleton' THEN 1 ELSE 0 END),
+                COALESCE(SUM(CASE WHEN node_kind = 'singleton' THEN point_count ELSE 0 END), 0),
+                COUNT(DISTINCT vessel_id)
+            FROM nodes
+        """).fetchone()
+        canonical_points = int(self.stats["canonical_vessel_hour_count"])
+        track_points = int(track_points)
+        singleton_points = int(singleton_points)
+        if canonical_points != track_points + singleton_points:
+            raise RuntimeError("canonical point accounting mismatch")
+        return {
+            "eligible_segment_count": int(tracks or 0),
+            "published_segment_count": int(tracks or 0),
+            "eligible_segment_points": track_points,
+            "published_segment_points": track_points,
+            "singleton_node_count": int(singletons or 0),
+            "singleton_node_points": singleton_points,
+            "canonical_vessel_hour_count": canonical_points,
+            "canonical_points": canonical_points,
+            "candidate_vessels": int(vessels),
+            "published_vessels": int(vessels),
+            # Legacy aliases remain accurate but no longer imply selection.
+            "candidate_features": int(tracks or 0),
+            "displayed_features": int(tracks or 0),
+            "candidate_points": track_points,
+            "displayed_points": track_points,
+            "cap_applied": False,
+            "omitted_by_display_cap": 0,
+        }
+
+    def close(self) -> None:
+        self.connection.close()
+
+
+def _normalize_store_row(row: dict[str, Any]) -> tuple[Any, ...] | None:
+    try:
+        vessel_id = str(row["vessel_id"]).strip()
+        observed_at = _parse_utc(str(row["observed_at"])).isoformat()
+        longitude = float(row["longitude"])
+        latitude = float(row["latitude"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if not vessel_id or not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+        return None
+    return (
+        vessel_id, observed_at, longitude, latitude,
+        row.get("mmsi"), row.get("ship_name"), row.get("vessel_type"), row.get("flag"),
+    )
+
+
+def finalize_track_store(
     shard_paths: Iterable[Path],
     *,
     work_dir: Path,
     gap_hours: float,
     max_speed_knots: float,
-    max_features: int,
-    max_points: int,
-) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, Any], int, int, int]:
-    """Deduplicate, sort, and select segments using SQLite-backed working state.
-
-    Only the capped display features are materialized in Python memory. The
-    complete point and candidate-segment sets stay in a disposable work DB.
-    """
+) -> SQLiteTrackStore:
+    """Build a SQLite-backed full-fidelity node store without selecting a subset."""
     database_path = work_dir / "finalize.sqlite3"
     if database_path.exists():
         database_path.unlink()
@@ -620,16 +743,15 @@ def _finalize_disk_backed(
         (vessel_id, observed_at, longitude, latitude, mmsi, ship_name, vessel_type, flag)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """
-    tile_row_count = 0
+    tile_row_count = invalid_rows = 0
     batch: list[tuple[Any, ...]] = []
     for row in _read_points(shard_paths):
-        batch.append((
-            row.get("vessel_id"), row.get("observed_at"),
-            row.get("longitude"), row.get("latitude"),
-            row.get("mmsi"), row.get("ship_name"),
-            row.get("vessel_type"), row.get("flag"),
-        ))
         tile_row_count += 1
+        normalized = _normalize_store_row(row)
+        if normalized is None:
+            invalid_rows += 1
+            continue
+        batch.append(normalized)
         if len(batch) >= 5000:
             connection.executemany(insert_sql, batch)
             batch.clear()
@@ -639,37 +761,41 @@ def _finalize_disk_backed(
     unique_point_count = int(connection.execute("SELECT COUNT(*) FROM points").fetchone()[0])
 
     connection.execute("""
-        CREATE TABLE segments (
+        CREATE TABLE nodes (
             track_id TEXT PRIMARY KEY,
             vessel_id TEXT NOT NULL,
+            start_at TEXT NOT NULL,
+            node_kind TEXT NOT NULL CHECK (node_kind IN ('track', 'singleton')),
             point_count INTEGER NOT NULL,
             feature_json TEXT NOT NULL
         ) WITHOUT ROWID
     """)
     segment_stats = {
         "valid_unique_points": unique_point_count,
-        "invalid_rows": 0,
-        "duplicate_rows": tile_row_count - unique_point_count,
+        "invalid_rows": invalid_rows,
+        "duplicate_rows": tile_row_count - invalid_rows - unique_point_count,
         "same_hour_conflicts": 0,
         "gap_splits": 0,
         "speed_splits": 0,
         "dropped_singletons": 0,
+        "singleton_nodes": 0,
     }
     current_vessel: str | None = None
     last_hour: datetime | None = None
     segment: list[dict[str, Any]] = []
     segment_index = 0
-    segment_batch: list[tuple[str, str, int, str]] = []
+    segment_batch: list[tuple[str, str, str, str, int, str]] = []
 
     def insert_feature(feature: dict[str, Any]) -> None:
         properties = feature["properties"]
         segment_batch.append((
-            properties["track_id"], properties["vessel_id"],
+            properties["track_id"], properties["vessel_id"], properties["start_at"],
+            "singleton" if feature["geometry"]["type"] == "Point" else "track",
             int(properties["point_count"]), _canonical(feature),
         ))
         if len(segment_batch) >= 1000:
             connection.executemany(
-                "INSERT INTO segments (track_id, vessel_id, point_count, feature_json) VALUES (?, ?, ?, ?)",
+                "INSERT INTO nodes (track_id, vessel_id, start_at, node_kind, point_count, feature_json) VALUES (?, ?, ?, ?, ?, ?)",
                 segment_batch,
             )
             segment_batch.clear()
@@ -678,9 +804,11 @@ def _finalize_disk_backed(
         nonlocal segment, segment_index
         if len(segment) >= 2:
             insert_feature(_feature(current_vessel or "", segment, segment_index))
-            segment_index += 1
         elif segment:
-            segment_stats["dropped_singletons"] += 1
+            insert_feature(_singleton_feature(current_vessel or "", segment[0], segment_index))
+            segment_stats["singleton_nodes"] += 1
+        if segment:
+            segment_index += 1
         segment = []
 
     cursor = connection.execute("""
@@ -722,47 +850,43 @@ def _finalize_disk_backed(
     flush_segment()
     if segment_batch:
         connection.executemany(
-            "INSERT INTO segments (track_id, vessel_id, point_count, feature_json) VALUES (?, ?, ?, ?)",
+            "INSERT INTO nodes (track_id, vessel_id, start_at, node_kind, point_count, feature_json) VALUES (?, ?, ?, ?, ?, ?)",
             segment_batch,
         )
     connection.commit()
 
-    candidate_features, candidate_points, candidate_vessels = connection.execute("""
-        SELECT COUNT(*), COALESCE(SUM(point_count), 0), COUNT(DISTINCT vessel_id)
-        FROM segments
-    """).fetchone()
-    displayed: list[dict[str, Any]] = []
-    displayed_points = 0
-    displayed_vessels: set[str] = set()
-    for point_count, vessel_id, feature_json in connection.execute("""
-        SELECT point_count, vessel_id, feature_json
-        FROM segments
-        ORDER BY point_count DESC, track_id ASC
-    """):
-        if len(displayed) >= max_features or displayed_points >= max_points:
-            break
-        if displayed_points + point_count > max_points:
-            continue
-        displayed.append(json.loads(feature_json))
-        displayed_points += point_count
-        displayed_vessels.add(vessel_id)
-    displayed.sort(key=lambda feature: (
-        str(feature["properties"].get("vessel_id", "")),
-        str(feature["properties"].get("start_at", "")),
-        str(feature["properties"]["track_id"]),
-    ))
-    cap_stats = {
-        "candidate_features": int(candidate_features),
-        "displayed_features": len(displayed),
-        "candidate_points": int(candidate_points),
-        "displayed_points": displayed_points,
-        "cap_applied": len(displayed) < int(candidate_features),
-    }
-    connection.close()
-    return (
-        displayed, segment_stats, cap_stats, int(candidate_vessels),
-        len(displayed_vessels), tile_row_count,
+    canonical_count = int(connection.execute("""
+        SELECT COUNT(*) FROM (
+            SELECT vessel_id, substr(observed_at, 1, 13) AS hour FROM points
+            GROUP BY vessel_id, hour
+        )
+    """).fetchone()[0])
+    if canonical_count != unique_point_count - segment_stats["same_hour_conflicts"]:
+        raise RuntimeError("same-hour canonicalization accounting mismatch")
+    segment_stats["canonical_vessel_hour_count"] = canonical_count
+    return SQLiteTrackStore(
+        database_path, connection, tile_rows=tile_row_count, stats=segment_stats,
     )
+
+
+def _finalize_disk_backed(
+    shard_paths: Iterable[Path], *, work_dir: Path, gap_hours: float,
+    max_speed_knots: float, max_features: int, max_points: int,
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, Any], int, int, int]:
+    """Compatibility helper for legacy callers; production uses ``finalize_track_store``."""
+    del max_features, max_points
+    store = finalize_track_store(
+        shard_paths, work_dir=work_dir, gap_hours=gap_hours,
+        max_speed_knots=max_speed_knots,
+    )
+    try:
+        counts = store.counts()
+        return (
+            list(store.iter_features()), store.stats, counts,
+            counts["candidate_vessels"], counts["published_vessels"], store.tile_rows,
+        )
+    finally:
+        store.close()
 
 
 def _parse_bbox(value: str) -> tuple[float, float, float, float]:
@@ -794,6 +918,53 @@ def _load_or_create_manifest(work_dir: Path, signature: dict[str, Any], tiles: l
     }
     _atomic_json(manifest_path, manifest, indent=2)
     return manifest
+
+
+def write_feature_collection_stream(
+    path: Path, *, metadata: dict[str, Any], features: Iterable[dict[str, Any]],
+) -> int:
+    """Atomically serialize a FeatureCollection while consuming one feature at a time."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write('{"type":"FeatureCollection","metadata":')
+        handle.write(_canonical(metadata))
+        handle.write(',"features":[')
+        first = True
+        for feature in features:
+            if not first:
+                handle.write(",")
+            handle.write(_canonical(feature))
+            first = False
+        handle.write("]}")
+    temporary.replace(path)
+    return path.stat().st_size
+
+
+def write_features_ndjson(path: Path, features: Iterable[dict[str, Any]]) -> int:
+    """Atomically write canonical feature NDJSON without retaining a feature list."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    count = 0
+    with temporary.open("w", encoding="utf-8") as handle:
+        for feature in features:
+            handle.write(_canonical(feature) + "\n")
+            count += 1
+    temporary.replace(path)
+    return count
+
+
+class _StreamingFeatureCollection(dict[str, Any]):
+    """Mapping-shaped release input that provides a fresh deterministic feature iterator."""
+
+    def __init__(self, metadata: dict[str, Any], store: SQLiteTrackStore):
+        super().__init__(type="FeatureCollection", metadata=metadata)
+        self._store = store
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "features":
+            return self._store.iter_features()
+        return super().get(key, default)
 
 
 def run_poc(
@@ -890,20 +1061,20 @@ def run_poc(
         )
 
     shard_paths = [work_dir / f"{tile.tile_id}.points.ndjson" for tile in tiles]
-    (
-        displayed_features, segment_stats, cap_stats,
-        candidate_vessel_count, displayed_vessel_count, tile_row_count,
-    ) = _finalize_disk_backed(
+    store = finalize_track_store(
         shard_paths,
         work_dir=work_dir,
         gap_hours=gap_hours,
         max_speed_knots=max_speed_knots,
-        max_features=max_features,
-        max_points=max_points,
     )
+    segment_stats = store.stats
+    cap_stats = store.counts()
+    candidate_vessel_count = cap_stats["candidate_vessels"]
+    displayed_vessel_count = cap_stats["published_vessels"]
+    tile_row_count = store.tile_rows
     generated_at = datetime.now(timezone.utc).isoformat()
     metadata = {
-        "schema_version": 2,
+        "schema_version": 3,
         "poc": True,
         "generated_at": generated_at,
         "source": "Global Fishing Watch 4Wings AIS Vessel Presence",
@@ -921,8 +1092,8 @@ def run_poc(
         # Stable frontend aliases. Keep the detailed accounting under counts.
         "row_count": tile_row_count,
         "vessel_count": candidate_vessel_count,
-        "segment_count": cap_stats["candidate_features"],
-        "displayed_segment_count": cap_stats["displayed_features"],
+        "segment_count": cap_stats["eligible_segment_count"],
+        "displayed_segment_count": cap_stats["published_segment_count"],
         "track_rules": {
             "gap_hours_gt": gap_hours,
             "max_implied_speed_knots": max_speed_knots,
@@ -948,9 +1119,11 @@ def run_poc(
             **cap_stats,
         },
         "display_cap": {
-            "max_features": max_features,
-            "max_points": max_points,
-            "selection": "longest segments first, then stable track_id",
+            "max_features": None,
+            "max_points": None,
+            "selection": "none; full-fidelity streaming output",
+            "cap_applied": False,
+            "omitted_by_display_cap": 0,
         },
         "requests": {
             "successful_tile_reports": len(manifest["completed_tiles"]),
@@ -970,37 +1143,40 @@ def run_poc(
         "errors": errors,
         "storage": "No DB/S3/raw archive; normalized resume shards deleted after success unless --keep-work-dir",
     }
-    collection = {"type": "FeatureCollection", "metadata": metadata, "features": displayed_features}
     size_bytes = None
-    if output is not None:
-        _atomic_json(output, collection)
-        size_bytes = output.stat().st_size
     partition_release = None
-    if output_dir is not None:
-        partition_release = publish_track_release(
-            collection,
-            root=output_dir,
-            latest_complete_date=latest_complete_day,
-            date_start=start_text,
-            date_end=latest_complete_day,
-            generated_at=generated_at,
-        )
-    summary = {
-        "output": str(output.resolve()) if output is not None else None,
-        "output_dir": str(output_dir.resolve()) if output_dir is not None else None,
-        "partition_release": partition_release,
-        "file_size_bytes": size_bytes,
-        "rows": tile_row_count,
-        "unique_points": segment_stats["valid_unique_points"],
-        "candidate_segments": cap_stats["candidate_features"],
-        "displayed_segments": cap_stats["displayed_features"],
-        "candidate_vessels": candidate_vessel_count,
-        "displayed_vessels": displayed_vessel_count,
-        "requests": metadata["requests"],
-        "errors": errors,
-        "work_dir": str(work_dir),
-        "work_dir_kept": keep_work_dir,
-    }
+    try:
+        if output is not None:
+            size_bytes = write_feature_collection_stream(
+                output, metadata=metadata, features=store.iter_features(),
+            )
+        if output_dir is not None:
+            partition_release = publish_track_release(
+                _StreamingFeatureCollection(metadata, store),
+                root=output_dir,
+                latest_complete_date=latest_complete_day,
+                date_start=start_text,
+                date_end=latest_complete_day,
+                generated_at=generated_at,
+            )
+        summary = {
+            "output": str(output.resolve()) if output is not None else None,
+            "output_dir": str(output_dir.resolve()) if output_dir is not None else None,
+            "partition_release": partition_release,
+            "file_size_bytes": size_bytes,
+            "rows": tile_row_count,
+            "unique_points": segment_stats["valid_unique_points"],
+            "candidate_segments": cap_stats["eligible_segment_count"],
+            "displayed_segments": cap_stats["published_segment_count"],
+            "candidate_vessels": candidate_vessel_count,
+            "displayed_vessels": displayed_vessel_count,
+            "requests": metadata["requests"],
+            "errors": errors,
+            "work_dir": str(work_dir),
+            "work_dir_kept": keep_work_dir,
+        }
+    finally:
+        store.close()
     if not keep_work_dir:
         shutil.rmtree(work_dir)
         summary["work_dir"] = None

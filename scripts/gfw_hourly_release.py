@@ -100,16 +100,23 @@ def _validated_asset_relative_path(value: str) -> Path:
 
 def _frontend_index_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
+    def append_entries(values: list[dict[str, Any]] | None) -> None:
+        for entry in values or []:
+            entries.append(entry)
+            entries.extend(entry.get("detail_buckets") or [])
+
     for index_name in ("days", "hours"):
-        entries.extend(manifest.get(index_name) or [])
+        append_entries(manifest.get(index_name) or [])
     tracks = manifest.get("tracks") or {}
     grid = manifest.get("grid") or {}
     dark_vessels = manifest.get("dark_vessels") or {}
     if any(not isinstance(section, dict) for section in (tracks, grid, dark_vessels)):
         raise ValueError("tracks, grid, and dark_vessels manifest sections must be objects")
-    entries.extend(tracks.get("days") or [])
-    entries.extend(grid.get("hours") or [])
-    entries.extend(dark_vessels.get("hours") or [])
+    append_entries(tracks.get("days") or [])
+    append_entries(tracks.get("singleton_days") or [])
+    append_entries(tracks.get("frames") or [])
+    append_entries(grid.get("hours") or [])
+    append_entries(dark_vessels.get("hours") or [])
     if any(not isinstance(entry, dict) for entry in entries):
         raise ValueError("frontend manifest indexes must contain objects")
     return entries
@@ -197,6 +204,26 @@ def clip_track_feature(
     feature: dict[str, Any], *, window_start: datetime, window_end: datetime
 ) -> dict[str, Any] | None:
     """Clip one track to an inclusive UTC window with linear boundary vertices."""
+    if feature.get("geometry", {}).get("type") == "Point":
+        try:
+            properties = feature["properties"]
+            observed_times = properties["observed_times"]
+            coordinate = feature["geometry"]["coordinates"]
+        except (KeyError, TypeError) as exc:
+            raise ValueError("singleton feature is missing coordinates or observed_times") from exc
+        if not isinstance(coordinate, list) or len(coordinate) != 2 or len(observed_times) != 1:
+            raise ValueError("singleton feature must contain one coordinate and one observed time")
+        observed = _parse_utc(observed_times[0])
+        if observed < window_start or observed > window_end:
+            return None
+        if properties.get("start_at") != observed_times[0] or properties.get("end_at") != observed_times[0]:
+            raise ValueError("singleton start_at/end_at must match observed time")
+        clipped = deepcopy(feature)
+        clipped["properties"]["partition_clipped"] = False
+        clipped["properties"]["partition_boundary_interpolated"] = False
+        return clipped
+    if feature.get("geometry", {}).get("type") != "LineString":
+        raise ValueError("track feature geometry must be LineString or Point")
     try:
         properties = feature["properties"]
         coordinates = feature["geometry"]["coordinates"]
@@ -297,7 +324,16 @@ def build_daily_track_partition(
             "interpolation": "linear_between_adjacent_hourly_grid_centers",
             "feature_count": len(features),
             "point_count": sum(
-                len(feature["geometry"]["coordinates"]) for feature in features
+                int(feature.get("properties", {}).get("point_count", 0))
+                for feature in features
+            ),
+            "line_feature_count": sum(
+                feature.get("geometry", {}).get("type") == "LineString"
+                for feature in features
+            ),
+            "singleton_feature_count": sum(
+                feature.get("geometry", {}).get("type") == "Point"
+                for feature in features
             ),
             "coordinate_semantics": "GFW_HIGH_grid_cell_center_not_raw_AIS_position",
         },
@@ -313,9 +349,17 @@ def _validate_partition(path: Path, expected_date: str) -> dict[str, Any]:
     if metadata.get("display_date") != expected_date:
         raise ValueError(f"partition display_date mismatch: {path}")
     for feature in value.get("features") or []:
+        geometry_type = feature.get("geometry", {}).get("type")
         coordinates = feature.get("geometry", {}).get("coordinates") or []
         observed_times = feature.get("properties", {}).get("observed_times") or []
-        if len(coordinates) < 2 or len(coordinates) != len(observed_times):
+        if geometry_type == "Point":
+            if not isinstance(coordinates, list) or len(coordinates) != 2 or len(observed_times) != 1:
+                raise ValueError(f"partition has invalid singleton node contract: {path}")
+            if feature.get("properties", {}).get("start_at") != observed_times[0] or feature.get("properties", {}).get("end_at") != observed_times[0]:
+                raise ValueError(f"partition singleton endpoints do not match observed time: {path}")
+            _parse_utc(observed_times[0])
+            continue
+        if geometry_type != "LineString" or len(coordinates) < 2 or len(coordinates) != len(observed_times):
             raise ValueError(f"partition has invalid track vertex contract: {path}")
         parsed = [_parse_utc(value) for value in observed_times]
         if any(current <= previous for previous, current in zip(parsed, parsed[1:])):
@@ -596,8 +640,9 @@ def _put_and_verify_s3(
     sha256: str,
     content_type: str,
     cache_control: str,
+    content_encoding: str | None = None,
 ) -> None:
-    client.put_object(
+    request = dict(
         Bucket=bucket,
         Key=key,
         Body=body,
@@ -605,6 +650,9 @@ def _put_and_verify_s3(
         CacheControl=cache_control,
         Metadata={"sha256": sha256},
     )
+    if content_encoding is not None:
+        request["ContentEncoding"] = content_encoding
+    client.put_object(**request)
     head = client.head_object(Bucket=bucket, Key=key)
     metadata = {str(name).lower(): str(value) for name, value in (head.get("Metadata") or {}).items()}
     if int(head.get("ContentLength", -1)) != len(body):
@@ -739,7 +787,13 @@ def publish_release_to_s3(
             key=key,
             body=body,
             sha256=asset["sha256"],
-            content_type="application/geo+json" if asset["path"].endswith(".geojson") else "application/octet-stream",
+            content_type=(
+                "application/geo+json" if asset["path"].endswith(".geojson")
+                else "application/gzip" if asset["path"].endswith(".gz")
+                else "application/vnd.pmtiles" if asset["path"].endswith(".pmtiles")
+                else "application/x-ndjson" if asset["path"].endswith(".ndjson")
+                else "application/octet-stream"
+            ),
             cache_control=RELEASE_CACHE_CONTROL,
         )
     if run_key:
@@ -763,10 +817,13 @@ def publish_release_to_s3(
         for entry in root_manifest.get(index_name) or []:
             entry["path"] = f"releases/{release_id}/{entry['path']}"
     for section_name, index_name in (
-        ("tracks", "days"), ("grid", "hours"), ("dark_vessels", "hours")
+        ("tracks", "days"), ("tracks", "singleton_days"), ("tracks", "frames"),
+        ("grid", "hours"), ("dark_vessels", "hours")
     ):
         for entry in (root_manifest.get(section_name) or {}).get(index_name) or []:
             entry["path"] = f"releases/{release_id}/{entry['path']}"
+            for detail in entry.get("detail_buckets") or []:
+                detail["path"] = f"releases/{release_id}/{detail['path']}"
     root_manifest["published_releases"] = kept_entries
     root_key = f"{key_prefix}/manifest.json"
     root_body = _canonical(root_manifest).encode("utf-8")

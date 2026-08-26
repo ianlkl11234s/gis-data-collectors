@@ -8,6 +8,7 @@ from scripts.gfw_hourly_tracks_poc import (
     GFWReportClient,
     IncompleteReportError,
     _finalize_disk_backed,
+    finalize_track_store,
     _load_or_create_manifest,
     build_track_segments,
     cap_features,
@@ -55,12 +56,12 @@ def test_tracks_split_on_gap_or_implausible_speed_and_keep_identity():
         # > 2 h gap cuts the first segment.
         _point("v-1", "2026-08-15T04:00:00Z", 125.2, 25.0, mmsi="416000001", ship_name="TEST"),
         _point("v-1", "2026-08-15T05:00:00Z", 125.3, 25.0, mmsi="416000001", ship_name="TEST"),
-        # About 550 nm in one hour; > 80 kn cuts again and the isolated point is dropped.
+        # About 550 nm in one hour; > 80 kn cuts again and the isolated point is a Point node.
         _point("v-1", "2026-08-15T06:00:00Z", 135.0, 25.0, mmsi="416000001", ship_name="TEST"),
     ]
     features, stats = build_track_segments(rows, gap_hours=2.0, max_speed_knots=80.0)
-    assert len(features) == 2
-    assert [feature["properties"]["point_count"] for feature in features] == [2, 2]
+    assert len(features) == 3
+    assert [feature["properties"]["point_count"] for feature in features] == [2, 2, 1]
     assert features[0]["properties"]["mmsi"] == "416000001"
     assert features[0]["properties"]["ship_name"] == "TEST"
     assert features[0]["properties"]["approximate"] is True
@@ -77,6 +78,8 @@ def test_tracks_split_on_gap_or_implausible_speed_and_keep_identity():
     assert "start_time" not in features[0]["properties"]
     assert "end_time" not in features[0]["properties"]
     assert features[0]["geometry"]["type"] == "LineString"
+    assert features[-1]["geometry"]["type"] == "Point"
+    assert features[-1]["properties"]["node_type"] == "singleton"
     assert stats["gap_splits"] == 1
     assert stats["speed_splits"] == 1
 
@@ -139,7 +142,7 @@ def test_display_cap_is_deterministic_and_reports_omissions():
     assert stats == {"candidate_features": 3, "displayed_features": 2, "candidate_points": 10, "displayed_points": 8, "cap_applied": True}
 
 
-def test_disk_backed_finalize_streams_large_shard_and_caps_output(tmp_path):
+def test_disk_backed_finalize_keeps_large_shard_full_fidelity(tmp_path):
     shard = tmp_path / "tile.points.ndjson"
     with shard.open("w", encoding="utf-8") as handle:
         for vessel_number in range(400):
@@ -165,10 +168,11 @@ def test_disk_backed_finalize_streams_large_shard_and_caps_output(tmp_path):
     assert segment_stats["valid_unique_points"] == 1600
     assert segment_stats["duplicate_rows"] == 1
     assert candidate_vessels == 400
-    assert displayed_vessels == 25
-    assert len(displayed) == 25
-    assert cap_stats["displayed_points"] == 100
-    assert cap_stats["cap_applied"] is True
+    assert displayed_vessels == 400
+    assert len(displayed) == 400
+    assert cap_stats["displayed_points"] == 1600
+    assert cap_stats["cap_applied"] is False
+    assert cap_stats["omitted_by_display_cap"] == 0
 
 
 def test_run_poc_emits_frontend_summary_aliases_and_canonical_track_fields(tmp_path):
@@ -207,13 +211,20 @@ def test_run_poc_emits_frontend_summary_aliases_and_canonical_track_fields(tmp_p
     assert metadata["vessel_count"] == 1
     assert metadata["segment_count"] == 1
     assert metadata["displayed_segment_count"] == 1
-    assert metadata["schema_version"] == 2
+    assert metadata["schema_version"] == 3
     assert metadata["track_contract"] == {
         "vertex_time_property": "observed_times",
         "vertex_time_alignment": "one_to_one_with_geometry_coordinates",
         "vertex_time_order": "strictly_increasing_utc",
     }
     assert metadata["counts"]["candidate_features"] == 1
+    assert metadata["counts"]["eligible_segment_count"] == metadata["counts"]["published_segment_count"]
+    assert metadata["counts"]["canonical_points"] == (
+        metadata["counts"]["eligible_segment_points"]
+        + metadata["counts"]["singleton_node_points"]
+    )
+    assert metadata["counts"]["cap_applied"] is False
+    assert metadata["counts"]["omitted_by_display_cap"] == 0
     properties = collection["features"][0]["properties"]
     assert set(("start_at", "end_at", "source_dataset")) <= set(properties)
     assert properties["observed_times"] == [
@@ -261,6 +272,34 @@ def test_run_poc_can_publish_partitioned_release_without_monolith(tmp_path):
     assert manifest["days"][0]["path"] == (
         "releases/2026-08-15/days/2026-08-15.geojson"
     )
+
+
+def test_sqlite_track_store_streams_tracks_and_canonical_singletons(tmp_path):
+    shard = tmp_path / "tile.points.ndjson"
+    shard.write_text("\n".join(map(json.dumps, [
+        _point("v-1", "2026-08-15T00:00:00Z", 125, 25),
+        _point("v-1", "2026-08-15T01:00:00Z", 125.1, 25),
+        _point("v-2", "2026-08-15T00:00:00Z", 126, 26),
+        # Same vessel/hour deterministically keeps the earlier coordinate order.
+        _point("v-2", "2026-08-15T00:30:00Z", 126.1, 26),
+    ])) + "\n", encoding="utf-8")
+    store = finalize_track_store(
+        [shard], work_dir=tmp_path, gap_hours=2, max_speed_knots=80,
+    )
+    try:
+        tracks = list(store.iter_tracks())
+        singletons = list(store.iter_singleton_nodes())
+        assert len(tracks) == 1
+        assert len(singletons) == 1
+        assert singletons[0]["geometry"]["type"] == "Point"
+        assert [feature["properties"]["vessel_id"] for feature in store.iter_features()] == ["v-1", "v-2"]
+        counts = store.counts()
+        assert counts["eligible_segment_count"] == counts["published_segment_count"] == 1
+        assert counts["canonical_points"] == counts["eligible_segment_points"] + counts["singleton_node_points"]
+        assert counts["cap_applied"] is False
+        assert counts["omitted_by_display_cap"] == 0
+    finally:
+        store.close()
 
 
 class _Response:
