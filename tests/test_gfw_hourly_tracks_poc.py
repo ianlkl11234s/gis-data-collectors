@@ -344,6 +344,34 @@ def test_report_uses_hourly_high_vessel_id_and_recovers_524(monkeypatch):
     assert client.stats["recovery_requests"] == 2
 
 
+def test_report_can_request_low_daily_without_changing_high_hourly_default():
+    session = _Session([
+        _Response(200, {"entries": [], "nextOffset": 0}, {
+            "x-datasets": "public-global-presence:v4.0",
+        }),
+    ])
+    client = GFWReportClient("secret", session=session)
+    client.fetch(
+        (124, 24, 126, 26), "2026-08-15", "2026-08-16",
+        spatial_resolution="LOW",
+        temporal_resolution="DAILY",
+    )
+    assert session.calls[0][2]["params"]["spatial-resolution"] == "LOW"
+    assert session.calls[0][2]["params"]["temporal-resolution"] == "DAILY"
+
+    with pytest.raises(ValueError, match="LOW or HIGH"):
+        client.fetch(
+            (124, 24, 126, 26), "2026-08-15", "2026-08-16",
+            spatial_resolution="MEDIUM",
+        )
+
+    with pytest.raises(ValueError, match="HOURLY or DAILY"):
+        client.fetch(
+            (124, 24, 126, 26), "2026-08-15", "2026-08-16",
+            temporal_resolution="WEEKLY",
+        )
+
+
 def test_nonzero_next_offset_fails_closed():
     session = _Session([_Response(200, {"entries": [], "nextOffset": 100})])
     client = GFWReportClient("secret", session=session)

@@ -256,15 +256,21 @@ class GFWReportClient:
         dataset: str = GFW_DATASET,
         group_by: str | None = "VESSEL_ID",
         filters: tuple[str, ...] = (),
+        spatial_resolution: str = "HIGH",
+        temporal_resolution: str = "HOURLY",
     ) -> tuple[Any, str | None]:
+        if spatial_resolution not in {"LOW", "HIGH"}:
+            raise ValueError("spatial_resolution must be LOW or HIGH")
+        if temporal_resolution not in {"HOURLY", "DAILY"}:
+            raise ValueError("temporal_resolution must be HOURLY or DAILY")
         west, south, east, north = bbox
         params = {
             "format": "JSON",
-            "temporal-resolution": "HOURLY",
+            "temporal-resolution": temporal_resolution,
             "datasets[0]": dataset,
             "date-range": f"{start},{end}",
             "spatial-aggregation": "false",
-            "spatial-resolution": "HIGH",
+            "spatial-resolution": spatial_resolution,
         }
         if group_by is not None:
             params["group-by"] = group_by
