@@ -18,6 +18,7 @@ from scripts.gfw_v4_production_release import (
     _validate_fishing_asset,
     build_production_release,
     validate_schema4_release_manifest,
+    validate_track_frame_artifact,
 )
 
 
@@ -36,6 +37,65 @@ def _spatial_frame_metadata(bucket: str, observed_at: str) -> dict:
             "identity_duplicate_count": 0, "identity_missing_count": 0,
         },
     }
+
+
+def _frame_artifact() -> dict:
+    sha = "b" * 64
+    return {
+        "path": "releases/2026-08-21__public-global-presence-v4.0/tracks/other/tracks/frames/20260821T00Z.pmtiles",
+        "type": "track_frame_pmtiles", "bytes": 10, "content_length": 10, "sha256": sha,
+        "etag": f'"{sha}"', "content_type": "application/octet-stream",
+        "content_encoding": "identity",
+        "cache_control": "public,max-age=604800,s-maxage=604800,immutable",
+        "semantic_counts": {"observed_at": "2026-08-21T00:00:00+00:00", "bucket": "other", "feature_count": 7},
+        "spatial_contract": {
+            "fixed_zoom": 6, "source_feature_count": 7, "decoded_feature_count": 7,
+            "identity_duplicate_count": 0, "identity_missing_count": 0,
+        },
+    }
+
+
+def test_top_level_track_frame_artifact_requires_spatial_contract() -> None:
+    """Regression: v9 shipped track_frame artifacts with no spatial_contract.
+
+    _asset() rebuilds the top-level record from scratch, so the identity/no-drop
+    proof computed during the PMTiles build has to be carried across explicitly.
+    Mirrors install-gfw-v4-local-release.sh's frame checks.
+    """
+    validate_track_frame_artifact(_frame_artifact())
+
+    for mutate, match in (
+        (lambda a: a.pop("spatial_contract"), "fixed-z6 spatial_contract"),
+        (lambda a: a.update(spatial_contract=None), "fixed-z6 spatial_contract"),
+        (lambda a: a["spatial_contract"].update(fixed_zoom=7), "fixed-z6 spatial_contract"),
+        (lambda a: a["spatial_contract"].update(decoded_feature_count=6), "identity/no-drop"),
+        (lambda a: a["spatial_contract"].update(identity_duplicate_count=1), "identity/no-drop"),
+        (lambda a: a["spatial_contract"].update(identity_missing_count=1), "identity/no-drop"),
+        (lambda a: a["semantic_counts"].update(feature_count=6), "identity/no-drop"),
+        (lambda a: a.update(content_encoding="gzip"), "identity octet-stream"),
+    ):
+        asset = _frame_artifact()
+        mutate(asset)
+        with pytest.raises(ProductionReleaseError, match=match):
+            validate_track_frame_artifact(asset)
+
+
+def test_release_manifest_validation_rejects_frame_without_spatial_contract() -> None:
+    """The builder's own manifest gate must catch it before anything is written."""
+    frame = _frame_artifact()
+    frame.pop("spatial_contract")
+    manifest = {
+        "schema_version": 4, "release_id": "2026-08-21__public-global-presence-v4.0",
+        "selected_utc_date": "2026-08-21", "bbox": [115.9, 20.3, 134.7, 36.5],
+        "source_dataset_id": "public-global-presence",
+        "resolved_dataset_version": "public-global-presence:v4.0",
+        "days": [], "grid": {}, "fishing_effort": {},
+        "layer_separation": {"grid": "gfwHourlyGrid", "tracks": "gfwHourlyTracks", "fishing_effort": "gfwFishingEffort", "dark_vessels": "gfwDarkVessels"},
+        "tracks": {"buckets": ["FISHING", "CARGO", "PASSENGER", "CARRIER", "OTHER", "UNKNOWN"], "default_buckets": ["FISHING", "CARGO", "PASSENGER"]},
+        "artifacts": [frame], "release_truth": {},
+    }
+    with pytest.raises(ProductionReleaseError, match="fixed-z6 spatial_contract"):
+        validate_schema4_release_manifest(manifest)
 
 
 def test_nested_track_frame_keeps_frozen_consumer_fields() -> None:

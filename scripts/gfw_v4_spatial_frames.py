@@ -26,8 +26,12 @@ def _decoded_identities(mbtiles: Path) -> Counter[str]:
             for feature in layer.get("features") or []: identities.append(_identity(feature))
     return Counter(identities)
 
-def _spatial_pmtiles(*, named_inputs: list[tuple[str, Path]], output: Path, expected_identities: Counter[str]) -> None:
-    """Encode exactly one complete, non-duplicated z6 viewport shard per frame."""
+def _spatial_pmtiles(*, named_inputs: list[tuple[str, Path]], output: Path, expected_identities: Counter[str]) -> Counter[str]:
+    """Encode exactly one complete, non-duplicated z6 viewport shard per frame.
+
+    Returns the identities actually decoded back out of the tiles, so the
+    caller can publish readback-derived counts rather than restating its input.
+    """
     tippecanoe,pmtiles=require_gfw_asset_toolchain(); output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="gfw-spatial-tippecanoe-",dir=output.parent) as temporary:
         temporary_path=Path(temporary); mbtiles=temporary_path/"asset.mbtiles"
@@ -39,10 +43,12 @@ def _spatial_pmtiles(*, named_inputs: list[tuple[str, Path]], output: Path, expe
             if decoded != expected_identities: raise ValueError(f"spatial frame identity mismatch: source={sum(expected_identities.values())} decoded={sum(decoded.values())}")
         else:
             _empty_mbtiles(mbtiles,layers=[layer for layer,_ in named_inputs],minimum_zoom=SPATIAL_FRAME_ZOOM,maximum_zoom=SPATIAL_FRAME_ZOOM)
+            decoded=Counter()
         temporary_output=temporary_path/"asset.pmtiles"; _run([str(pmtiles),"convert",str(mbtiles),str(temporary_output)]); _run([str(pmtiles),"verify",str(temporary_output)])
         shown=subprocess.run([str(pmtiles),"show",str(temporary_output)],check=False,capture_output=True,text=True)
         if shown.returncode or "dropped_by_rate" in shown.stdout or f"min zoom: {SPATIAL_FRAME_ZOOM}" not in shown.stdout or f"max zoom: {SPATIAL_FRAME_ZOOM}" not in shown.stdout: raise RuntimeError("spatial PMTiles no-drop/fixed-zoom verification failed")
         temporary_output.replace(output)
+        return decoded
 
 def build_spatial_frame(*, source: Path, output: Path, observed_at: str, bucket: str, release_root: Path, pmtiles_builder: Callable[..., None] = _spatial_pmtiles) -> dict[str, Any]:
     value=json.loads(gzip.decompress(source.read_bytes()))
@@ -52,11 +58,15 @@ def build_spatial_frame(*, source: Path, output: Path, observed_at: str, bucket:
     ndjson.write_text("".join(json.dumps(x,separators=(",",":"))+"\n" for x in features),encoding="utf-8")
     identities=Counter(_identity(feature) for feature in features)
     if any(count != 1 for count in identities.values()): raise ValueError("track frame has duplicate vessel_id+track_id identity")
-    if pmtiles_builder is _spatial_pmtiles: pmtiles_builder(named_inputs=[("gfw_v4_track_frame",ndjson)],output=output,expected_identities=identities)
-    else: pmtiles_builder(named_inputs=[("gfw_v4_track_frame",ndjson)],output=output,minimum_zoom=SPATIAL_FRAME_ZOOM,maximum_zoom=SPATIAL_FRAME_ZOOM)
+    if pmtiles_builder is _spatial_pmtiles: decoded=pmtiles_builder(named_inputs=[("gfw_v4_track_frame",ndjson)],output=output,expected_identities=identities)
+    else: decoded=pmtiles_builder(named_inputs=[("gfw_v4_track_frame",ndjson)],output=output,minimum_zoom=SPATIAL_FRAME_ZOOM,maximum_zoom=SPATIAL_FRAME_ZOOM)
+    # Publish what the tiles actually decoded back, not a restatement of the
+    # input count.  An injected builder (tests) reports nothing to read back.
+    if isinstance(decoded,Counter): decoded_count=sum(decoded.values()); missing_count=sum((identities-decoded).values()); duplicate_count=sum((decoded-identities).values())
+    else: decoded_count=len(features); missing_count=0; duplicate_count=0
     ndjson.unlink()
     payload=output.read_bytes(); sha=hashlib.sha256(payload).hexdigest()
-    return {"path":output.relative_to(release_root).as_posix(),"type":"track_frame_pmtiles","bytes":len(payload),"content_length":len(payload),"sha256":sha,"etag":f'"{sha}"',"content_type":"application/octet-stream","content_encoding":"identity","cache_control":"public,max-age=604800,s-maxage=604800,immutable","semantic_counts":{"observed_at":observed_at,"bucket":bucket,"feature_count":len(features)},"spatial_contract":{"fixed_zoom":SPATIAL_FRAME_ZOOM,"source_feature_count":len(features),"decoded_feature_count":len(features),"identity_duplicate_count":0,"identity_missing_count":0}}
+    return {"path":output.relative_to(release_root).as_posix(),"type":"track_frame_pmtiles","bytes":len(payload),"content_length":len(payload),"sha256":sha,"etag":f'"{sha}"',"content_type":"application/octet-stream","content_encoding":"identity","cache_control":"public,max-age=604800,s-maxage=604800,immutable","semantic_counts":{"observed_at":observed_at,"bucket":bucket,"feature_count":len(features)},"spatial_contract":{"fixed_zoom":SPATIAL_FRAME_ZOOM,"source_feature_count":len(features),"decoded_feature_count":decoded_count,"identity_duplicate_count":duplicate_count,"identity_missing_count":missing_count}}
 
 if __name__ == "__main__":
     p=argparse.ArgumentParser(); p.add_argument("--source",type=Path); p.add_argument("--output",type=Path); p.add_argument("--observed-at"); p.add_argument("--bucket"); p.add_argument("--release-root",type=Path); p.add_argument("--candidate-root",type=Path); p.add_argument("--output-root",type=Path); a=p.parse_args()

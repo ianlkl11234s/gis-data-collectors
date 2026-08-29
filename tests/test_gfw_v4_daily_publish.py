@@ -135,7 +135,9 @@ def test_default_finalizer_calls_schema4_builder_only_with_reviewed_inputs(tmp_p
             "artifacts": [{
                 "path": frame_path, "type": "track_frame_pmtiles", "bytes": 7,
                 "sha256": hashlib.sha256(b"pmtiles").hexdigest(),
-                "semantic_counts": {"bucket": "fishing", "observed_at": "2026-08-21T00:00:00Z"},
+                "semantic_counts": {"bucket": "fishing", "observed_at": "2026-08-21T00:00:00Z", "feature_count": 1},
+                "spatial_contract": {"fixed_zoom": 6, "source_feature_count": 1, "decoded_feature_count": 1,
+                                     "identity_duplicate_count": 0, "identity_missing_count": 0},
             }],
             "tracks": {"bucket_data": {"fishing": {"frames": [{"path": "tracks/fishing/frames/00.pmtiles"}]}}},
             "release_truth": {"tier2_status": "passed", "readback_status": "passed"},
@@ -228,7 +230,9 @@ def _promotion_candidate(tmp_path):
         "schema_version": 4, "release_id": release_id, "selected_utc_date": "2026-08-21",
         "release_truth": {"tier1_status": "passed", "tier2_status": "not_run", "readback_status": "passed", "root_cutover": "blocked_until_tier2_passed"},
         "artifacts": [{"path": path, "type": "track_frame_pmtiles", "bytes": frame.stat().st_size, "sha256": sha,
-                       "semantic_counts": {"bucket": "fishing", "observed_at": "2026-08-21T00:00:00Z", "feature_count": 1}}],
+                       "semantic_counts": {"bucket": "fishing", "observed_at": "2026-08-21T00:00:00Z", "feature_count": 1},
+                       "spatial_contract": {"fixed_zoom": 6, "source_feature_count": 1, "decoded_feature_count": 1,
+                                            "identity_duplicate_count": 0, "identity_missing_count": 0}}],
         "tracks": {"bucket_data": {"fishing": {"frames": [{"path": "tracks/fishing/frames/00.pmtiles"}]}}},
     }
     release_dir.mkdir(parents=True, exist_ok=True)
@@ -274,6 +278,34 @@ def test_promotion_creates_new_immutable_formal_root_from_bound_evidence(tmp_pat
     body = (promoted / root["release_manifest"]["path"]).read_bytes()
     assert root["release_manifest"]["sha256"] == hashlib.sha256(body).hexdigest()
     assert root["release_manifest"]["bytes"] == len(body)
+
+
+def test_promotion_rejects_frame_artifact_without_spatial_contract(tmp_path):
+    """The installer demands a top-level identity/no-drop proof; catch it here."""
+    candidate, core = _promotion_candidate(tmp_path)
+    release_file = candidate / "releases" / "2026-08-21__public-global-presence-v4.0" / "manifest.json"
+    pristine = release_file.read_text()
+
+    for mutate in (
+        lambda asset: asset.pop("spatial_contract"),
+        lambda asset: asset["spatial_contract"].update(fixed_zoom=7),
+        lambda asset: asset["spatial_contract"].update(decoded_feature_count=0),
+        lambda asset: asset["spatial_contract"].update(identity_missing_count=1),
+    ):
+        release = json.loads(pristine)
+        mutate(release["artifacts"][0])
+        release_file.write_bytes(json.dumps(release, sort_keys=True, separators=(",", ":")).encode())
+        body = release_file.read_bytes()
+        root_file = candidate / "manifest.json"
+        root = json.loads(root_file.read_text())
+        root["release_manifest"].update(bytes=len(body), sha256=hashlib.sha256(body).hexdigest())
+        root_file.write_bytes(json.dumps(root, sort_keys=True, separators=(",", ":")).encode())
+        promoted = tmp_path / f"promoted-{hashlib.sha256(body).hexdigest()[:8]}"
+        with pytest.raises(GFWV4SourceContractBlocked, match="spatial_contract"):
+            promote_v4_candidate_with_tier2_evidence(
+                candidate, _tier2_evidence(tier2_core_digest(release)), promoted,
+            )
+        assert not promoted.exists()
 
 
 def test_promoted_manifest_evidence_binds_to_the_manifest_that_ships(tmp_path):

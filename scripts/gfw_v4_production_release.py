@@ -39,11 +39,12 @@ from scripts.gfw_hourly_browser_assets import (
     require_gfw_asset_toolchain,
 )
 from scripts.gfw_hourly_tracks_poc import finalize_track_store
-from scripts.gfw_v4_spatial_frames import build_spatial_frame
+from scripts.gfw_v4_spatial_frames import SPATIAL_FRAME_ZOOM, build_spatial_frame
 from tasks.gfw_v4_manifest_publisher import TIER2_BINDING_ALGORITHM, tier2_core_digest
 
 
 SCHEMA_VERSION = 4
+IDENTITY_ENCODING = "identity"
 UTC_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 PRESENCE_DATASET_PREFIX = "public-global-presence:"
 FISHING_DATASET_PREFIX = "public-global-fishing-effort:"
@@ -114,6 +115,37 @@ def validate_schema4_release_manifest(manifest: dict[str, Any]) -> None:
     tracks = manifest.get("tracks") or {}
     if tracks.get("buckets") != [bucket.upper() for bucket in TRACK_BUCKETS] or tracks.get("default_buckets") != [bucket.upper() for bucket in DEFAULT_TRACK_BUCKETS]:
         raise ProductionReleaseError("schema-4 tracks taxonomy/default buckets are frozen")
+    for asset in manifest["artifacts"]:
+        if asset.get("type") == "track_frame_pmtiles":
+            validate_track_frame_artifact(asset)
+
+
+def validate_track_frame_artifact(asset: dict[str, Any]) -> None:
+    """Mirror the consumer's frozen track_frame_pmtiles artifact contract.
+
+    Kept equivalent to install-gfw-v4-local-release.sh and to
+    tasks.gfw_v4_manifest_publisher._validate_track_frame_pmtiles, so a missing
+    or inconsistent identity/no-drop proof fails at build time instead of being
+    discovered by the installer.
+    """
+    path = asset.get("path")
+    counts = asset.get("semantic_counts")
+    spatial = asset.get("spatial_contract")
+    if asset.get("content_type") != "application/octet-stream" or asset.get("content_encoding") != IDENTITY_ENCODING:
+        raise ProductionReleaseError(f"track_frame_pmtiles must be identity octet-stream: {path}")
+    if not isinstance(counts, dict) or not str(counts.get("observed_at") or "") or not str(counts.get("bucket") or ""):
+        raise ProductionReleaseError(f"track_frame_pmtiles lacks observed_at/bucket: {path}")
+    if not isinstance(spatial, dict) or spatial.get("fixed_zoom") != SPATIAL_FRAME_ZOOM:
+        raise ProductionReleaseError(f"track_frame_pmtiles must carry a fixed-z6 spatial_contract: {path}")
+    source_count = spatial.get("source_feature_count")
+    if (
+        not isinstance(source_count, int) or isinstance(source_count, bool) or source_count < 0
+        or spatial.get("decoded_feature_count") != source_count
+        or counts.get("feature_count") != source_count
+        or spatial.get("identity_duplicate_count") != 0
+        or spatial.get("identity_missing_count") != 0
+    ):
+        raise ProductionReleaseError(f"track_frame_pmtiles identity/no-drop proof failed: {path}")
 
 
 def _track_bucket(value: Any) -> str | None:
@@ -261,7 +293,10 @@ def _write_ndjson(path: Path, rows: Iterable[dict[str, Any]]) -> None:
             handle.write("\n")
 
 
-def _asset(path: Path, *, artifact_root: Path, asset_type: str, scope: dict[str, Any]) -> dict[str, Any]:
+def _asset(
+    path: Path, *, artifact_root: Path, asset_type: str, scope: dict[str, Any],
+    spatial_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     byte_size = path.stat().st_size
     sha256 = _sha256(path)
     record = {
@@ -270,6 +305,10 @@ def _asset(path: Path, *, artifact_root: Path, asset_type: str, scope: dict[str,
         "etag": f'"{sha256}"', "cache_control": "public,max-age=604800,s-maxage=604800,immutable",
         "semantic_counts": scope,
     }
+    # track_frame_pmtiles carries its identity/no-drop readback proof at the top
+    # level too; the consumer validates the artifact entry, not the nested index.
+    if spatial_contract is not None:
+        record["spatial_contract"] = spatial_contract
     if path.suffix == ".gz":
         record.update({"content_type": "application/json", "content_encoding": "gzip"})
     elif path.suffix == ".pmtiles":
@@ -408,7 +447,7 @@ def build_production_release(
                 for detail in day_entry["detail_buckets"]:
                     assets.append(_asset(release_dir / detail["path"], artifact_root=staging, asset_type="track_detail_bucket", scope={"bucket": bucket, "display_date": day_entry["display_date"], "entry_count": detail["entry_count"], "point_count": detail["point_count"]}))
             for frame in result["frames"]:
-                assets.append(_asset(release_dir / frame["path"], artifact_root=staging, asset_type="track_frame_pmtiles", scope=frame["semantic_counts"]))
+                assets.append(_asset(release_dir / frame["path"], artifact_root=staging, asset_type="track_frame_pmtiles", scope=frame["semantic_counts"], spatial_contract=frame["spatial_contract"]))
         assets.append(_asset(fishing_target, artifact_root=staging, asset_type="fishing_effort_day", scope={"display_date": selected_day.isoformat(), "feature_count": fishing["feature_count"]}))
         assets.sort(key=lambda item: item["path"])
         readback = _readback_assets(staging, assets, pmtiles)

@@ -452,7 +452,21 @@ def _assert_pmtiles_candidate(candidate: Path, *, tier2_evidence_id: str = "") -
         local = candidate / path
         if not local.is_file() or local.stat().st_size != int(asset.get("bytes", -1)) or _sha256(local) != asset.get("sha256"):
             raise GFWV4SourceContractBlocked("PMTiles artifact bytes/SHA readback failed")
+        # Equivalent to the consumer installer's frame contract: the top-level
+        # artifact must carry its own identity/no-drop proof, not just the
+        # nested index.  Fail here rather than at install time.
+        spatial = asset.get("spatial_contract")
         counts = asset.get("semantic_counts") or {}
+        source_count = spatial.get("source_feature_count") if isinstance(spatial, dict) else None
+        if (
+            not isinstance(spatial, dict) or spatial.get("fixed_zoom") != 6
+            or not isinstance(source_count, int) or isinstance(source_count, bool) or source_count < 0
+            or spatial.get("decoded_feature_count") != source_count
+            or counts.get("feature_count") != source_count
+            or spatial.get("identity_duplicate_count") != 0
+            or spatial.get("identity_missing_count") != 0
+        ):
+            raise GFWV4SourceContractBlocked(f"PMTiles artifact lacks a fixed-z6 identity/no-drop spatial_contract: {path}")
         bucket = str(counts.get("bucket") or "")
         frames = tracks.get(bucket, {}).get("frames") if isinstance(tracks.get(bucket), dict) else None
         if not isinstance(frames, list) or sum(1 for frame in frames if isinstance(frame, dict) and frame.get("path") == nested_path.as_posix()) != 1:
