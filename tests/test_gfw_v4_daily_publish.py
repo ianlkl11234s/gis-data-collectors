@@ -20,6 +20,24 @@ from tasks.gfw_v4_daily_publish import (
     promote_v4_candidate_with_tier2_evidence,
     validate_normalized_v4_daily_source,
 )
+from tasks.gfw_v4_manifest_publisher import (
+    TIER2_BINDING_ALGORITHM,
+    tier2_binding_failure,
+    tier2_core_digest,
+)
+
+
+def _bind_tier2(manifest: dict, *, evidence_id: str) -> dict:
+    """Bind minimal Tier 2 evidence to this manifest's own core digest."""
+    digest = tier2_core_digest(manifest)
+    manifest["tier2_evidence_id"] = evidence_id
+    manifest["tier2_evidence"] = {
+        "schema_version": 1, "kind": "gfw_v4_tier2_browser_evidence",
+        "evidence_id": evidence_id, "release_manifest": {"core_sha256": digest},
+    }
+    manifest["tier2_binding"] = {"algorithm": TIER2_BINDING_ALGORITHM, "core_sha256": digest}
+    manifest.setdefault("release_truth", {})["tier2_evidence_id"] = evidence_id
+    return manifest
 
 
 def _settings() -> GFWV4DailyPublishSettings:
@@ -112,15 +130,18 @@ def test_default_finalizer_calls_schema4_builder_only_with_reviewed_inputs(tmp_p
         frame.parent.mkdir(parents=True)
         frame.write_bytes(b"pmtiles")
         frame_path = "releases/2026-08-21__public-global-presence-v4.0/tracks/fishing/frames/00.pmtiles"
-        (release / "manifest.json").write_text(
-            '{"release_id":"2026-08-21__public-global-presence-v4.0",'
-            '"artifacts":[{"path":"' + frame_path + '","type":"track_frame_pmtiles",'
-            '"bytes":7,"sha256":"' + hashlib.sha256(b"pmtiles").hexdigest() + '",'
-            '"semantic_counts":{"bucket":"fishing","observed_at":"2026-08-21T00:00:00Z"}}],'
-            '"tracks":{"bucket_data":{"fishing":{"frames":[{"path":"tracks/fishing/frames/00.pmtiles"}]}}},'
-            '"release_truth":{"tier2_status":"passed","readback_status":"passed"}}',
-            encoding="utf-8",
-        )
+        built = {
+            "release_id": "2026-08-21__public-global-presence-v4.0",
+            "artifacts": [{
+                "path": frame_path, "type": "track_frame_pmtiles", "bytes": 7,
+                "sha256": hashlib.sha256(b"pmtiles").hexdigest(),
+                "semantic_counts": {"bucket": "fishing", "observed_at": "2026-08-21T00:00:00Z"},
+            }],
+            "tracks": {"bucket_data": {"fishing": {"frames": [{"path": "tracks/fishing/frames/00.pmtiles"}]}}},
+            "release_truth": {"tier2_status": "passed", "readback_status": "passed"},
+        }
+        _bind_tier2(built, evidence_id="tier2-accepted")
+        (release / "manifest.json").write_text(json.dumps(built), encoding="utf-8")
         (output / "manifest.json").write_text(
             '{"production_cutover":"passed",'
             '"release_manifest":{"path":"releases/2026-08-21__public-global-presence-v4.0/manifest.json"}}',
@@ -218,10 +239,10 @@ def _promotion_candidate(tmp_path):
         "schema_version": 4, "release_manifest": {"path": f"releases/{release_id}/manifest.json", "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()},
         "production_cutover": False,
     }, sort_keys=True, separators=(",", ":")).encode())
-    return candidate, hashlib.sha256(body).hexdigest(), len(body)
+    return candidate, tier2_core_digest(manifest)
 
 
-def _tier2_evidence(sha, size, *, heap_status="passed", range_206=True):
+def _tier2_evidence(core_sha256, *, heap_status="passed", range_206=True):
     def profile():
         return {
             "status": "passed",
@@ -229,7 +250,7 @@ def _tier2_evidence(sha, size, *, heap_status="passed", range_206=True):
             "mobile": {"status": "passed", "metrics": {"initial_bytes": 10, "transfer_bytes": 20, "max_heap_bytes": 30, "frame_p95_ms": 20.0, "frame_updates": 96}, "heap": {"status": heap_status, "bytes": 30}, "wire": {"status": "passed", "range_206": range_206}},
         }
     return {"schema_version": 1, "kind": "gfw_v4_tier2_browser_evidence", "evidence_id": "tier2-browser-20260829",
-            "release_manifest": {"sha256": sha, "bytes": size}, "thresholds": {
+            "release_manifest": {"core_sha256": core_sha256}, "thresholds": {
                 "default": {"desktop": {"initial_bytes_max": 100, "transfer_bytes_max": 100, "max_heap_bytes_max": 100, "frame_p95_ms_max": 16.7, "frame_updates_min": 96}, "mobile": {"initial_bytes_max": 100, "transfer_bytes_max": 100, "max_heap_bytes_max": 100, "frame_p95_ms_max": 33, "frame_updates_min": 96}},
                 "all": {"desktop": {"initial_bytes_max": 100, "transfer_bytes_max": 100, "max_heap_bytes_max": 100, "frame_p95_ms_max": 33, "frame_updates_min": 96}, "mobile": {"initial_bytes_max": 100, "transfer_bytes_max": 100, "max_heap_bytes_max": 100, "frame_p95_ms_max": 50, "frame_updates_min": 96}}},
             "profiles": {"default": profile(), "all": profile()},
@@ -237,10 +258,10 @@ def _tier2_evidence(sha, size, *, heap_status="passed", range_206=True):
 
 
 def test_promotion_creates_new_immutable_formal_root_from_bound_evidence(tmp_path):
-    candidate, sha, size = _promotion_candidate(tmp_path)
+    candidate, core = _promotion_candidate(tmp_path)
     original = (candidate / "manifest.json").read_bytes()
     promoted = promote_v4_candidate_with_tier2_evidence(
-        candidate, _tier2_evidence(sha, size), tmp_path / "promoted",
+        candidate, _tier2_evidence(core), tmp_path / "promoted",
     )
     assert promoted != candidate and promoted.is_dir()
     assert (candidate / "manifest.json").read_bytes() == original
@@ -255,15 +276,84 @@ def test_promotion_creates_new_immutable_formal_root_from_bound_evidence(tmp_pat
     assert root["release_manifest"]["bytes"] == len(body)
 
 
+def test_promoted_manifest_evidence_binds_to_the_manifest_that_ships(tmp_path):
+    """The promoted manifest must certify itself, not the candidate it came from.
+
+    v8 shipped a manifest whose embedded evidence named the pre-promotion
+    candidate, because promotion validated the binding and *then* changed the
+    bytes.  Binding on the core digest survives that rewrite.
+    """
+    candidate, core = _promotion_candidate(tmp_path)
+    promoted = promote_v4_candidate_with_tier2_evidence(
+        candidate, _tier2_evidence(core), tmp_path / "promoted",
+    )
+    root = json.loads((promoted / "manifest.json").read_text())
+    release = json.loads((promoted / root["release_manifest"]["path"]).read_text())
+
+    assert release["release_truth"]["tier2_status"] == "passed"
+    # The shipped manifest satisfies the fail-closed gate on its own bytes.
+    assert tier2_binding_failure(release) is None
+    assert release["tier2_evidence"]["release_manifest"]["core_sha256"] == tier2_core_digest(release)
+    assert release["tier2_binding"]["core_sha256"] == core
+    # And no stale blocker text contradicting the verdict.
+    assert "cutover_blocker" not in release
+
+
+def test_promotion_rejects_evidence_bound_to_a_different_release(tmp_path):
+    candidate, core = _promotion_candidate(tmp_path)
+    foreign = "f" * 64
+    assert foreign != core
+    with pytest.raises(GFWV4SourceContractBlocked, match="core digest"):
+        promote_v4_candidate_with_tier2_evidence(
+            candidate, _tier2_evidence(foreign), tmp_path / "promoted",
+        )
+    assert not (tmp_path / "promoted").exists()
+
+
+def test_promotion_rejects_legacy_whole_manifest_byte_binding(tmp_path):
+    """Byte binding cannot survive promotion, so it must never be accepted."""
+    candidate, core = _promotion_candidate(tmp_path)
+    release_file = candidate / "releases" / "2026-08-21__public-global-presence-v4.0" / "manifest.json"
+    body = release_file.read_bytes()
+    evidence = _tier2_evidence(core)
+    evidence["release_manifest"] = {"bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()}
+    with pytest.raises(GFWV4SourceContractBlocked, match="core digest"):
+        promote_v4_candidate_with_tier2_evidence(candidate, evidence, tmp_path / "promoted")
+
+
+def test_promotion_fails_closed_if_it_mutates_a_bound_field(tmp_path, monkeypatch):
+    """Any future promotion edit outside the excluded set must fail, not ship."""
+    import tasks.gfw_v4_daily_publish as daily
+
+    real = daily.tier2_core_digest
+    calls = {"n": 0}
+
+    def drifting(manifest):
+        # Simulate promotion touching a bound field: the post-mutation digest
+        # no longer matches what the evidence was validated against.
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real(manifest)
+        return real({**manifest, "release_id": "2026-08-20__drifted"})
+
+    candidate, core = _promotion_candidate(tmp_path)
+    monkeypatch.setattr(daily, "tier2_core_digest", drifting)
+    with pytest.raises(GFWV4SourceContractBlocked, match="mutated a Tier2-bound"):
+        promote_v4_candidate_with_tier2_evidence(
+            candidate, _tier2_evidence(core), tmp_path / "promoted",
+        )
+    assert not (tmp_path / "promoted").exists()
+
+
 @pytest.mark.parametrize("kwargs,match", [
     ({"heap_status": "unavailable"}, "heap"),
     ({"range_206": False}, "206"),
 ])
 def test_promotion_rejects_incomplete_browser_evidence(tmp_path, kwargs, match):
-    candidate, sha, size = _promotion_candidate(tmp_path)
+    candidate, core = _promotion_candidate(tmp_path)
     with pytest.raises(GFWV4SourceContractBlocked, match=match):
         promote_v4_candidate_with_tier2_evidence(
-            candidate, _tier2_evidence(sha, size, **kwargs), tmp_path / "promoted",
+            candidate, _tier2_evidence(core, **kwargs), tmp_path / "promoted",
         )
 
 
@@ -273,8 +363,8 @@ def test_promotion_rejects_incomplete_browser_evidence(tmp_path, kwargs, match):
     (lambda evidence: evidence["profiles"]["default"]["mobile"]["metrics"].update(max_heap_bytes=31), "heap"),
 ])
 def test_promotion_enforces_frozen_frame_and_heap_contract(tmp_path, mutate, match):
-    candidate, sha, size = _promotion_candidate(tmp_path)
-    evidence = _tier2_evidence(sha, size)
+    candidate, core = _promotion_candidate(tmp_path)
+    evidence = _tier2_evidence(core)
     mutate(evidence)
     with pytest.raises(GFWV4SourceContractBlocked, match=match):
         promote_v4_candidate_with_tier2_evidence(candidate, evidence, tmp_path / "promoted")
@@ -286,7 +376,7 @@ def test_promotion_enforces_frozen_frame_and_heap_contract(tmp_path, mutate, mat
     "releases/2026-08-21__public-global-presence-v4.0/tracks/../bad.pmtiles",
 ])
 def test_promotion_rejects_noncanonical_artifact_prefix(tmp_path, bad_path):
-    candidate, _sha, _size = _promotion_candidate(tmp_path)
+    candidate, _core = _promotion_candidate(tmp_path)
     release_file = candidate / "releases" / "2026-08-21__public-global-presence-v4.0" / "manifest.json"
     release = json.loads(release_file.read_text())
     release["artifacts"][0]["path"] = bad_path
@@ -298,7 +388,8 @@ def test_promotion_rejects_noncanonical_artifact_prefix(tmp_path, bad_path):
     root_file.write_bytes(json.dumps(root, sort_keys=True, separators=(",", ":")).encode())
     with pytest.raises(GFWV4SourceContractBlocked, match="exact releases"):
         promote_v4_candidate_with_tier2_evidence(
-            candidate, _tier2_evidence(hashlib.sha256(body).hexdigest(), len(body)), tmp_path / "promoted",
+            # Bind to the mutated manifest so the path check is what fails.
+            candidate, _tier2_evidence(tier2_core_digest(release)), tmp_path / "promoted",
         )
 
 

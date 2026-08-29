@@ -86,6 +86,76 @@ def _status_passed(value: Any) -> bool:
     return value is True or value == "passed"
 
 
+# Tier 2 browser evidence certifies the asset set a release actually ships, not
+# the bookkeeping that records the verdict.  A manifest can never embed a hash
+# of itself, so the binding is taken over the canonical manifest with the
+# promotion-mutable bookkeeping removed.  Promotion may rewrite these keys and
+# nothing else; every other key -- notably ``release_id`` and the whole
+# ``artifacts`` array with each asset SHA -- stays inside the bound core, so the
+# digest is stable across promotion while still pinning the exact assets the
+# browser measured.
+TIER2_BINDING_EXCLUDED_FIELDS = frozenset({
+    "release_truth", "tier2_evidence", "tier2_evidence_id",
+    "production_cutover", "cutover_blocker", "tier2_binding",
+})
+TIER2_BINDING_ALGORITHM = "sha256/canonical-json/v4-core-1"
+
+
+def tier2_core_digest(release_manifest: dict[str, Any]) -> str:
+    """Return the Tier 2 binding digest of a schema-4 release manifest.
+
+    Excluding ``TIER2_BINDING_EXCLUDED_FIELDS`` makes the digest identical
+    before and after Tier 2 evidence is recorded, which is what lets evidence
+    bind to the very manifest that carries it.
+    """
+    core = {
+        key: value for key, value in release_manifest.items()
+        if key not in TIER2_BINDING_EXCLUDED_FIELDS
+    }
+    return _sha256_bytes(_canonical_bytes(core))
+
+
+def tier2_binding_failure(release_manifest: dict[str, Any]) -> str | None:
+    """Return why an inline Tier 2 ``passed`` claim is unproven, else ``None``.
+
+    Fail-closed core invariant: a manifest may only claim
+    ``release_truth.tier2_status == "passed"`` when the evidence it carries is
+    bound to *this* manifest's core digest.  A manifest whose evidence targets a
+    different manifest is self-contradictory and must never reach a root
+    pointer, however well-formed the rest of it looks.
+    """
+    truth = release_manifest.get("release_truth")
+    if not isinstance(truth, dict) or not _status_passed(truth.get("tier2_status")):
+        return None
+    evidence = release_manifest.get("tier2_evidence")
+    if not isinstance(evidence, dict):
+        return "release_truth claims Tier 2 passed but the manifest carries no tier2_evidence"
+    binding = evidence.get("release_manifest")
+    if not isinstance(binding, dict):
+        return "Tier 2 evidence carries no release_manifest binding"
+    declared = binding.get("core_sha256")
+    if not isinstance(declared, str) or not SHA256.fullmatch(declared):
+        # Legacy evidence bound whole-manifest bytes/SHA, which can only ever
+        # name a pre-promotion manifest that no longer exists.  That is exactly
+        # the self-contradiction this gate exists to stop.
+        legacy = binding.get("sha256")
+        detail = f"; it names foreign manifest sha256={legacy}" if isinstance(legacy, str) else ""
+        return f"Tier 2 evidence lacks a release_manifest.core_sha256 binding{detail}"
+    actual = tier2_core_digest(release_manifest)
+    if declared != actual:
+        return (
+            f"Tier 2 evidence is bound to core digest {declared} but this manifest's "
+            f"core digest is {actual}"
+        )
+    evidence_id = evidence.get("evidence_id")
+    if truth.get("tier2_evidence_id") != evidence_id:
+        return "release_truth.tier2_evidence_id does not match the bound Tier 2 evidence"
+    declared_binding = release_manifest.get("tier2_binding")
+    if isinstance(declared_binding, dict) and declared_binding.get("core_sha256") not in (None, actual):
+        return "manifest tier2_binding.core_sha256 disagrees with the recomputed core digest"
+    return None
+
+
 def _validate_track_frame_pmtiles(asset: dict[str, Any], *, path: str) -> None:
     """Require the formal z6, no-drop spatial identity proof for one frame."""
     if asset.get("content_type") != "application/octet-stream" or asset.get("content_encoding") != IDENTITY:
@@ -172,6 +242,12 @@ def validate_v4_release_candidate(
     declared_evidence = release_manifest.get("tier2_evidence_id") or truth.get("tier2_evidence_id")
     if declared_evidence is not None and declared_evidence != tier2_evidence_id:
         raise V4ManifestPublishError("Tier 2 evidence ID mismatch")
+    # A matching evidence *ID* only proves someone typed the same string.  The
+    # release may not claim Tier 2 passed unless its evidence is cryptographically
+    # bound to this manifest's own core digest.
+    binding_failure = tier2_binding_failure(release_manifest)
+    if binding_failure is not None:
+        raise V4ManifestPublishError(f"Tier 2 evidence binding failed: {binding_failure}")
 
     assets = release_manifest.get("artifacts")
     if not isinstance(assets, list) or not assets:

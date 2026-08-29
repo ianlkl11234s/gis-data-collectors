@@ -40,6 +40,7 @@ from scripts.gfw_hourly_browser_assets import (
 )
 from scripts.gfw_hourly_tracks_poc import finalize_track_store
 from scripts.gfw_v4_spatial_frames import build_spatial_frame
+from tasks.gfw_v4_manifest_publisher import TIER2_BINDING_ALGORITHM, tier2_core_digest
 
 
 SCHEMA_VERSION = 4
@@ -451,6 +452,15 @@ def build_production_release(
             },
         }
         validate_schema4_release_manifest(release_manifest)
+        # Advertise the Tier 2 binding target so the browser operator can bind
+        # evidence by copying this value, instead of reimplementing canonical
+        # JSON in another language.  The field is outside the bound core, so
+        # adding it does not change the digest it names, and the validator
+        # recomputes the digest independently rather than trusting it.
+        release_manifest["tier2_binding"] = {
+            "algorithm": TIER2_BINDING_ALGORITHM,
+            "core_sha256": tier2_core_digest(release_manifest),
+        }
         _atomic_json(release_dir / "manifest.json", release_manifest)
         release_manifest_sha = _sha256(release_dir / "manifest.json")
         root_manifest = {

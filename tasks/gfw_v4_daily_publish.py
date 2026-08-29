@@ -26,6 +26,11 @@ from urllib.parse import urlparse
 
 import config
 from scripts.gfw_hourly_browser_assets import require_gfw_asset_toolchain
+from tasks.gfw_v4_manifest_publisher import (
+    TIER2_BINDING_ALGORITHM,
+    tier2_binding_failure,
+    tier2_core_digest,
+)
 
 
 _UTC_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -459,6 +464,9 @@ def _assert_pmtiles_candidate(candidate: Path, *, tier2_evidence_id: str = "") -
         raise GFWV4SourceContractBlocked("PMTiles candidate lacks Tier2/readback truth")
     if tier2_evidence_id and truth.get("tier2_evidence_id") not in (None, tier2_evidence_id):
         raise GFWV4SourceContractBlocked("PMTiles candidate Tier2 evidence ID mismatch")
+    binding_failure = tier2_binding_failure(release)
+    if binding_failure is not None:
+        raise GFWV4SourceContractBlocked(f"PMTiles candidate Tier2 evidence binding failed: {binding_failure}")
 
 
 def _load_tier2_evidence(value: Any) -> dict[str, Any]:
@@ -480,12 +488,20 @@ def _load_tier2_evidence(value: Any) -> dict[str, Any]:
 
 
 def _validate_tier2_evidence(
-    evidence: dict[str, Any], *, release_bytes: bytes, release_sha256: str,
+    evidence: dict[str, Any], *, core_sha256: str,
     frame_assets: list[dict[str, Any]],
 ) -> None:
     binding = evidence.get("release_manifest")
-    if not isinstance(binding, dict) or binding.get("sha256") != release_sha256 or int(binding.get("bytes", -1)) != len(release_bytes):
-        raise GFWV4SourceContractBlocked("Tier2 evidence is bound to a different release manifest SHA/bytes")
+    if not isinstance(binding, dict):
+        raise GFWV4SourceContractBlocked("Tier2 evidence carries no release_manifest binding")
+    declared = binding.get("core_sha256")
+    if not isinstance(declared, str) or declared != core_sha256:
+        # Binding on whole-manifest bytes cannot survive promotion: recording the
+        # verdict changes those bytes, so the evidence would end up naming a
+        # manifest that is not the one shipped.  Only the core digest is stable.
+        raise GFWV4SourceContractBlocked(
+            "Tier2 evidence is not bound to this release manifest's core digest"
+        )
     profiles = evidence.get("profiles")
     thresholds = evidence.get("thresholds")
     if not isinstance(profiles, dict) or not isinstance(thresholds, dict) or set(("default", "all")) - set(profiles):
@@ -555,9 +571,9 @@ def promote_v4_candidate_with_tier2_evidence(
         raise GFWV4SourceContractBlocked("candidate Tier1/readback truth is not passed")
     evidence_value = _load_tier2_evidence(evidence)
     frame_assets = [asset for asset in release.get("artifacts", []) if isinstance(asset, dict) and asset.get("type") == "track_frame_pmtiles"]
+    candidate_core = tier2_core_digest(release)
     _validate_tier2_evidence(
-        evidence_value, release_bytes=release_bytes, release_sha256=release_sha256,
-        frame_assets=frame_assets,
+        evidence_value, core_sha256=candidate_core, frame_assets=frame_assets,
     )
     stage = Path(tempfile.mkdtemp(prefix=f".{promoted_root.name}-", dir=promoted_root.parent))
     try:
@@ -572,6 +588,20 @@ def promote_v4_candidate_with_tier2_evidence(
             "root_cutover": "passed_local",
         }
         promoted_release["production_cutover"] = True
+        promoted_release["tier2_binding"] = {
+            "algorithm": TIER2_BINDING_ALGORITHM, "core_sha256": candidate_core,
+        }
+        # The candidate's blocker text is now false; leaving it would reproduce
+        # the second half of the v8 self-contradiction.
+        promoted_release.pop("cutover_blocker", None)
+        # Promotion may only rewrite the excluded bookkeeping keys.  If it ever
+        # touches a bound field, the evidence would no longer describe what
+        # ships -- fail closed rather than publish a manifest that lies.
+        promoted_core = tier2_core_digest(promoted_release)
+        if promoted_core != candidate_core:
+            raise GFWV4SourceContractBlocked(
+                "promotion mutated a Tier2-bound manifest field; evidence no longer describes the release"
+            )
         staged_release.write_bytes(_canonical_bytes(promoted_release))
         promoted_release_bytes = staged_release.read_bytes()
         promoted_root_manifest = json.loads((stage / "manifest.json").read_text(encoding="utf-8"))
