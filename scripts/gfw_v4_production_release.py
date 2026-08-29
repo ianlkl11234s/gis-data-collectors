@@ -291,6 +291,24 @@ def _prefix_track_asset_paths(
     return days, frames
 
 
+def _rewrite_nested_frame(frame: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite a nested track frame in place to the frozen consumer shape.
+
+    ``build_spatial_frame`` returns *artifact*-shaped keys, so overwriting a
+    nested frame with it verbatim drops the fields the release parser validates
+    (``format``, ``observed_at``, ``features``) and leaks an artifact-only
+    ``type``.  The nested index and the top-level ``artifacts`` array are two
+    different contracts over the same file; keep them apart.
+    """
+    observed_at = str(frame["observed_at"])
+    frame.clear()
+    frame.update({key: value for key, value in metadata.items() if key != "type"})
+    frame["format"] = "pmtiles"
+    frame["observed_at"] = observed_at
+    frame["features"] = metadata["semantic_counts"]["feature_count"]
+    return frame
+
+
 def _readback_assets(artifact_root: Path, assets: list[dict[str, Any]], pmtiles: Path) -> dict[str, Any]:
     checked_bytes = 0
     for asset in assets:
@@ -364,8 +382,7 @@ def build_production_release(
                         release_root=release_dir,
                     )
                     source.unlink()
-                    frame.clear()
-                    frame.update(metadata)
+                    _rewrite_nested_frame(frame, metadata)
                 store_counts = store.counts()
             finally:
                 store.close()

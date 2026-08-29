@@ -7,15 +7,69 @@ import json
 
 import pytest
 
+import re
+
 from scripts.gfw_v4_production_release import (
     ProductionReleaseError,
     _filter_track_rows,
     _is_non_vessel,
     _prefix_track_asset_paths,
+    _rewrite_nested_frame,
     _validate_fishing_asset,
     build_production_release,
     validate_schema4_release_manifest,
 )
+
+
+def _spatial_frame_metadata(bucket: str, observed_at: str) -> dict:
+    """Exactly the key set scripts/gfw_v4_spatial_frames.build_spatial_frame returns."""
+    sha = "a" * 64
+    return {
+        "path": f"tracks/{bucket}/tracks/frames/20260821T00Z.pmtiles",
+        "type": "track_frame_pmtiles", "bytes": 1234, "content_length": 1234,
+        "sha256": sha, "etag": f'"{sha}"',
+        "content_type": "application/octet-stream", "content_encoding": "identity",
+        "cache_control": "public,max-age=604800,s-maxage=604800,immutable",
+        "semantic_counts": {"observed_at": observed_at, "bucket": bucket, "feature_count": 14185},
+        "spatial_contract": {
+            "fixed_zoom": 6, "source_feature_count": 14185, "decoded_feature_count": 14185,
+            "identity_duplicate_count": 0, "identity_missing_count": 0,
+        },
+    }
+
+
+def test_nested_track_frame_keeps_frozen_consumer_fields() -> None:
+    """Regression: the PMTiles rewrite must not strip the nested-frame contract.
+
+    A v9 candidate was rejected by the frontend's frozen parser
+    ("invalid frozen spatial release") because the nested frames had been
+    overwritten with the artifact-shaped return of build_spatial_frame, which
+    carries no format/observed_at/features.
+    """
+    observed_at = "2026-08-21T00:00:00+00:00"
+    frame = {
+        "path": "tracks/other/tracks/frames/20260821T00Z.geojson.gz",
+        "observed_at": observed_at, "format": "geojson.gz", "features": 14185,
+    }
+    metadata = _spatial_frame_metadata("other", observed_at)
+    _rewrite_nested_frame(frame, metadata)
+
+    # Mirror src/data/gfwV4SpatialTracksLoader.ts validBucketData().
+    assert frame["format"] == "pmtiles"
+    assert frame["content_encoding"] == "identity"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", frame["observed_at"])
+    assert frame["observed_at"][:10] == "2026-08-21"
+    assert frame["path"].startswith("tracks/other/tracks/frames/")
+    assert frame["path"].endswith(".pmtiles")
+    # v8 nested shape is the ground truth: 13 keys, and no artifact-only "type".
+    assert "type" not in frame
+    assert set(frame) == {
+        "bytes", "cache_control", "content_encoding", "content_length", "content_type",
+        "etag", "features", "format", "observed_at", "path", "semantic_counts",
+        "sha256", "spatial_contract",
+    }
+    assert frame["features"] == metadata["semantic_counts"]["feature_count"]
+    assert frame["sha256"] == metadata["sha256"] and frame["bytes"] == metadata["bytes"]
 
 
 def test_formal_taxonomy_keeps_other_and_unknown_separate() -> None:
