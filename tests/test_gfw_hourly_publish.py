@@ -80,6 +80,21 @@ def test_production_release_retention_is_fixed_at_two(tmp_path):
         invalid.validate()
 
 
+def test_task_toolchain_preflight_blocks_before_ledger_or_network(tmp_path):
+    ledger = _FakeLedger()
+    client_factory_calls = []
+    with pytest.raises(RuntimeError, match="toolchain missing"):
+        GFWHourlyPublishTask(
+            _settings(tmp_path), ledger=ledger,
+            report_client_factory=lambda _token: client_factory_calls.append(True),
+            asset_toolchain_preflight=lambda: (_ for _ in ()).throw(
+                RuntimeError("toolchain missing")
+            ),
+        )
+    assert ledger.payloads == []
+    assert client_factory_calls == []
+
+
 def test_sar_normalizer_accepts_official_wrapper_and_documented_null_empty():
     rows = normalize_sar_unmatched_entries(
         _sar_payload(), resolved_dataset="public-global-sar-presence:v4.0"
@@ -310,6 +325,7 @@ def test_task_uses_one_ais_fetch_for_grid_tracks_then_sar_and_manifest_last(tmp_
         report_client_factory=lambda _token: client,
         s3_client_factory=lambda: s3,
         now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
+        asset_toolchain_preflight=lambda: None,
     )
     result = task.run()
     assert len(client.calls) == 2
@@ -346,6 +362,7 @@ def test_ledger_gate_fails_before_report_network_and_preserves_failed_spool(tmp_
         report_client_factory=lambda token: client_factory_calls.append(token),
         s3_client_factory=lambda: _FakeS3(),
         now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
+        asset_toolchain_preflight=lambda: None,
     )
     with pytest.raises(RuntimeError, match="migration missing"):
         task.run()
@@ -364,6 +381,7 @@ def test_keyboard_interrupt_marks_running_attempt_failed_before_cutover(tmp_path
         report_client_factory=lambda _token: _InterruptedReportClient(),
         s3_client_factory=lambda: _FakeS3(),
         now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
+        asset_toolchain_preflight=lambda: None,
     )
     with pytest.raises(KeyboardInterrupt, match="operator cancelled"):
         task.run()
@@ -386,6 +404,7 @@ def test_cutover_ledger_failure_retries_without_writing_failed_and_keeps_reconci
         s3_client_factory=lambda: s3,
         now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
         sleep=lambda _delay: None,
+        asset_toolchain_preflight=lambda: None,
     )
     with pytest.raises(RuntimeError, match="temporary ledger outage"):
         task.run()

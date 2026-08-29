@@ -178,7 +178,7 @@ def test_pmtiles_production_boundary_requires_real_binaries(tmp_path, monkeypatc
     monkeypatch.setattr(gfw_hourly_browser_assets, "TIPPECANOE", tmp_path / "missing-tippecanoe")
     monkeypatch.setattr(gfw_hourly_browser_assets, "PMTILES", tmp_path / "missing-pmtiles")
 
-    with pytest.raises(RuntimeError, match="executables are required"):
+    with pytest.raises(RuntimeError, match="executable is required"):
         gfw_hourly_browser_assets._pmtiles(
             named_inputs=[("gfw_grid", source)], output=tmp_path / "output.pmtiles",
             minimum_zoom=4, maximum_zoom=12,

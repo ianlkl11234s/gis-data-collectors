@@ -36,6 +36,7 @@ from scripts.gfw_hourly_release import (
 from scripts.gfw_hourly_browser_assets import (
     build_grid_browser_assets,
     build_track_browser_assets,
+    require_gfw_asset_toolchain,
 )
 from scripts.gfw_hourly_tracks_poc import (
     GFWReportClient,
@@ -1194,6 +1195,7 @@ class GFWHourlyPublishTask:
         s3_client_factory: Callable[[], Any] | None = None,
         now: Callable[[], datetime] | None = None,
         sleep: Callable[[float], None] | None = None,
+        asset_toolchain_preflight: Callable[[], Any] | None = None,
     ):
         self.settings = settings or GFWHourlyPublishSettings.from_config()
         self.settings.validate()
@@ -1202,6 +1204,12 @@ class GFWHourlyPublishTask:
         self.s3_client_factory = s3_client_factory or self._default_s3_client
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.sleep = sleep or time.sleep
+        self.asset_toolchain_preflight = (
+            asset_toolchain_preflight or require_gfw_asset_toolchain
+        )
+        # Fail deployment startup before registering a schedule.  This must
+        # stay before every ledger write or network request.
+        self.asset_toolchain_preflight()
 
     def _write_succeeded_ledger_with_retry(self, payload: dict[str, Any]) -> None:
         """Bounded retry after reader-visible cutover; never relabel it failed."""

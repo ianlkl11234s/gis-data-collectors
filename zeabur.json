@@ -118,10 +118,24 @@
     "GFW_HOURLY_PUBLIC_URL_PREFIX": {
       "description": "Cloudflare public URL ending /global-maritime/gfw-hourly（啟用時必填）"
     },
+    "GFW_HOURLY_SHADOW_S3_PREFIX": {
+      "description": "v3 shadow 固定 S3 root；不得改為 canonical root",
+      "default": "deploy-assets/global-maritime/gfw-hourly/v3-shadow"
+    },
+    "GFW_HOURLY_SHADOW_PUBLIC_URL_PREFIX": {
+      "description": "Cloudflare shadow public URL ending /global-maritime/gfw-hourly/v3-shadow（啟用時必填）"
+    },
     "GFW_HOURLY_FAILED_SPOOL_RETENTION_DAYS": {
       "description": "Failed local spool bounded retention；當次失敗不刪",
       "default": "7"
     },
+    "GFW_V4_DAILY_PUBLISH_ENABLED": {"description": "Schema-4 v4 daily immutable publish; single instance only", "default": "false"},
+    "GFW_V4_DAILY_REDISTRIBUTION_APPROVED": {"description": "Required redistribution gate for schema-4 v4", "default": "false"},
+    "GFW_V4_DAILY_SINGLE_WRITER": {"description": "Exactly one deployment instance may set true", "default": "false"},
+    "GFW_V4_DAILY_TIER2_EVIDENCE_ID": {"description": "Accepted production desktop+mobile Tier2 evidence ID; required"},
+    "GFW_V4_DAILY_PUBLISH_TIME": {"description": "Asia/Taipei HH:MM; default 08:30", "default": "08:30"},
+    "GFW_V4_DAILY_S3_PREFIX": {"description": "Frozen v4 immutable prefix", "default": "deploy-assets/global-maritime/gfw-hourly/v4"},
+    "GFW_V4_DAILY_PUBLIC_URL_PREFIX": {"description": "HTTPS public v4 prefix; required"},
     "WEBHOOK_URL": {
       "description": "通知 Webhook URL"
     },

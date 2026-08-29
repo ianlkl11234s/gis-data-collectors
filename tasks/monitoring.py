@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 _CROSS_LAYER_YAML = _CONFIG_DIR / "cross_layer_map.yaml"
 _REALTIME_TABLES_YAML = _CONFIG_DIR / "realtime_tables.yaml"
+_GFW_HOURLY_ROOT_KEY = "deploy-assets/global-maritime/gfw-hourly/manifest.json"
+_UTC_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -123,6 +125,40 @@ def classify_freshness(
 # ────────────────────────────────────────────────────────────────────
 # S3 archive 健康
 # ────────────────────────────────────────────────────────────────────
+def parse_gfw_hourly_root_manifest(payload: Any) -> str:
+    """Return the one reader-visible GFW release date or reject the root.
+
+    Listing immutable release objects is deliberately insufficient: a failed
+    run may have uploaded them before the root-manifest cutover.  Monitoring
+    must therefore use the exact root the frontend reads.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("GFW root manifest must be an object")
+    release_id = str(payload.get("release_id") or "")
+    if not _UTC_DATE.fullmatch(release_id):
+        raise ValueError("GFW root manifest release_id must be YYYY-MM-DD")
+    if payload.get("release_path") != f"releases/{release_id}":
+        raise ValueError("GFW root manifest release_path does not match release_id")
+    releases = payload.get("published_releases")
+    if not isinstance(releases, list) or not any(
+        isinstance(entry, dict) and entry.get("release_id") == release_id
+        for entry in releases
+    ):
+        raise ValueError("GFW root manifest does not attest the active release")
+    return release_id
+
+
+def read_gfw_hourly_root_release(s3: Any) -> str | None:
+    """Read the exact canonical root manifest; failures are unhealthy, not green."""
+    try:
+        response = s3.s3.get_object(Bucket=config.S3_BUCKET, Key=_GFW_HOURLY_ROOT_KEY)
+        payload = json.load(io.BytesIO(response["Body"].read()))
+        return parse_gfw_hourly_root_manifest(payload)
+    except Exception as exc:
+        log.error("GFW hourly root manifest health check failed: %s", exc)
+        return None
+
+
 def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[str, str]:
     """掃 S3 archives 拿每個 collector 的最新歸檔日期。
 
@@ -139,7 +175,8 @@ def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[s
 
     result: dict[str, str] = {}
     try:
-        # 掃 root 下所有 collector_name/archives/ 結構
+        # 掃 root 下所有 collector_name/archives/ 結構。GFW hourly is
+        # intentionally excluded: its single root manifest is checked below.
         paginator = s3.s3.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=config.S3_BUCKET, Prefix=""):
             for obj in page.get("Contents", []):
@@ -166,6 +203,10 @@ def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[s
                 # 取最大日期（字典序 YYYY-MM-DD 等同時序）
                 if collector_name not in result or date_part > result[collector_name]:
                     result[collector_name] = date_part
+        if prefix_filter is None or "gfw_hourly_publish".startswith(prefix_filter):
+            release_id = read_gfw_hourly_root_release(s3)
+            if release_id is not None:
+                result["gfw_hourly_publish"] = release_id
     except Exception as exc:
         log.error(f"list_archive_dates_per_collector 失敗: {exc}")
     return result

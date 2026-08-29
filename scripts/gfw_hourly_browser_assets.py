@@ -9,6 +9,8 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -17,8 +19,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-TIPPECANOE = Path("/opt/homebrew/bin/tippecanoe")
-PMTILES = Path("/opt/homebrew/bin/pmtiles")
+# The Docker image installs both tools in PATH.  Explicit paths are retained
+# only for controlled local diagnosis; a Homebrew path must never be assumed.
+TIPPECANOE = os.getenv("GFW_TIPPECANOE_BIN", "")
+PMTILES = os.getenv("GFW_PMTILES_BIN", "")
 DETAIL_BUCKETS = tuple(f"{number:x}" for number in range(16))
 _EMPTY_PMTILES_CACHE: dict[tuple[tuple[str, ...], int, int], bytes] = {}
 
@@ -62,8 +66,12 @@ def _epoch(value: str) -> int:
 def _ship_type_bucket(value: Any) -> str:
     """Stable coarse class for browser filtering; retain the original type too."""
     text = str(value or "").strip().casefold()
+    if text in {"", "na", "unknown", "null", "none"}:
+        return "unknown"
     if "fish" in text:
         return "fishing"
+    if "carrier" in text:
+        return "carrier"
     if "tank" in text:
         return "tanker"
     if any(token in text for token in ("passeng", "ferry", "cruise")):
@@ -84,6 +92,24 @@ def _run(command: list[str], *, runner: Callable[..., Any] = subprocess.run) -> 
             f"browser asset command failed ({result.returncode}): {' '.join(command)}\n"
             f"{result.stderr[-2000:]}"
         )
+
+
+def _resolve_binary(configured: str, name: str) -> Path:
+    candidate = Path(configured).expanduser() if configured else None
+    if candidate is None:
+        resolved = shutil.which(name)
+        candidate = Path(resolved) if resolved else None
+    if candidate is None or not candidate.is_file() or not os.access(candidate, os.X_OK):
+        raise RuntimeError(
+            f"{name} executable is required for browser assets; "
+            "install the pinned Docker toolchain or provide an executable path"
+        )
+    return candidate.resolve()
+
+
+def require_gfw_asset_toolchain() -> tuple[Path, Path]:
+    """Resolve production asset binaries before any DB ledger or GFW request."""
+    return _resolve_binary(TIPPECANOE, "tippecanoe"), _resolve_binary(PMTILES, "pmtiles")
 
 
 def _empty_mbtiles(path: Path, *, layers: list[str], minimum_zoom: int, maximum_zoom: int) -> None:
@@ -124,8 +150,7 @@ def _pmtiles(
     runner: Callable[..., Any] = subprocess.run,
 ) -> None:
     """Build a PMTiles archive with hard no-dropping options and verify it."""
-    if not TIPPECANOE.is_file() or not PMTILES.is_file():
-        raise RuntimeError("tippecanoe and pmtiles executables are required for browser assets")
+    tippecanoe, pmtiles = require_gfw_asset_toolchain()
     output.parent.mkdir(parents=True, exist_ok=True)
     empty_inputs = all(source.stat().st_size == 0 for _, source in named_inputs)
     empty_key = (tuple(layer for layer, _ in named_inputs), minimum_zoom, maximum_zoom)
@@ -141,7 +166,7 @@ def _pmtiles(
             )
         else:
             command = [
-                str(TIPPECANOE), "--force", f"--output={mbtiles}", "--quiet",
+                str(tippecanoe), "--force", f"--output={mbtiles}", "--quiet",
                 f"--minimum-zoom={minimum_zoom}", f"--maximum-zoom={maximum_zoom}",
                 "--no-feature-limit", "--no-tile-size-limit", "--no-line-simplification",
                 "--no-clipping",
@@ -150,8 +175,8 @@ def _pmtiles(
                 command.append(f"--named-layer={layer}:{source}")
             _run(command, runner=runner)
         temporary_output = Path(temporary) / "asset.pmtiles"
-        _run([str(PMTILES), "convert", str(mbtiles), str(temporary_output)], runner=runner)
-        _run([str(PMTILES), "verify", str(temporary_output)], runner=runner)
+        _run([str(pmtiles), "convert", str(mbtiles), str(temporary_output)], runner=runner)
+        _run([str(pmtiles), "verify", str(temporary_output)], runner=runner)
         if empty_inputs:
             _EMPTY_PMTILES_CACHE[empty_key] = temporary_output.read_bytes()
         temporary_output.replace(output)

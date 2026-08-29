@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import gzip
+import io
 from datetime import date, datetime, timezone
 
 import pytest
@@ -13,6 +14,7 @@ from scripts.gfw_hourly_release import (
     publish_release_to_s3,
     publish_staged_release,
     publish_track_release,
+    rollback_s3_root_to_release,
     stage_track_release,
 )
 
@@ -43,6 +45,11 @@ class _FakeS3:
         if key == self.mismatch_key:
             metadata["sha256"] = "0" * 64
         return {"ContentLength": len(item["Body"]), "Metadata": metadata}
+
+    def get_object(self, **kwargs):
+        key = kwargs["Key"]
+        self.calls.append(("get", key))
+        return {"Body": io.BytesIO(self.objects[key]["Body"])}
 
     def delete_object(self, **kwargs):
         key = kwargs["Key"]
@@ -407,6 +414,53 @@ def test_s3_unknown_previous_key_fails_closed_before_upload_or_delete(tmp_path):
         )
     assert client.calls == []
     assert release.exists()
+
+
+def test_s3_rollback_repoints_only_root_to_manifest_enumerated_release(tmp_path):
+    client = _FakeS3()
+    roots = []
+    for day in ("2026-08-20", "2026-08-21"):
+        release = stage_track_release(
+            _collection(), root=tmp_path,
+            latest_complete_date=day, date_start=day, date_end=day,
+        )
+        publish_release_to_s3(
+            client, release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+            previous_root_manifest=roots[-1] if roots else None,
+        )
+        roots.append(json.loads(client.objects["public/gfw-hourly/manifest.json"]["Body"]))
+
+    before_calls = list(client.calls)
+    result = rollback_s3_root_to_release(
+        client, bucket="gfw-release-test", key_prefix="public/gfw-hourly",
+        public_url_prefix="https://assets.example.test/gfw-hourly",
+        current_root_manifest=roots[-1], target_release_id="2026-08-20",
+    )
+    root = json.loads(client.objects["public/gfw-hourly/manifest.json"]["Body"])
+    assert root["release_id"] == "2026-08-20"
+    assert root["release_path"] == "releases/2026-08-20"
+    assert result["deleted_object_keys"] == []
+    new_calls = client.calls[len(before_calls):]
+    assert not any(operation == "delete" for operation, _key in new_calls)
+    assert all(
+        key.startswith("public/gfw-hourly/releases/2026-08-20/")
+        or key == "public/gfw-hourly/manifest.json"
+        for _operation, key in new_calls
+    )
+
+
+def test_s3_rollback_refuses_release_not_enumerated_by_current_root(tmp_path):
+    client = _FakeS3()
+    with pytest.raises(ValueError, match="not enumerated"):
+        rollback_s3_root_to_release(
+            client, bucket="gfw-release-test", key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+            current_root_manifest={"published_releases": []},
+            target_release_id="2026-08-20",
+        )
+    assert client.calls == []
 
 
 def test_manifest_assets_derives_legacy_tracks_days():

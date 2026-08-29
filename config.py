@@ -395,6 +395,18 @@ GFW_HOURLY_SHADOW_PUBLIC_URL_PREFIX = os.getenv(
 ).rstrip('/')
 GFW_HOURLY_SPOOL_DIR = LOCAL_DATA_DIR / 'gfw_hourly_publish_spool'
 
+# Schema-4 East Asia release.  This is a separate immutable root and must not
+# inherit the v2/v3 enable flag.  Tier-2 evidence is an operator supplied ID,
+# never a permissive boolean default.
+GFW_V4_DAILY_PUBLISH_ENABLED = _env_bool('GFW_V4_DAILY_PUBLISH_ENABLED', False)
+GFW_V4_DAILY_REDISTRIBUTION_APPROVED = _env_bool('GFW_V4_DAILY_REDISTRIBUTION_APPROVED', False)
+GFW_V4_DAILY_SINGLE_WRITER = _env_bool('GFW_V4_DAILY_SINGLE_WRITER', False)
+GFW_V4_DAILY_TIER2_EVIDENCE_ID = os.getenv('GFW_V4_DAILY_TIER2_EVIDENCE_ID', '').strip()
+GFW_V4_DAILY_PUBLISH_TIME = os.getenv('GFW_V4_DAILY_PUBLISH_TIME', '08:30')
+GFW_V4_DAILY_S3_PREFIX = os.getenv('GFW_V4_DAILY_S3_PREFIX', 'deploy-assets/global-maritime/gfw-hourly/v4').strip('/')
+GFW_V4_DAILY_PUBLIC_URL_PREFIX = os.getenv('GFW_V4_DAILY_PUBLIC_URL_PREFIX', '').rstrip('/')
+GFW_V4_DAILY_WORK_DIR = LOCAL_DATA_DIR / 'gfw_v4_daily_publish_spool'
+
 # AISStream BoundingBoxes 格式為 [[[lat_min, lon_min], [lat_max, lon_max]], ...]。
 # 五個區域刻意保留獨立標籤，日後可依區域比較涵蓋率；collector 仍只開一條 WebSocket。
 AISSTREAM_BBOXES = os.getenv(
@@ -604,10 +616,25 @@ def validate_config():
             'SUPABASE_DB_URL': SUPABASE_DB_URL,
             'S3_BUCKET': S3_BUCKET,
             'GFW_HOURLY_PUBLIC_URL_PREFIX': GFW_HOURLY_PUBLIC_URL_PREFIX,
+            'GFW_HOURLY_SHADOW_PUBLIC_URL_PREFIX': GFW_HOURLY_SHADOW_PUBLIC_URL_PREFIX,
         }
         missing = [name for name, value in required.items() if not value]
         if missing:
             errors.append(f"GFW hourly publish 缺少: {', '.join(missing)}")
+        if GFW_RAW_ARCHIVE_ENABLED:
+            errors.append("GFW hourly publish 不得啟用 GFW_RAW_ARCHIVE_ENABLED")
+        if GFW_HOURLY_S3_PREFIX != 'deploy-assets/global-maritime/gfw-hourly':
+            errors.append("GFW hourly canonical S3 prefix 必須是固定 production root")
+        if GFW_HOURLY_SHADOW_S3_PREFIX != 'deploy-assets/global-maritime/gfw-hourly/v3-shadow':
+            errors.append("GFW hourly shadow S3 prefix 必須是固定 v3 shadow root")
+        if GFW_HOURLY_SHADOW_S3_PREFIX == GFW_HOURLY_S3_PREFIX:
+            errors.append("GFW hourly shadow 與 canonical S3 prefix 不得相同")
+        if (
+            GFW_HOURLY_PUBLIC_URL_PREFIX
+            and GFW_HOURLY_SHADOW_PUBLIC_URL_PREFIX
+            and GFW_HOURLY_PUBLIC_URL_PREFIX == GFW_HOURLY_SHADOW_PUBLIC_URL_PREFIX
+        ):
+            errors.append("GFW hourly shadow 與 canonical public URL 不得相同")
 
     if errors:
         print("⚠️  設定錯誤:")

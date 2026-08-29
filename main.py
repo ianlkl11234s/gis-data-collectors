@@ -35,6 +35,9 @@ from tasks import (
     BackupSupabaseTask,
     DailyReportTask,
     GFWHourlyPublishTask,
+    DefaultV4CandidateFinalizer,
+    GFWV4DailyPublishTask,
+    GFWV4LiveSourceAdapter,
     MiniTaipeiPublishTask,
 )
 from utils.notify import notify_archive_complete, notify_trails_export
@@ -375,6 +378,49 @@ def run_gfw_hourly_publish_task():
         raise
 
 
+def run_gfw_v4_daily_publish_task(
+    *, source_provider=None, candidate_finalizer=None, publisher_factory=None,
+    asset_toolchain_preflight=None,
+):
+    """Register v4 only after config, source, finalizer, and publisher gates pass."""
+    from tasks.gfw_v4_daily_publish import GFWV4DailyPublishSettings, default_v4_publisher_factory
+
+    settings = GFWV4DailyPublishSettings.from_config()
+    gates = (
+        settings.enabled,
+        settings.redistribution_approved,
+        settings.single_writer,
+        bool(settings.tier2_evidence_id),
+    )
+    if not all(gates):
+        print("\n⏸️  GFW v4 daily publish 未通過 enable/redistribution/single-writer/Tier2 gate")
+        return None
+    task_kwargs = {
+        "source_provider": source_provider or GFWV4LiveSourceAdapter(
+            token=settings.token, work_root=settings.work_root,
+        ),
+        "candidate_finalizer": candidate_finalizer or DefaultV4CandidateFinalizer(
+            settings.work_root, tier2_evidence_id=settings.tier2_evidence_id,
+        ),
+        "publisher_factory": publisher_factory or default_v4_publisher_factory,
+        "settings": settings,
+    }
+    if asset_toolchain_preflight is not None:
+        task_kwargs["asset_toolchain_preflight"] = asset_toolchain_preflight
+    task = GFWV4DailyPublishTask(**task_kwargs)
+    try:
+        task.complete_preflight()
+    except Exception as exc:
+        print(f"\n⚠️  GFW v4 daily publish 未註冊: {exc}")
+        return None
+    sched = get_scheduler()
+    schedule.every().day.at(settings.publish_time).do(
+        sched.submit, _as_task("gfw_v4_daily_publish", task.run, timeout=7200),
+    )
+    print(f"\n✓ GFW v4 daily publish 已設定 (每日 {settings.publish_time} Asia/Taipei)")
+    return task
+
+
 def _setup_logging():
     """初始化 logging（讓 scheduler 與其他模組的 logger 輸出）"""
     level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
@@ -427,6 +473,7 @@ def main():
 
     # GFW AIS grid/tracks + SAR unmatched 共用單一 root manifest；僅固定每日排程。
     gfw_hourly_task = run_gfw_hourly_publish_task()
+    gfw_v4_daily_task = run_gfw_v4_daily_publish_task()
 
     # Supabase buffer flush 排程
     if config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:
@@ -444,7 +491,7 @@ def main():
 
     if not collectors:
         # 如果沒有收集器但有 API，繼續執行
-        if not api_thread and not aisstream_worker and not gfw_hourly_task:
+        if not api_thread and not aisstream_worker and not gfw_hourly_task and not gfw_v4_daily_task:
             sys.exit(1)
         if aisstream_worker:
             print("\n⚠️  沒有排程型收集器，僅執行 AISStream 長駐 worker" + (" + API Server" if api_thread else ""))

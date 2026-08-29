@@ -178,6 +178,29 @@ def test_fetch_phase_is_sequential_42_reports_and_records_resource_contract(tmp_
     assert metrics["wall_time_seconds"] >= 0
     assert metrics["peak_rss_bytes"] > 0
     assert metrics["raw_response_saved"] is False
+    assert metrics["checkpoint_contract"] == {
+        "mode": "per_tile_ndjson_atomic_then_streamed_assembly",
+        "checkpoint_count": 42,
+        "resumed_checkpoint_count": 0,
+    }
+    assert len(output.read_text(encoding="utf-8").splitlines()) == 42
+
+
+def test_fetch_phase_resumes_validated_parts_without_refetching_or_daily_row_list(tmp_path):
+    class Client:
+        def __init__(self):
+            self.stats = {"post_requests": 0, "recovery_requests": 0, "retries": 0, "http_statuses": {}, "response_body_bytes": 0, "status_429": 0, "status_524": 0}
+        def fetch(self, bbox, start, end, *, spatial_resolution):
+            self.stats["post_requests"] += 1
+            return {"entries": [{"vesselId": f"v-{self.stats['post_requests']}", "date": "2026-08-15T00:00:00Z", "lon": bbox[0] + .01, "lat": bbox[1] + .01}]}, "public-global-presence:v4.0"
+    output = tmp_path / "high.ndjson"
+    first = fetch_presence_phase(client=Client(), resolution="HIGH", selected_day=DAY, output_path=output)
+    class NoFetch(Client):
+        def fetch(self, *args, **kwargs):
+            raise AssertionError("validated checkpoints must resume without a refetch")
+    resumed = fetch_presence_phase(client=NoFetch(), resolution="HIGH", selected_day=DAY, output_path=output)
+    assert first["normalized_row_count"] == resumed["normalized_row_count"] == 42
+    assert resumed["checkpoint_contract"]["resumed_checkpoint_count"] == 42
     assert len(output.read_text(encoding="utf-8").splitlines()) == 42
 
 

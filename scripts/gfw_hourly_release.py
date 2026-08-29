@@ -868,6 +868,143 @@ def publish_release_to_s3(
     }
 
 
+def _get_object_bytes(client: Any, *, bucket: str, key: str) -> bytes:
+    response = client.get_object(Bucket=bucket, Key=key)
+    body = response.get("Body")
+    if body is None:
+        raise RuntimeError(f"S3 object has no body: {key}")
+    return bytes(body.read())
+
+
+def _root_manifest_for_existing_release(
+    release_manifest: dict[str, Any], *, release_id: str,
+    key_prefix: str, public_url_prefix: str, published_releases: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Map a verified immutable release manifest back to one reader-visible root."""
+    root = deepcopy(release_manifest)
+    root["release_path"] = f"releases/{release_id}"
+    root["origin_mapping"] = {
+        "s3_key_prefix": key_prefix,
+        "public_url_prefix": public_url_prefix,
+        "path_rule": "public_url_prefix + '/' + key relative to s3_key_prefix",
+    }
+    for asset in manifest_assets(root):
+        _validated_asset_relative_path(str(asset["path"]))
+    for index_name in ("assets", "days", "hours"):
+        for entry in root.get(index_name) or []:
+            entry["path"] = f"releases/{release_id}/{entry['path']}"
+    for section_name, index_name in (
+        ("tracks", "days"), ("tracks", "singleton_days"), ("tracks", "frames"),
+        ("grid", "hours"), ("dark_vessels", "hours"),
+    ):
+        for entry in (root.get(section_name) or {}).get(index_name) or []:
+            entry["path"] = f"releases/{release_id}/{entry['path']}"
+            for detail in entry.get("detail_buckets") or []:
+                detail["path"] = f"releases/{release_id}/{detail['path']}"
+    root["published_releases"] = published_releases
+    return root
+
+
+def rollback_s3_root_to_release(
+    client: Any,
+    *,
+    bucket: str,
+    key_prefix: str,
+    public_url_prefix: str,
+    current_root_manifest: dict[str, Any],
+    target_release_id: str,
+) -> dict[str, Any]:
+    """Rollback only the root pointer to a manifest-enumerated release.
+
+    This never lists a prefix and never deletes an object.  The selected
+    immutable release manifest and every asset it references are read/HEAD
+    verified before the root is replaced.  On a root verification failure the
+    caller-supplied current root is restored.
+    """
+    bucket, key_prefix, public_url_prefix = _validate_s3_config(
+        bucket=bucket, key_prefix=key_prefix, public_url_prefix=public_url_prefix
+    )
+    if not _RELEASE_ID.fullmatch(target_release_id):
+        raise ValueError("target_release_id must be a strict UTC date")
+    if not isinstance(current_root_manifest, dict):
+        raise ValueError("current_root_manifest must be an object")
+    published_releases = [
+        _validate_previous_release_entry(entry, key_prefix=key_prefix)
+        for entry in (current_root_manifest.get("published_releases") or [])
+    ]
+    target = next(
+        (entry for entry in published_releases if entry["release_id"] == target_release_id),
+        None,
+    )
+    if target is None:
+        raise ValueError("rollback target is not enumerated by the current root manifest")
+
+    release_body = _get_object_bytes(
+        client, bucket=bucket, key=target["manifest_key"]
+    )
+    try:
+        release_manifest = json.loads(release_body)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("rollback target manifest is not valid JSON") from exc
+    if not isinstance(release_manifest, dict) or release_manifest.get("release_id") != target_release_id:
+        raise ValueError("rollback target manifest release_id mismatch")
+    if _canonical(release_manifest).encode("utf-8") != release_body:
+        raise ValueError("rollback target manifest is not canonical JSON")
+
+    release_prefix = f"{key_prefix}/releases/{target_release_id}/"
+    asset_keys = set()
+    for asset in manifest_assets(release_manifest):
+        relative = _validated_asset_relative_path(str(asset["path"]))
+        object_key = f"{release_prefix}{relative.as_posix()}"
+        if object_key not in target["object_keys"]:
+            raise ValueError("rollback target omits a manifest asset from exact object_keys")
+        head = client.head_object(Bucket=bucket, Key=object_key)
+        metadata = {str(k).lower(): str(v) for k, v in (head.get("Metadata") or {}).items()}
+        if int(head.get("ContentLength", -1)) != int(asset["bytes"]):
+            raise RuntimeError(f"rollback asset ContentLength mismatch: {object_key}")
+        if metadata.get("sha256") != str(asset["sha256"]):
+            raise RuntimeError(f"rollback asset sha256 mismatch: {object_key}")
+        asset_keys.add(object_key)
+    for object_key in target["object_keys"]:
+        # This verifies run.json and the manifest too, without trusting a list
+        # operation or touching any object outside the root's exact ledger.
+        client.head_object(Bucket=bucket, Key=object_key)
+    if target["manifest_key"] not in target["object_keys"] or not asset_keys:
+        raise ValueError("rollback target has no verified immutable assets")
+
+    rollback_root = _root_manifest_for_existing_release(
+        release_manifest,
+        release_id=target_release_id,
+        key_prefix=key_prefix,
+        public_url_prefix=public_url_prefix,
+        published_releases=published_releases,
+    )
+    root_key = f"{key_prefix}/manifest.json"
+    rollback_body = _canonical(rollback_root).encode("utf-8")
+    try:
+        _put_and_verify_s3(
+            client, bucket=bucket, key=root_key, body=rollback_body,
+            sha256=_sha256_bytes(rollback_body), content_type="application/json",
+            cache_control=ROOT_CACHE_CONTROL,
+        )
+    except Exception:
+        previous_body = _canonical(current_root_manifest).encode("utf-8")
+        _put_and_verify_s3(
+            client, bucket=bucket, key=root_key, body=previous_body,
+            sha256=_sha256_bytes(previous_body), content_type="application/json",
+            cache_control=ROOT_CACHE_CONTROL,
+        )
+        raise
+    return {
+        "root_manifest_key": root_key,
+        "release_id": target_release_id,
+        "root_manifest_sha256": _sha256_bytes(rollback_body),
+        "root_manifest_bytes": len(rollback_body),
+        "deleted_object_keys": [],
+        "public_manifest_url": f"{public_url_prefix}/manifest.json",
+    }
+
+
 def publish_track_release(
     collection: dict[str, Any],
     *,

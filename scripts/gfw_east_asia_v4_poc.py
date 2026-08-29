@@ -39,7 +39,10 @@ from collectors.gfw_vessel_presence import (  # noqa: E402
     GFWVesselPresenceCollector,
     _first,
 )
-from scripts.gfw_hourly_browser_assets import _pmtiles  # noqa: E402
+from scripts.gfw_hourly_browser_assets import (  # noqa: E402
+    _pmtiles,
+    require_gfw_asset_toolchain,
+)
 from scripts.gfw_hourly_tracks_poc import (  # noqa: E402
     GFWReportClient,
     _haversine_nm,
@@ -320,6 +323,62 @@ def read_ndjson(path: Path) -> Iterator[dict[str, Any]]:
                 yield json.loads(line)
 
 
+def _count_ndjson(path: Path) -> int:
+    with path.open(encoding="utf-8") as handle:
+        return sum(1 for line in handle if line.strip())
+
+
+def _count_report_row_candidates(value: Any) -> int:
+    """Count provider-shaped rows without retaining a second response-wide list."""
+    if isinstance(value, list):
+        return sum(_count_report_row_candidates(item) for item in value)
+    if not isinstance(value, dict):
+        return 0
+    row_markers = {
+        "vessel_id", "vesselId", "vesselIdRaw", "id", "ship_id",
+        "longitude", "lon", "lng", "latitude", "lat", "date", "hours",
+    }
+    if row_markers & value.keys() and (
+        {"longitude", "latitude"} <= value.keys()
+        or {"lon", "lat"} <= value.keys()
+        or {"lng", "lat"} <= value.keys()
+    ):
+        return 1
+    return sum(_count_report_row_candidates(nested) for nested in value.values())
+
+
+def _write_accepted_checkpoint(path: Path, normalized: Iterable[dict[str, Any]]) -> tuple[int, int]:
+    """Stream a single report tile's accepted rows and count rejections once."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    accepted = rejected_invalid_coordinates = 0
+    with temporary.open("wb") as handle:
+        for row in normalized:
+            if row.get("presence_quality") != "accepted":
+                rejected_invalid_coordinates += 1
+                continue
+            handle.write(_canonical_bytes(_project_presence(row)) + b"\n")
+            accepted += 1
+    temporary.replace(path)
+    return accepted, rejected_invalid_coordinates
+
+
+def _assemble_checkpoint_parts(output_path: Path, parts: Iterable[Path]) -> int:
+    """Atomically concatenate validated per-tile checkpoints without a daily rows list."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_name(f".{output_path.name}.tmp")
+    total = 0
+    with temporary.open("wb") as target:
+        for part in parts:
+            with part.open("rb") as source:
+                for line in source:
+                    if line.strip():
+                        target.write(line)
+                        total += 1
+    temporary.replace(output_path)
+    return total
+
+
 def fetch_presence_phase(
     *,
     client: GFWReportClient,
@@ -337,19 +396,19 @@ def fetch_presence_phase(
     end = (selected_day + timedelta(days=1)).isoformat()
     checkpoint_root = output_path.with_name(f"{output_path.name}.parts")
     checkpoint_root.mkdir(parents=True, exist_ok=True)
-    rows: list[dict[str, Any]] = []
     resolved_versions: set[str] = set()
-    tile_ledger = []
+    tile_ledger: list[dict[str, Any]] = []
+    checkpoint_parts: list[Path] = []
     for tile_index, tile in enumerate(tiles, start=1):
         part_path = checkpoint_root / f"{tile.tile_id}.ndjson"
         ledger_path = checkpoint_root / f"{tile.tile_id}.metrics.json"
         if part_path.is_file() and ledger_path.is_file():
             ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
-            tile_rows = list(read_ndjson(part_path))
-            if len(tile_rows) != ledger.get("normalized_rows"):
+            if _count_ndjson(part_path) != ledger.get("normalized_rows"):
                 raise RuntimeError(f"checkpoint row count mismatch: {tile.tile_id}")
-            rows.extend(tile_rows)
+            ledger = {**ledger, "resumed": True}
             tile_ledger.append(ledger)
+            checkpoint_parts.append(part_path)
             resolved_versions.add(str(ledger["resolved_dataset_version"]))
             print(f"{resolution} tile {tile_index}/{len(tiles)} resumed", flush=True)
             continue
@@ -363,7 +422,7 @@ def fetch_presence_phase(
         )
         if not resolved:
             raise RuntimeError(f"{resolution} tile {tile.tile_id} lacks x-datasets")
-        raw_rows = _report_row_candidates(payload)
+        upstream_rows = _count_report_row_candidates(payload)
         normalized = GFWVesselPresenceCollector.normalize_entries(
             payload,
             snapshot_date=start,
@@ -371,11 +430,7 @@ def fetch_presence_phase(
             zone=tile.tile_id,
             dataset=resolved,
         )
-        accepted = [
-            _project_presence(row) for row in normalized
-            if row.get("presence_quality") == "accepted"
-        ]
-        _write_ndjson(part_path, accepted)
+        accepted_count, rejected_invalid_coordinates = _write_accepted_checkpoint(part_path, normalized)
         after = dict(client.stats)
         statuses_before = before.get("http_statuses", {})
         statuses_after = after.get("http_statuses", {})
@@ -387,12 +442,10 @@ def fetch_presence_phase(
         ledger = {
             "tile_id": tile.tile_id,
             "bbox": list(tile.bbox),
-            "normalized_rows": len(accepted),
-            "upstream_rows": len(raw_rows),
-            "rejected_missing_identity": len(raw_rows) - len(normalized),
-            "rejected_invalid_coordinates": sum(
-                row.get("presence_quality") != "accepted" for row in normalized
-            ),
+            "normalized_rows": accepted_count,
+            "upstream_rows": upstream_rows,
+            "rejected_missing_identity": upstream_rows - len(normalized),
+            "rejected_invalid_coordinates": rejected_invalid_coordinates,
             "next_offset_complete": True,
             "resolved_dataset_version": resolved,
             "wall_time_seconds": round(time.perf_counter() - tile_started, 6),
@@ -406,15 +459,19 @@ def fetch_presence_phase(
             "status_524": int(after.get("status_524", 0)) - int(before.get("status_524", 0)),
             "post_requests": int(after.get("post_requests", 0)) - int(before.get("post_requests", 0)),
             "recovery_requests": int(after.get("recovery_requests", 0)) - int(before.get("recovery_requests", 0)),
+            "resumed": False,
         }
         _atomic_json(ledger_path, ledger)
-        rows.extend(accepted)
         resolved_versions.add(resolved)
         tile_ledger.append(ledger)
+        checkpoint_parts.append(part_path)
         print(f"{resolution} tile {tile_index}/{len(tiles)} complete", flush=True)
     if len(resolved_versions) != 1:
         raise RuntimeError(f"{resolution} phase resolved multiple dataset versions")
-    _write_ndjson(output_path, rows)
+    normalized_row_count = _assemble_checkpoint_parts(output_path, checkpoint_parts)
+    expected_row_count = sum(int(item["normalized_rows"]) for item in tile_ledger)
+    if normalized_row_count != expected_row_count:
+        raise RuntimeError("assembled checkpoint row count mismatch")
     status_totals: dict[str, int] = defaultdict(int)
     for ledger in tile_ledger:
         for key, value in ledger["http_statuses"].items():
@@ -423,7 +480,7 @@ def fetch_presence_phase(
         "resolution": resolution,
         "logical_report_count": len(tiles),
         "report_page_count": len(tiles),
-        "normalized_row_count": len(rows),
+        "normalized_row_count": normalized_row_count,
         "upstream_row_count": sum(item["upstream_rows"] for item in tile_ledger),
         "rejected_missing_identity": sum(item["rejected_missing_identity"] for item in tile_ledger),
         "rejected_invalid_coordinates": sum(item["rejected_invalid_coordinates"] for item in tile_ledger),
@@ -440,6 +497,13 @@ def fetch_presence_phase(
         "post_requests": sum(item["post_requests"] for item in tile_ledger),
         "recovery_requests": sum(item["recovery_requests"] for item in tile_ledger),
         "raw_response_saved": False,
+        "checkpoint_contract": {
+            "mode": "per_tile_ndjson_atomic_then_streamed_assembly",
+            "checkpoint_count": len(checkpoint_parts),
+            "resumed_checkpoint_count": sum(
+                1 for item in tile_ledger if bool(item.get("resumed"))
+            ),
+        },
         "tiles": tile_ledger,
     }
 
@@ -1232,9 +1296,15 @@ def build_grid_artifacts_from_compare_sqlite(
     pmtiles_builder: Callable[..., None] = _pmtiles,
     detail_target_compressed_bytes: int = 256 * 1024,
     semantic_readback: bool = True,
-    pmtiles_cli: Path = Path("/opt/homebrew/bin/pmtiles"),
+    pmtiles_cli: Path | None = None,
+    include_member: Callable[[dict[str, Any]], bool] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Build 24 Grid hours from canonical HIGH rows, retaining one hour in memory."""
+    """Build 24 Grid hours from canonical HIGH rows, retaining one hour in memory.
+
+    ``include_member`` is an explicit projection gate for a downstream release
+    contract (for example, excluding non-vessel GEAR/FAD observations).  The
+    default deliberately retains the historical POC semantics.
+    """
     connection = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
     assets: list[dict[str, Any]] = []
     hours_index = []
@@ -1256,6 +1326,8 @@ def build_grid_artifacts_from_compare_sqlite(
             for vessel_id, cell_lon, cell_lat, member_json in cursor:
                 member = json.loads(member_json)
                 member["vessel_id"] = str(vessel_id)
+                if include_member is not None and not include_member(member):
+                    continue
                 grouped[(int(cell_lon), int(cell_lat))].append(
                     {field: member.get(field) for field in POPUP_FIELDS}
                 )
@@ -1315,7 +1387,9 @@ def build_grid_artifacts_from_compare_sqlite(
             )
             if semantic_readback:
                 pmtiles_asset["semantic_readback"] = semantic_readback_grid_pmtiles(
-                    pmtiles_path, expected_features=features, pmtiles_cli=pmtiles_cli,
+                    pmtiles_path,
+                    expected_features=features,
+                    pmtiles_cli=pmtiles_cli or require_gfw_asset_toolchain()[1],
                 )
             assets.append(pmtiles_asset)
             if sum(entry["vessels"] for entry in detail_index) != pmtiles_asset["vessels"]:
