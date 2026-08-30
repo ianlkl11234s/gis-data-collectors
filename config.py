@@ -275,8 +275,8 @@ _COLLECTOR_TOGGLES = (
     ('CWA_MARINE_OBSERVATION',       False, 15),  # O-B0076 + O-B0075 rolling 48h; CWA 官方整合入口
     ('ISOHE_PORT_MARINE',            False, 10),  # Taiwan IP required; production runs through external HiCloud mirror
     ('NCDR_ALERTS',                  True,  15),
-    ('CLOUDFLARE_RADAR',             False, 5),   # Radar traffic/anomaly/outage evidence; token required
-    ('IODA_INTERNET_HEALTH',         False, 5),   # IODA country raw signals; alerts remain schema-gated
+    ('CLOUDFLARE_RADAR',             False, 5),   # repo safe default false；production env 自 2026-08-31 啟用 5min
+    ('IODA_INTERNET_HEALTH',         False, 5),   # repo safe default false；production env 5min；raw internal only
     ('FOURSQUARE_POI',               False, 43200),  # 每 30 天
     ('AIR_QUALITY_IMAGERY',          False, 60),
     ('AIR_QUALITY',                  False, 60),

@@ -319,8 +319,8 @@ ncdr_alerts:
   critical: true
 
 cloudflare_radar:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs
@@ -334,12 +334,14 @@ cloudflare_radar:
     Cloudflare Radar country traffic/anomaly/outage evidence；多個 Radar signal
     仍只算 cloudflare 一個 evidence family。只有 fresh netflow 且 anomaly/outage
     端點皆成功、同窗無事件時才產 provider-level normal heartbeat；這不是全臺
-    normal 結論。Composite detector 尚未實作。預設停用，啟用前需 migration、
-    token、live fetch 與 CC BY-NC 4.0 使用邊界驗收。
+    normal 結論。main 5a371bf 已部署；2026-08-30 DB/local/S3 smoke 全綠，
+    2026-08-31 03:17 首次排程為 partial/stale、7 observations。Production env
+    已啟用 5 分鐘排程；Zeabur health healthy、DB connected、main loop alive。
+    freshness 門檻仍待多輪校準，Composite detector 尚未實作。
 
 ioda_internet_health:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs
@@ -351,9 +353,10 @@ ioda_internet_health:
   critical: false
   notes: >-
     IODA raw country signals；同 provider 的 BGP／ping／network telescope 只算 ioda
-    一個 evidence family。raw response 明示 All Rights Reserved，S3 僅供內部復原，
-    對外 derived serving 仍待法務 review；alerts endpoint schema 尚未驗證且預設關閉，
-    因此 IODA provider status 維持 unknown。Composite detector 尚未實作。
+    一個 evidence family。main 5a371bf 已部署；2026-08-30 DB/local/S3 smoke 全綠，
+    2026-08-31 03:17 首次排程 succeeded、159 observations。Production env 已啟用
+    5 分鐘排程。raw response 明示 All Rights Reserved，只作內部收集與受控 S3 復原；
+    公開排除由 platform contract 強制。alerts 未驗證且保持關閉；Composite detector 未實作。
 
 news_events:
   enabled: true

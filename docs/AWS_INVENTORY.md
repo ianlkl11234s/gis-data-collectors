@@ -71,8 +71,8 @@ Rule ID: tiered-cold-storage
 | `rail_timetable/` | rail_timetable | 0.04 GB | 69 | |
 | `flight_opensky/` | flight_opensky | 0.04 GB | 69 | |
 | `ncdr_alerts/` | ncdr_alerts | 0.02 GB | 34 | |
-| `cloudflare_radar/` | cloudflare_radar | 尚未建立 | — | **預設停用；僅可在 fresh netflow + 兩事件端點成功且無事件時產單一 provider normal；跨來源 detector 尚未實作；raw archive 僅供內部復原** |
-| `ioda_internet_health/` | ioda_internet_health | 尚未建立 | — | **預設停用；alerts schema 未驗證，status 維持 unknown；跨來源 detector 尚未實作；IODA raw 不公開再散布，derived serving 待法務 review** |
+| `cloudflare_radar/` | cloudflare_radar | 2026-08-30 首次 S3 archive smoke/readback 成功 | 待下次完整 inventory | **main 5a371bf 已部署、production 5min；2026-08-31 03:17 首輪 partial/stale 7 observations。freshness calibration、跨來源 detector 尚未完成；raw archive 僅供內部復原** |
+| `ioda_internet_health/` | ioda_internet_health | 2026-08-30 首次 S3 archive smoke/readback 成功 | 待下次完整 inventory | **main 5a371bf 已部署、production 5min；2026-08-31 03:17 首輪 succeeded 159 observations。IODA raw 僅內部收集、不公開再散布；公開排除由 platform contract 強制；alerts/composite detector 未完成** |
 | `road_event_live/` | road_event_live | 0.02 GB | 2 | |
 | `waste_positions/` | waste_positions (垃圾車) | 0.02 GB | 7 | |
 | `groundwater_level/` | groundwater_level | 0.01 GB | 21 | |
