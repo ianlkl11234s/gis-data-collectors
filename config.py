@@ -129,13 +129,15 @@ COLLECTOR_RETENTION_OVERRIDES = {
                  'foursquare_poi', 'ncdr_alerts', 'rain_gauge_realtime',
                  'river_water_level', 'groundwater_level', 'water_reservoir',
                  'water_reservoir_daily_ops', 'news_events', 'cwa_marine_observation',
-                 'isohe_port_marine')
+                 'isohe_port_marine', 'cloudflare_radar', 'ioda_internet_health')
     if os.getenv(f'{name.upper()}_ARCHIVE_RETENTION_DAYS')
 }
 # High-volume marine snapshots use the documented three-day local recovery
 # window even when the deployment dashboard omits an explicit override.
 COLLECTOR_RETENTION_OVERRIDES.setdefault('cwa_marine_observation', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('isohe_port_marine', 3)
+COLLECTOR_RETENTION_OVERRIDES.setdefault('cloudflare_radar', 3)
+COLLECTOR_RETENTION_OVERRIDES.setdefault('ioda_internet_health', 3)
 
 
 def get_retention_days(collector_name: str) -> int:
@@ -273,6 +275,8 @@ _COLLECTOR_TOGGLES = (
     ('CWA_MARINE_OBSERVATION',       False, 15),  # O-B0076 + O-B0075 rolling 48h; CWA 官方整合入口
     ('ISOHE_PORT_MARINE',            False, 10),  # Taiwan IP required; production runs through external HiCloud mirror
     ('NCDR_ALERTS',                  True,  15),
+    ('CLOUDFLARE_RADAR',             False, 5),   # Radar traffic/anomaly/outage evidence; token required
+    ('IODA_INTERNET_HEALTH',         False, 5),   # IODA country raw signals; alerts remain schema-gated
     ('FOURSQUARE_POI',               False, 43200),  # 每 30 天
     ('AIR_QUALITY_IMAGERY',          False, 60),
     ('AIR_QUALITY',                  False, 60),
@@ -333,6 +337,18 @@ _COLLECTOR_TOGGLES = (
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
     globals()[f'{_prefix}_ENABLED'] = _env_bool(f'{_prefix}_ENABLED', _en_default)
     globals()[f'{_prefix}_INTERVAL'] = int(os.getenv(f'{_prefix}_INTERVAL', str(_intv_default)))
+
+# Internet health — provider jobs remain independent but write one canonical
+# contract.  Country-level TW is the MVP; ASN coverage is added only after a
+# reviewed provider roster, never by inventing geometry.
+CLOUDFLARE_RADAR_API_TOKEN = os.getenv('CLOUDFLARE_RADAR_API_TOKEN', '')
+INTERNET_HEALTH_LOCATION = os.getenv('INTERNET_HEALTH_LOCATION', 'TW').strip().upper()
+INTERNET_HEALTH_LOOKBACK_MINUTES = int(os.getenv('INTERNET_HEALTH_LOOKBACK_MINUTES', '180'))
+CLOUDFLARE_RADAR_STALE_AFTER_SECONDS = int(os.getenv('CLOUDFLARE_RADAR_STALE_AFTER_SECONDS', '2700'))
+IODA_STALE_AFTER_SECONDS = int(os.getenv('IODA_STALE_AFTER_SECONDS', '3600'))
+# /v2/outages/alerts timed out during source validation and its response schema
+# is not yet proven.  Do not enable ingestion merely because the URL exists.
+IODA_ALERTS_ENABLED = _env_bool('IODA_ALERTS_ENABLED', False)
 
 # AISStream 常駐 WebSocket worker（獨立於既有 ship_ais / SupabaseWriter pipeline）
 # 預設關閉；啟用前需先完成 gis-platform migration、S3 權限與 Zeabur smoke test。

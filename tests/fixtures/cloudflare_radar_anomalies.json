@@ -1,0 +1,25 @@
+{
+  "success": true,
+  "result": {
+    "trafficAnomalies": [
+      {
+        "id": "cf-anomaly-tw-historical",
+        "eventType": "TRAFFIC_ANOMALY",
+        "startDate": "2026-08-30T07:00:00Z",
+        "endDate": "2026-08-30T08:00:00Z",
+        "locations": [{"code": "TW", "name": "Taiwan"}],
+        "status": "VERIFIED",
+        "description": "Historical traffic drop outside the requested window"
+      },
+      {
+        "id": "cf-anomaly-tw-1",
+        "eventType": "TRAFFIC_ANOMALY",
+        "startDate": "2026-08-30T08:20:00Z",
+        "endDate": null,
+        "locations": [{"code": "TW", "name": "Taiwan"}],
+        "status": "VERIFIED",
+        "description": "Traffic drop observed"
+      }
+    ]
+  }
+}

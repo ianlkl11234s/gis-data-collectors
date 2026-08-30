@@ -81,6 +81,7 @@ exclude:
   - live.er_hospital_current
   - live.satellite_current      # reconstructible from positions
   - live.animal_adoption_current # reconstructible from complete snapshots; missing_once/not_listed is derived
+  - live.internet_health_current # latest pointers; reconstructible from observations
   - analytics.animal_shelter_outcomes_monthly  # reprojectable from complete live runs/raw archive
   - analytics.animal_shelter_pressure_monthly  # reprojectable from complete live runs/raw archive
 
@@ -138,6 +139,9 @@ archive_py_covered:
   - live.disaster_alerts           # ncdr_alerts + wra_drought_alert, 2026-04-07 起
   - live.lightning_events          # lightning_events, 2026-06-15 起
   - live.marine_observation_readings # cwa_marine_observation / isohe_port_marine, pending first production archive
+  - live.internet_health_source_runs # cloudflare_radar / ioda_internet_health raw archives can replay run evidence
+  - live.internet_health_observations # canonical provider evidence; raw archives preserve null/trailing-null payloads
+  - live.internet_health_incidents # detector lifecycle records; provider archives plus observations are recovery evidence
   - live.nuclear_radiation_measurements  # nuclear_radiation, 2026-06-15 起
   - live.nuclear_radiation_stations  # 同上
   # Satellite / launch

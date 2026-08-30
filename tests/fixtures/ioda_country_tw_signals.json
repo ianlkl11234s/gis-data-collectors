@@ -1,0 +1,56 @@
+{
+  "type": "signals",
+  "metadata": {
+    "requestTime": "2026-08-30T08:40:00Z",
+    "responseTime": "2026-08-30T08:40:01Z"
+  },
+  "requestParameters": {"entityType": "country", "entityCode": "TW"},
+  "error": null,
+  "perf": [],
+  "data": [[
+    {
+      "entityType": "country",
+      "entityCode": "TW",
+      "entityName": "Taiwan",
+      "entityFqid": "country/TW",
+      "datasource": "bgp",
+      "subtype": "visibility",
+      "from": 1788076800,
+      "until": 1788078000,
+      "step": 300,
+      "nativeStep": 300,
+      "values": [98.5, null, 98.2, null]
+    },
+    {
+      "entityType": "country",
+      "entityCode": "TW",
+      "entityName": "Taiwan",
+      "entityFqid": "country/TW",
+      "datasource": "ping-slash24-loss",
+      "subtype": "all",
+      "from": 1788076800,
+      "until": 1788078000,
+      "step": 600,
+      "nativeStep": 600,
+      "values": [
+        {"agg_values": {"loss_pct": 1.25, "probe_count": 41}},
+        {"agg_values": {"loss_pct": null, "probe_count": 38}},
+        null
+      ]
+    },
+    {
+      "entityType": "country",
+      "entityCode": "TW",
+      "entityName": "Taiwan",
+      "entityFqid": "country/TW",
+      "datasource": "merit-nt",
+      "subtype": "raw",
+      "from": 1788076800,
+      "until": 1788077100,
+      "step": 300,
+      "nativeStep": 300,
+      "values": [[1788076800, 72.0], [1788077100, null]]
+    }
+  ]],
+  "copyright": "This data is Copyright (c) 2021-2025 Georgia Tech Research Corporation. All Rights Reserved."
+}

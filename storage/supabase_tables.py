@@ -230,6 +230,17 @@ TABLE_MAP = {
         'upsert_key': 'dataset_id,observed_at',
         'upsert_strategy': 'do_nothing',
     },
+    'cloudflare_radar': {
+        # Provider run ledger + canonical observations are one atomic write;
+        # the migration trigger projects current.  Cloudflare's multiple
+        # signals remain one family and do not directly create incidents.
+        'is_multi_table': True,
+    },
+    'ioda_internet_health': {
+        # Same canonical tables as Cloudflare, under an independent provider
+        # job and evidence_family.  Missing/trailing-null values stay NULL.
+        'is_multi_table': True,
+    },
     'cwa_marine_observation': {
         # reference station + long history + current cache + orphan quarantine are one transaction.
         'is_multi_table': True,
