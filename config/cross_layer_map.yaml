@@ -318,6 +318,43 @@ ncdr_alerts:
     - {prefix: ncdr_alerts/archives/, expected_daily: true}
   critical: true
 
+cloudflare_radar:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables:
+    - live.internet_health_source_runs
+    - live.internet_health_observations
+    - live.internet_health_current
+    - live.internet_health_incidents
+  s3_prefixes:
+    - {prefix: cloudflare_radar/archives/, expected_daily: true}
+  critical: false
+  notes: >-
+    Cloudflare Radar country traffic/anomaly/outage evidence；多個 Radar signal
+    仍只算 cloudflare 一個 evidence family。只有 fresh netflow 且 anomaly/outage
+    端點皆成功、同窗無事件時才產 provider-level normal heartbeat；這不是全臺
+    normal 結論。Composite detector 尚未實作。預設停用，啟用前需 migration、
+    token、live fetch 與 CC BY-NC 4.0 使用邊界驗收。
+
+ioda_internet_health:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables:
+    - live.internet_health_source_runs
+    - live.internet_health_observations
+    - live.internet_health_current
+    - live.internet_health_incidents
+  s3_prefixes:
+    - {prefix: ioda_internet_health/archives/, expected_daily: true}
+  critical: false
+  notes: >-
+    IODA raw country signals；同 provider 的 BGP／ping／network telescope 只算 ioda
+    一個 evidence family。raw response 明示 All Rights Reserved，S3 僅供內部復原，
+    對外 derived serving 仍待法務 review；alerts endpoint schema 尚未驗證且預設關閉，
+    因此 IODA provider status 維持 unknown。Composite detector 尚未實作。
+
 news_events:
   enabled: true
   deployment: zeabur

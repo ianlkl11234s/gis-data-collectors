@@ -40,6 +40,7 @@ from .groundwater_level import GroundwaterLevelCollector
 from .iot_wra import IotWraCollector
 from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
+from .internet_health import CloudflareRadarCollector, IodaInternetHealthCollector
 from .news_events import NewsEventsCollector
 from .parking import ParkingCollector
 from .parking_offstreet import ParkingOffStreetCollector
@@ -140,6 +141,10 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(CwaMarineObservationCollector, "CWA 海洋浮標/潮位觀測收集器", "CWA_MARINE_OBSERVATION", ("CWA_API_KEY",)),
     CollectorEntry(IsohePortMarineCollector, "ISOHE 商港海氣象收集器（HiCloud）", "ISOHE_PORT_MARINE"),
     CollectorEntry(NCDRAlertsCollector, "NCDR Alerts 收集器", "NCDR_ALERTS"),
+    # Token absence is written as a source_run config_missing ledger instead of
+    # being silently skipped by required_env.
+    CollectorEntry(CloudflareRadarCollector, "Cloudflare Radar 網路健康收集器", "CLOUDFLARE_RADAR"),
+    CollectorEntry(IodaInternetHealthCollector, "IODA 網路健康收集器", "IODA_INTERNET_HEALTH"),
     CollectorEntry(FoursquarePOICollector, "Foursquare POI 收集器", "FOURSQUARE_POI", ("HF_TOKEN",)),
     CollectorEntry(AirQualityImageryCollector, "Air Quality Imagery 收集器", "AIR_QUALITY_IMAGERY"),
     CollectorEntry(AirQualityCollector, "Air Quality 觀測收集器", "AIR_QUALITY", ("MOENV_API_KEY",)),

@@ -1,0 +1,15 @@
+{
+  "success": true,
+  "result": {
+    "meta": {
+      "lastUpdated": "2026-08-30T08:30:00Z",
+      "normalization": "PERCENTAGE",
+      "confidenceInfo": {"level": 5, "annotations": []}
+    },
+    "serie_0": {
+      "name": "netflows_all",
+      "timestamps": ["2026-08-30T08:15:00Z", "2026-08-30T08:30:00Z"],
+      "values": [41.5, null]
+    }
+  }
+}

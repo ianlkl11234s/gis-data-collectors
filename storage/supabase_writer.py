@@ -356,6 +356,10 @@ class SupabaseWriter:
         """Collectors already enforce the canonical long-form marine contract."""
         return [dict(row) for row in result.get("data", []) if isinstance(row, dict)]
 
+    def _transform_internet_health(self, result: dict, ts: datetime) -> list[dict]:
+        """Provider collectors already emit the shared canonical contract."""
+        return [dict(row) for row in result.get("data", []) if isinstance(row, dict)]
+
     def _transform_temperature(self, result: dict, ts: datetime) -> list[dict]:
         """溫度網格：二維陣列展開為 row"""
         grid_data = result.get('data', [])
@@ -2141,6 +2145,8 @@ class SupabaseWriter:
         'satellite': _transform_satellite,
         'launch': _transform_launch,
         'ncdr_alerts': _transform_ncdr_alerts,
+        'cloudflare_radar': _transform_internet_health,
+        'ioda_internet_health': _transform_internet_health,
         'news_events': _transform_news_events,
         'cwa_satellite': _transform_cwa_satellite,
         'cwa_marine_observation': _transform_marine_observation,
@@ -2283,7 +2289,89 @@ class SupabaseWriter:
         logger.info(f"[{collector_name}] ✓ DB 寫入 {record_count} 筆")
 
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
-        """freeway_vd 和 flight_fr24 的多表寫入"""
+        """Write collector-specific multi-table contracts atomically."""
+        if collector_name in ('cloudflare_radar', 'ioda_internet_health'):
+            runs = [r for r in records if r.get('_type') == 'source_run']
+            observations = [r for r in records if r.get('_type') == 'observation']
+            incidents = [r for r in records if r.get('_type') == 'incident']
+            if len(runs) != 1:
+                raise ValueError(f'{collector_name} requires exactly one source_run ledger')
+            with self._txn(conn) as cur:
+                run_cols = [
+                    'run_id', 'source', 'started_at', 'finished_at', 'status',
+                    'requested_from', 'requested_to', 'source_updated_at',
+                    'records_received', 'records_written', 'records_rejected',
+                    'error_code', 'error_message', 'metadata',
+                ]
+                execute_values(
+                    cur,
+                    f"INSERT INTO live.internet_health_source_runs ({','.join(run_cols)}) VALUES %s "
+                    "ON CONFLICT (run_id) DO UPDATE SET "
+                    "finished_at=EXCLUDED.finished_at,status=EXCLUDED.status,"
+                    "source_updated_at=EXCLUDED.source_updated_at,records_received=EXCLUDED.records_received,"
+                    "records_written=EXCLUDED.records_written,records_rejected=EXCLUDED.records_rejected,"
+                    "error_code=EXCLUDED.error_code,error_message=EXCLUDED.error_message,metadata=EXCLUDED.metadata",
+                    [tuple(Json(row.get(c) or {}) if c == 'metadata' else row.get(c) for c in run_cols) for row in runs],
+                )
+
+                if observations:
+                    observation_cols = [
+                        'run_id', 'source', 'evidence_family', 'source_observation_id',
+                        'entity_type', 'entity_id', 'entity_name', 'signal', 'observed_at',
+                        'window_start', 'window_end', 'value', 'unit', 'baseline_value',
+                        'change_ratio', 'reported_status', 'incident_kind', 'confidence',
+                        'sample_count', 'stale_after_seconds', 'source_updated_at',
+                        'collected_at', 'quality_flags', 'metadata',
+                    ]
+                    values = [tuple(
+                        Json(row.get(c) or {}) if c in ('quality_flags', 'metadata') else row.get(c)
+                        for c in observation_cols
+                    ) for row in observations]
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.internet_health_observations ({','.join(observation_cols)}) VALUES %s "
+                        "ON CONFLICT (source,entity_type,entity_id,signal,observed_at) DO UPDATE SET "
+                        "run_id=EXCLUDED.run_id,evidence_family=EXCLUDED.evidence_family,"
+                        "source_observation_id=EXCLUDED.source_observation_id,entity_name=EXCLUDED.entity_name,"
+                        "window_start=EXCLUDED.window_start,window_end=EXCLUDED.window_end,value=EXCLUDED.value,"
+                        "unit=EXCLUDED.unit,baseline_value=EXCLUDED.baseline_value,change_ratio=EXCLUDED.change_ratio,"
+                        "reported_status=EXCLUDED.reported_status,incident_kind=EXCLUDED.incident_kind,"
+                        "confidence=EXCLUDED.confidence,sample_count=EXCLUDED.sample_count,"
+                        "stale_after_seconds=EXCLUDED.stale_after_seconds,source_updated_at=EXCLUDED.source_updated_at,"
+                        "collected_at=EXCLUDED.collected_at,quality_flags=EXCLUDED.quality_flags,metadata=EXCLUDED.metadata",
+                        values,
+                        page_size=1000,
+                    )
+                if incidents:
+                    incident_cols = [
+                        'incident_id', 'fingerprint', 'entity_type', 'entity_id', 'entity_name',
+                        'incident_kind', 'severity', 'status', 'first_detected_at',
+                        'last_detected_at', 'resolved_at', 'confidence', 'detector_version',
+                        'first_observation_id', 'latest_observation_id', 'evidence', 'summary', 'metadata',
+                    ]
+                    incident_values = [tuple(
+                        Json(row.get(c) or []) if c == 'evidence'
+                        else Json(row.get(c) or {}) if c == 'metadata'
+                        else row.get(c)
+                        for c in incident_cols
+                    ) for row in incidents]
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.internet_health_incidents ({','.join(incident_cols)}) VALUES %s "
+                        "ON CONFLICT (incident_id) DO UPDATE SET "
+                        "entity_name=EXCLUDED.entity_name,incident_kind=EXCLUDED.incident_kind,"
+                        "severity=EXCLUDED.severity,status=EXCLUDED.status,last_detected_at=EXCLUDED.last_detected_at,"
+                        "resolved_at=EXCLUDED.resolved_at,confidence=EXCLUDED.confidence,"
+                        "latest_observation_id=EXCLUDED.latest_observation_id,evidence=EXCLUDED.evidence,"
+                        "summary=EXCLUDED.summary,metadata=EXCLUDED.metadata",
+                        incident_values,
+                        page_size=500,
+                    )
+            logger.info(
+                f"[{collector_name}] internet health transaction runs={len(runs)} "
+                f"observations={len(observations)} incidents={len(incidents)}"
+            )
+            return
         if collector_name in ('cwa_marine_observation', 'isohe_port_marine'):
             stations = [r for r in records if r.get('_type') == 'station']
             readings = [r for r in records if r.get('_type') == 'reading']

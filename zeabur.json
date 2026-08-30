@@ -32,6 +32,53 @@
       "description": "ISOHE 需台灣出口，Zeabur 必須保持 false；production 由 HiCloud runner 執行",
       "default": "false"
     },
+    "CLOUDFLARE_RADAR_API_TOKEN": {
+      "description": "Cloudflare Radar API 專用 bearer token；不得與其他 Cloudflare token 共用"
+    },
+    "CLOUDFLARE_RADAR_ENABLED": {
+      "description": "Cloudflare Radar 網路健康 evidence collector；migration + smoke/readback/archive 全綠後才能開啟",
+      "default": "false"
+    },
+    "CLOUDFLARE_RADAR_INTERVAL": {
+      "description": "Cloudflare Radar 收集間隔（分鐘）",
+      "default": "5"
+    },
+    "CLOUDFLARE_RADAR_ARCHIVE_RETENTION_DAYS": {
+      "description": "Cloudflare Radar raw snapshot 本地保留天數；之後由 S3 archive 接手",
+      "default": "3"
+    },
+    "IODA_INTERNET_HEALTH_ENABLED": {
+      "description": "IODA country signals evidence collector；migration + smoke/readback/archive 全綠後才能開啟",
+      "default": "false"
+    },
+    "IODA_INTERNET_HEALTH_INTERVAL": {
+      "description": "IODA 網路健康 signals 收集間隔（分鐘）",
+      "default": "5"
+    },
+    "IODA_INTERNET_HEALTH_ARCHIVE_RETENTION_DAYS": {
+      "description": "IODA raw snapshot 本地保留天數；raw 不得公開再散布",
+      "default": "3"
+    },
+    "IODA_ALERTS_ENABLED": {
+      "description": "IODA alerts schema 尚未 live 驗證，必須保持 false",
+      "default": "false"
+    },
+    "INTERNET_HEALTH_LOCATION": {
+      "description": "Internet health country code",
+      "default": "TW"
+    },
+    "INTERNET_HEALTH_LOOKBACK_MINUTES": {
+      "description": "Internet health 每輪回看視窗（分鐘）",
+      "default": "180"
+    },
+    "CLOUDFLARE_RADAR_STALE_AFTER_SECONDS": {
+      "description": "Cloudflare Radar observation freshness threshold",
+      "default": "2700"
+    },
+    "IODA_STALE_AFTER_SECONDS": {
+      "description": "IODA observation freshness threshold",
+      "default": "3600"
+    },
     "MOENV_API_KEY": {
       "description": "環境部開放資料 API Key（空氣品質用；data.gov.tw 頁面上的公開 key 亦可）"
     },
