@@ -36,7 +36,7 @@
       "description": "Cloudflare Radar API 專用 bearer token；不得與其他 Cloudflare token 共用"
     },
     "CLOUDFLARE_RADAR_ENABLED": {
-      "description": "Cloudflare Radar 網路健康 evidence collector；migration + smoke/readback/archive 全綠後才能開啟",
+      "description": "Cloudflare Radar 網路健康 evidence collector；repo 預設 false，production 自 2026-08-31 由 env 啟用 5min",
       "default": "false"
     },
     "CLOUDFLARE_RADAR_INTERVAL": {
@@ -48,7 +48,7 @@
       "default": "3"
     },
     "IODA_INTERNET_HEALTH_ENABLED": {
-      "description": "IODA country signals evidence collector；migration + smoke/readback/archive 全綠後才能開啟",
+      "description": "IODA country signals evidence collector；repo 預設 false，production 自 2026-08-31 由 env 啟用 5min；raw 僅內部收集",
       "default": "false"
     },
     "IODA_INTERNET_HEALTH_INTERVAL": {

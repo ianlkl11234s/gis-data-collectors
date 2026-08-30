@@ -336,7 +336,8 @@ def test_monitor_and_archive_registries_cover_both_provider_jobs():
         "live.internet_health_incidents",
     }
     for collector_name in ("cloudflare_radar", "ioda_internet_health"):
-        assert cross_layer[collector_name]["enabled"] is False
+        assert cross_layer[collector_name]["enabled"] is True
+        assert cross_layer[collector_name]["deployment"] == "zeabur"
         assert set(cross_layer[collector_name]["supabase_tables"]) == expected
     monitored = {f"{row['schema']}.{row['table']}" for row in realtime}
     assert expected <= monitored
