@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import config
 from collectors.base import BaseCollector
 
 
@@ -164,6 +165,72 @@ def test_consecutive_errors_reset_on_success(_mock_err, _mock_ok):
     collector.run()
     assert collector.consecutive_errors == 0
     assert collector.last_success_at is not None
+
+
+# ============================================================
+# notify_recovery：連續錯誤達門檻後成功恢復要主動通知
+# ============================================================
+
+@patch('collectors.base.notify_recovery')
+@patch('collectors.base.notify_success')
+@patch('collectors.base.notify_error')
+def test_notify_recovery_sent_when_prior_consecutive_errors_reached_threshold(
+    _mock_err, _mock_ok, mock_recovery, monkeypatch
+):
+    """原 consecutive_errors >= threshold 時，成功後應發恢復通知"""
+    monkeypatch.setattr(config, 'CONSECUTIVE_ERROR_THRESHOLD', 3)
+
+    state = {'should_fail': True}
+
+    def maybe_fail():
+        if state['should_fail']:
+            raise RuntimeError("fail")
+        return {'total': 1, 'data': [{'x': 1}]}
+
+    collector = DummyCollector(collect_impl=maybe_fail)
+
+    # 連續 3 次失敗，達到門檻
+    collector.run()
+    collector.run()
+    collector.run()
+    assert collector.consecutive_errors == 3
+
+    # 第 4 次成功
+    state['should_fail'] = False
+    collector.run()
+
+    mock_recovery.assert_called_once_with('dummy', 3)
+    assert collector.consecutive_errors == 0
+
+
+@patch('collectors.base.notify_recovery')
+@patch('collectors.base.notify_success')
+@patch('collectors.base.notify_error')
+def test_notify_recovery_not_sent_when_prior_consecutive_errors_below_threshold(
+    _mock_err, _mock_ok, mock_recovery, monkeypatch
+):
+    """原 consecutive_errors < threshold 時，成功後不應發恢復通知"""
+    monkeypatch.setattr(config, 'CONSECUTIVE_ERROR_THRESHOLD', 3)
+
+    state = {'should_fail': True}
+
+    def maybe_fail():
+        if state['should_fail']:
+            raise RuntimeError("fail")
+        return {'total': 1, 'data': [{'x': 1}]}
+
+    collector = DummyCollector(collect_impl=maybe_fail)
+
+    # 只失敗 2 次，未達門檻
+    collector.run()
+    collector.run()
+    assert collector.consecutive_errors == 2
+
+    state['should_fail'] = False
+    collector.run()
+
+    mock_recovery.assert_not_called()
+    assert collector.consecutive_errors == 0
 
 
 # ============================================================

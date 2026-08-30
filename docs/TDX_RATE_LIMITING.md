@@ -3,7 +3,7 @@
 > 本文件記錄 TDX API 節流機制的運作原理、設定方式、與新增 TDX collector 時的必備 checklist。
 > **只要依照此 checklist 新增 collector，就不會再遇到 2026-04-16 的 17/22 城市 429 事件。**
 
-最後更新：2026-04-16
+最後更新：2026-08-30
 
 ---
 
@@ -189,7 +189,97 @@ TDX_RATE_LIMIT=3
 
 ---
 
-## 六、測試保證
+## 六、401 認證失敗排查（跟 429 是兩回事）
+
+### 症狀判別：401 vs 429
+
+| | 429 Too Many Requests | 401 Unauthorized（在 token 端點） |
+|---|---|---|
+| 位置 | 業務 API endpoint（如 `/TrainLiveBoard`） | `/auth/realms/TDXConnect/protocol/openid-connect/token` |
+| 性質 | 流量問題，會自癒 | 認證問題，**不會**因為降頻、等待自己好 |
+| 對應章節 | 見上方「五、排查 429 錯誤流程」 | 本節 |
+
+**關鍵陷阱：429 可能只是 401 的連鎖症狀，不是第二個獨立問題。**
+2026-08-30 之前的 `utils/auth.py` 拿 token 失敗時直接 `raise`、不 cache——如果 token 本身壞了（例如平台端重置了 secret），
+每一支 collector 每一輪都會重打 token 端點，形成 retry storm；這股 storm 裡有些請求會先被 `TDX_RATE_LIMIT`
+擋下變成 429（token 請求也算在 5 req/sec 配額內）。看到「token 端點 401 + 業務端點 429 同時出現、且 401 完全不會恢復」
+時，先假設是認證問題，429 只是噪音，不要往「金鑰上限不夠」的方向排查。
+（現在的程式已有全域 backoff 止住 storm，見下方「程式面防護」，但判讀原則不變。）
+
+### Keycloak error body 判讀表
+
+`raise_for_status()` 只會留下「401 Client Error: Unauthorized for url: …/token」，**看不到真正的 error body**。
+要看懂根因，必須自己印出 response body（見下方重放測試）。Keycloak 常見回應：
+
+| `error` | `error_description`（常見） | 意義 | 處置 |
+|---|---|---|---|
+| `invalid_client` | client not found / 格式錯 | `TDX_APP_ID` 不存在或打錯 | 檢查 `.env` / Zeabur env 的 `TDX_APP_ID` 有沒有誤植 |
+| `unauthorized_client` | `Invalid client secret` | **client_id 存在，但 secret 對不上**——通常是 TDX 平台端把這把金鑰的 secret 重置了 | 上 TDX 會員中心查看金鑰、換新 secret（見下方修復 SOP） |
+| （帳號/應用層錯誤，訊息含 disabled / suspended） | — | 金鑰或會員帳號被停用 | 聯繫 TDX 客服或直接到會員中心確認金鑰狀態 |
+
+### 本地重放測試：一鎚定音判別法
+
+不要用線上 log 猜，直接本地重放 token 請求，看 response body（**絕不印出 secret**）：
+
+```python
+import requests
+env = {}
+with open('.env') as f:
+    for line in f:
+        line = line.strip()
+        if line and not line.startswith('#') and '=' in line:
+            k, _, v = line.partition('=')
+            env[k.strip()] = v.strip().strip('"').strip("'")
+r = requests.post(
+    'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token',
+    data={'grant_type': 'client_credentials',
+          'client_id': env['TDX_APP_ID'], 'client_secret': env['TDX_APP_KEY']},
+    timeout=15)
+print('HTTP', r.status_code)
+print(r.text[:300] if not r.ok else 'token OK, expires_in=%s' % r.json().get('expires_in'))
+```
+
+判讀：
+- `unauthorized_client` + `Invalid client secret` → client_id 還在，secret 對不上 = **平台端重置**。
+  排除掉「IP 被封鎖」（那會是 403 或 timeout，不會走到 Keycloak 回應）與「純限流」
+  （463 次連敗不可能一次都不成功——429 會偶爾放行，401 不會）。
+- 拿到 `token OK` → 問題不在金鑰本身，回頭查 collector 端的 session/cache 邏輯或環境變數是否有沒生效。
+
+### 修復 SOP
+
+1. 到 TDX 會員中心查看金鑰狀態，取得新的 client secret
+2. 更新本地 `.env` 的 `TDX_APP_KEY`
+3. 同步更新 Zeabur 主站對應 service 的環境變數
+4. **重啟／redeploy**（env 改了不會自動生效，這點跟其他 Zeabur env 一樣）
+5. 驗證三件事都綠：Zeabur runtime log 首輪出現對應 collector 的成功 log、DB 對應 table 有新 row（`collected_at` 在重啟後）、告警停止重複發送
+
+### 程式面防護（2026-08-30 起）
+
+上述事故後，認證層加了三道防護（`tests/test_auth.py` / `tests/test_notify.py` 有測試保證）：
+
+1. **Token 端點錯誤帶完整 body**（`utils/auth.py`）：token 端點回 4xx/5xx 時，Keycloak 的
+   error body（截斷 200 字）會併入例外訊息並寫入 log——上面判讀表要的 `error_description`
+   直接看 log 就有，不用再本地重放才看得到。
+2. **全域 token 失敗 backoff**（`utils/auth.py`）：token 端點連續失敗時，所有 TDXAuth instance
+   共用一個 class-level backoff（首次 60s、倍增、上限 600s；429 帶 `Retry-After` 時尊重伺服器
+   要求不受上限限制），backoff 期間直接 fail fast 不打網路，止住 retry storm。任一 instance
+   成功即歸零。Token cache 本身仍是 per-instance。
+3. **資料 API 401 自動換 token retry 一次**（`utils/tdx_session.py`）：token 在效期內被伺服器端
+   撤銷時，不再抱著死 token 空轉到本地 expiry（最長 24h），收到 401 立即 invalidate → 重取
+   token → 重新 acquire rate limiter → retry 該請求一次。
+
+另外告警端（`utils/notify.py`）同日改為指數收斂：連續錯誤只在門檻的 2^k 倍（3, 6, 12, 24…次）
+發 Telegram 告警，恢復時發一則 ✅ 通知——463 連錯從 460+ 則洗版變 8 則。
+
+### 參考事故
+
+2026-08-30：TDX 平台端重置了共用金鑰的 secret，16 支共用同一組 `TDX_APP_ID`/`TDX_APP_KEY` 的 collector
+全數 401，連續 15.4 小時（463 次 × 2 分鐘 interval）才被判別出來並修復。
+詳見 [`.claude/pitfalls/2026-08-30-tdx-secret-reset-401.md`](../.claude/pitfalls/2026-08-30-tdx-secret-reset-401.md)。
+
+---
+
+## 七、測試保證
 
 `tests/test_rate_limiter.py` + `tests/test_tdx_session.py` 共 16 個測試，覆蓋：
 
@@ -210,7 +300,7 @@ pytest tests/test_rate_limiter.py tests/test_tdx_session.py -v
 
 ---
 
-## 七、其他 API 的節流需求
+## 八、其他 API 的節流需求
 
 目前只有 TDX 有這個限制，但未來可能：
 
@@ -226,8 +316,9 @@ pytest tests/test_rate_limiter.py tests/test_tdx_session.py -v
 
 ---
 
-## 八、變更記錄
+## 九、變更記錄
 
 | 日期 | 事件 |
 |------|------|
 | 2026-04-16 | 公車 6→22 城擴充後遭遇 17/22 城 429，建立全域 TDX rate limiter |
+| 2026-08-30 | TDX 平台端重置共用金鑰 secret，16 支 collector 連續 15.4 小時 401，新增「六、401 認證失敗排查」 |
