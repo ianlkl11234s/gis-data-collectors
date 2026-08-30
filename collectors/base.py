@@ -16,7 +16,7 @@ TAIPEI_TZ = timezone(timedelta(hours=8))
 
 import config
 from storage import get_storage
-from utils.notify import notify_error, notify_success
+from utils.notify import notify_error, notify_success, notify_recovery
 
 
 # Supabase writer 單例（所有 collector 共用同一條連線）
@@ -126,6 +126,9 @@ class BaseCollector(ABC):
 
             self.last_run = timestamp
             self.last_success_at = timestamp
+            if self.consecutive_errors >= config.CONSECUTIVE_ERROR_THRESHOLD:
+                # 先前已達連續錯誤告警門檻，這次恢復成功要主動通知
+                notify_recovery(self.name, self.consecutive_errors)
             self.consecutive_errors = 0  # 成功則重置連續錯誤
             notify_success(self.name, stats)
 

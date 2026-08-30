@@ -145,6 +145,29 @@ def send_telegram_long(message: str, parse_mode: str = 'Markdown') -> bool:
     return all_ok
 
 
+def _should_alert(count: int, threshold: int) -> bool:
+    """判斷連續錯誤數是否達到告警時機（指數收斂）
+
+    只在 count == threshold * 2**k（k=0,1,2,…）時回傳 True，
+    例如 threshold=3 → 3, 6, 12, 24, 48, 96, 192, 384…
+    避免 `>= threshold` 那樣每次失敗都重複發送同一則告警。
+
+    Args:
+        count: 目前連續錯誤次數
+        threshold: 告警門檻（config.CONSECUTIVE_ERROR_THRESHOLD）
+
+    Returns:
+        True 代表這次應該發送告警
+    """
+    if threshold <= 0 or count < threshold:
+        return False
+    quotient, remainder = divmod(count, threshold)
+    if remainder != 0:
+        return False
+    # quotient 必須是 2 的冪（1, 2, 4, 8, …），對應 threshold 的每次倍增
+    return quotient & (quotient - 1) == 0
+
+
 def notify_error(collector_name: str, error: str, consecutive_errors: int = 0):
     """通知錯誤
 
@@ -160,13 +183,16 @@ def notify_error(collector_name: str, error: str, consecutive_errors: int = 0):
 
     # Telegram 即時錯誤通知
     if consecutive_errors >= config.CONSECUTIVE_ERROR_THRESHOLD:
-        tg_msg = (
-            f"🚨 *收集器連續錯誤告警*{tag}\n\n"
-            f"收集器: `{collector_name}`\n"
-            f"連續錯誤: *{consecutive_errors} 次*\n"
-            f"錯誤: {_escape_md(error)}"
-        )
-        send_telegram(tg_msg)
+        # 連續錯誤告警指數收斂：只在門檻的 2^k 倍時發送，其餘次數靜默
+        # （webhook/LINE 仍照常發送，這裡只收斂 Telegram 的重複告警）
+        if _should_alert(consecutive_errors, config.CONSECUTIVE_ERROR_THRESHOLD):
+            tg_msg = (
+                f"🚨 *收集器連續錯誤告警*{tag}\n\n"
+                f"收集器: `{collector_name}`\n"
+                f"連續錯誤: *{consecutive_errors} 次*\n"
+                f"錯誤: {_escape_md(error)}"
+            )
+            send_telegram(tg_msg)
     else:
         tg_msg = (
             f"❌ *收集器錯誤*{tag}\n\n"
@@ -179,6 +205,22 @@ def notify_error(collector_name: str, error: str, consecutive_errors: int = 0):
 def notify_success(collector_name: str, stats: dict):
     """通知成功"""
     send_webhook('success', {'collector': collector_name, **stats})
+
+
+def notify_recovery(collector_name: str, consecutive_errors: int):
+    """通知收集器恢復正常（先前已達連續錯誤告警門檻，這次執行成功）
+
+    Args:
+        collector_name: 收集器名稱
+        consecutive_errors: 恢復前的連續錯誤次數
+    """
+    tag = _instance_tag()
+    tg_msg = (
+        f"✅ *收集器恢復*{tag}\n\n"
+        f"收集器: `{collector_name}`\n"
+        f"中斷了 {consecutive_errors} 次，本次執行成功"
+    )
+    send_telegram(tg_msg)
 
 
 def notify_archive_complete(stats: dict):
