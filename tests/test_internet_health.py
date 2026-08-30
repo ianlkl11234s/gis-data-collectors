@@ -62,7 +62,7 @@ def test_cloudflare_series_preserves_null_and_provider_metadata():
     assert records[1]["value"] is None
     assert records[1]["quality_flags"]["missing_value"] is True
     assert records[0]["evidence_family"] == records[1]["evidence_family"] == "cloudflare"
-    assert records[0]["metadata"]["normalization"] == "PERCENTAGE"
+    assert records[0]["metadata"]["normalization"] == "MIN0_MAX"
     assert records[0]["confidence"] == 1.0
     assert records[0]["metadata"]["confidence_info"]["level"] == 5
 
@@ -199,7 +199,7 @@ def test_cloudflare_endpoint_failure_isolated_and_raw_archive_retained(monkeypat
             return _fixture("cloudflare_radar_netflows.json")
         if path == "traffic_anomalies":
             payload = _fixture("cloudflare_radar_anomalies.json")
-            payload["result"]["annotations"] = [payload["result"]["annotations"][-1]]
+            payload["result"]["trafficAnomalies"] = [payload["result"]["trafficAnomalies"][-1]]
             return payload
         raise requests.Timeout("outages unavailable test-secret")
 
@@ -211,10 +211,12 @@ def test_cloudflare_endpoint_failure_isolated_and_raw_archive_retained(monkeypat
     assert set(result["raw_payload"]) == {"netflows", "traffic_anomalies"}
     assert result["endpoint_status"]["outages"]["error_code"] == "http_timeout"
     assert "test-secret" not in result["endpoint_status"]["outages"]["error"]
-    assert "dateStart" not in requested_params["traffic_anomalies"]
-    assert "dateEnd" not in requested_params["traffic_anomalies"]
+    assert requested_params["traffic_anomalies"]["dateStart"].endswith("Z")
+    assert requested_params["traffic_anomalies"]["dateEnd"].endswith("Z")
+    assert "+00:00" not in requested_params["traffic_anomalies"]["dateStart"]
     assert requested_params["traffic_anomalies"]["limit"] == 100
-    assert "dateStart" in requested_params["annotations/outages"]
+    assert requested_params["netflows/timeseries"]["dateStart"].endswith("Z")
+    assert requested_params["annotations/outages"]["dateStart"].endswith("Z")
     assert "_collector_error" not in result
 
 

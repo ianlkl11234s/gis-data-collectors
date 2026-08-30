@@ -1,7 +1,7 @@
 {
   "success": true,
   "result": {
-    "annotations": [
+    "trafficAnomalies": [
       {
         "id": "cf-anomaly-tw-historical",
         "eventType": "TRAFFIC_ANOMALY",

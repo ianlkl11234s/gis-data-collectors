@@ -57,6 +57,13 @@ def _iso(value: Any) -> str | None:
     return dt.astimezone(UTC).isoformat()
 
 
+def _cloudflare_query_time(value: datetime) -> str:
+    """Format Radar query dates using its strict UTC ``Z`` contract."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _seconds(value: Any, default: int = 0) -> int:
     try:
         return max(0, int(float(value)))
@@ -569,8 +576,8 @@ class CloudflareRadarCollector(BaseCollector):
         endpoints = (
             ("netflows", "netflows/timeseries", {
                 "location": config.INTERNET_HEALTH_LOCATION,
-                "dateStart": requested_from.isoformat(),
-                "dateEnd": started.isoformat(),
+                "dateStart": _cloudflare_query_time(requested_from),
+                "dateEnd": _cloudflare_query_time(started),
                 "aggInterval": "15m",
                 "product": "ALL",
                 "format": "json",
@@ -578,13 +585,15 @@ class CloudflareRadarCollector(BaseCollector):
             ("traffic_anomalies", "traffic_anomalies", {
                 "location": config.INTERNET_HEALTH_LOCATION,
                 "type": "LOCATION",
+                "dateStart": _cloudflare_query_time(requested_from),
+                "dateEnd": _cloudflare_query_time(started),
                 "limit": 100,
                 "offset": 0,
             }),
             ("outages", "annotations/outages", {
                 "location": config.INTERNET_HEALTH_LOCATION,
-                "dateStart": requested_from.isoformat(),
-                "dateEnd": started.isoformat(),
+                "dateStart": _cloudflare_query_time(requested_from),
+                "dateEnd": _cloudflare_query_time(started),
             }),
         )
         for endpoint, path, params in endpoints:
