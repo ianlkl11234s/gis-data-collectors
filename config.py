@@ -306,7 +306,7 @@ _COLLECTOR_TOGGLES = (
     ('WIC_EVACUATE',                 False, 10),   # 北市疏散門狀態 (35 站，wic.gov.taipei，無金鑰)
     ('WIC_PUMB',                     False, 10),   # 北市抽水站運轉 (97 站，heopublic.gov.taipei，無金鑰)
     ('NEWS_EVENTS',                  False, 10),   # 新聞事件 RSS + Gemini 地點抽取 + GIS 相關性評估（v2 prompt）
-    ('SATELLITE_PASSES_DAILY',       False, 1440), # 中國軍偵衛星通過台灣每日彙總（補昨+前天），需 SATELLITE collector 累積 TLE 歷史
+    ('SATELLITE_PASSES_DAILY',       False, 1440), # 中國衛星過境每日彙總（legacy bbox + audited ISR 領海；補昨+前天）
     ('TWSE_MARKET_INDEX',            False, 1),    # TWSE 加權指數 ticker（盤中 5s 更新，1 分 polling 已遠快於前端需要）
     ('PLA_ACTIVITY_DAILY',           False, 30),   # 共機 @MoNDefense 每日通報（每 30 分鐘抓推特看當天有沒有更新）
     ('PLA_TRACKS_VECTORIZE',         False, 1440), # 共機航跡示意圖向量化（CV，非 API）；補齊 pla_activity_daily 已抓到 track_chart_url 但尚未向量化的日子，1 row/day 到 spatial.pla_tracks_runs

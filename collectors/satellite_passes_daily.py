@@ -1,11 +1,13 @@
 """
-中國軍偵衛星每日通過台灣彙總
+中國衛星每日通過台灣彙總（legacy bbox + audited ISR 領海聚合）
 
 每日跑一次，補算「昨天 + 前天」（前天用來蓋掉昨天跑時 TLE 還沒到齊的）：
 1. 從 live.satellite_tle_history 撈出當天每顆中國軍偵衛星最新 TLE
 2. SGP4 採樣 30s 一整天，偵測進出台灣 bbox → 寫進 live.satellite_passes
 3. UPDATE counties[] = 對 spatial.county_boundaries 做 ST_Intersects
-4. 重算 live.satellite_passes_daily 那兩天的彙總
+4. 重算 live.satellite_passes_daily 那兩天的 legacy bbox 彙總
+5. 呼叫 public.refresh_isr_satellite_passes_daily()，以 registry + 12 浬
+   領海 polygon 重建 Monitor 使用的 pre-aggregate
 
 這個 collector 不寫 supabase_writer 表（直接用 SQL），run() 回 dict 給 base 統計用。
 """
@@ -34,12 +36,17 @@ logger = logging.getLogger(__name__)
 
 
 class SatellitePassesDailyCollector(BaseCollector):
-    """每日中國軍偵衛星通過彙總（補昨天 + 前天）"""
+    """每日中國衛星通過彙總（補昨天 + 前天）。"""
 
     name = "satellite_passes_daily"
     interval_minutes = config.SATELLITE_PASSES_DAILY_INTERVAL
     # SGP4 ~40s + UPDATE/SP，最壞 1-3 分鐘；給 10 分鐘 budget 觸發超時 warning
     COLLECT_TIMEOUT = 600
+    ISR_TIER_MODES = (
+        "confirmed_only",
+        "confirmed_plus_dual_use",
+        "all_non_excluded",
+    )
 
     def collect(self) -> dict:
         if not config.SUPABASE_DB_URL:
@@ -61,6 +68,7 @@ class SatellitePassesDailyCollector(BaseCollector):
                 'total_passes_inserted': 0,
                 'counties_updated': 0,
                 'daily_rows_rebuilt': 0,
+                'isr_daily_rows_refreshed': 0,
                 'sgp4_errors': 0,
             }
 
@@ -98,9 +106,13 @@ class SatellitePassesDailyCollector(BaseCollector):
             stats['counties_updated'] = update_counties_for_range(
                 conn, days[0], days[-1])
             stats['daily_rows_rebuilt'] = rebuild_daily(conn, days[0], days[-1])
+            stats['isr_daily_rows_refreshed'] = self._refresh_isr_daily(conn, days)
+            self._report_direct_write_heartbeat(
+                conn, stats['isr_daily_rows_refreshed'])
             logger.info(
                 f"[{self.name}] counties updated={stats['counties_updated']} "
-                f"daily_rebuilt={stats['daily_rows_rebuilt']}")
+                f"daily_rebuilt={stats['daily_rows_rebuilt']} "
+                f"isr_daily_refreshed={stats['isr_daily_rows_refreshed']}")
         finally:
             conn.close()
 
@@ -109,3 +121,28 @@ class SatellitePassesDailyCollector(BaseCollector):
             'data': [],  # 不走 supabase_writer，這裡留空避免被當作未知 table 寫入
             **stats,
         }
+
+    def _refresh_isr_daily(self, conn, days: list[datetime]) -> int:
+        """重建 audited ISR 領海日彙總；advisory lock 由 DB function 保護。"""
+        refreshed = 0
+        with conn.cursor() as cur:
+            for day in days:
+                for tier_mode in self.ISR_TIER_MODES:
+                    cur.execute(
+                        "SELECT public.refresh_isr_satellite_passes_daily(%s::date, %s, %s)",
+                        (day.date(), "twmain_12nm", tier_mode),
+                    )
+                    row = cur.fetchone()
+                    refreshed += int(row[0] or 0) if row else 0
+        return refreshed
+
+    def _report_direct_write_heartbeat(self, conn, records: int) -> None:
+        """直接 SQL collector 沒有 writer records，需自行留下成功 heartbeat。"""
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT public.report_collector_heartbeat(%s, %s, %s, %s)",
+                    (self.name, True, records, None),
+                )
+        except Exception as exc:  # heartbeat 與 SupabaseWriter 一樣採 best-effort
+            logger.warning("[%s] heartbeat 回報失敗: %s", self.name, exc)
