@@ -135,7 +135,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(EarthquakeMomentTensorCollector, "震源機制解（AutoBATS）收集器", "EARTHQUAKE_MOMENT_TENSOR", ("CWA_API_KEY",)),
     CollectorEntry(FlightOpenSkyCollector, "OpenSky 收集器", "FLIGHT_OPENSKY"),
     CollectorEntry(SatelliteCollector, "Satellite 收集器", "SATELLITE"),
-    CollectorEntry(SatellitePassesDailyCollector, "中國軍偵衛星通過台灣每日彙總", "SATELLITE_PASSES_DAILY"),
+    CollectorEntry(SatellitePassesDailyCollector, "中國衛星過境每日彙總（含 ISR 領海）", "SATELLITE_PASSES_DAILY"),
     CollectorEntry(LaunchCollector, "Launch 收集器", "LAUNCH"),
     CollectorEntry(CWASatelliteCollector, "CWA Satellite 影像收集器", "CWA_SATELLITE", ("CWA_API_KEY",)),
     CollectorEntry(CwaMarineObservationCollector, "CWA 海洋浮標/潮位觀測收集器", "CWA_MARINE_OBSERVATION", ("CWA_API_KEY",)),
