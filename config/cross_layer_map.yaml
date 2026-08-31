@@ -359,22 +359,25 @@ ioda_internet_health:
     公開排除由 platform contract 強制。alerts 未驗證且保持關閉；Composite detector 未實作。
 
 ripe_atlas_internet_health:
-  enabled: false
-  deployment: disabled
+  enabled: true
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs
     - live.internet_health_observations
     - live.internet_health_current
   s3_prefixes:
-    - {prefix: ripe_atlas_internet_health/archives/, expected_daily: false}
+    - {prefix: ripe_atlas_internet_health/archives/, expected_daily: true}
   critical: false
   notes: >-
     RIPE Atlas reviewed public ping measurements；2026-08-31 roster v2026-08-31.1
     已核准 built-in K-root 1001/2001 與臺灣 public connected probes；pending/empty 仍 fail closed。
     僅寫 5 分鐘 country aggregates，raw response 只進 private S3。與 RIPE RIS
     同屬 independence_group=ripe_ncc，不能單獨算兩個獨立機構證據。internal-only、
-    repo default disabled；本機 official API fetch/normalize smoke 通過，production DB/S3 未驗。
+    repo default disabled 但 production env 已啟用。deployment 6a954164... RUNNING；
+    migration 383 gates 全綠。one-shot 9d6d032c... succeeded 913/56/0、62,888-byte
+    create-only S3/SHA readback、8 current fresh、public RPC 0 rows；scheduled f97ce10e...
+    succeeded 916/56/0。health HTTP 200、main loop/DB green。
 
 ripe_ris_live:
   enabled: false
@@ -392,7 +395,10 @@ ripe_ris_live:
     lock、DB 與 private S3 都是 enable hard gate。任何 reconnect/ack/pong/idle gap
     都令完整 5 分鐘 bucket partial 且 metrics=NULL/unknown；不以無 BGP 更新推論正常。
     不支援跨 replica distributed lease，raw JSON/manifest 只進 private S3。本機 official
-    WebSocket ack/pong smoke 通過；production 完整 5 分鐘 window/DB/S3 未驗。
+    WebSocket ack/pong smoke 通過；production flag 仍 false、RIPE_RIS_REPLICA_COUNT
+    fail-closed。Zeabur 同一 logical service 可有多 replicas，CLI service/deployment
+    count 不足以證明 replicas=1；Dashboard/API actual Replicas=1 後才可跑 18 分鐘
+    complete-window/15 分鐘 archive smoke。
 
 news_events:
   enabled: true

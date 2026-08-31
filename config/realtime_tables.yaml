@@ -67,8 +67,8 @@ tables:
   - {schema: live, table: earthquake_moment_tensor,  time_column: collected_at, owner_collector: earthquake_moment_tensor, expected_interval_min: 43200, critical: false, notes: AutoBATS 只對規模較大事件出解；查無屬常態}
   - {schema: live, table: disaster_alerts,           time_column: collected_at, owner_collector: ncdr_alerts, expected_interval_min: 15, critical: true}
   # 網路健康的 provider event 可能合法為空；source_runs 才是主要心跳。
-  - {schema: live, table: internet_health_source_runs, time_column: finished_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: Cloudflare/IODA production 5min 共用 run ledger；RIPE Atlas/RIS code default disabled，未 smoke；status/error_code 區分 partial、empty、stale、config/http/parse/stream_gap}
-  - {schema: live, table: internet_health_observations, time_column: collected_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: canonical evidence history；RIPE 只寫 finite 5min aggregates；NULL/trailing null/stream gap 保留，不補 0}
+  - {schema: live, table: internet_health_source_runs, time_column: finished_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: Cloudflare/IODA/RIPE Atlas production 5min 共用 run ledger；Atlas one-shot + scheduled run 已驗，RIS 仍 disabled/fail-closed；status/error_code 區分 partial、empty、stale、config/http/parse/stream_gap}
+  - {schema: live, table: internet_health_observations, time_column: collected_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: canonical evidence history；RIPE Atlas production 只寫 finite 5min aggregates，RIS 尚未 production enable；NULL/trailing null/stream gap 保留，不補 0}
   - {schema: live, table: internet_health_current, time_column: observed_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: DB trigger 維護 latest pointer；conditional upsert 防止舊 observation 倒退，collector 不直寫}
   - {schema: live, table: internet_health_incidents, time_column: last_detected_at, owner_collector: cloudflare_radar, expected_interval_min: 43200, critical: false, notes: 事件驅動可長期無 row；不得作 collector 心跳}
 

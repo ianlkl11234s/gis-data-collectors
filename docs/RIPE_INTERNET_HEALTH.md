@@ -1,11 +1,29 @@
 # RIPE Atlas + RIS Live internet-health collectors
 
-Status: **implemented, reviewed roster, internal-only, repo default disabled; production DB/S3 not yet smoked or enabled**.
+Status: **Atlas production enabled at 5-minute cadence; RIS Live remains
+internal-only, production disabled, and fail-closed.  Repo defaults remain
+disabled for both.**
 
 These are evidence collectors.  They do not decide that Taiwan is normal,
 degraded, or offline.  RIPE Atlas and RIPE RIS are separate technical signals
 but share `independence_group=ripe_ncc`, so they cannot by themselves satisfy a
 two-independent-organisation detector rule.
+
+## Production truth (2026-08-31)
+
+- Collector deployment `6a954164...` is `RUNNING`. Migration 383 registry,
+  family/FK and public-exclusion gates passed apply, verify, fixture and
+  readback. Service health returned HTTP 200 with the main loop and DB green.
+- Atlas one-shot run `9d6d032c...` succeeded with 913 received, 56 written and
+  0 rejected. Its create-only S3 smoke object read back at 62,888 bytes; raw
+  envelope keys `1001`/`2001` and SHA-256 matched. The DB projected 8 fresh
+  current rows, while the public RPC returned 0 rows as required.
+- Atlas scheduled run `f97ce10e...` then succeeded with 916 received, 56
+  written and 0 rejected. `RIPE_ATLAS_INTERNET_HEALTH_ENABLED=true` is the
+  production override; Atlas remains internal-only.
+- RIS stays `RIPE_RIS_LIVE_ENABLED=false`. `RIPE_RIS_REPLICA_COUNT` remains
+  fail-closed until the actual Zeabur replica count is proven to be exactly 1
+  and the bounded 18-minute complete-window/automatic-archive smoke passes.
 
 ## Reviewed roster hard gate
 
@@ -42,9 +60,8 @@ silently auto-discovered.
 - Public result reads do not require an API key.  `RIPE_ATLAS_API_KEY` is
   optional and must only be used for an explicitly reviewed private
   measurement.
-- 2026-08-31 local official-API smoke: both endpoints succeeded; 907 results
-  normalized into 56 five-minute observations with zero rejected rows. This
-  proves fetch/parser compatibility, not production DB/archive readiness.
+- 2026-08-31 local official-API smoke first proved parser compatibility; the
+  production one-shot and subsequent scheduled run are recorded above.
 
 ## RIPE RIS Live worker
 
@@ -77,18 +94,24 @@ Enabling requires the Zeabur service to have exactly one replica and
 threads/processes in one container.  **There is no distributed lease across
 replicas.** Do not scale this service above one replica while RIS is enabled.
 
+Zeabur's June 2026 HA feature allows multiple replicas inside one logical
+service. CLI service count and RUNNING deployment count therefore do not prove
+the runtime replica count. The gate requires the Dashboard/API's actual
+`Replicas=1` value; only then run the bounded smoke for at least 18 minutes so
+it crosses the startup-partial bucket, one complete 5-minute bucket and one
+automatic 15-minute spool rotation.
+
 ## Production enable checklist
 
 1. Platform source registry/FK/public-exclusion migration is live and verified.
 2. Reviewed roster is approved in Git; no secrets are embedded.
-3. Atlas exact-runtime read-only fetch/normalize succeeds.
-4. Atlas one-shot DB write/current readback and private S3 archive readback
-   succeed before setting its enable flag.
-5. RIS exact-runtime bounded WebSocket receives all subscription acks and pong;
+3. Atlas exact-runtime fetch/normalize, DB/current and private S3 readback are
+   verified; the 5-minute production schedule is enabled.
+4. RIS exact-runtime bounded WebSocket receives all subscription acks and pong;
    message rate and spool growth remain within limits.
-6. Zeabur replicas=1 and `RIPE_RIS_REPLICA_COUNT=1` are independently verified.
-7. RIS one complete 5-minute DB window plus gzip/manifest/S3 readback succeeds.
-8. Only then enable recurring collection; keep both sources internal-only.
+5. Zeabur replicas=1 and `RIPE_RIS_REPLICA_COUNT=1` are independently verified.
+6. RIS one complete 5-minute DB window plus gzip/manifest/S3 readback succeeds.
+7. Only then enable recurring collection; keep both sources internal-only.
 
 Rollback is setting each `*_ENABLED=false` and restarting the service.  The RIS
 worker gracefully closes/rotates its spool.  Never delete unverified local raw,
@@ -102,3 +125,4 @@ S3 objects, or existing DB evidence as part of rollback.
 - RIPE Atlas terms v3.5: <https://www.ripe.net/about-us/legal/ripe-atlas-service-terms-and-conditions/>
 - RIS Live protocol: <https://ris-live.ripe.net/manual/>
 - RIS commercial-use terms: <https://www.ripe.net/analyse/internet-measurements/routing-information-service-ris/commercial-use/>
+- Zeabur HA replicas (2026-06): <https://zeabur.com/zh-CN/changelogs/high-availability>
