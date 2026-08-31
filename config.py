@@ -129,7 +129,8 @@ COLLECTOR_RETENTION_OVERRIDES = {
                  'foursquare_poi', 'ncdr_alerts', 'rain_gauge_realtime',
                  'river_water_level', 'groundwater_level', 'water_reservoir',
                  'water_reservoir_daily_ops', 'news_events', 'cwa_marine_observation',
-                 'isohe_port_marine', 'cloudflare_radar', 'ioda_internet_health')
+                 'isohe_port_marine', 'cloudflare_radar', 'ioda_internet_health',
+                 'ripe_atlas_internet_health')
     if os.getenv(f'{name.upper()}_ARCHIVE_RETENTION_DAYS')
 }
 # High-volume marine snapshots use the documented three-day local recovery
@@ -138,6 +139,7 @@ COLLECTOR_RETENTION_OVERRIDES.setdefault('cwa_marine_observation', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('isohe_port_marine', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('cloudflare_radar', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('ioda_internet_health', 3)
+COLLECTOR_RETENTION_OVERRIDES.setdefault('ripe_atlas_internet_health', 3)
 
 
 def get_retention_days(collector_name: str) -> int:
@@ -277,6 +279,8 @@ _COLLECTOR_TOGGLES = (
     ('NCDR_ALERTS',                  True,  15),
     ('CLOUDFLARE_RADAR',             False, 5),   # repo safe default false；production env 自 2026-08-31 啟用 5min
     ('IODA_INTERNET_HEALTH',         False, 5),   # repo safe default false；production env 5min；raw internal only
+    ('RIPE_ATLAS_INTERNET_HEALTH',    False, 5),   # reviewed public measurements only；raw/internal aggregates 不公開
+    ('RIPE_RIS_LIVE',                 False, 5),   # 常駐 WebSocket；main.py 另行啟動，replicas=1 hard gate
     ('FOURSQUARE_POI',               False, 43200),  # 每 30 天
     ('AIR_QUALITY_IMAGERY',          False, 60),
     ('AIR_QUALITY',                  False, 60),
@@ -349,6 +353,35 @@ IODA_STALE_AFTER_SECONDS = int(os.getenv('IODA_STALE_AFTER_SECONDS', '3600'))
 # /v2/outages/alerts timed out during source validation and its response schema
 # is not yet proven.  Do not enable ingestion merely because the URL exists.
 IODA_ALERTS_ENABLED = _env_bool('IODA_ALERTS_ENABLED', False)
+
+# RIPE Atlas / RIS Live share a reviewed, versioned non-secret roster.  An
+# empty or pending-review roster fails closed even when an enable flag is set.
+RIPE_INTERNET_HEALTH_ROSTER_PATH = os.getenv(
+    'RIPE_INTERNET_HEALTH_ROSTER_PATH',
+    str(Path(__file__).parent / 'config' / 'ripe_internet_health.yaml'),
+)
+RIPE_ATLAS_API_KEY = os.getenv('RIPE_ATLAS_API_KEY', '')
+RIPE_ATLAS_LOOKBACK_MINUTES = int(os.getenv('RIPE_ATLAS_LOOKBACK_MINUTES', '30'))
+RIPE_ATLAS_OVERLAP_MINUTES = int(os.getenv('RIPE_ATLAS_OVERLAP_MINUTES', '10'))
+RIPE_ATLAS_STALE_AFTER_SECONDS = int(os.getenv('RIPE_ATLAS_STALE_AFTER_SECONDS', '900'))
+
+# RIS Live must run in exactly one Zeabur replica.  The local lock prevents a
+# duplicate worker inside one container but deliberately does not pretend to
+# provide a distributed lease across replicas.
+RIPE_RIS_LIVE_WS_URL = os.getenv(
+    'RIPE_RIS_LIVE_WS_URL',
+    'wss://ris-live.ripe.net/v1/ws/?client=gis-data-collectors',
+)
+RIPE_RIS_REPLICA_COUNT = int(os.getenv('RIPE_RIS_REPLICA_COUNT', '0'))
+RIPE_RIS_RECONNECT_MAX_SECONDS = float(os.getenv('RIPE_RIS_RECONNECT_MAX_SECONDS', '60'))
+RIPE_RIS_PING_INTERVAL_SECONDS = float(os.getenv('RIPE_RIS_PING_INTERVAL_SECONDS', '30'))
+RIPE_RIS_PONG_TIMEOUT_SECONDS = float(os.getenv('RIPE_RIS_PONG_TIMEOUT_SECONDS', '15'))
+RIPE_RIS_IDLE_TIMEOUT_SECONDS = float(os.getenv('RIPE_RIS_IDLE_TIMEOUT_SECONDS', '120'))
+RIPE_RIS_SPOOL_ROTATE_MINUTES = int(os.getenv('RIPE_RIS_SPOOL_ROTATE_MINUTES', '15'))
+RIPE_RIS_SPOOL_MAX_MB = int(os.getenv('RIPE_RIS_SPOOL_MAX_MB', '10240'))
+RIPE_RIS_S3_STORAGE_CLASS = os.getenv('RIPE_RIS_S3_STORAGE_CLASS', 'GLACIER_IR')
+RIPE_RIS_S3_PREFIX = os.getenv('RIPE_RIS_S3_PREFIX', 'ripe_ris_live/raw/v1')
+RIPE_RIS_STALE_AFTER_SECONDS = int(os.getenv('RIPE_RIS_STALE_AFTER_SECONDS', '900'))
 
 # AISStream 常駐 WebSocket worker（獨立於既有 ship_ais / SupabaseWriter pipeline）
 # 預設關閉；啟用前需先完成 gis-platform migration、S3 權限與 Zeabur smoke test。

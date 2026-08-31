@@ -241,6 +241,16 @@ TABLE_MAP = {
         # job and evidence_family.  Missing/trailing-null values stay NULL.
         'is_multi_table': True,
     },
+    'ripe_atlas_internet_health': {
+        # Reviewed Atlas results are aggregated before this boundary.  Raw
+        # provider rows stay in the private local/S3 archive.
+        'is_multi_table': True,
+    },
+    'ripe_ris_live': {
+        # Five-minute stream windows write only source_runs + canonical
+        # observations.  Raw BGP JSON remains in the private durable spool/S3.
+        'is_multi_table': True,
+    },
     'cwa_marine_observation': {
         # reference station + long history + current cache + orphan quarantine are one transaction.
         'is_multi_table': True,

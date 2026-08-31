@@ -358,6 +358,42 @@ ioda_internet_health:
     5 分鐘排程。raw response 明示 All Rights Reserved，只作內部收集與受控 S3 復原；
     公開排除由 platform contract 強制。alerts 未驗證且保持關閉；Composite detector 未實作。
 
+ripe_atlas_internet_health:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables:
+    - live.internet_health_source_runs
+    - live.internet_health_observations
+    - live.internet_health_current
+  s3_prefixes:
+    - {prefix: ripe_atlas_internet_health/archives/, expected_daily: false}
+  critical: false
+  notes: >-
+    RIPE Atlas reviewed public ping measurements；2026-08-31 roster v2026-08-31.1
+    已核准 built-in K-root 1001/2001 與臺灣 public connected probes；pending/empty 仍 fail closed。
+    僅寫 5 分鐘 country aggregates，raw response 只進 private S3。與 RIPE RIS
+    同屬 independence_group=ripe_ncc，不能單獨算兩個獨立機構證據。internal-only、
+    repo default disabled；本機 official API fetch/normalize smoke 通過，production DB/S3 未驗。
+
+ripe_ris_live:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 5
+  supabase_tables:
+    - live.internet_health_source_runs
+    - live.internet_health_observations
+    - live.internet_health_current
+  s3_prefixes:
+    - {prefix: ripe_ris_live/raw/v1/, expected_daily: false}
+  critical: false
+  notes: >-
+    RIPE RIS Live bounded WebSocket；roster v2026-08-31.1 為 15 個 origin-AS subscriptions；replicas=1、process-local
+    lock、DB 與 private S3 都是 enable hard gate。任何 reconnect/ack/pong/idle gap
+    都令完整 5 分鐘 bucket partial 且 metrics=NULL/unknown；不以無 BGP 更新推論正常。
+    不支援跨 replica distributed lease，raw JSON/manifest 只進 private S3。本機 official
+    WebSocket ack/pong smoke 通過；production 完整 5 分鐘 window/DB/S3 未驗。
+
 news_events:
   enabled: true
   deployment: zeabur

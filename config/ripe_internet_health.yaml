@@ -1,0 +1,180 @@
+schema_version: ripe_internet_health_roster.v1
+version: 2026-08-31.1
+review_status: approved
+reviewed_at: "2026-08-31T16:30:00+08:00"
+internal_only: true
+country_code: TW
+
+# Reviewed safe-MVP roster. Public connected probes were fetched from the
+# official RIPE Atlas probe API with country_code=TW/status=1/is_public=true.
+# Only public probe IDs and AF-specific ASNs are retained; no IP, prefix,
+# hostname, description, contact, or coordinate is present. The roster is a
+# versioned snapshot, not a permanently connected denominator.
+ripe_atlas:
+  measurements:
+    - measurement_id: 1001
+      measurement_type: ping
+      address_family: 4
+      interval_seconds: 240
+      target_group: k_root_server
+      probes:
+        - {probe_id: 6818, asn: 31713}
+        - {probe_id: 6907, asn: 131657}
+        - {probe_id: 6995, asn: 16552}
+        - {probe_id: 7481, asn: 131151}
+        - {probe_id: 7483, asn: 9923}
+        - {probe_id: 7485, asn: 204844}
+        - {probe_id: 7486, asn: 18041}
+        - {probe_id: 7492, asn: 38254}
+        - {probe_id: 7495, asn: 131630}
+        - {probe_id: 7524, asn: 1659}
+        - {probe_id: 7533, asn: 1659}
+        - {probe_id: 7632, asn: 1659}
+        - {probe_id: 7722, asn: 63900}
+        - {probe_id: 7783, asn: 131630}
+        - {probe_id: 25011, asn: 18419}
+        - {probe_id: 34667, asn: 3462}
+        - {probe_id: 50278, asn: 13335}
+        - {probe_id: 51086, asn: 9916}
+        - {probe_id: 51525, asn: 3462}
+        - {probe_id: 54492, asn: 17809}
+        - {probe_id: 60540, asn: 17415}
+        - {probe_id: 60749, asn: 18420}
+        - {probe_id: 60763, asn: 3462}
+        - {probe_id: 61078, asn: 38254}
+        - {probe_id: 61200, asn: 38856}
+        - {probe_id: 61304, asn: 3462}
+        - {probe_id: 61572, asn: 9416}
+        - {probe_id: 61580, asn: 3462}
+        - {probe_id: 61615, asn: 3462}
+        - {probe_id: 61925, asn: 38841}
+        - {probe_id: 62299, asn: 38856}
+        - {probe_id: 64024, asn: 3462}
+        - {probe_id: 64182, asn: 3462}
+        - {probe_id: 64229, asn: 4780}
+        - {probe_id: 64349, asn: 3462}
+        - {probe_id: 64407, asn: 3462}
+        - {probe_id: 64542, asn: 4780}
+        - {probe_id: 64845, asn: 38856}
+        - {probe_id: 64928, asn: 3462}
+        - {probe_id: 65011, asn: 3462}
+        - {probe_id: 65082, asn: 3462}
+        - {probe_id: 65085, asn: 3462}
+        - {probe_id: 65208, asn: 3462}
+        - {probe_id: 65253, asn: 3462}
+        - {probe_id: 65530, asn: 1659}
+        - {probe_id: 65619, asn: 18049}
+        - {probe_id: 65655, asn: 1659}
+        - {probe_id: 1002288, asn: 4780}
+        - {probe_id: 1002754, asn: 31713}
+        - {probe_id: 1004095, asn: 18041}
+        - {probe_id: 1004125, asn: 149791}
+        - {probe_id: 1004171, asn: 18049}
+        - {probe_id: 1004618, asn: 16509}
+        - {probe_id: 1006309, asn: 9919}
+        - {probe_id: 1006563, asn: 3462}
+        - {probe_id: 1006580, asn: 3462}
+        - {probe_id: 1006949, asn: 131645}
+        - {probe_id: 1007763, asn: 3462}
+        - {probe_id: 1008914, asn: 208223}
+        - {probe_id: 1009315, asn: 3462}
+        - {probe_id: 1010306, asn: 131151}
+        - {probe_id: 1010966, asn: 203843}
+        - {probe_id: 1011079, asn: 18419}
+        - {probe_id: 1011221, asn: 4780}
+        - {probe_id: 1011339, asn: 3462}
+        - {probe_id: 1012226, asn: 17809}
+        - {probe_id: 1013128, asn: 396982}
+        - {probe_id: 1013213, asn: 17716}
+        - {probe_id: 1013252, asn: 3462}
+        - {probe_id: 1013465, asn: 3462}
+        - {probe_id: 1013678, asn: 18041}
+        - {probe_id: 1013761, asn: 3462}
+        - {probe_id: 1014362, asn: 135377}
+        - {probe_id: 1014363, asn: 135377}
+        - {probe_id: 1014459, asn: 18044}
+        - {probe_id: 1014585, asn: 3462}
+        - {probe_id: 1015128, asn: 61112}
+        - {probe_id: 1015771, asn: 3462}
+        - {probe_id: 1015810, asn: 3462}
+        - {probe_id: 1015832, asn: 3462}
+        - {probe_id: 1015856, asn: 1659}
+        - {probe_id: 1016345, asn: 3462}
+        - {probe_id: 1016571, asn: 3462}
+        - {probe_id: 1016576, asn: 3462}
+        - {probe_id: 1016577, asn: 3462}
+        - {probe_id: 1016578, asn: 3462}
+        - {probe_id: 1016879, asn: 3462}
+
+    - measurement_id: 2001
+      measurement_type: ping
+      address_family: 6
+      interval_seconds: 240
+      target_group: k_root_server
+      probes:
+        - {probe_id: 6818, asn: 3491}
+        - {probe_id: 6907, asn: 131657}
+        - {probe_id: 6995, asn: 16552}
+        - {probe_id: 7481, asn: 134823}
+        - {probe_id: 7485, asn: 204844}
+        - {probe_id: 7486, asn: 18041}
+        - {probe_id: 7492, asn: 38254}
+        - {probe_id: 7495, asn: 131630}
+        - {probe_id: 7524, asn: 1659}
+        - {probe_id: 7533, asn: 1659}
+        - {probe_id: 7632, asn: 1659}
+        - {probe_id: 7722, asn: 63900}
+        - {probe_id: 7783, asn: 131630}
+        - {probe_id: 51525, asn: 3462}
+        - {probe_id: 60749, asn: 1659}
+        - {probe_id: 61078, asn: 38254}
+        - {probe_id: 61200, asn: 38856}
+        - {probe_id: 61304, asn: 3462}
+        - {probe_id: 61615, asn: 3462}
+        - {probe_id: 62299, asn: 57429}
+        - {probe_id: 64024, asn: 3462}
+        - {probe_id: 64182, asn: 3462}
+        - {probe_id: 64542, asn: 216123}
+        - {probe_id: 64845, asn: 212360}
+        - {probe_id: 65011, asn: 212359}
+        - {probe_id: 65082, asn: 3462}
+        - {probe_id: 65530, asn: 1659}
+        - {probe_id: 1002754, asn: 3491}
+        - {probe_id: 1004095, asn: 18041}
+        - {probe_id: 1004618, asn: 16509}
+        - {probe_id: 1006580, asn: 3462}
+        - {probe_id: 1008914, asn: 208223}
+        - {probe_id: 1010306, asn: 134823}
+        - {probe_id: 1010966, asn: 203843}
+        - {probe_id: 1011079, asn: 215191}
+        - {probe_id: 1013252, asn: 3462}
+        - {probe_id: 1013465, asn: 3462}
+        - {probe_id: 1013678, asn: 18041}
+        - {probe_id: 1014459, asn: 18044}
+        - {probe_id: 1015128, asn: 38136}
+        - {probe_id: 1016879, asn: 3462}
+
+# RIS Live safe MVP uses a bounded origin-AS subscription derived from access
+# networks represented by at least two reviewed Taiwan public probes in this
+# snapshot. Prefix visibility remains NULL until a separate RIB baseline is
+# implemented; UPDATE silence is never a normal signal.
+ripe_ris_live:
+  prefixes: []
+  origin_asns:
+    - 1659
+    - 3462
+    - 3491
+    - 4780
+    - 17809
+    - 18041
+    - 18049
+    - 18419
+    - 31713
+    - 38254
+    - 38856
+    - 131151
+    - 131630
+    - 134823
+    - 135377
+  more_specific: true
+  less_specific: false

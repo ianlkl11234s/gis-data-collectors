@@ -63,6 +63,73 @@
       "description": "IODA alerts schema 尚未 live 驗證，必須保持 false",
       "default": "false"
     },
+    "RIPE_ATLAS_API_KEY": {
+      "description": "選填；只供 private RIPE Atlas measurement，public results 不需要 key"
+    },
+    "RIPE_ATLAS_INTERNET_HEALTH_ENABLED": {
+      "description": "RIPE Atlas reviewed roster 5min aggregates；internal-only，migration/roster/smoke 前保持 false",
+      "default": "false"
+    },
+    "RIPE_ATLAS_INTERNET_HEALTH_INTERVAL": {
+      "description": "RIPE Atlas polling interval；latest cache 5min",
+      "default": "5"
+    },
+    "RIPE_ATLAS_LOOKBACK_MINUTES": {
+      "description": "RIPE Atlas results startup/rolling lookback",
+      "default": "30"
+    },
+    "RIPE_ATLAS_OVERLAP_MINUTES": {
+      "description": "RIPE Atlas deterministic overlap/dedup window",
+      "default": "10"
+    },
+    "RIPE_ATLAS_STALE_AFTER_SECONDS": {
+      "description": "RIPE Atlas aggregate freshness floor",
+      "default": "900"
+    },
+    "RIPE_RIS_LIVE_ENABLED": {
+      "description": "Bounded RIPE RIS Live WebSocket；replicas=1/approved roster/DB/private S3 前保持 false",
+      "default": "false"
+    },
+    "RIPE_RIS_REPLICA_COUNT": {
+      "description": "啟用 RIS Live 時必須明確為 1；process-local lock 不支援跨 replica lease",
+      "default": "0"
+    },
+    "RIPE_RIS_RECONNECT_MAX_SECONDS": {
+      "description": "RIS Live full-jitter reconnect backoff cap",
+      "default": "60"
+    },
+    "RIPE_RIS_PING_INTERVAL_SECONDS": {
+      "description": "RIS Live application ping interval",
+      "default": "30"
+    },
+    "RIPE_RIS_PONG_TIMEOUT_SECONDS": {
+      "description": "RIS Live pong timeout；逾時令 bucket partial/NULL",
+      "default": "15"
+    },
+    "RIPE_RIS_IDLE_TIMEOUT_SECONDS": {
+      "description": "RIS Live server idle timeout",
+      "default": "120"
+    },
+    "RIPE_RIS_SPOOL_ROTATE_MINUTES": {
+      "description": "RIS Live private durable NDJSON spool rotation",
+      "default": "15"
+    },
+    "RIPE_RIS_SPOOL_MAX_MB": {
+      "description": "RIS Live unverified local spool hard limit；超過即 fail-stop",
+      "default": "10240"
+    },
+    "RIPE_RIS_S3_PREFIX": {
+      "description": "RIS Live private raw/manifest prefix",
+      "default": "ripe_ris_live/raw/v1"
+    },
+    "RIPE_RIS_S3_STORAGE_CLASS": {
+      "description": "RIS Live private archive S3 storage class",
+      "default": "GLACIER_IR"
+    },
+    "RIPE_RIS_STALE_AFTER_SECONDS": {
+      "description": "RIS Live aggregate freshness threshold",
+      "default": "900"
+    },
     "INTERNET_HEALTH_LOCATION": {
       "description": "Internet health country code",
       "default": "TW"

@@ -157,6 +157,14 @@ def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[s
                         continue
                     collector_name = "aisstream"
                     date_part = match.group(1)
+                elif key.startswith("ripe_ris_live/raw/v1/") and key.endswith(".manifest.json"):
+                    # RIS Live uses durable 15-minute gzip NDJSON + manifest,
+                    # not ArchiveTask daily tarballs.
+                    match = re.search(r"/date=(\d{4}-\d{2}-\d{2})/", key)
+                    if not match:
+                        continue
+                    collector_name = "ripe_ris_live"
+                    date_part = match.group(1)
                 else:
                     continue
                 if len(date_part) != 10 or date_part.count("-") != 2:
