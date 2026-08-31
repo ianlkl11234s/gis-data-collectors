@@ -394,11 +394,15 @@ ripe_ris_live:
     RIPE RIS Live bounded WebSocket；roster v2026-08-31.1 為 15 個 origin-AS subscriptions；replicas=1、process-local
     lock、DB 與 private S3 都是 enable hard gate。任何 reconnect/ack/pong/idle gap
     都令完整 5 分鐘 bucket partial 且 metrics=NULL/unknown；不以無 BGP 更新推論正常。
-    不支援跨 replica distributed lease，raw JSON/manifest 只進 private S3。本機 official
-    WebSocket ack/pong smoke 通過；production flag 仍 false、RIPE_RIS_REPLICA_COUNT
-    fail-closed。Zeabur 同一 logical service 可有多 replicas，CLI service/deployment
-    count 不足以證明 replicas=1；Dashboard/API actual Replicas=1 後才可跑 18 分鐘
-    complete-window/15 分鐘 archive smoke。
+    不支援跨 replica distributed lease，raw JSON/manifest 只進 private S3。2026-08-31
+    Zeabur Settings Replicas=1、Overview 1/1，production flag=true、replica gate=1；22:51:02
+    restart log 啟動 15 subscriptions。bounded 18 分鐘 smoke 為 1 partial + 2 succeeded，
+    成功窗各 6 unknown observations、current 6/6 fresh、public RPC 0；2 gzip archives
+    （2,033/112 records）完整 GET/SHA-256/manifest readback 通過。截至 15:05 UTC 正式
+    排程 3 runs（1 partial/2 succeeded），成功窗各 6 unknown observations、current 6/6
+    fresh observed_at 15:05 UTC、public RPC 0。production automatic archive 1 個（1,292
+    records）full GET/SHA/manifest 通過；health HTTP 200/healthy、main loop/DB green、
+    breaker false。
 
 news_events:
   enabled: true
