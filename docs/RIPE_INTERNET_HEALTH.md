@@ -1,8 +1,7 @@
 # RIPE Atlas + RIS Live internet-health collectors
 
-Status: **Atlas production enabled at 5-minute cadence; RIS Live remains
-internal-only, production disabled, and fail-closed.  Repo defaults remain
-disabled for both.**
+Status: **Atlas and RIS Live are production enabled at 5-minute cadence and
+remain internal-only. Repo defaults remain disabled for both.**
 
 These are evidence collectors.  They do not decide that Taiwan is normal,
 degraded, or offline.  RIPE Atlas and RIPE RIS are separate technical signals
@@ -21,9 +20,22 @@ two-independent-organisation detector rule.
 - Atlas scheduled run `f97ce10e...` then succeeded with 916 received, 56
   written and 0 rejected. `RIPE_ATLAS_INTERNET_HEALTH_ENABLED=true` is the
   production override; Atlas remains internal-only.
-- RIS stays `RIPE_RIS_LIVE_ENABLED=false`. `RIPE_RIS_REPLICA_COUNT` remains
-  fail-closed until the actual Zeabur replica count is proven to be exactly 1
-  and the bounded 18-minute complete-window/automatic-archive smoke passes.
+- Zeabur Settings showed the RIS service `Replicas` spinbutton at 1; volume
+  scaling was disabled and Overview reported 1/1. Production overrides are
+  `RIPE_RIS_LIVE_ENABLED=true` and `RIPE_RIS_REPLICA_COUNT=1`. Restart logs at
+  22:51:02 confirmed one RIS worker with the reviewed 15 subscriptions.
+- The bounded 18-minute RIS smoke produced three 5-minute runs: one expected
+  startup-partial run and two succeeded runs. Each succeeded window wrote six
+  `unknown` observations; current was 6/6 fresh and public status/timeseries
+  returned 0 rows. Two private-S3 gzip objects and their manifests passed full
+  GET, SHA-256 and manifest readback, with 2,033 and 112 records respectively.
+- By 2026-08-31 15:05 UTC recurring production had written three runs: one
+  partial and two succeeded. Both succeeded windows wrote six `unknown`
+  observations; current was 6/6 fresh at observed_at 15:05 UTC, and public
+  status/timeseries remained 0 rows. Health returned HTTP 200/healthy with the
+  main loop and DB green and breaker false. One automatic production archive
+  and manifest passed full GET, SHA-256 and manifest readback with 1,292
+  records.
 
 ## Reviewed roster hard gate
 
@@ -83,9 +95,10 @@ silently auto-discovered.
 - `prefix_visibility_ratio_*` remains NULL until a separately validated RIB
   snapshot/reconciliation contract exists.  RIS Live updates alone cannot
   initialize complete route visibility.
-- 2026-08-31 local official WebSocket smoke for AS3462 received the subscription
-  acknowledgement and pong with `includeRaw=false` and no `ris_error`. This is
-  not the required production complete-window/archive test.
+- 2026-08-31 local official WebSocket smoke for AS3462 first proved the
+  subscription acknowledgement and pong contract. The later bounded production
+  smoke crossed startup partial, two complete windows and automatic spool
+  rotation; its DB/current/private-S3 evidence is recorded above.
 
 ### Single-replica hard gate
 
@@ -96,10 +109,9 @@ replicas.** Do not scale this service above one replica while RIS is enabled.
 
 Zeabur's June 2026 HA feature allows multiple replicas inside one logical
 service. CLI service count and RUNNING deployment count therefore do not prove
-the runtime replica count. The gate requires the Dashboard/API's actual
-`Replicas=1` value; only then run the bounded smoke for at least 18 minutes so
-it crosses the startup-partial bucket, one complete 5-minute bucket and one
-automatic 15-minute spool rotation.
+the runtime replica count. The production gate was satisfied from the Zeabur
+Settings `Replicas=1` spinbutton plus Overview 1/1; keep that value at one for
+as long as RIS is enabled.
 
 ## Production enable checklist
 
@@ -108,10 +120,13 @@ automatic 15-minute spool rotation.
 3. Atlas exact-runtime fetch/normalize, DB/current and private S3 readback are
    verified; the 5-minute production schedule is enabled.
 4. RIS exact-runtime bounded WebSocket receives all subscription acks and pong;
-   message rate and spool growth remain within limits.
+   message rate and spool growth remain within limits. **Verified.**
 5. Zeabur replicas=1 and `RIPE_RIS_REPLICA_COUNT=1` are independently verified.
-6. RIS one complete 5-minute DB window plus gzip/manifest/S3 readback succeeds.
-7. Only then enable recurring collection; keep both sources internal-only.
+   **Verified from Settings plus Overview.**
+6. RIS complete 5-minute DB windows plus gzip/manifest/S3 readback succeed.
+   **Verified by the bounded 18-minute production smoke.**
+7. Recurring collection remains internal-only. **Enabled; recurring DB/current
+   and automatic private-S3 archive evidence are verified.**
 
 Rollback is setting each `*_ENABLED=false` and restarting the service.  The RIS
 worker gracefully closes/rotates its spool.  Never delete unverified local raw,
