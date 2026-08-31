@@ -306,6 +306,7 @@ _COLLECTOR_TOGGLES = (
     ('WIC_EVACUATE',                 False, 10),   # 北市疏散門狀態 (35 站，wic.gov.taipei，無金鑰)
     ('WIC_PUMB',                     False, 10),   # 北市抽水站運轉 (97 站，heopublic.gov.taipei，無金鑰)
     ('NEWS_EVENTS',                  False, 10),   # 新聞事件 RSS + Gemini 地點抽取 + GIS 相關性評估（v2 prompt）
+    ('INTL_MEDIA_TAIWAN',            False, 15),   # GDELT GKG standard+translation；repo safe default disabled
     ('SATELLITE_PASSES_DAILY',       False, 1440), # 中國衛星過境每日彙總（legacy bbox + audited ISR 領海；補昨+前天）
     ('TWSE_MARKET_INDEX',            False, 1),    # TWSE 加權指數 ticker（盤中 5s 更新，1 分 polling 已遠快於前端需要）
     ('PLA_ACTIVITY_DAILY',           False, 30),   # 共機 @MoNDefense 每日通報（每 30 分鐘抓推特看當天有沒有更新）
@@ -581,6 +582,35 @@ WASTE_MATCH_MIN_CONFIDENCE = float(os.getenv('WASTE_MATCH_MIN_CONFIDENCE', '0.35
 # 新聞事件 LLM 地點抽取（Gemini）
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.1-flash-lite-preview')
+
+# 國際媒體涉台報導 — GDELT GKG metadata + OpenRouter Stage 1。
+# Repo 預設停用；啟用前必須完成 live.intl_media_taiwan/source state migration。
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
+OPENROUTER_API_URL = os.getenv(
+    'OPENROUTER_API_URL', 'https://openrouter.ai/api/v1/chat/completions'
+)
+INTL_MEDIA_TAIWAN_STAGE1_MODEL = os.getenv(
+    'INTL_MEDIA_TAIWAN_STAGE1_MODEL', 'openai/gpt-oss-20b'
+)
+INTL_MEDIA_TAIWAN_STAGE1_FALLBACK_MODEL = os.getenv(
+    'INTL_MEDIA_TAIWAN_STAGE1_FALLBACK_MODEL', 'qwen/qwen3.7-flash'
+)
+INTL_MEDIA_TAIWAN_LLM_BATCH_SIZE = int(os.getenv('INTL_MEDIA_TAIWAN_LLM_BATCH_SIZE', '10'))
+INTL_MEDIA_TAIWAN_LLM_MAX_ATTEMPTS = int(os.getenv('INTL_MEDIA_TAIWAN_LLM_MAX_ATTEMPTS', '3'))
+INTL_MEDIA_TAIWAN_LLM_HTTP_TIMEOUT = int(os.getenv('INTL_MEDIA_TAIWAN_LLM_HTTP_TIMEOUT', '45'))
+INTL_MEDIA_TAIWAN_LLM_HARD_TIMEOUT = int(os.getenv('INTL_MEDIA_TAIWAN_LLM_HARD_TIMEOUT', '60'))
+INTL_MEDIA_TAIWAN_MAX_FILES_PER_STREAM = int(
+    os.getenv('INTL_MEDIA_TAIWAN_MAX_FILES_PER_STREAM', '4')
+)
+INTL_MEDIA_TAIWAN_INITIAL_SLOTS = int(os.getenv('INTL_MEDIA_TAIWAN_INITIAL_SLOTS', '1'))
+INTL_MEDIA_TAIWAN_STANDARD_INDEX = os.getenv(
+    'INTL_MEDIA_TAIWAN_STANDARD_INDEX',
+    'https://data.gdeltproject.org/gdeltv2/masterfilelist.txt',
+)
+INTL_MEDIA_TAIWAN_TRANSLATION_INDEX = os.getenv(
+    'INTL_MEDIA_TAIWAN_TRANSLATION_INDEX',
+    'https://data.gdeltproject.org/gdeltv2/masterfilelist-translation.txt',
+)
 
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')

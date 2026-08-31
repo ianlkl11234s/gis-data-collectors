@@ -112,6 +112,8 @@ tables:
 
   # ── 新聞 ────────────────────────────────
   - {schema: live, table: news_events,               time_column: created_at,   owner_collector: news_events, expected_interval_min: 20, critical: false}
+  - {schema: live, table: intl_media_taiwan,         time_column: collected_at, owner_collector: intl_media_taiwan, expected_interval_min: 15, critical: false, notes: GDELT metadata-only candidate history；product RPC filters foreign editorial relevance >= 2}
+  - {schema: live, table: intl_media_taiwan_source_state, time_column: updated_at, owner_collector: intl_media_taiwan, expected_interval_min: 15, critical: false, notes: per-stream durable checkpoint/error/latest-item state}
 
   # ── 公衛 ────────────────────────────────
   # cdc_public_health_weekly 跑在 HiCloud VM 上，每週四 11:00 一次

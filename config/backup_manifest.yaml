@@ -158,6 +158,7 @@ archive_py_covered:
   - live.market_index_tick         # twse_market_index, 2026-06-16 起
   # News / media / social
   - live.news_events               # news_events, 2026-06-12 起
+  - live.intl_media_taiwan         # GDELT metadata-only reports；intl_media_taiwan local archive 可重播
   - live.yt_live_current           # yt_live_video_resolver, 2026-06-17 起
   - live.yt_live_history           # 同上
   - live.pla_activity_daily        # pla_activity_daily, 2026-06-16 起

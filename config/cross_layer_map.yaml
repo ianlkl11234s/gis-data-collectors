@@ -368,6 +368,16 @@ news_events:
   critical: false
   notes: RSS 29 feeds + Gemini Flash-Lite 地名抽取（需 GEMINI_API_KEY + NEWS_EVENTS_ENABLED）
 
+intl_media_taiwan:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 15
+  supabase_tables: [live.intl_media_taiwan, live.intl_media_taiwan_source_state]
+  s3_prefixes:
+    - {prefix: intl_media_taiwan/archives/, expected_daily: true}
+  critical: false
+  notes: GDELT GKG standard+translation metadata only；OpenRouter Stage 1；migration/production smoke 前保持停用
+
 # ─────────────────────────────────────────────────────────
 # 太空 / 衛星
 # ─────────────────────────────────────────────────────────

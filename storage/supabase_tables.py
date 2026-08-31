@@ -519,6 +519,11 @@ TABLE_MAP = {
         'upsert_key': 'url_norm',
         'upsert_strategy': 'do_nothing',
     },
+    'intl_media_taiwan': {
+        # GDELT GKG metadata only. url_norm/report_key are canonical report keys;
+        # quotations and article body text never enter this contract.
+        'is_multi_table': True,
+    },
     'power_taipower': {
         # 台電即時電力供需：單一 collector 寫 3 張表
         #   live.power_system_status   UNIQUE(observed_at)             DO NOTHING

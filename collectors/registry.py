@@ -42,6 +42,7 @@ from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
 from .internet_health import CloudflareRadarCollector, IodaInternetHealthCollector
 from .news_events import NewsEventsCollector
+from .intl_media_taiwan import IntlMediaTaiwanCollector
 from .parking import ParkingCollector
 from .parking_offstreet import ParkingOffStreetCollector
 from .parking_ref import ParkingRefCollector
@@ -172,6 +173,7 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(WicEvacuateCollector, "北市疏散門狀態收集器", "WIC_EVACUATE"),
     CollectorEntry(WicPumbCollector, "北市抽水站運轉收集器", "WIC_PUMB"),
     CollectorEntry(NewsEventsCollector, "News Events 新聞事件收集器", "NEWS_EVENTS", ("GEMINI_API_KEY",)),
+    CollectorEntry(IntlMediaTaiwanCollector, "國際媒體涉台報導收集器", "INTL_MEDIA_TAIWAN", ("OPENROUTER_API_KEY",)),
     CollectorEntry(TwseMarketIndexCollector, "TWSE 加權指數即時收集器", "TWSE_MARKET_INDEX"),
     CollectorEntry(FoodPricesCollector, "食品價格（菜/魚/肉/蛋批發價）收集器", "FOOD_PRICES"),
     CollectorEntry(PlaActivityDailyCollector, "中共解放軍臺海周邊動態每日收集器", "PLA_ACTIVITY_DAILY"),

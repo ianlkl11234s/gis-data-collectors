@@ -1828,6 +1828,20 @@ class SupabaseWriter:
         url_norm 缺值跳過（UNIQUE key 不可為 NULL 重複）。"""
         return [r for r in result.get('data', []) if r.get('url_norm')]
 
+    def _transform_intl_media_taiwan(self, result: dict, ts: datetime) -> list[dict]:
+        """GDELT reports plus per-stream durable state for one atomic write."""
+        reports = [
+            {'_type': 'report', **r}
+            for r in result.get('data', [])
+            if r.get('url_norm') and r.get('source_id')
+        ]
+        states = [
+            {'_type': 'source_state', **r}
+            for r in result.get('source_states', [])
+            if r.get('source_id') and r.get('source_stream')
+        ]
+        return reports + states
+
     def _transform_power_taipower(self, result: dict, ts: datetime) -> list[dict]:
         """台電即時電力供需：3 表攤平為單一 records list，由 _write_multi_table 依 _type 分派。
 
@@ -2148,6 +2162,7 @@ class SupabaseWriter:
         'cloudflare_radar': _transform_internet_health,
         'ioda_internet_health': _transform_internet_health,
         'news_events': _transform_news_events,
+        'intl_media_taiwan': _transform_intl_media_taiwan,
         'cwa_satellite': _transform_cwa_satellite,
         'cwa_marine_observation': _transform_marine_observation,
         'isohe_port_marine': _transform_marine_observation,
@@ -2290,6 +2305,132 @@ class SupabaseWriter:
 
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """Write collector-specific multi-table contracts atomically."""
+        if collector_name == 'intl_media_taiwan':
+            reports = [r for r in records if r.get('_type') == 'report']
+            states = [r for r in records if r.get('_type') == 'source_state']
+            if {r.get('source_stream') for r in states} != {'standard', 'translation'}:
+                raise ValueError('intl_media_taiwan requires standard and translation source states')
+            report_cols = [
+                'source_id', 'source_stream', 'source_domain', 'source_country', 'source_city',
+                'source_location_label', 'source_latitude', 'source_longitude',
+                'source_location_level', 'source_location_method', 'source_location_confidence',
+                'source_language',
+                'source_name',
+                'url', 'url_norm', 'report_key', 'title_original', 'quality_flags', 'summary_zh',
+                'published_ts', 'collected_at',
+                'gkg_record_id', 'gkg_slot_ts', 'gkg_themes', 'gkg_locations',
+                'gkg_persons', 'gkg_organizations', 'gkg_tone', 'candidate_rules',
+                'source_kind', 'taiwan_relevance', 'importance', 'topics',
+                'severity_source', 'source_kind_method', 'llm_model', 'llm_processed_at',
+            ]
+            with self._txn(conn) as cur:
+                written_by_stream = {}
+                if reports:
+                    inserted = execute_values(
+                        cur,
+                        f"INSERT INTO live.intl_media_taiwan ({','.join(report_cols)}) VALUES %s "
+                        "ON CONFLICT (url_norm) DO NOTHING RETURNING source_stream",
+                        [
+                            tuple(
+                                Json(row.get(col)) if col in ('gkg_locations', 'gkg_tone')
+                                and row.get(col) is not None else row.get(col)
+                                for col in report_cols
+                            )
+                            for row in reports
+                        ],
+                        page_size=1000,
+                        fetch=True,
+                    )
+                    for (stream,) in inserted:
+                        written_by_stream[stream] = written_by_stream.get(stream, 0) + 1
+                for state in states:
+                    records_written = written_by_stream.get(state['source_stream'], 0)
+                    if state.get('success'):
+                        cur.execute(
+                            "INSERT INTO live.intl_media_taiwan_source_state "
+                            "(source_id,source_stream,enabled,poll_interval_minutes,checkpoint_slot_ts,"
+                            "latest_item_ts,last_success_at,last_attempt_at,last_error,consecutive_fail,"
+                            "records_seen_last_run,records_written_last_run,updated_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,now(),now(),NULL,0,%s,%s,now()) "
+                            "ON CONFLICT (source_id) DO UPDATE SET "
+                            "source_stream=EXCLUDED.source_stream,enabled=EXCLUDED.enabled,"
+                            "poll_interval_minutes=EXCLUDED.poll_interval_minutes,"
+                            "checkpoint_slot_ts=EXCLUDED.checkpoint_slot_ts,"
+                            "latest_item_ts=EXCLUDED.latest_item_ts,last_success_at=now(),"
+                            "last_attempt_at=now(),last_error=NULL,consecutive_fail=0,"
+                            "records_seen_last_run=EXCLUDED.records_seen_last_run,"
+                            "records_written_last_run=EXCLUDED.records_written_last_run,updated_at=now()",
+                            (
+                                state['source_id'], state['source_stream'], state.get('enabled', True),
+                                state.get('poll_interval_minutes', 15), state.get('checkpoint_slot_ts'),
+                                state.get('latest_item_ts'), state.get('records_seen_last_run', 0),
+                                records_written,
+                            ),
+                        )
+                    else:
+                        advance_set = (
+                            "checkpoint_slot_ts=EXCLUDED.checkpoint_slot_ts,"
+                            "latest_item_ts=COALESCE(EXCLUDED.latest_item_ts,"
+                            "live.intl_media_taiwan_source_state.latest_item_ts),"
+                            if state.get('advance_checkpoint_on_error') else ""
+                        )
+                        cur.execute(
+                            "INSERT INTO live.intl_media_taiwan_source_state "
+                            "(source_id,source_stream,enabled,poll_interval_minutes,checkpoint_slot_ts,"
+                            "latest_item_ts,last_attempt_at,last_error,consecutive_fail,"
+                            "records_seen_last_run,records_written_last_run,updated_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,now(),%s,1,%s,0,now()) "
+                            "ON CONFLICT (source_id) DO UPDATE SET "
+                            "source_stream=EXCLUDED.source_stream,enabled=EXCLUDED.enabled,"
+                            "poll_interval_minutes=EXCLUDED.poll_interval_minutes,"
+                            f"{advance_set}"
+                            "last_attempt_at=now(),last_error=EXCLUDED.last_error,"
+                            "consecutive_fail=live.intl_media_taiwan_source_state.consecutive_fail+1,"
+                            "records_seen_last_run=EXCLUDED.records_seen_last_run,"
+                            "records_written_last_run=0,"
+                            "updated_at=now()",
+                            (
+                                state['source_id'], state['source_stream'], state.get('enabled', True),
+                                state.get('poll_interval_minutes', 15), state.get('checkpoint_slot_ts'),
+                                state.get('latest_item_ts'), state.get('last_error'),
+                                state.get('records_seen_last_run', 0),
+                            ),
+                        )
+                    if state.get('success'):
+                        cur.execute(
+                            "INSERT INTO live.source_health "
+                            "(feed_url,source,county_hint,interval_minutes,last_success_at,last_attempt_at,"
+                            "last_error,consecutive_fail,latest_item_ts,updated_at) "
+                            "VALUES (%s,%s,NULL,15,now(),now(),NULL,0,%s,now()) "
+                            "ON CONFLICT (feed_url) DO UPDATE SET source=EXCLUDED.source,"
+                            "interval_minutes=15,last_success_at=now(),last_attempt_at=now(),last_error=NULL,"
+                            "consecutive_fail=0,latest_item_ts=EXCLUDED.latest_item_ts,updated_at=now()",
+                            (state['feed_url'], state['source_id'], state.get('latest_item_ts')),
+                        )
+                    else:
+                        latest_set = (
+                            "latest_item_ts=COALESCE(EXCLUDED.latest_item_ts,live.source_health.latest_item_ts),"
+                            if state.get('advance_checkpoint_on_error') else ""
+                        )
+                        cur.execute(
+                            "INSERT INTO live.source_health "
+                            "(feed_url,source,county_hint,interval_minutes,last_attempt_at,last_error,"
+                            "consecutive_fail,latest_item_ts,updated_at) "
+                            "VALUES (%s,%s,NULL,15,now(),%s,1,%s,now()) "
+                            "ON CONFLICT (feed_url) DO UPDATE SET source=EXCLUDED.source,"
+                            "interval_minutes=15,last_attempt_at=now(),last_error=EXCLUDED.last_error,"
+                            f"{latest_set}"
+                            "consecutive_fail=live.source_health.consecutive_fail+1,updated_at=now()",
+                            (
+                                state['feed_url'], state['source_id'], state.get('last_error'),
+                                state.get('latest_item_ts'),
+                            ),
+                        )
+            logger.info(
+                '[intl_media_taiwan] DB atomic write reports=%d states=%d health=%d',
+                len(reports), len(states), len(states),
+            )
+            return
         if collector_name in ('cloudflare_radar', 'ioda_internet_health'):
             runs = [r for r in records if r.get('_type') == 'source_run']
             observations = [r for r in records if r.get('_type') == 'observation']

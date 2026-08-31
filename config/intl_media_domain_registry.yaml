@@ -1,0 +1,114 @@
+version: 2
+source: gdelt-2026-08-23-through-2026-08-29-stream-top100-union
+classifications:
+  foreign_media:
+    AU: [afr.net]
+    CN: [auto.cnfol.com, auto.sina.com.cn, beijing.qianlong.com, cfi.net.cn, china.qianlong.com, chinanews.com.cn, citnews.com.cn, cqnews.net, dcdv.zol.com.cn, digi.china.com, finance.eastmoney.com, finance.jrj.com.cn, finance.sina.com.cn, fjnews.fjsen.com, globaltimes.cn, gxnews.com.cn, hea.china.com, huxiu.com, hy.stock.cnfol.com, itbear.com.cn, jd.zol.com.cn, m.tech.china.com, nbd.com.cn, news.china.com, news.china.com.cn, news.cn, news.cyol.com, news.dayoo.com, news.fznews.com.cn, news.hangzhou.com.cn, news.ifeng.com, news.pedaily.cn, news.shm.com.cn, news.southcn.com, news.ycwb.com, newsghexport.shobserver.cn, qzwb.com, stcn.com, sznews.com, taihai.fjsen.com, tech.china.com, tech.ifeng.com, tmtpost.com, tv.zol.com.cn, wallstreetcn.com, xm.fjsen.com, yangtse.com, yicai.com, zjnews.zjol.com.cn]
+    GR: [hellenicshippingnews.com]
+    HK: [hkcd.com, hkcna.hk, scmp.com, wenweipo.com]
+    IN: [aninews.in, business-standard.com, economictimes.indiatimes.com, livemint.com, moneycontrol.com, thehindu.com, thehindubusinessline.com, timesofindia.indiatimes.com]
+    JP: [asahi.com, asia.nikkei.com, japantoday.com]
+    KR: [koreaherald.com]
+    MY: [freemalaysiatoday.com, orientaldaily.com.my, thestar.com.my]
+    PH: [bworldonline.com, manilatimes.net]
+    SG: [asiaone.com, businesstimes.com.sg, zaobao.com.sg]
+    TH: [dailynews.co.th, thailand-business-news.com]
+    UK: [dailymail.com, independent.co.uk, theguardian.com]
+    US: [247wallst.com, chinesepress.com, edition.cnn.com, epochtimes.com, ettvamerica.com, fool.com, forbes.com, foreignpolicy.com, morningstar.com, naturalnews.com, nbcnews.com, ntdtv.com, rttnews.com, taiwandaily.net, techtimes.com, thedailybeast.com, theepochtimes.com, tomshardware.com]
+    VN: [vietnamnews.vn]
+  taiwan_media:
+    TW: [art.ltn.com.tw, bnext.com.tw, cardu.com.tw, cars.tvbs.com.tw, chinatimes.com, cna.com.tw, def.ltn.com.tw, digitimes.com, ec.ltn.com.tw, ent.ltn.com.tw, epochtimes.com.tw, ettoday.net, fashion.ettoday.net, finance.ettoday.net, focustaiwan.tw, health.ettoday.net, news.ltn.com.tw, news.pts.org.tw, news.tvbs.com.tw, news.ustv.com.tw, newtalk.tw, nownews.com, setn.com, star.ettoday.net, star.setn.com, stars.udn.com, storm.mg, supertaste.tvbs.com.tw, taipeitimes.com, talk.ltn.com.tw, technews.tw, travel.ettoday.net, udn.com]
+  aggregator_nonmedia:
+    AE: [afghanistannews.net, australiannews.net, azerbaijannews.net, bignewsnetwork.com, britainnews.net, bruneinews.net, calcuttanews.net, laosnews.net, myanmarnews.net, shanghainews.net, thailandnews.net]
+    AU: [afghanistansun.com, asiabulletin.com, chinanationalnews.com, europesun.com, floridastatesman.com, greaterbelize.com, hongkongherald.com, indiagazette.com, iranherald.com, iraqsun.com, japanherald.com, mainemirror.com, malaysiasun.com, massachusettssun.com, mexicostar.com, milwaukeesun.com, miragenews.com, nepalnational.com, newjerseytelegraph.com, newyorkstatesman.com, newzealandstar.com, northkoreatimes.com, ohiostandard.com, pakistantelegraph.com, parisguardian.com, philippinetimes.com, russiaherald.com, sanantoniopost.com, singaporestar.com, southeastasiapost.com, srilankasource.com, sydneysun.com, taiwansun.com, texasguardian.com, vietnamtribune.com]
+    CH: [finanzen.ch]
+    CN: [163.com, baijiahao.baidu.com, k.sina.com.cn]
+    DE: [finanznachrichten.de]
+    HK: [portal.sina.com.hk]
+    IN: [news.webindia123.com]
+    TH: [ryt9.com]
+    TW: [blog.udn.com, ithelp.ithome.com.tw, n.yam.com]
+    US: [aol.com, blog.wenxuecity.com, dailypolitical.com, finance.yahoo.com, prnewswire.com, themarketsdaily.com, tickerreport.com, wenxuecity.com, yahoo.com]
+    unknown: [vava8.com]
+locations:
+  # Country-only is the conservative default for every reviewed registry entry.
+  # It intentionally carries no coordinates: a country's centroid is not an outlet.
+  countries:
+    AE: United Arab Emirates
+    AU: Australia
+    CH: Switzerland
+    CN: China
+    DE: Germany
+    GR: Greece
+    HK: Hong Kong
+    IN: India
+    JP: Japan
+    KR: South Korea
+    MY: Malaysia
+    PH: Philippines
+    SG: Singapore
+    TH: Thailand
+    TW: Taiwan
+    UK: United Kingdom
+    US: United States
+    VN: Vietnam
+  # Exact-domain exceptions only. Coordinates are city centroids, not street addresses.
+  # government_capital is an accepted method for future reviewed central-government
+  # publishers, but no current media domain is reclassified as a government publisher.
+  outlets:
+    asia.nikkei.com:
+      level: city
+      city: Tokyo
+      label: Tokyo, Japan
+      latitude: 35.6762
+      longitude: 139.6503
+      method: outlet_registry
+      confidence: verified
+    asahi.com:
+      level: city
+      city: Tokyo
+      label: Tokyo, Japan
+      latitude: 35.6762
+      longitude: 139.6503
+      method: outlet_registry
+      confidence: verified
+    edition.cnn.com:
+      level: city
+      city: Atlanta
+      label: Atlanta, United States
+      latitude: 33.749
+      longitude: -84.388
+      method: outlet_registry
+      confidence: verified
+    foreignpolicy.com:
+      level: city
+      city: Washington, D.C.
+      label: Washington, D.C., United States
+      latitude: 38.9072
+      longitude: -77.0369
+      method: outlet_registry
+      confidence: verified
+    koreaherald.com:
+      level: city
+      city: Seoul
+      label: Seoul, South Korea
+      latitude: 37.5665
+      longitude: 126.978
+      method: outlet_registry
+      confidence: verified
+    scmp.com:
+      level: city
+      city: Hong Kong
+      label: Hong Kong
+      latitude: 22.3193
+      longitude: 114.1694
+      method: outlet_registry
+      confidence: verified
+    theguardian.com:
+      level: city
+      city: London
+      label: London, United Kingdom
+      latitude: 51.5074
+      longitude: -0.1278
+      method: outlet_registry
+      confidence: verified
