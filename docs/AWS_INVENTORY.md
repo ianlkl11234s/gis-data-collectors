@@ -73,6 +73,8 @@ Rule ID: tiered-cold-storage
 | `ncdr_alerts/` | ncdr_alerts | 0.02 GB | 34 | |
 | `cloudflare_radar/` | cloudflare_radar | 2026-08-30 首次 S3 archive smoke/readback 成功 | 待下次完整 inventory | **main 5a371bf 已部署、production 5min；2026-08-31 03:17 首輪 partial/stale 7 observations。freshness calibration、跨來源 detector 尚未完成；raw archive 僅供內部復原** |
 | `ioda_internet_health/` | ioda_internet_health | 2026-08-30 首次 S3 archive smoke/readback 成功 | 待下次完整 inventory | **main 5a371bf 已部署、production 5min；2026-08-31 03:17 首輪 succeeded 159 observations。IODA raw 僅內部收集、不公開再散布；公開排除由 platform contract 強制；alerts/composite detector 未完成** |
+| `ripe_atlas_internet_health/` | ripe_atlas_internet_health | 尚未產生；repo default disabled | 待首次 production DB/S3 smoke | **2026-08-31 reviewed roster v2026-08-31.1；本機 official API fetch/normalize smoke 通過。raw Atlas response 僅供 private S3 復原，商業／公開使用需完成 RIPE NCC permission review** |
+| `ripe_ris_live/raw/v1/` | ripe_ris_live | 尚未產生；repo default disabled | 待 production 完整 5min window/S3 manifest smoke | **15 個 bounded origin-AS subscriptions，本機 official WebSocket ack/pong smoke 通過。15min gzip NDJSON + manifest；HEAD/SHA-256/manifest GET verified 才刪 local retry。replicas=1 hard gate、無 distributed lease、internal-only** |
 | `road_event_live/` | road_event_live | 0.02 GB | 2 | |
 | `waste_positions/` | waste_positions (垃圾車) | 0.02 GB | 7 | |
 | `groundwater_level/` | groundwater_level | 0.01 GB | 21 | |

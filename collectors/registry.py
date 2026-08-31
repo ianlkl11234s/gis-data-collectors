@@ -41,6 +41,8 @@ from .iot_wra import IotWraCollector
 from .launch import LaunchCollector
 from .ncdr_alerts import NCDRAlertsCollector
 from .internet_health import CloudflareRadarCollector, IodaInternetHealthCollector
+from .ripe_atlas_internet_health import RipeAtlasInternetHealthCollector
+from .ripe_ris_live import RipeRisLiveCollector
 from .news_events import NewsEventsCollector
 from .parking import ParkingCollector
 from .parking_offstreet import ParkingOffStreetCollector
@@ -145,6 +147,8 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     # being silently skipped by required_env.
     CollectorEntry(CloudflareRadarCollector, "Cloudflare Radar 網路健康收集器", "CLOUDFLARE_RADAR"),
     CollectorEntry(IodaInternetHealthCollector, "IODA 網路健康收集器", "IODA_INTERNET_HEALTH"),
+    CollectorEntry(RipeAtlasInternetHealthCollector, "RIPE Atlas 網路健康收集器", "RIPE_ATLAS_INTERNET_HEALTH"),
+    CollectorEntry(RipeRisLiveCollector, "RIPE RIS Live 長駐網路健康收集器", "RIPE_RIS_LIVE", (), True),
     CollectorEntry(FoursquarePOICollector, "Foursquare POI 收集器", "FOURSQUARE_POI", ("HF_TOKEN",)),
     CollectorEntry(AirQualityImageryCollector, "Air Quality Imagery 收集器", "AIR_QUALITY_IMAGERY"),
     CollectorEntry(AirQualityCollector, "Air Quality 觀測收集器", "AIR_QUALITY", ("MOENV_API_KEY",)),

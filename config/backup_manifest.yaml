@@ -139,8 +139,8 @@ archive_py_covered:
   - live.disaster_alerts           # ncdr_alerts + wra_drought_alert, 2026-04-07 起
   - live.lightning_events          # lightning_events, 2026-06-15 起
   - live.marine_observation_readings # cwa_marine_observation / isohe_port_marine, pending first production archive
-  - live.internet_health_source_runs # CF/IODA 2026-08-30 DB+local+S3 archive smoke verified; raw archives can replay run evidence
-  - live.internet_health_observations # canonical evidence; raw provider payload archives are available for replay
+  - live.internet_health_source_runs # CF/IODA verified; RIPE Atlas/RIS default disabled pending DB/private-S3 smoke
+  - live.internet_health_observations # canonical finite evidence; provider raw stays in private archives and NULL is preserved
   - live.internet_health_incidents # detector lifecycle records; provider archives plus observations are recovery evidence
   - live.nuclear_radiation_measurements  # nuclear_radiation, 2026-06-15 起
   - live.nuclear_radiation_stations  # 同上

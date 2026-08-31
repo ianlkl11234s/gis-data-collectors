@@ -152,6 +152,28 @@ def run_aisstream_worker():
         raise
 
 
+def run_ripe_ris_live_worker():
+    """Start the bounded RIPE RIS Live worker outside the interval scheduler."""
+    if not getattr(config, 'RIPE_RIS_LIVE_ENABLED', False):
+        print("\n⏸️  RIPE RIS Live 長駐收集器已停用 (RIPE_RIS_LIVE_ENABLED=false)")
+        return None
+    try:
+        from workers.ripe_ris_live import RipeRisLiveWorker
+
+        worker = RipeRisLiveWorker()
+        # Roster review, replicas=1, process lock, DB and private S3 are hard
+        # startup gates.  Fail on the main thread instead of leaving a dead
+        # daemon while the container health endpoint still looks alive.
+        worker.prepare()
+        thread = threading.Thread(target=worker.run, daemon=True, name='ripe-ris-live-worker')
+        thread.start()
+        print(f"\n✓ RIPE RIS Live 長駐收集器已啟動（{len(worker._subscriptions)} bounded subscriptions）")
+        return worker
+    except Exception as exc:
+        print(f"\n✗ RIPE RIS Live 長駐收集器初始化失敗: {exc}")
+        raise
+
+
 def run_api_server_thread():
     """在背景執行 API Server"""
     if not config.API_KEY:
@@ -410,6 +432,9 @@ def main():
     # AISStream 是長駐 WebSocket，刻意不掛入 interval scheduler，避免被當成 polling job。
     aisstream_worker = run_aisstream_worker()
 
+    # RIS Live 同樣是單一常駐 WebSocket；replicas=1 是 enable hard gate。
+    ripe_ris_live_worker = run_ripe_ris_live_worker()
+
     # 設定每日報告（先建立，讓歸檔任務可以回傳結果）
     daily_report_task = run_daily_report_task(collectors)
 
@@ -444,10 +469,15 @@ def main():
 
     if not collectors:
         # 如果沒有收集器但有 API，繼續執行
-        if not api_thread and not aisstream_worker and not gfw_hourly_task:
+        if not api_thread and not aisstream_worker and not ripe_ris_live_worker and not gfw_hourly_task:
             sys.exit(1)
-        if aisstream_worker:
-            print("\n⚠️  沒有排程型收集器，僅執行 AISStream 長駐 worker" + (" + API Server" if api_thread else ""))
+        if aisstream_worker or ripe_ris_live_worker:
+            workers = []
+            if aisstream_worker:
+                workers.append("AISStream")
+            if ripe_ris_live_worker:
+                workers.append("RIPE RIS Live")
+            print("\n⚠️  沒有排程型收集器，僅執行 " + " + ".join(workers) + " 長駐 worker" + (" + API Server" if api_thread else ""))
         else:
             print("\n⚠️  沒有收集器，僅執行 API Server")
 
@@ -459,6 +489,8 @@ def main():
         print(f"\n\n🛑 收到停止信號，正在結束...")
         if aisstream_worker:
             aisstream_worker.stop()
+        if ripe_ris_live_worker:
+            ripe_ris_live_worker.stop()
         running = False
 
     signal.signal(signal.SIGINT, signal_handler)

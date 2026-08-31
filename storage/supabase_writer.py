@@ -2147,6 +2147,8 @@ class SupabaseWriter:
         'ncdr_alerts': _transform_ncdr_alerts,
         'cloudflare_radar': _transform_internet_health,
         'ioda_internet_health': _transform_internet_health,
+        'ripe_atlas_internet_health': _transform_internet_health,
+        'ripe_ris_live': _transform_internet_health,
         'news_events': _transform_news_events,
         'cwa_satellite': _transform_cwa_satellite,
         'cwa_marine_observation': _transform_marine_observation,
@@ -2290,7 +2292,10 @@ class SupabaseWriter:
 
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """Write collector-specific multi-table contracts atomically."""
-        if collector_name in ('cloudflare_radar', 'ioda_internet_health'):
+        if collector_name in (
+            'cloudflare_radar', 'ioda_internet_health',
+            'ripe_atlas_internet_health', 'ripe_ris_live',
+        ):
             runs = [r for r in records if r.get('_type') == 'source_run']
             observations = [r for r in records if r.get('_type') == 'observation']
             incidents = [r for r in records if r.get('_type') == 'incident']
