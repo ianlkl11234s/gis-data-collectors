@@ -359,15 +359,15 @@ ioda_internet_health:
     公開排除由 platform contract 強制。alerts 未驗證且保持關閉；Composite detector 未實作。
 
 ripe_atlas_internet_health:
-  enabled: true
-  deployment: zeabur
+  enabled: false
+  deployment: disabled
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs
     - live.internet_health_observations
     - live.internet_health_current
   s3_prefixes:
-    - {prefix: ripe_atlas_internet_health/archives/, expected_daily: true}
+    - {prefix: ripe_atlas_internet_health/archives/, expected_daily: false}
   critical: false
   notes: >-
     RIPE Atlas reviewed public ping measurements；2026-08-31 roster v2026-08-31.1
