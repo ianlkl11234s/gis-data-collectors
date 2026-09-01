@@ -6,6 +6,7 @@ import types
 import zipfile
 
 import pytest
+import requests
 
 from collectors.global_events import (
     GKGArtifact,
@@ -71,6 +72,51 @@ def test_master_index_and_contiguous_gap():
     collector._select_pending(artifacts, None)
     with pytest.raises(GKGIndexGap):
         collector._select_pending(artifacts, "20260901114500")
+
+
+def test_indexed_translation_404_is_explicit_artifact_unavailable(monkeypatch):
+    from collectors.global_events import GKGArtifactUnavailable
+
+    artifact = GKGArtifact(
+        "translation", "20260901163000", 10, "a" * 32, "https://example/404"
+    )
+
+    class NotReadyResponse:
+        status_code = 404
+        content = b""
+
+        def raise_for_status(self):
+            raise requests.HTTPError(response=self)
+
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = type(
+        "NotReadySession", (), {"get": lambda self, url, timeout: NotReadyResponse()}
+    )()
+    with pytest.raises(GKGArtifactUnavailable, match="HTTP 404"):
+        collector._download_artifact(artifact)
+
+
+def test_openrouter_none_content_has_single_clear_failure(monkeypatch):
+    import config
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": None}}]}
+
+    class Session:
+        def post(self, *args, **kwargs):
+            return Response()
+
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = Session()
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
+    with pytest.raises(ValueError, match="content must be a non-empty string"):
+        collector._request_stage1([])
 
 
 def test_compact_batch_hash_and_full_producer_lineage():
@@ -296,6 +342,7 @@ def test_s3_manifest_failure_does_not_advance_checkpoint_or_mark_raw(
     assert run_receipt["status"] == "failed"
     assert run_receipt["batch_id"] is None
     assert run_receipt["archive_eligible"] is False
+    assert run_receipt["error_type"] == "handoff_failed"
     assert calls[-1].startswith("global_events/handoff/manifests/")
     assert not (tmp_path / "global_events" / "checkpoint.json").exists()
     raw = list((tmp_path / "global_events" / "raw").glob("**/*.zip"))
@@ -424,6 +471,63 @@ def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
     assert "_collector_error" in result
     assert len(result["_supabase_receipts"]) == 1
     assert result["_supabase_receipts"][0]["status"] == "failed"
+    assert result["_supabase_receipts"][0]["error_type"] == "source_or_stage1_failed"
     assert calls == []
     assert not (tmp_path / "global_events" / "checkpoint.json").exists()
+    assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
+
+
+def test_translation_404_fails_closed_without_stage1_s3_or_checkpoint(
+    monkeypatch, tmp_path
+):
+    import storage.s3
+
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    base_session = collector._session
+    openrouter_calls = []
+
+    class NotReadyResponse:
+        status_code = 404
+        content = b""
+
+        def raise_for_status(self):
+            raise requests.HTTPError(response=self)
+
+    class Translation404Session:
+        headers = {}
+
+        def get(self, url, timeout):
+            if url.endswith(".translation.gkg.csv.zip"):
+                return NotReadyResponse()
+            return base_session.get(url, timeout)
+
+        def post(self, *args, **kwargs):
+            openrouter_calls.append((args, kwargs))
+            raise AssertionError("OpenRouter must not be called after a source error")
+
+    class UnexpectedS3:
+        def __init__(self):
+            raise AssertionError("S3 must not be called after a source error")
+
+    monkeypatch.setattr(storage.s3, "S3Storage", UnexpectedS3)
+    collector._session = Translation404Session()
+    result = collector.collect()
+
+    assert "_collector_error" in result
+    assert "translation:" in result["_collector_error"]
+    assert "HTTP 404" in result["_collector_error"]
+    assert result["health"]["status"] == "ERROR"
+    assert openrouter_calls == []
+    assert len(result["_supabase_receipts"]) == 1
+    receipt = result["_supabase_receipts"][0]
+    assert receipt["status"] == "failed"
+    assert receipt["error_type"] == "source_or_stage1_failed"
+    assert receipt["batch_id"] is None
+    assert receipt["output_artifact_sha256"] is None
+    assert receipt["raw_response_sha256"] is None
+    assert not (tmp_path / "global_events" / "checkpoint.json").exists()
+    raw = list((tmp_path / "global_events" / "raw").glob("**/*.zip"))
+    assert len(raw) == 1
+    assert raw[0].name.startswith("standard_")
     assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
