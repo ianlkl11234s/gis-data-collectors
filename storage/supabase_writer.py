@@ -37,6 +37,16 @@ logger = logging.getLogger(__name__)
 BUFFER_DIR = config.LOCAL_DATA_DIR / 'buffer'
 
 
+def _taipei_today() -> date:
+    """目前台北（Asia/Taipei，UTC+8，全年無 DST）日期。
+
+    獨立成函式方便測試 monkeypatch。History dedup 的每日 heartbeat
+    刻意用純時間比較判斷、不查 DB。
+    """
+    from datetime import timedelta, timezone
+    return datetime.now(timezone(timedelta(hours=8))).date()
+
+
 class SupabaseWriter:
     """統一的 Supabase 寫入介面（連線池版本）。
 
@@ -53,6 +63,13 @@ class SupabaseWriter:
     # DB 寫入連續錯誤追蹤（跨 collector 共用）
     _db_consecutive_errors: dict[str, int] = {}
     _DB_ERROR_ALERT_THRESHOLD = 3  # 連續 N 次失敗才告警（避免瞬時錯誤洗版）
+
+    # History dedup 的每日 heartbeat：collector_name -> 上次全量寫入 history 的
+    # 台北日期。同一台北日只需第一輪全量，其餘走正常 dedup；跨到新的一天
+    # 再全量一次 —— 保證「長期不變的 row」不會因為 dedup + 有限 lookback
+    # 窗補不到值，讓下游整天顯示 '-'。collector 重啟會清空這個 dict，
+    # 下一輪多做一次全量寫，無害。
+    _history_dedup_heartbeat_date: dict[str, date] = {}
 
     def __init__(self, database_url: str):
         self.database_url = database_url
@@ -2221,9 +2238,61 @@ class SupabaseWriter:
         columns = table_config['columns']
 
         with self._txn(conn) as cur:
+            # 0. History dedup（可選，見 table_config['history_dedup_cols']）：
+            #    只有指定欄位變動、或該 current_key 首次出現，才寫 history；
+            #    current 仍每輪全量 upsert，行為不變。
+            #    ⚠️ 順序關鍵：必須先撈 current 現況再 upsert current（見下方 2.），
+            #    否則撈到的會是本輪剛寫入的值，比對永遠相同、dedup 形同失效。
+            def _dedup_norm(v):
+                # REAL/float4 欄位（如 road_congestion 的 travel_speed/travel_time）
+                # 存進 DB 再讀回來會有 float4 精度誤差（約 1e-5~1e-6），
+                # 不 round 的話同一個值會被誤判成「變動」、dedup 形同失效。
+                if isinstance(v, float):
+                    return round(v, 2)
+                return v
+
+            dedup_cols = table_config.get('history_dedup_cols')
+            history_records = records
+            dedup_skipped = 0
+            is_heartbeat = False
+            if dedup_cols and table_config.get('current') and table_config.get('current_key'):
+                # 每日 heartbeat：同一台北日曆日的第一次寫入 bypass dedup，
+                # 全量寫入 history 當作當天的完整快照。純時間判斷、不查 DB。
+                # 任何有限 lookback 的下游聚合都補不到「連續多天沒變」的
+                # row，靠這個保證每天至少有一張全量快照能被回溯窗撈到。
+                today = _taipei_today()
+                is_heartbeat = self._history_dedup_heartbeat_date.get(collector_name) != today
+
+                if is_heartbeat:
+                    self._history_dedup_heartbeat_date[collector_name] = today
+                    history_records = records
+                else:
+                    current_key = table_config['current_key']
+                    keys = list({r.get(current_key) for r in records if r.get(current_key) is not None})
+                    prev_state = {}
+                    if keys:
+                        cur.execute(
+                            f"SELECT {current_key}, {','.join(dedup_cols)} "
+                            f"FROM {table_config['current']} WHERE {current_key} = ANY(%s)",
+                            (keys,),
+                        )
+                        prev_state = {
+                            row[0]: tuple(_dedup_norm(v) for v in row[1:])
+                            for row in cur.fetchall()
+                        }
+
+                    history_records = []
+                    for r in records:
+                        prev = prev_state.get(r.get(current_key))
+                        cur_vals = tuple(_dedup_norm(r.get(c)) for c in dedup_cols)
+                        if prev is None or cur_vals != prev:
+                            history_records.append(r)
+                        else:
+                            dedup_skipped += 1
+
             # 1. INSERT INTO 分區表（歷史）
             values = []
-            for r in records:
+            for r in history_records:
                 row = tuple(r.get(c) for c in columns)
                 values.append(row)
 
@@ -2250,6 +2319,16 @@ class SupabaseWriter:
                     sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s"
 
                 execute_values(cur, sql, values, page_size=1000)
+
+            if dedup_cols:
+                if is_heartbeat:
+                    logger.info(
+                        f"[{collector_name}] history dedup: 每日 heartbeat 全量寫入 {len(values)} 筆"
+                    )
+                else:
+                    logger.info(
+                        f"[{collector_name}] history dedup: 寫入 {len(values)} 筆 / 略過 {dedup_skipped} 筆未變動"
+                    )
 
             # 2. UPSERT INTO current 表（最新狀態）
             # 同一批次內可能有重複 PK（例如同一輛公車出現兩次），

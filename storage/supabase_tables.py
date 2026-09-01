@@ -84,6 +84,10 @@ TABLE_MAP = {
             'travel_time', 'travel_speed', 'congestion_level', 'congestion_level_id',
             'data_sources', 'data_collect_time', 'collected_at',
         ],
+        # history dedup：(congestion_level, travel_speed, travel_time) 任一變動，
+        # 或該 section_uid 首次出現才寫 history；current 仍每輪全量 upsert。
+        # 見 _write_to_db 的通用 dedup 邏輯（比照 road_event_live 的 content-diff 作法）。
+        'history_dedup_cols': ['congestion_level', 'travel_speed', 'travel_time'],
     },
     'parking_offstreet': {
         # OffStreet 路外場館（新 collector parking_offstreet.py，City/SA/Tourism 3 變體）
