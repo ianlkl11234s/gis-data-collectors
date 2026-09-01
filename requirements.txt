@@ -32,6 +32,8 @@ pyarrow>=14
 # 新聞事件 collector（news_events：RSS parse + Gemini 地點抽取）
 feedparser>=6.0.0
 google-genai>=1.0.0
+# Global Events Stage1 Traditional-Chinese hard gate
+opencc-python-reimplemented>=0.1.7
 
 # 全球氣候 collectors（global_climate：GFS/CMEMS/CAMS 模式場解析）
 numpy>=1.26.0            # 三支 collector 直接 import（先前僅靠 shapely 間接帶入）

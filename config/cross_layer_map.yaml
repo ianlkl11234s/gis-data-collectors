@@ -414,6 +414,22 @@ news_events:
   critical: false
   notes: RSS 29 feeds + Gemini Flash-Lite 地名抽取（需 GEMINI_API_KEY + NEWS_EVENTS_ENABLED）
 
+global_events:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 60
+  supabase_tables:
+    - intel.global_event_collector_batches
+    - intel.global_event_collector_run_receipts
+  s3_prefixes:
+    - {prefix: global_events/handoff/, expected_daily: false}
+  critical: false
+  notes: >-
+    GDELT standard+translation metadata-only cursor/backfill + Qwen Stage1。
+    Migration 389 只準備 immutable collector batch/run receipts；固定
+    publisher、GitHub archive 與 production gates 尚未完成。本 collector 預設
+    disabled，handoff 與 receipt 明確標記 production_publishable=false。
+
 # ─────────────────────────────────────────────────────────
 # 太空 / 衛星
 # ─────────────────────────────────────────────────────────

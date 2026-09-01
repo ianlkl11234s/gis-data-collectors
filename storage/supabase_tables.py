@@ -533,6 +533,12 @@ TABLE_MAP = {
         'upsert_key': 'url_norm',
         'upsert_strategy': 'do_nothing',
     },
+    'global_events': {
+        # Migration 389 prepares immutable Collector batch/run receipts only.
+        # Event current/version publishing remains a separate fixed publisher.
+        'is_multi_table': True,
+        'contract': 'global-events/supabase-lifecycle-v1-migration-389',
+    },
     'power_taipower': {
         # 台電即時電力供需：單一 collector 寫 3 張表
         #   live.power_system_status   UNIQUE(observed_at)             DO NOTHING
