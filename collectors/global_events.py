@@ -657,6 +657,7 @@ class GlobalEventsCollector(BaseCollector):
         self._supabase_receipts: list[dict[str, Any]] = []
         self._raw_response_sha256: str | None = None
         self._stage1_usage: dict[str, Any] = {}
+        self._stage1_observation: dict[str, Any] = {}
         self._normalization_lineage: list[dict[str, Any]] = []
 
     @property
@@ -804,6 +805,42 @@ class GlobalEventsCollector(BaseCollector):
             }
             for c in candidates
         ]
+        output_contract = {
+            "top_level_only": ["assessments"],
+            "assessment_count": len(candidates),
+            "assessment_additional_properties": False,
+            "assessment_required_fields": [
+                "candidate_id",
+                "candidate_rank",
+                "decision",
+                "event_group",
+                "title_zh_tw",
+                "summary_zh_tw",
+                "category",
+                "severity",
+                "severity_source",
+                "taiwan_relationship",
+                "taiwan_impact_zh_tw",
+                "confidence",
+                "reason_zh_tw",
+            ],
+            "decision_enum": ["keep_core", "keep_watch", "drop_noise"],
+            "category_enum": [
+                "accident",
+                "crime",
+                "disaster",
+                "traffic",
+                "health",
+                "policy",
+                "other",
+            ],
+            "taiwan_relationship_enum": ["direct", "indirect", "none", "unknown"],
+            "severity_source": "inferred",
+            "severity_range": [0, 3],
+            "confidence_range": [0, 1],
+            "event_group_pattern": "^E\\d{3,}$",
+            "traditional_chinese_required": True,
+        }
         response = self._session.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
@@ -818,12 +855,23 @@ class GlobalEventsCollector(BaseCollector):
                     int(getattr(config, "GLOBAL_EVENTS_QWEN_MAX_OUTPUT_TOKENS", 4096)),
                 ),
                 "response_format": {"type": "json_object"},
+                # Qwen3.7 Flash exposes JSON mode but not JSON-schema
+                # enforcement. Disable its default reasoning so the bounded
+                # response budget is reserved for the JSON object; local
+                # validate_stage1 remains the final strict gate.
+                "reasoning": {"effort": "none"},
                 "messages": [
                     {
                         "role": "system",
-                        "content": "輸入只有 GDELT 標題與 metadata，輸出符合 global-events Stage1 assessment v1 的 JSON；severity_source 固定 inferred；所有中文使用臺灣繁體。",
+                        "content": "輸入只有 GDELT 標題與 metadata；只輸出 user output_contract 指定的 JSON，不要 markdown、解釋或額外欄位；所有中文使用臺灣繁體。",
                     },
-                    {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {"candidates": prompt, "output_contract": output_contract},
+                            ensure_ascii=False,
+                        ),
+                    },
                 ],
             },
             timeout=max(30, int(getattr(config, "GLOBAL_EVENTS_QWEN_TIMEOUT", 90))),
@@ -831,14 +879,30 @@ class GlobalEventsCollector(BaseCollector):
         response.raise_for_status()
         payload = response.json()
         usage = payload.get("usage") or {}
+        completion_details = usage.get("completion_tokens_details")
+        reasoning_units = usage.get("reasoning_tokens")
+        if reasoning_units is None and isinstance(completion_details, dict):
+            reasoning_units = completion_details.get("reasoning_tokens")
         self._stage1_usage = {
             "input_units": usage.get("prompt_tokens", usage.get("input_tokens")),
             "output_units": usage.get(
                 "completion_tokens", usage.get("output_tokens")
             ),
+            "reasoning_units": reasoning_units,
             "cost_usd": usage.get("cost"),
         }
-        usage = payload.get("usage") or {}
+        choices = payload.get("choices")
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        message = choice.get("message") if isinstance(choice, dict) else {}
+        message = message if isinstance(message, dict) else {}
+        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        content = message.get("content")
+        content_length = len(content) if isinstance(content, str) else None
+        self._stage1_observation = {
+            "finish_reason": finish_reason if isinstance(finish_reason, str) else None,
+            "content_length": content_length,
+            "usage": self._stage1_usage,
+        }
         cost = usage.get("cost")
         if cost is not None and float(cost) > float(
             getattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
@@ -847,12 +911,29 @@ class GlobalEventsCollector(BaseCollector):
                 "Qwen Stage1 usage cost exceeded post-hoc alert threshold: %.6f",
                 float(cost),
             )
-        content = payload["choices"][0]["message"]["content"]
+        if isinstance(content, str):
+            # Preserve only a digest of the provider bytes even when the
+            # response is truncated or malformed; the raw content never
+            # enters a receipt or exception message.
+            self._raw_response_sha256 = hashlib.sha256(
+                content.encode("utf-8")
+            ).hexdigest()
+        if finish_reason != "stop":
+            raise ValueError(
+                "OpenRouter Stage1 incomplete response: "
+                f"finish_reason={finish_reason!r}, content_length={content_length}"
+            )
         if not isinstance(content, str) or not content.strip():
             raise ValueError("OpenRouter message content must be a non-empty string")
-        self._raw_response_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.I)
-        return json.loads(content)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "OpenRouter Stage1 JSON decode failed: "
+                f"finish_reason={finish_reason!r}, content_length={content_length}, "
+                f"line={exc.lineno}, column={exc.colno}, char={exc.pos}"
+            ) from exc
 
     def _upload_handoff(
         self,
@@ -899,6 +980,7 @@ class GlobalEventsCollector(BaseCollector):
         producer_sha = getattr(config, "GLOBAL_EVENTS_PRODUCER_GIT_COMMIT", "")
         self._raw_response_sha256 = None
         self._stage1_usage = {}
+        self._stage1_observation = {}
         self._normalization_lineage = []
         checkpoints = self._load_checkpoints()
         groups: dict[str, dict[str, Any]] = {}
@@ -1068,6 +1150,7 @@ class GlobalEventsCollector(BaseCollector):
                 "traditional_chinese_gate": "canonical_final_passed",
                 "normalization_lineage": self._normalization_lineage,
                 "source_warning": "title and GDELT metadata only; no article full text",
+                "stage1_observation": self._stage1_observation,
                 "usage": self._stage1_usage,
                 "result": stage1,
             }
@@ -1093,6 +1176,7 @@ class GlobalEventsCollector(BaseCollector):
             "stage1_sha256": content_sha256(stage1) if stage1 is not None else None,
             "raw_objects": raw_metadata,
             "streams": stream_stats,
+            "stage1_observation": self._stage1_observation,
             "created_at": datetime.now(UTC).isoformat(),
             "archive_eligible": True if run_manifest is not None else False,
             "production_publishable": False,
