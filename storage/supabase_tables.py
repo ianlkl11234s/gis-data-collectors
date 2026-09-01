@@ -277,7 +277,7 @@ TABLE_MAP = {
         'history': 'live.aqi_imagery_frames',
         'columns': [
             'product_type', 'observed_at', 'image_bytes', 'mime_type',
-            'image_size', 'product_url', 'collected_at',
+            'image_size', 'product_url', 'image_key', 'collected_at',
         ],
         # PK (product_type, observed_at)：同小時同產品重複抓不寫入
         'upsert_key': 'product_type,observed_at',

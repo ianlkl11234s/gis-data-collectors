@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 """
-回填 live.cwa_imagery_frames 歷史影像到 R2 CDN（AR-11 read-path-cdn）。
+回填 imagery frame 表歷史影像到 R2 CDN（AR-11 read-path-cdn）。
+
+支援兩個來源（--table 選擇，預設 cwa）：
+- cwa：live.cwa_imagery_frames（PK: dataset_id, observed_at）
+- aqi：live.aqi_imagery_frames（PK: product_type, observed_at）
 
 對每一列 image_key IS NULL 的 frame：算 R2 key → 上傳 bytea 到 R2 → 回填 image_key。
 
 設計重點（連的是 Supabase transaction pooler，不可長交易 / 長 cursor）：
-- keyset 分頁：每批 WHERE image_key IS NULL ORDER BY (dataset_id, observed_at)
-  LIMIT N，用 (dataset_id, observed_at) > cursor 推進。每批獨立 query + commit，
+- keyset 分頁：每批 WHERE image_key IS NULL ORDER BY (id_col, observed_at)
+  LIMIT N，用 (id_col, observed_at) > cursor 推進。每批獨立 query + commit，
   不留 server-side cursor / 不開長交易。
 - 冪等：image_key IS NULL 天然可續跑；成功回填的列下次自動排除。
 - 韌性：單列上傳失敗 → skip + 記數，keyset 仍推進（不會卡在壞列），全程不中斷。
 - Ctrl-C：已 UPDATE 的批次已 commit，直接重跑即續傳。
 
-總量 ~21.5k 列 / ~3.2GB，跑很久是正常的。
+cwa 總量 ~21.5k 列 / ~3.2GB，跑很久是正常的。
 
 用法：
-    python3 scripts/backfill_imagery_r2.py                  # 全量回填
-    python3 scripts/backfill_imagery_r2.py --limit 5        # 只跑 5 列（驗證用）
-    python3 scripts/backfill_imagery_r2.py --dry-run        # 只算 key + 統計，不上傳/不寫 DB
-    python3 scripts/backfill_imagery_r2.py --batch-size 100 # 調整每批列數（預設 50）
+    python3 scripts/backfill_imagery_r2.py                        # cwa 全量回填
+    python3 scripts/backfill_imagery_r2.py --table aqi            # aqi 全量回填
+    python3 scripts/backfill_imagery_r2.py --table aqi --limit 5  # 只跑 5 列（驗證用）
+    python3 scripts/backfill_imagery_r2.py --table aqi --dry-run  # 只算 key + 統計，不上傳/不寫 DB
+    python3 scripts/backfill_imagery_r2.py --batch-size 100       # 調整每批列數（預設 50）
 
 需環境變數：SUPABASE_DB_URL + R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY /
 R2_ENDPOINT_URL（R2_BUCKET 預設 mini-tw-pulse）。
@@ -33,37 +38,54 @@ from psycopg2.extras import execute_values
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import SUPABASE_DB_URL  # noqa: E402
-from collectors.cwa_satellite import imagery_r2_key  # noqa: E402
+from collectors.cwa_satellite import imagery_r2_key as cwa_imagery_r2_key  # noqa: E402
+from collectors.air_quality_imagery import imagery_r2_key as aqi_imagery_r2_key  # noqa: E402
 from storage.r2 import get_r2_storage  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
+# 來源表設定：table/id_col 為程式內固定常數（非使用者輸入），f-string 組 SQL 安全。
+SOURCES = {
+    'cwa': {
+        'table': 'live.cwa_imagery_frames',
+        'id_col': 'dataset_id',
+        'key_fn': cwa_imagery_r2_key,
+    },
+    'aqi': {
+        'table': 'live.aqi_imagery_frames',
+        'id_col': 'product_type',
+        'key_fn': aqi_imagery_r2_key,
+    },
+}
 
-def fetch_batch(conn, cursor_key, limit):
+
+def fetch_batch(conn, source, cursor_key, limit):
     """keyset 分頁抓一批 image_key IS NULL 的列。每批獨立 query + commit（pooler 友善）。"""
+    table = source['table']
+    id_col = source['id_col']
     with conn.cursor() as cur:
         if cursor_key is None:
             cur.execute(
-                """
-                SELECT dataset_id, observed_at, mime_type, image_bytes
-                  FROM live.cwa_imagery_frames
+                f"""
+                SELECT {id_col}, observed_at, mime_type, image_bytes
+                  FROM {table}
                  WHERE image_key IS NULL
                    AND image_bytes IS NOT NULL
-                 ORDER BY dataset_id, observed_at
+                 ORDER BY {id_col}, observed_at
                  LIMIT %s
                 """,
                 (limit,),
             )
         else:
             cur.execute(
-                """
-                SELECT dataset_id, observed_at, mime_type, image_bytes
-                  FROM live.cwa_imagery_frames
+                f"""
+                SELECT {id_col}, observed_at, mime_type, image_bytes
+                  FROM {table}
                  WHERE image_key IS NULL
                    AND image_bytes IS NOT NULL
-                   AND (dataset_id, observed_at) > (%s, %s)
-                 ORDER BY dataset_id, observed_at
+                   AND ({id_col}, observed_at) > (%s, %s)
+                 ORDER BY {id_col}, observed_at
                  LIMIT %s
                 """,
                 (cursor_key[0], cursor_key[1], limit),
@@ -73,15 +95,17 @@ def fetch_batch(conn, cursor_key, limit):
     return rows
 
 
-def update_keys(conn, updates):
-    """一次批次 UPDATE image_key。updates: list of (dataset_id, observed_at, image_key)。"""
+def update_keys(conn, source, updates):
+    """一次批次 UPDATE image_key。updates: list of (id_value, observed_at, image_key)。"""
     if not updates:
         return 0
-    sql = """
-        UPDATE live.cwa_imagery_frames AS t
+    table = source['table']
+    id_col = source['id_col']
+    sql = f"""
+        UPDATE {table} AS t
            SET image_key = v.image_key
-          FROM (VALUES %s) AS v(dataset_id, observed_at, image_key)
-         WHERE t.dataset_id = v.dataset_id
+          FROM (VALUES %s) AS v({id_col}, observed_at, image_key)
+         WHERE t.{id_col} = v.{id_col}
            AND t.observed_at = v.observed_at::timestamptz
     """
     with conn.cursor() as cur:
@@ -93,6 +117,8 @@ def update_keys(conn, updates):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('--table', choices=sorted(SOURCES), default='cwa',
+                    help='回填來源表：cwa（預設）或 aqi')
     ap.add_argument('--dry-run', action='store_true',
                     help='只算 key + 統計，不上傳 R2、不寫 DB')
     ap.add_argument('--limit', type=int,
@@ -100,6 +126,9 @@ def main():
     ap.add_argument('--batch-size', type=int, default=50,
                     help='每批列數（keyset 分頁），預設 50')
     args = ap.parse_args()
+
+    source = SOURCES[args.table]
+    key_fn = source['key_fn']
 
     if not SUPABASE_DB_URL:
         logger.error("SUPABASE_DB_URL 未設定")
@@ -130,30 +159,30 @@ def main():
                     break
                 this_limit = min(this_limit, remaining)
 
-            rows = fetch_batch(conn, cursor_key, this_limit)
+            rows = fetch_batch(conn, source, cursor_key, this_limit)
             if not rows:
                 break
             batch_no += 1
 
             updates = []
             batch_ok = batch_fail = 0
-            for dataset_id, observed_at, mime_type, image_bytes in rows:
+            for id_value, observed_at, mime_type, image_bytes in rows:
                 total_seen += 1
-                cursor_key = (dataset_id, observed_at)  # 推進 keyset（失敗列也跳過）
-                key = imagery_r2_key(dataset_id, observed_at, mime_type)
+                cursor_key = (id_value, observed_at)  # 推進 keyset（失敗列也跳過）
+                key = key_fn(id_value, observed_at, mime_type)
                 if args.dry_run:
                     batch_ok += 1
                     continue
                 try:
                     r2.upload_image(key, bytes(image_bytes), mime_type)
-                    updates.append((dataset_id, observed_at, key))
+                    updates.append((id_value, observed_at, key))
                     batch_ok += 1
                 except Exception as e:
                     batch_fail += 1
                     logger.warning(f"  上傳失敗 {key}: {e}")
 
             if updates:
-                update_keys(conn, updates)
+                update_keys(conn, source, updates)
 
             total_ok += batch_ok
             total_fail += batch_fail
