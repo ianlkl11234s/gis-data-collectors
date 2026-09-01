@@ -106,7 +106,11 @@ def test_openrouter_none_content_has_single_clear_failure(monkeypatch):
             return None
 
         def json(self):
-            return {"choices": [{"message": {"content": None}}]}
+            return {
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": None}}
+                ]
+            }
 
     class Session:
         def post(self, *args, **kwargs):
@@ -117,6 +121,103 @@ def test_openrouter_none_content_has_single_clear_failure(monkeypatch):
     monkeypatch.setattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
     with pytest.raises(ValueError, match="content must be a non-empty string"):
         collector._request_stage1([])
+    assert getattr(collector, "_raw_response_sha256", None) is None
+
+
+@pytest.mark.parametrize(
+    ("content", "finish_reason", "message"),
+    [
+        ('{"assessments": [', "stop", "JSON decode failed"),
+        ('{"assessments": [', "length", "incomplete response"),
+    ],
+)
+def test_openrouter_malformed_or_truncated_stage1_is_observable_and_rejected(
+    monkeypatch, content, finish_reason, message
+):
+    import config
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "finish_reason": finish_reason,
+                        "message": {"content": content},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 7,
+                    "completion_tokens": 9,
+                    "completion_tokens_details": {"reasoning_tokens": 2},
+                    "cost": 0.001,
+                },
+            }
+
+    class Session:
+        def post(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return Response()
+
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = Session()
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
+    candidate = {
+        "routing_rank": 1,
+        "candidate_id": "cand_" + "a" * 24,
+        "representative_documents": [
+            {"title": "Major earthquake", "url": "https://example.test/story"}
+        ],
+        "coverage": {"documents": 1},
+        "routing_evidence": {"impact_signals": ["major_disaster"]},
+    }
+    with pytest.raises(ValueError, match=message):
+        collector._request_stage1([candidate])
+
+    payload = calls[0][1]["json"]
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["reasoning"] == {"effort": "none"}
+    assert "provider" not in payload
+    assert "json_schema" not in payload
+    request_content = json.loads(payload["messages"][1]["content"])
+    assert request_content["output_contract"]["assessment_count"] == 1
+    assert request_content["output_contract"][
+        "assessment_additional_properties"
+    ] is False
+    assert set(request_content["output_contract"]["assessment_required_fields"]) == {
+        "candidate_id",
+        "candidate_rank",
+        "decision",
+        "event_group",
+        "title_zh_tw",
+        "summary_zh_tw",
+        "category",
+        "severity",
+        "severity_source",
+        "taiwan_relationship",
+        "taiwan_impact_zh_tw",
+        "confidence",
+        "reason_zh_tw",
+    }
+    assert collector._stage1_observation == {
+        "finish_reason": finish_reason,
+        "content_length": len(content),
+        "usage": {
+            "input_units": 7,
+            "output_units": 9,
+            "reasoning_units": 2,
+            "cost_usd": 0.001,
+        },
+    }
+    assert collector._raw_response_sha256 == hashlib.sha256(
+        content.encode("utf-8")
+    ).hexdigest()
+    assert "assessments" not in str(collector._stage1_observation)
 
 
 def test_compact_batch_hash_and_full_producer_lineage():
@@ -465,13 +566,49 @@ def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
 
     monkeypatch.setattr(storage.s3, "S3Storage", UnexpectedS3)
     collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
-    collector._request_stage1 = lambda _candidates: {"assessments": []}
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    malformed_content = '{"assessments": ['
+
+    class Stage1Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": malformed_content},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 4096,
+                    "reasoning_tokens": 512,
+                    "cost": 0.01,
+                },
+            }
+
+    collector._session.post = lambda *args, **kwargs: Stage1Response()
     result = collector.collect()
 
     assert "_collector_error" in result
     assert len(result["_supabase_receipts"]) == 1
     assert result["_supabase_receipts"][0]["status"] == "failed"
     assert result["_supabase_receipts"][0]["error_type"] == "source_or_stage1_failed"
+    assert result["_supabase_receipts"][0]["receipt"]["stage1_observation"] == {
+        "finish_reason": "length",
+        "content_length": len(malformed_content),
+        "usage": {
+            "input_units": 100,
+            "output_units": 4096,
+            "reasoning_units": 512,
+            "cost_usd": 0.01,
+        },
+    }
+    assert result["_supabase_receipts"][0]["raw_response_sha256"] == hashlib.sha256(
+        malformed_content.encode("utf-8")
+    ).hexdigest()
     assert calls == []
     assert not (tmp_path / "global_events" / "checkpoint.json").exists()
     assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
