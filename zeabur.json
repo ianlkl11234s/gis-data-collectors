@@ -5,6 +5,45 @@
     "type": "dockerfile"
   },
   "env": {
+    "GLOBAL_EVENTS_ENABLED": {
+      "description": "GDELT global-events metadata/Qwen handoff；Supabase migration、publisher 與七日 gate 前保持 false",
+      "default": "false"
+    },
+    "GLOBAL_EVENTS_INTERVAL": {
+      "description": "GDELT global-events polling interval（分鐘）",
+      "default": "60"
+    },
+    "GLOBAL_EVENTS_MAX_FILES_PER_STREAM": {
+      "description": "每個 GDELT stream 每輪最多處理檔案數；hourly 正常 4 檔、失敗追趕最多 8 檔",
+      "default": "8"
+    },
+    "GLOBAL_EVENTS_INITIAL_SLOTS": {
+      "description": "首次執行每個 GDELT stream 回補最近 15 分鐘 slots 數",
+      "default": "4"
+    },
+    "GLOBAL_EVENTS_RAW_RETENTION_HOURS": {
+      "description": "成功 GDELT raw ZIP 的本地保留時間；失敗批次不自動刪除",
+      "default": "72"
+    },
+    "GLOBAL_EVENTS_QWEN_MODEL": {
+      "description": "OpenRouter Stage1 model；輸出 severity_source 固定 inferred",
+      "default": "qwen/qwen3.7-flash"
+    },
+    "GLOBAL_EVENTS_QWEN_MAX_CANDIDATES": {
+      "description": "每輪送 Qwen Stage1 的 hard cap；超過只保留規則排序前段",
+      "default": "30"
+    },
+    "GLOBAL_EVENTS_QWEN_MAX_OUTPUT_TOKENS": {
+      "description": "Qwen Stage1 response max output tokens",
+      "default": "4096"
+    },
+    "GLOBAL_EVENTS_QWEN_MAX_COST_USD": {
+      "description": "單輪 Qwen usage.cost post-hoc alert threshold；硬界線由 candidates/output tokens 控制",
+      "default": "0.02"
+    },
+    "OPENROUTER_API_KEY": {
+      "description": "OpenRouter private API key；僅在明確啟用 global_events 時設定，不進 logs/artifacts"
+    },
     "TDX_APP_ID": {
       "description": "TDX API Client ID",
       "required": true

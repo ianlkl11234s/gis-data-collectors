@@ -18,6 +18,9 @@
 #   notes                 : 自由備註
 
 tables:
+  # global_events intentionally has no entry until gis-platform approves the
+  # current/version lifecycle migration; monitoring must not query invented DB
+  # table names. Its health is emitted in the private handoff manifest.
   # ── 交通 ────────────────────────────────
   - {schema: live, table: youbike_snapshots,         time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
   - {schema: live, table: youbike_current,           time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}

@@ -1861,6 +1861,13 @@ class SupabaseWriter:
             records.append({'_type': 'region', **r})
         return records
 
+    def _transform_global_events(self, result: dict, ts: datetime) -> list[dict]:
+        """Convert collector output to migration-389 immutable receipt records."""
+        records = result.get('_supabase_receipts') or []
+        if not isinstance(records, list):
+            raise ValueError('[global_events] _supabase_receipts must be an array')
+        return records
+
     def _transform_global_climate_typhoon_positions(self, result: dict, ts: datetime) -> list[dict]:
         """颱風 time-point decomposed（JMA + JTWC 共用）：補 geom WKT。"""
         records: list[dict] = []
@@ -2168,6 +2175,7 @@ class SupabaseWriter:
         'ripe_atlas_internet_health': _transform_internet_health,
         'ripe_ris_live': _transform_internet_health,
         'news_events': _transform_news_events,
+        'global_events': _transform_global_events,
         'cwa_satellite': _transform_cwa_satellite,
         'cwa_marine_observation': _transform_marine_observation,
         'isohe_port_marine': _transform_marine_observation,
@@ -2372,6 +2380,54 @@ class SupabaseWriter:
 
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """Write collector-specific multi-table contracts atomically."""
+        if collector_name == 'global_events':
+            batches = [r for r in records if r.get('_type') == 'collector_batch']
+            runs = [r for r in records if r.get('_type') == 'collector_run']
+            if len(runs) != 1 or len(batches) > 1:
+                raise ValueError('global_events requires one run and at most one batch receipt')
+            run_status = runs[0].get('status')
+            if run_status == 'accepted' and len(batches) != 1:
+                raise ValueError('accepted global_events run requires one batch receipt')
+            if run_status == 'failed' and batches:
+                raise ValueError('failed global_events run cannot reserve a batch receipt')
+            if run_status not in {'accepted', 'failed'}:
+                raise ValueError('global_events run status must be accepted or failed')
+            if bool(runs[0].get('archive_eligible')) != (run_status == 'accepted'):
+                raise ValueError('global_events archive_eligible must match terminal status')
+            if run_status == 'accepted' and not batches[0].get('archive_eligible'):
+                raise ValueError('accepted global_events batch must be archive eligible')
+            batch_cols = [
+                'batch_id', 'schema_version', 'content_sha256',
+                'observation_first_slot', 'observation_last_slot',
+                'source_manifest_sha256', 'source_registry_sha256',
+                'producer_name', 'producer_profile_version',
+                'extractor_profile_version', 'candidate_id_version',
+                'producer_git_commit', 'candidate_count', 'artifact_repo',
+                'artifact_path', 'archive_eligible', 'production_publishable',
+                'receipt',
+            ]
+            run_cols = [
+                'run_id', 'batch_id', 'status', 'model', 'prompt_version',
+                'output_schema_version', 'started_at', 'finished_at',
+                'candidate_count', 'input_content_sha256',
+                'output_artifact_sha256', 'raw_response_sha256',
+                'archive_eligible', 'production_publishable', 'error_type',
+                'error_message', 'receipt',
+            ]
+            with self._txn(conn) as cur:
+                if batches:
+                    execute_values(
+                        cur,
+                        f"INSERT INTO intel.global_event_collector_batches ({','.join(batch_cols)}) VALUES %s ON CONFLICT (batch_id) DO NOTHING",
+                        [tuple(Json(row.get(c) or {}) if c == 'receipt' else row.get(c) for c in batch_cols) for row in batches],
+                    )
+                execute_values(
+                    cur,
+                    f"INSERT INTO intel.global_event_collector_run_receipts ({','.join(run_cols)}) VALUES %s ON CONFLICT (run_id) DO NOTHING",
+                    [tuple(Json(row.get(c) or {}) if c == 'receipt' else row.get(c) for c in run_cols) for row in runs],
+                )
+            logger.info('[global_events] migration-389 receipts batch=%s run=%s', batches[0]['batch_id'] if batches else None, runs[0]['run_id'])
+            return
         if collector_name in (
             'cloudflare_radar', 'ioda_internet_health',
             'ripe_atlas_internet_health', 'ripe_ris_live',

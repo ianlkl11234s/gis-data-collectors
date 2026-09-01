@@ -130,7 +130,7 @@ COLLECTOR_RETENTION_OVERRIDES = {
                  'river_water_level', 'groundwater_level', 'water_reservoir',
                  'water_reservoir_daily_ops', 'news_events', 'cwa_marine_observation',
                  'isohe_port_marine', 'cloudflare_radar', 'ioda_internet_health',
-                 'ripe_atlas_internet_health')
+                 'ripe_atlas_internet_health', 'global_events')
     if os.getenv(f'{name.upper()}_ARCHIVE_RETENTION_DAYS')
 }
 # High-volume marine snapshots use the documented three-day local recovery
@@ -140,11 +140,25 @@ COLLECTOR_RETENTION_OVERRIDES.setdefault('isohe_port_marine', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('cloudflare_radar', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('ioda_internet_health', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('ripe_atlas_internet_health', 3)
+COLLECTOR_RETENTION_OVERRIDES.setdefault('global_events', 3)
 
 
 def get_retention_days(collector_name: str) -> int:
     """回傳特定 collector 的本地保留天數，fallback 到全域設定。"""
     return COLLECTOR_RETENTION_OVERRIDES.get(collector_name, ARCHIVE_RETENTION_DAYS)
+
+# Global events production handoff. Safe defaults keep the collector disabled.
+GLOBAL_EVENTS_RAW_RETENTION_HOURS = int(os.getenv('GLOBAL_EVENTS_RAW_RETENTION_HOURS', '72'))
+GLOBAL_EVENTS_MAX_FILES_PER_STREAM = int(os.getenv('GLOBAL_EVENTS_MAX_FILES_PER_STREAM', '8'))
+GLOBAL_EVENTS_INITIAL_SLOTS = int(os.getenv('GLOBAL_EVENTS_INITIAL_SLOTS', '4'))
+GLOBAL_EVENTS_PRODUCER_GIT_COMMIT = os.getenv('GLOBAL_EVENTS_PRODUCER_GIT_COMMIT', '')
+GLOBAL_EVENTS_QWEN_MODEL = os.getenv('GLOBAL_EVENTS_QWEN_MODEL', 'qwen/qwen3.7-flash')
+GLOBAL_EVENTS_QWEN_TIMEOUT = int(os.getenv('GLOBAL_EVENTS_QWEN_TIMEOUT', '90'))
+GLOBAL_EVENTS_QWEN_MAX_CANDIDATES = int(os.getenv('GLOBAL_EVENTS_QWEN_MAX_CANDIDATES', '30'))
+GLOBAL_EVENTS_QWEN_MAX_OUTPUT_TOKENS = int(os.getenv('GLOBAL_EVENTS_QWEN_MAX_OUTPUT_TOKENS', '4096'))
+GLOBAL_EVENTS_QWEN_MAX_COST_USD = float(os.getenv('GLOBAL_EVENTS_QWEN_MAX_COST_USD', '0.02'))
+GLOBAL_EVENTS_STANDARD_INDEX = os.getenv('GLOBAL_EVENTS_STANDARD_INDEX', 'https://data.gdeltproject.org/gdeltv2/masterfilelist.txt')
+GLOBAL_EVENTS_TRANSLATION_INDEX = os.getenv('GLOBAL_EVENTS_TRANSLATION_INDEX', 'https://data.gdeltproject.org/gdeltv2/masterfilelist-translation.txt')
 
 # 本地儲存路徑
 # Zeabur Volume 掛載在 /data，優先使用環境變數 DATA_DIR
@@ -310,6 +324,7 @@ _COLLECTOR_TOGGLES = (
     ('WIC_EVACUATE',                 False, 10),   # 北市疏散門狀態 (35 站，wic.gov.taipei，無金鑰)
     ('WIC_PUMB',                     False, 10),   # 北市抽水站運轉 (97 站，heopublic.gov.taipei，無金鑰)
     ('NEWS_EVENTS',                  False, 10),   # 新聞事件 RSS + Gemini 地點抽取 + GIS 相關性評估（v2 prompt）
+    ('GLOBAL_EVENTS',                False, 60),   # GDELT metadata-only + Qwen Stage1; pending migration/handoff gate
     ('SATELLITE_PASSES_DAILY',       False, 1440), # 中國衛星過境每日彙總（legacy bbox + audited ISR 領海；補昨+前天）
     ('TWSE_MARKET_INDEX',            False, 1),    # TWSE 加權指數 ticker（盤中 5s 更新，1 分 polling 已遠快於前端需要）
     ('PLA_ACTIVITY_DAILY',           False, 30),   # 共機 @MoNDefense 每日通報（每 30 分鐘抓推特看當天有沒有更新）

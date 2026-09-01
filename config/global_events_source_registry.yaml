@@ -1,0 +1,7 @@
+version: 1
+status: routing_only
+notes: >-
+  Domain classification is intentionally empty until the global-events source
+  registry is approved. Unknown domains remain unknown evidence; this file is
+  hashed into each compact batch for lineage and is not a severity signal.
+domains: {}

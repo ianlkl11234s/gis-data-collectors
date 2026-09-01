@@ -89,6 +89,8 @@ exclude:
 # Expanded 2026-06-21 from real S3 audit (49 collector archives found vs 16 documented).
 # Sourced from `aws s3 ls s3://migu-gis-data-collector/` actual coverage.
 archive_py_covered:
+  # global_events handoff is private object storage, not a Supabase table;
+  # collector success markers govern 24-72h L0 raw retention.
   # Transportation
   - live.youbike_snapshots         # youbike, 2026-02-28 起
   - live.bus_positions             # bus, 2026-02-28 起
