@@ -105,6 +105,17 @@ class GKGIndexGap(RuntimeError):
         self.completed = completed
 
 
+class GKGArtifactUnavailable(RuntimeError):
+    """An indexed artifact is temporarily unavailable (for example, 404)."""
+
+    def __init__(self, artifact: GKGArtifact, status_code: int):
+        super().__init__(
+            f"{artifact.stream}:{artifact.slot} artifact unavailable (HTTP {status_code})"
+        )
+        self.artifact = artifact
+        self.status_code = status_code
+
+
 def canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -728,7 +739,17 @@ class GlobalEventsCollector(BaseCollector):
         response = self._session.get(
             artifact.url, timeout=(20, max(60, config.REQUEST_TIMEOUT))
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            if status_code == 404:
+                # GDELT can publish the index row before the ZIP is available.
+                # Do not parse partial data or advance this stream cursor; the
+                # next scheduled run will retry, while this remains visible as
+                # an artifact-unavailable error (not an index gap).
+                raise GKGArtifactUnavailable(artifact, status_code) from exc
+            raise
         payload = response.content
         if len(payload) != artifact.expected_bytes:
             raise ValueError(f"{artifact.stream}:{artifact.slot} size mismatch")
@@ -827,6 +848,8 @@ class GlobalEventsCollector(BaseCollector):
                 float(cost),
             )
         content = payload["choices"][0]["message"]["content"]
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("OpenRouter message content must be a non-empty string")
         self._raw_response_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.I)
         return json.loads(content)
@@ -988,8 +1011,8 @@ class GlobalEventsCollector(BaseCollector):
             source_registry_sha256=registry_hash,
             producer_git_commit=producer_sha,
         )
-        stage1: dict[str, Any] | None = {"assessments": []}
-        if batch["payload"]["candidates"]:
+        stage1: dict[str, Any] | None = None
+        if batch["payload"]["candidates"] and not errors:
             try:
                 stage1 = validate_stage1(
                     self._request_stage1(batch["payload"]["candidates"]),
@@ -1001,7 +1024,8 @@ class GlobalEventsCollector(BaseCollector):
                 # Never upload an invalid/fake Stage1 artifact. The compact
                 # batch and failed manifest/receipt remain auditable instead.
                 stage1 = None
-        else:
+        elif not batch["payload"]["candidates"] and not errors:
+            stage1 = {"assessments": []}
             # Migration 389 requires an accepted run to carry a response hash;
             # for a deterministic no-candidate run this is the canonical empty
             # Stage1 artifact rather than a fabricated model response.
@@ -1075,6 +1099,7 @@ class GlobalEventsCollector(BaseCollector):
             "db_contract_status": "migration_389_receipts",
         }
         handoff_ok = False
+        source_or_stage1_failed = bool(errors)
         if run_manifest is not None:
             handoff_ok = self._upload_handoff(
                 batch_path, run_manifest_path, manifest, run_id
@@ -1141,9 +1166,9 @@ class GlobalEventsCollector(BaseCollector):
             "archive_eligible": bool(handoff_ok and not errors),
             "production_publishable": False,
             "error_type": (
-                "handoff_failed"
-                if not handoff_ok
-                else ("source_or_stage1_failed" if errors else None)
+                "source_or_stage1_failed"
+                if source_or_stage1_failed
+                else ("handoff_failed" if not handoff_ok else None)
             ),
             "error_message": "; ".join(errors) if errors else None,
             "receipt": manifest,
