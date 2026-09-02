@@ -311,6 +311,7 @@ def test_hourly_operating_defaults(monkeypatch):
     assert config.GLOBAL_EVENTS_INTERVAL == 60
     assert config.GLOBAL_EVENTS_MAX_FILES_PER_STREAM == 8
     assert config.GLOBAL_EVENTS_INITIAL_SLOTS == 4
+    assert config.GLOBAL_EVENTS_QWEN_MAX_CANDIDATES == 15
     assert config.GLOBAL_EVENTS_QWEN_MAX_COST_USD == 0.02
 
 
