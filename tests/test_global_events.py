@@ -315,6 +315,37 @@ def test_hourly_operating_defaults(monkeypatch):
     assert config.GLOBAL_EVENTS_QWEN_MAX_COST_USD == 0.02
 
 
+def test_registry_preflight_requires_openrouter_key(monkeypatch, capsys):
+    import importlib
+    import config
+    from collectors.registry import get_entry_by_name
+    from main import _init_collector_from_entry
+
+    entry = get_entry_by_name("global_events")
+    assert entry is not None
+
+    with monkeypatch.context() as env:
+        env.setenv("GLOBAL_EVENTS_ENABLED", "true")
+        env.setenv("OPENROUTER_API_KEY", "fixture-secret-never-log")
+        importlib.reload(config)
+        assert isinstance(
+            _init_collector_from_entry(entry, first=False),
+            GlobalEventsCollector,
+        )
+        assert "fixture-secret-never-log" not in capsys.readouterr().out
+
+    with monkeypatch.context() as env:
+        env.setenv("GLOBAL_EVENTS_ENABLED", "true")
+        env.delenv("OPENROUTER_API_KEY", raising=False)
+        importlib.reload(config)
+        assert _init_collector_from_entry(entry, first=False) is None
+        output = capsys.readouterr().out
+        assert "OPENROUTER_API_KEY 未設定" in output
+        assert "fixture-secret-never-log" not in output
+
+    importlib.reload(config)
+
+
 def test_checkpoint_is_mutable_across_successive_runs(monkeypatch, tmp_path):
     import config
 
