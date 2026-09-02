@@ -44,6 +44,24 @@ def _row(domain, title):
     return row
 
 
+def _stage1_assessment(candidate, event_group="E001"):
+    return {
+        "candidate_id": candidate["candidate_id"],
+        "candidate_rank": candidate["routing_rank"],
+        "decision": "keep_watch",
+        "event_group": event_group,
+        "title_zh_tw": "台灣地震",
+        "summary_zh_tw": "造成重大影響",
+        "category": "disaster",
+        "severity": 2,
+        "severity_source": "inferred",
+        "taiwan_relationship": "unknown",
+        "taiwan_impact_zh_tw": "尚無明確對台影響",
+        "confidence": 0.5,
+        "reason_zh_tw": "資料有限",
+    }
+
+
 def test_gkg_parser_metadata_only_and_title():
     payload = _zip([_row("one.example", "Major earthquake kills dozens")])
     artifact = GKGArtifact(
@@ -265,25 +283,7 @@ def test_stage1_opencc_normalization_is_recorded_in_lineage(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "opencc", types.SimpleNamespace(OpenCC=FakeOpenCC))
     candidate = {"routing_rank": 1, "candidate_id": "cand_" + "a" * 24}
-    result = {
-        "assessments": [
-            {
-                "candidate_id": candidate["candidate_id"],
-                "candidate_rank": 1,
-                "decision": "keep_watch",
-                "event_group": "E001",
-                "title_zh_tw": "台灣地震",
-                "summary_zh_tw": "造成重大影響",
-                "category": "disaster",
-                "severity": 2,
-                "severity_source": "inferred",
-                "taiwan_relationship": "unknown",
-                "taiwan_impact_zh_tw": "尚無明確對台影響",
-                "confidence": 0.5,
-                "reason_zh_tw": "資料有限",
-            }
-        ]
-    }
+    result = {"assessments": [_stage1_assessment(candidate)]}
     lineage = []
     normalized = validate_stage1(result, [candidate], lineage)
     assert normalized["assessments"][0]["title_zh_tw"] == "臺灣地震"
@@ -291,6 +291,25 @@ def test_stage1_opencc_normalization_is_recorded_in_lineage(monkeypatch):
         "title_zh_tw",
         "taiwan_impact_zh_tw",
     }
+
+
+@pytest.mark.parametrize("event_group", [None, 123, "", " ", "event-001", "E12"])
+def test_stage1_event_group_rejects_non_string_blank_and_invalid_values(
+    monkeypatch, event_group
+):
+    class FakeOpenCC:
+        def __init__(self, _profile):
+            pass
+
+        def convert(self, value):
+            return value
+
+    monkeypatch.setitem(sys.modules, "opencc", types.SimpleNamespace(OpenCC=FakeOpenCC))
+    candidate = {"routing_rank": 1, "candidate_id": "cand_" + "a" * 24}
+    result = {"assessments": [_stage1_assessment(candidate, event_group)]}
+
+    with pytest.raises(ValueError, match="invalid Stage1 event_group"):
+        validate_stage1(result, [candidate])
 
 
 def test_disabled_collector_never_fetches(monkeypatch, tmp_path):
@@ -643,6 +662,52 @@ def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
     ).hexdigest()
     assert calls == []
     assert not (tmp_path / "global_events" / "checkpoint.json").exists()
+    assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
+
+
+def test_stage1_null_event_group_does_not_advance_checkpoint_or_create_archive(
+    monkeypatch, tmp_path
+):
+    import storage.s3
+
+    class FakeOpenCC:
+        def __init__(self, _profile):
+            pass
+
+        def convert(self, value):
+            return value
+
+    monkeypatch.setitem(sys.modules, "opencc", types.SimpleNamespace(OpenCC=FakeOpenCC))
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    calls = []
+
+    class UnexpectedS3:
+        def __init__(self):
+            self.bucket = "private-test"
+
+        def upload_file(self, path, key):
+            calls.append(key)
+            return True
+
+    monkeypatch.setattr(storage.s3, "S3Storage", UnexpectedS3)
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+
+    def null_event_group(candidates):
+        return {"assessments": [_stage1_assessment(candidates[0], None)]}
+
+    monkeypatch.setattr(collector, "_request_stage1", null_event_group)
+    result = collector.collect()
+
+    assert "invalid Stage1 event_group" in result["_collector_error"]
+    assert calls == []
+    assert len(result["_supabase_receipts"]) == 1
+    run_receipt = result["_supabase_receipts"][0]
+    assert run_receipt["status"] == "failed"
+    assert run_receipt["batch_id"] is None
+    assert run_receipt["archive_eligible"] is False
+    assert run_receipt["receipt"]["archive_eligible"] is False
+    assert not (tmp_path / "global_events" / "checkpoint.json").exists()
+    assert not list((tmp_path / "global_events" / "handoff").glob("**/run_*.json"))
     assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
 
 

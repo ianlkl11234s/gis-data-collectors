@@ -563,7 +563,10 @@ def validate_stage1(
         ):
             raise ValueError("Stage1 candidate rank/id lineage mismatch")
         seen.add(rank)
-        if not re.fullmatch(r"E\d{3,}", item["event_group"]):
+        event_group = item["event_group"]
+        if not isinstance(event_group, str) or not re.fullmatch(
+            r"E\d{3,}", event_group
+        ):
             raise ValueError("invalid Stage1 event_group")
         for field, allowed in enums.items():
             if item[field] not in allowed:
