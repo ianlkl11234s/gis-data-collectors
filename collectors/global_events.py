@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -84,6 +85,9 @@ NOISE_PATTERNS = {
         r"\b(?:album|box office|football match|tour de france|us open)\b", re.I
     ),
 }
+OPENROUTER_429_MAX_ATTEMPTS = 2
+OPENROUTER_RETRY_FALLBACK_SECONDS = 5.0
+OPENROUTER_RETRY_CAP_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -502,6 +506,17 @@ def group_signal_priority(signals: Iterable[str]) -> int:
     )
 
 
+def openrouter_retry_delay(response: requests.Response) -> float:
+    raw = (getattr(response, "headers", None) or {}).get("Retry-After")
+    try:
+        delay = float(raw)
+    except (TypeError, ValueError):
+        return OPENROUTER_RETRY_FALLBACK_SECONDS
+    if delay < 0 or delay != delay:
+        return OPENROUTER_RETRY_FALLBACK_SECONDS
+    return min(delay, OPENROUTER_RETRY_CAP_SECONDS)
+
+
 def validate_stage1(
     result: Any,
     candidates: list[dict[str, Any]],
@@ -844,13 +859,12 @@ class GlobalEventsCollector(BaseCollector):
             "event_group_pattern": "^E\\d{3,}$",
             "traditional_chinese_required": True,
         }
-        response = self._session.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
+        request_kwargs = {
+            "headers": {
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
             },
-            json={
+            "json": {
                 "model": model,
                 "temperature": 0,
                 "max_tokens": max(
@@ -877,9 +891,32 @@ class GlobalEventsCollector(BaseCollector):
                     },
                 ],
             },
-            timeout=max(30, int(getattr(config, "GLOBAL_EVENTS_QWEN_TIMEOUT", 90))),
-        )
-        response.raise_for_status()
+            "timeout": max(
+                30, int(getattr(config, "GLOBAL_EVENTS_QWEN_TIMEOUT", 90))
+            ),
+        }
+        for attempt in range(OPENROUTER_429_MAX_ATTEMPTS):
+            response = self._session.post(
+                "https://openrouter.ai/api/v1/chat/completions", **request_kwargs
+            )
+            try:
+                response.raise_for_status()
+                break
+            except requests.HTTPError as exc:
+                error_response = exc.response if exc.response is not None else response
+                if (
+                    getattr(error_response, "status_code", None) != 429
+                    or attempt + 1 >= OPENROUTER_429_MAX_ATTEMPTS
+                ):
+                    raise
+                delay = openrouter_retry_delay(error_response)
+                logger.warning(
+                    "OpenRouter Stage1 HTTP 429; retrying attempt %d/%d in %.1fs",
+                    attempt + 2,
+                    OPENROUTER_429_MAX_ATTEMPTS,
+                    delay,
+                )
+                time.sleep(delay)
         payload = response.json()
         usage = payload.get("usage") or {}
         completion_details = usage.get("completion_tokens_details")
