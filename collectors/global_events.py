@@ -1071,7 +1071,7 @@ class GlobalEventsCollector(BaseCollector):
             and all(not row["noise_signals"] for row in group["rows"])
         ]
         max_candidates = max(
-            1, int(getattr(config, "GLOBAL_EVENTS_QWEN_MAX_CANDIDATES", 30))
+            1, int(getattr(config, "GLOBAL_EVENTS_QWEN_MAX_CANDIDATES", 15))
         )
         routed.sort(
             key=lambda item: (
