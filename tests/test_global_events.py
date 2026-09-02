@@ -62,6 +62,43 @@ def _stage1_assessment(candidate, event_group="E001"):
     }
 
 
+class _OpenRouterResponse:
+    def __init__(self, status_code, *, retry_after=None, payload=None):
+        self.status_code = status_code
+        self.headers = {}
+        if retry_after is not None:
+            self.headers["Retry-After"] = retry_after
+        self._payload = payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(response=self)
+
+    def json(self):
+        return self._payload
+
+
+def _openrouter_success_payload():
+    return {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"content": '{"assessments": []}'},
+            }
+        ]
+    }
+
+
+class _OpenRouterSequence:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    def post(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.responses[len(self.calls) - 1]
+
+
 def test_gkg_parser_metadata_only_and_title():
     payload = _zip([_row("one.example", "Major earthquake kills dozens")])
     artifact = GKGArtifact(
@@ -140,6 +177,65 @@ def test_openrouter_none_content_has_single_clear_failure(monkeypatch):
     with pytest.raises(ValueError, match="content must be a non-empty string"):
         collector._request_stage1([])
     assert getattr(collector, "_raw_response_sha256", None) is None
+
+
+def test_openrouter_429_retries_once_then_succeeds(monkeypatch):
+    import config
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    sleeps = []
+    monkeypatch.setattr("collectors.global_events.time.sleep", sleeps.append)
+    session = _OpenRouterSequence(
+        [
+            _OpenRouterResponse(429, retry_after="2"),
+            _OpenRouterResponse(200, payload=_openrouter_success_payload()),
+        ]
+    )
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = session
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
+
+    assert collector._request_stage1([]) == {"assessments": []}
+    assert len(session.calls) == 2
+    assert sleeps == [2.0]
+    assert session.calls[0][1]["json"]["model"] == session.calls[1][1]["json"][
+        "model"
+    ]
+
+
+def test_openrouter_non_429_does_not_retry(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    sleeps = []
+    monkeypatch.setattr("collectors.global_events.time.sleep", sleeps.append)
+    session = _OpenRouterSequence([_OpenRouterResponse(401)])
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = session
+
+    with pytest.raises(requests.HTTPError):
+        collector._request_stage1([])
+    assert len(session.calls) == 1
+    assert sleeps == []
+
+
+def test_openrouter_retry_after_is_capped(monkeypatch):
+    import config
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    sleeps = []
+    monkeypatch.setattr("collectors.global_events.time.sleep", sleeps.append)
+    session = _OpenRouterSequence(
+        [
+            _OpenRouterResponse(429, retry_after="120"),
+            _OpenRouterResponse(200, payload=_openrouter_success_payload()),
+        ]
+    )
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = session
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
+
+    assert collector._request_stage1([]) == {"assessments": []}
+    assert len(session.calls) == 2
+    assert sleeps == [30.0]
 
 
 @pytest.mark.parametrize(
@@ -708,6 +804,36 @@ def test_stage1_null_event_group_does_not_advance_checkpoint_or_create_archive(
     assert run_receipt["receipt"]["archive_eligible"] is False
     assert not (tmp_path / "global_events" / "checkpoint.json").exists()
     assert not list((tmp_path / "global_events" / "handoff").glob("**/run_*.json"))
+    assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
+
+
+def test_openrouter_repeated_429_stops_after_two_and_keeps_failed_run(
+    monkeypatch, tmp_path
+):
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    sleeps = []
+    calls = []
+    monkeypatch.setattr("collectors.global_events.time.sleep", sleeps.append)
+
+    def rate_limited(*args, **kwargs):
+        calls.append((args, kwargs))
+        return _OpenRouterResponse(429)
+
+    collector._session.post = rate_limited
+    result = collector.collect()
+
+    assert len(calls) == 2
+    assert sleeps == [5.0]
+    assert result["_collector_error"].startswith("stage1:")
+    assert len(result["_supabase_receipts"]) == 1
+    run_receipt = result["_supabase_receipts"][0]
+    assert run_receipt["status"] == "failed"
+    assert run_receipt["batch_id"] is None
+    assert run_receipt["archive_eligible"] is False
+    assert run_receipt["error_type"] == "source_or_stage1_failed"
+    assert not (tmp_path / "global_events" / "checkpoint.json").exists()
     assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
 
 
