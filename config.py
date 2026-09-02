@@ -148,6 +148,7 @@ def get_retention_days(collector_name: str) -> int:
     return COLLECTOR_RETENTION_OVERRIDES.get(collector_name, ARCHIVE_RETENTION_DAYS)
 
 # Global events production handoff. Safe defaults keep the collector disabled.
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
 GLOBAL_EVENTS_RAW_RETENTION_HOURS = int(os.getenv('GLOBAL_EVENTS_RAW_RETENTION_HOURS', '72'))
 GLOBAL_EVENTS_MAX_FILES_PER_STREAM = int(os.getenv('GLOBAL_EVENTS_MAX_FILES_PER_STREAM', '8'))
 GLOBAL_EVENTS_INITIAL_SLOTS = int(os.getenv('GLOBAL_EVENTS_INITIAL_SLOTS', '4'))
