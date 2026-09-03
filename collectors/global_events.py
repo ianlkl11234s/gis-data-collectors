@@ -577,7 +577,26 @@ def candidate_display_records(
         }
         places = []
         seen_places = set()
-        for selection in assessment.get("location_evidence_ids", []):
+        selected_place_found = False
+        location_selections = [
+            (selection, False)
+            for selection in assessment.get("location_evidence_ids", [])
+        ] + [
+            (
+                {
+                    "evidence_id": evidence_id,
+                    "basis": "來源新聞的地理提及，僅供概略定位；未確認為精確發生地。",
+                },
+                True,
+            )
+            for evidence_id in evidence_by_id
+        ]
+        for selection, is_fallback in location_selections:
+            # Prefer usable model-selected evidence. Without one, source metadata
+            # may supply explicitly approximate related places, never invented
+            # coordinates or a fabricated quotation from the headline.
+            if (is_fallback and selected_place_found) or len(places) >= 20:
+                break
             evidence = evidence_by_id[selection["evidence_id"]]
             if evidence["source_url"] not in source_urls:
                 continue
@@ -609,6 +628,12 @@ def candidate_display_records(
             if place_identity in seen_places:
                 continue
             seen_places.add(place_identity)
+            selected_place_found = selected_place_found or not is_fallback
+            lineage_id = (
+                f"metadata_fallback_{evidence['evidence_id']}"
+                if is_fallback
+                else evidence["evidence_id"]
+            )
             places.append(
                 {
                     "place_key": f"place_{content_sha256(place_identity)[:24]}",
@@ -619,7 +644,7 @@ def candidate_display_records(
                     "longitude": longitude,
                     "latitude": latitude,
                     "evidence_url": evidence["source_url"],
-                    "location_lineage": f"{kind}:gdelt:{evidence['evidence_id']}",
+                    "location_lineage": f"{kind}:gdelt:{lineage_id}",
                     "evidence_basis": selection["basis"],
                     "source_kind": "gdelt_metadata_mention",
                 }
