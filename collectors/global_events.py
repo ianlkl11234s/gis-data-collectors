@@ -88,6 +88,9 @@ NOISE_PATTERNS = {
 OPENROUTER_429_MAX_ATTEMPTS = 2
 OPENROUTER_RETRY_FALLBACK_SECONDS = 5.0
 OPENROUTER_RETRY_CAP_SECONDS = 30.0
+STAGE1_PROMPT_VERSION = "global-events-stage1/v2"
+STAGE1_RUN_SCHEMA_VERSION = "global-events-stage1-shadow/v2"
+TRADITIONALIZATION_POLICY_VERSION = "opencc-1.4.2-s2tw-single-pass-2026-09-03.1"
 
 
 @dataclass(frozen=True)
@@ -521,6 +524,8 @@ def validate_stage1(
     result: Any,
     candidates: list[dict[str, Any]],
     normalization_lineage: list[dict[str, Any]] | None = None,
+    validation_rejections: list[dict[str, Any]] | None = None,
+    validation_diagnostics: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if (
         not isinstance(result, dict)
@@ -530,6 +535,7 @@ def validate_stage1(
         raise ValueError("Stage1 output must contain only assessments")
     expected = {item["routing_rank"]: item["candidate_id"] for item in candidates}
     seen = set()
+    valid_assessments = []
     required = {
         "candidate_id",
         "candidate_rank",
@@ -561,61 +567,131 @@ def validate_stage1(
     try:
         from opencc import OpenCC
 
-        converter = OpenCC("s2twp")
+        converter = OpenCC("s2tw.json")
     except ImportError as exc:
         raise RuntimeError(
             "OpenCC is required for the Stage1 Traditional Chinese gate"
         ) from exc
+
+    def reject(
+        item: Any,
+        message: str,
+        *,
+        candidate_id: str | None = None,
+        candidate_rank: int | None = None,
+        field: str | None = None,
+    ) -> None:
+        if validation_rejections is None:
+            raise ValueError(message)
+        field_match = re.search(r"Stage1 ([a-z_]+)", message)
+        validation_rejections.append(
+            {
+                "candidate_id": candidate_id
+                or (item.get("candidate_id") if isinstance(item, dict) else None),
+                "candidate_rank": candidate_rank
+                if candidate_rank is not None
+                else (item.get("candidate_rank") if isinstance(item, dict) else None),
+                "error_code": "invalid_assessment",
+                "field": field or (field_match.group(1) if field_match else None),
+                "error": message,
+            }
+        )
+
+    def diagnose(item: Any, message: str) -> None:
+        if validation_diagnostics is None:
+            raise ValueError(message)
+        validation_diagnostics.append(
+            {
+                "reported_candidate_rank": (
+                    item.get("candidate_rank") if isinstance(item, dict) else None
+                ),
+                "error_code": "unmapped_stage1_output",
+                "error": message,
+            }
+        )
+
     for item in result["assessments"]:
-        if not isinstance(item, dict) or set(item) != required:
-            raise ValueError("Stage1 assessment schema mismatch")
-        rank = item["candidate_rank"]
-        if (
-            type(rank) is not int
-            or rank in seen
-            or rank not in expected
-            or item["candidate_id"] != expected[rank]
-        ):
-            raise ValueError("Stage1 candidate rank/id lineage mismatch")
+        if not isinstance(item, dict):
+            diagnose(item, "Stage1 assessment must be an object")
+            continue
+        rank = item.get("candidate_rank")
+        if type(rank) is not int or rank not in expected or rank in seen:
+            diagnose(item, "Stage1 candidate rank/id lineage mismatch")
+            continue
         seen.add(rank)
-        event_group = item["event_group"]
-        if not isinstance(event_group, str) or not re.fullmatch(
-            r"E\d{3,}", event_group
-        ):
-            raise ValueError("invalid Stage1 event_group")
-        for field, allowed in enums.items():
-            if item[field] not in allowed:
-                raise ValueError(f"invalid Stage1 {field}")
-        if (
-            item["severity_source"] != "inferred"
-            or type(item["severity"]) is not int
-            or not 0 <= item["severity"] <= 3
-            or isinstance(item["confidence"], bool)
-            or not isinstance(item["confidence"], (int, float))
-            or not 0 <= item["confidence"] <= 1
-        ):
-            raise ValueError("invalid inferred severity/confidence")
-        for field in (
-            "title_zh_tw",
-            "summary_zh_tw",
-            "taiwan_impact_zh_tw",
-            "reason_zh_tw",
-        ):
-            value = item[field].strip()
-            if not value:
-                raise ValueError(f"Stage1 {field} is blank")
-            normalized = converter.convert(value)
-            if normalized != value and normalization_lineage is not None:
-                normalization_lineage.append(
-                    {"candidate_id": item["candidate_id"], "field": field}
-                )
-            if converter.convert(normalized) != normalized:
-                raise ValueError(f"Stage1 {field} is not canonical Traditional Chinese")
-            item[field] = normalized
+        if item.get("candidate_id") != expected[rank]:
+            reject(
+                item,
+                "Stage1 candidate rank/id lineage mismatch",
+                candidate_id=expected[rank],
+                candidate_rank=rank,
+                field="candidate_id",
+            )
+            continue
+        try:
+            if set(item) != required:
+                raise ValueError("Stage1 assessment schema mismatch")
+            event_group = item["event_group"]
+            if not isinstance(event_group, str) or not re.fullmatch(
+                r"E\d{3,}", event_group
+            ):
+                raise ValueError("invalid Stage1 event_group")
+            for field, allowed in enums.items():
+                if item[field] not in allowed:
+                    raise ValueError(f"invalid Stage1 {field}")
+            if (
+                item["severity_source"] != "inferred"
+                or type(item["severity"]) is not int
+                or not 0 <= item["severity"] <= 3
+                or isinstance(item["confidence"], bool)
+                or not isinstance(item["confidence"], (int, float))
+                or not 0 <= item["confidence"] <= 1
+            ):
+                raise ValueError("invalid inferred severity/confidence")
+            for field in (
+                "title_zh_tw",
+                "summary_zh_tw",
+                "taiwan_impact_zh_tw",
+                "reason_zh_tw",
+            ):
+                raw_value = item[field]
+                if not isinstance(raw_value, str) or not raw_value.strip():
+                    raise ValueError(f"Stage1 {field} is blank")
+                value = raw_value.strip()
+                # Use the official OpenCC s2tw character/variant policy once.
+                # s2twp phrase dictionaries and repeated conversions can alter
+                # already-canonical wording, so neither belongs in this gate.
+                normalized = converter.convert(value).strip()
+                if not normalized:
+                    raise ValueError(f"Stage1 {field} is blank after normalization")
+                if normalized != value and normalization_lineage is not None:
+                    normalization_lineage.append(
+                        {"candidate_id": item["candidate_id"], "field": field}
+                    )
+                item[field] = normalized
+        except (KeyError, TypeError, ValueError) as exc:
+            reject(item, str(exc))
+            continue
+        valid_assessments.append(item)
     if seen != set(expected):
-        raise ValueError("Stage1 omitted candidates")
+        if validation_rejections is None:
+            raise ValueError("Stage1 omitted candidates")
+        for rank in sorted(set(expected) - seen):
+            validation_rejections.append(
+                {
+                    "candidate_id": expected[rank],
+                    "candidate_rank": rank,
+                    "error_code": "omitted_candidate",
+                    "field": None,
+                    "error": "Stage1 omitted candidate",
+                }
+            )
+    if validation_rejections is not None and (
+        len(valid_assessments) + len(validation_rejections) != len(candidates)
+    ):
+        raise ValueError("Stage1 candidate validation reconciliation mismatch")
     result["assessments"] = sorted(
-        result["assessments"], key=lambda item: item["candidate_rank"]
+        valid_assessments, key=lambda item: item["candidate_rank"]
     )
     return result
 
@@ -858,6 +934,9 @@ class GlobalEventsCollector(BaseCollector):
             "confidence_range": [0, 1],
             "event_group_pattern": "^E\\d{3,}$",
             "traditional_chinese_required": True,
+            "traditional_chinese_locale": (
+                "zh-TW; use 臺灣 terms and avoid Simplified Chinese"
+            ),
         }
         request_kwargs = {
             "headers": {
@@ -880,7 +959,12 @@ class GlobalEventsCollector(BaseCollector):
                 "messages": [
                     {
                         "role": "system",
-                        "content": "輸入只有 GDELT 標題與 metadata；只輸出 user output_contract 指定的 JSON，不要 markdown、解釋或額外欄位；所有中文使用臺灣繁體。",
+                        "content": (
+                            "輸入只有 GDELT 標題與 metadata；只輸出 user "
+                            "output_contract 指定的 JSON，不要 markdown、解釋或額外欄位；"
+                            "所有中文欄位必須使用臺灣正體中文（zh-TW，例如臺灣、資訊、影響），"
+                            "不得混入簡體字。"
+                        ),
                     },
                     {
                         "role": "user",
@@ -1022,6 +1106,8 @@ class GlobalEventsCollector(BaseCollector):
         self._stage1_usage = {}
         self._stage1_observation = {}
         self._normalization_lineage = []
+        self._stage1_validation_rejections = []
+        self._stage1_validation_diagnostics = []
         checkpoints = self._load_checkpoints()
         groups: dict[str, dict[str, Any]] = {}
         raw_paths = []
@@ -1140,6 +1226,8 @@ class GlobalEventsCollector(BaseCollector):
                     self._request_stage1(batch["payload"]["candidates"]),
                     batch["payload"]["candidates"],
                     self._normalization_lineage,
+                    self._stage1_validation_rejections,
+                    self._stage1_validation_diagnostics,
                 )
             except Exception as exc:
                 errors.append(f"stage1: {str(exc)[:300]}")
@@ -1165,8 +1253,19 @@ class GlobalEventsCollector(BaseCollector):
         run_manifest_path = run_dir / f"{run_id}.json"
         run_manifest = None
         if stage1 is not None and not errors:
+            valid_count = len(stage1["assessments"])
+            rejected_count = len(self._stage1_validation_rejections)
+            if rejected_count == 0:
+                validation_status = "accepted_all"
+                traditional_chinese_gate = "canonical_all_passed"
+            elif valid_count == 0:
+                validation_status = "accepted_all_rejected"
+                traditional_chinese_gate = "canonical_survivors_passed"
+            else:
+                validation_status = "accepted_partial"
+                traditional_chinese_gate = "canonical_survivors_passed"
             run_manifest = {
-                "schema_version": "global-events-stage1-shadow/v1",
+                "schema_version": STAGE1_RUN_SCHEMA_VERSION,
                 "run_id": run_id,
                 "status": "accepted",
                 "started_at": started_at,
@@ -1178,17 +1277,22 @@ class GlobalEventsCollector(BaseCollector):
                 "archive_eligible": True,
                 "production_publishable": False,
                 "candidate_count": batch["payload"]["candidate_count"],
+                "valid_assessment_count": valid_count,
+                "rejected_assessment_count": rejected_count,
+                "validation_status": validation_status,
                 "model": getattr(
                     config, "GLOBAL_EVENTS_QWEN_MODEL", "qwen/qwen3.7-flash"
                 ),
-                "prompt_version": "global-events-stage1/v1",
+                "prompt_version": STAGE1_PROMPT_VERSION,
                 "output_schema_version": "stage1-assessment-v1",
                 "output_artifact_sha256": content_sha256(stage1),
                 "raw_response_sha256": self._raw_response_sha256,
                 "candidate_batch_sha256": batch["content_sha256"],
-                "traditionalization_policy_version": "opencc-s2twp+terms-2026-09-01.1",
-                "traditional_chinese_gate": "canonical_final_passed",
+                "traditionalization_policy_version": TRADITIONALIZATION_POLICY_VERSION,
+                "traditional_chinese_gate": traditional_chinese_gate,
                 "normalization_lineage": self._normalization_lineage,
+                "validation_rejections": self._stage1_validation_rejections,
+                "validation_diagnostics": self._stage1_validation_diagnostics,
                 "source_warning": "title and GDELT metadata only; no article full text",
                 "stage1_observation": self._stage1_observation,
                 "usage": self._stage1_usage,
@@ -1279,7 +1383,7 @@ class GlobalEventsCollector(BaseCollector):
             "model": getattr(
                 config, "GLOBAL_EVENTS_QWEN_MODEL", "qwen/qwen3.7-flash"
             ),
-            "prompt_version": "global-events-stage1/v1",
+            "prompt_version": STAGE1_PROMPT_VERSION,
             "output_schema_version": "stage1-assessment-v1",
             "started_at": started_at,
             "finished_at": finished_at,
