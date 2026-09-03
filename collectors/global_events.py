@@ -1,9 +1,9 @@
 """Canonical GDELT global-events metadata collector.
 
-This collector deliberately stops at the Collector -> Qwen -> private-object
-handoff.  The Supabase event/version schema is owned by the platform migration
-and is not invented here.  Until that migration is approved the collector is
-disabled by default and never writes event rows to Supabase.
+Private Collector -> Qwen handoffs remain the immutable research input. After
+that handoff succeeds, an allowlisted AI-candidate projection is written through
+platform migration 397. This is not formal event/version publication; that
+remains owned by the existing Publisher workflow. Disabled by default.
 
 Only GKG metadata is retained: URL, title, source, themes, locations, people,
 organisations and tone.  Article bodies are never downloaded or persisted.
@@ -16,6 +16,7 @@ import html
 import io
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -35,8 +36,8 @@ from collectors.base import BaseCollector
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
-SCHEMA_VERSION = "global-events/compact-candidate-batch/v1"
-PROFILE_VERSION = "gdelt-gkg-story-candidates-v3"
+SCHEMA_VERSION = "global-events/compact-candidate-batch/v2"
+PROFILE_VERSION = "gdelt-gkg-story-candidates-v4"
 EXTRACTOR_PROFILE_VERSION = "gdelt-gkg-document-shadow-v1"
 CANDIDATE_ID_VERSION = "global-events/content-family-windows/v2"
 PRODUCER_NAME = "gdelt_gkg_story_candidates"
@@ -88,8 +89,8 @@ NOISE_PATTERNS = {
 OPENROUTER_429_MAX_ATTEMPTS = 2
 OPENROUTER_RETRY_FALLBACK_SECONDS = 5.0
 OPENROUTER_RETRY_CAP_SECONDS = 30.0
-STAGE1_PROMPT_VERSION = "global-events-stage1/v2"
-STAGE1_RUN_SCHEMA_VERSION = "global-events-stage1-shadow/v2"
+STAGE1_PROMPT_VERSION = "global-events-stage1/v3"
+STAGE1_RUN_SCHEMA_VERSION = "global-events-stage1-shadow/v3"
 TRADITIONALIZATION_POLICY_VERSION = "opencc-1.4.2-s2tw-single-pass-2026-09-03.1"
 
 
@@ -156,9 +157,11 @@ def canonical_url(raw: str | None) -> str:
     query.sort()
     return urlunsplit(
         (
-            "https"
-            if parsed.scheme.lower() in {"http", "https"}
-            else parsed.scheme.lower(),
+            (
+                "https"
+                if parsed.scheme.lower() in {"http", "https"}
+                else parsed.scheme.lower()
+            ),
             host + port,
             parsed.path.rstrip("/") or "/",
             urlencode(query),
@@ -270,7 +273,9 @@ def parse_master_index(text: str, stream: str) -> list[GKGArtifact]:
     return sorted(artifacts, key=lambda item: item.slot)
 
 
-def selected_artifact_manifest(artifacts: Iterable[GKGArtifact]) -> list[dict[str, Any]]:
+def selected_artifact_manifest(
+    artifacts: Iterable[GKGArtifact],
+) -> list[dict[str, Any]]:
     """Return the stable lineage manifest for the files actually selected."""
     return [
         {
@@ -339,9 +344,9 @@ def parse_gkg_artifact(artifact: GKGArtifact, payload: bytes) -> list[dict[str, 
                         "source_stream": artifact.stream,
                         "source_name": row[3].strip() or source_domain(row[3], url),
                         "source_domain": source_domain(row[3], url),
-                        "source_language": "en"
-                        if artifact.stream == "standard"
-                        else None,
+                        "source_language": (
+                            "en" if artifact.stream == "standard" else None
+                        ),
                         "url": row[4].strip(),
                         "url_norm": url,
                         "title": title[:500],
@@ -409,6 +414,7 @@ def build_compact_batch(
         1,
     ):
         representatives = []
+        location_evidence = []
         seen_representatives = set()
         for row in group["rows"]:
             key = (row["title"], row["url"], row["source_domain"])
@@ -423,6 +429,24 @@ def build_compact_batch(
                     "selection_reason": "content_family_representative",
                 }
             )
+            for location in row.get("gkg_locations", []):
+                evidence = {
+                    **location,
+                    "country_code_scheme": "fips10",
+                    "source_url": row["url"],
+                    "source_kind": "gdelt_metadata_mention",
+                }
+                for coordinate, bound in (("latitude", 90), ("longitude", 180)):
+                    value = evidence[coordinate]
+                    if (
+                        type(value) not in (int, float)
+                        or not math.isfinite(value)
+                        or not -bound <= value <= bound
+                    ):
+                        evidence[coordinate] = None
+                evidence["evidence_id"] = f"loc_{content_sha256(evidence)[:24]}"
+                if evidence not in location_evidence and len(location_evidence) < 30:
+                    location_evidence.append(evidence)
             if len(representatives) == 5:
                 break
         selected.append(
@@ -431,9 +455,9 @@ def build_compact_batch(
                     group["fingerprint"], group["first_slot"], group["last_slot"]
                 ),
                 "routing_rank": rank,
-                "rule_tier": "A_candidate"
-                if len(group["domains"]) >= 5
-                else "B_broad_signal",
+                "rule_tier": (
+                    "A_candidate" if len(group["domains"]) >= 5 else "B_broad_signal"
+                ),
                 "possible_relation_group": None,
                 "observation_window": {
                     "first_slot": group["first_slot"],
@@ -455,6 +479,8 @@ def build_compact_batch(
                     "noise_signals": sorted(group["noise_signals"]),
                 },
                 "representative_documents": representatives,
+                # These are mentions, not confirmed occurrence coordinates.
+                "location_evidence": location_evidence,
             }
         )
     slots = [
@@ -489,6 +515,150 @@ def build_compact_batch(
         "content_sha256": digest,
         "payload": payload,
     }
+
+
+def candidate_batch_slice(
+    batch: dict[str, Any], candidates: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Keep the existing compact contract while draining a source window."""
+    selected = [
+        {**candidate, "routing_rank": rank}
+        for rank, candidate in enumerate(candidates, 1)
+    ]
+    slots = [
+        slot
+        for candidate in selected
+        for slot in candidate["observation_window"].values()
+    ]
+    payload = {
+        **batch["payload"],
+        "candidates": selected,
+        "candidate_count": len(selected),
+        "observation_window": {
+            "first_slot": min(slots) if slots else None,
+            "last_slot": max(slots) if slots else None,
+        },
+    }
+    digest = content_sha256({"schema_version": SCHEMA_VERSION, "payload": payload})
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "batch_id": f"batch_{digest[:24]}",
+        "content_sha256": digest,
+        "payload": payload,
+    }
+
+
+def candidate_display_records(
+    batch: dict[str, Any],
+    stage1: dict[str, Any],
+    assessed_at: str,
+    assessment_times: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Explicit public allowlist: AI assessments never become formal publications."""
+    assessments = {item["candidate_id"]: item for item in stage1["assessments"]}
+    records = []
+    for candidate in batch["payload"]["candidates"]:
+        documents = candidate["representative_documents"]
+        # Never truncate a URL into a different document. Oversized URLs and
+        # the full model response remain in the immutable private handoff;
+        # an all-oversized candidate is visible as unlocated/pending publicly.
+        source_urls = list(
+            dict.fromkeys(
+                document["url"]
+                for document in documents
+                if len(document["url"]) <= 8192
+            )
+        )
+        assessment = (
+            assessments.get(candidate["candidate_id"], {}) if source_urls else {}
+        )
+        evidence_by_id = {
+            item["evidence_id"]: item for item in candidate.get("location_evidence", [])
+        }
+        places = []
+        seen_places = set()
+        for selection in assessment.get("location_evidence_ids", []):
+            evidence = evidence_by_id[selection["evidence_id"]]
+            if evidence["source_url"] not in source_urls:
+                continue
+            if (
+                not isinstance(evidence.get("name"), str)
+                or not evidence["name"].strip()
+            ):
+                continue
+            # GKG country/city/landmark coordinates are representative only.
+            # State/ADM1 mentions stay unlocated rather than inventing a city.
+            kind = {1: "country_center", 3: "city_center", 4: "city_center"}.get(
+                evidence.get("location_type")
+            )
+            longitude, latitude = evidence.get("longitude"), evidence.get("latitude")
+            if kind is None or not all(
+                type(value) in (int, float) and math.isfinite(value)
+                for value in (longitude, latitude)
+            ):
+                continue
+            if not -180 <= longitude <= 180 or not -90 <= latitude <= 90:
+                continue
+            place_identity = (
+                kind,
+                evidence.get("country_code"),
+                evidence.get("name"),
+                longitude,
+                latitude,
+            )
+            if place_identity in seen_places:
+                continue
+            seen_places.add(place_identity)
+            places.append(
+                {
+                    "place_key": f"place_{content_sha256(place_identity)[:24]}",
+                    "name": evidence["name"],
+                    "country_code": evidence.get("country_code"),
+                    "country_code_scheme": "fips10",
+                    "location_kind": kind,
+                    "longitude": longitude,
+                    "latitude": latitude,
+                    "evidence_url": evidence["source_url"],
+                    "location_lineage": f"{kind}:gdelt:{evidence['evidence_id']}",
+                    "evidence_basis": selection["basis"],
+                    "source_kind": "gdelt_metadata_mention",
+                }
+            )
+        record = {
+            "candidate_id": candidate["candidate_id"],
+            "observed_at": parse_gdelt_ts(
+                candidate["observation_window"]["first_slot"], ""
+            ),
+            "assessed_at": (
+                (assessment_times or {}).get(candidate["candidate_id"], assessed_at)
+                if assessment
+                else None
+            ),
+            "assessment_status": "assessed" if assessment else "pending",
+            "ai_group_id": (
+                f"aigroup_{content_sha256([batch['batch_id'], assessment['event_group']])[:24]}"
+                if assessment
+                else None
+            ),
+            "source_urls": source_urls,
+            # Public preview only; the full title remains in the private batch.
+            "source_headline": documents[0]["title"][:500] if documents else None,
+            "places": places,
+        }
+        for field in (
+            "title_zh_tw",
+            "summary_zh_tw",
+            "category",
+            "severity",
+            "decision",
+            "taiwan_relationship",
+            "taiwan_impact_zh_tw",
+            "confidence",
+            "reason_zh_tw",
+        ):
+            record[field] = assessment.get(field)
+        records.append(record)
+    return records
 
 
 def group_signal_priority(signals: Iterable[str]) -> int:
@@ -534,6 +704,7 @@ def validate_stage1(
     ):
         raise ValueError("Stage1 output must contain only assessments")
     expected = {item["routing_rank"]: item["candidate_id"] for item in candidates}
+    candidates_by_id = {item["candidate_id"]: item for item in candidates}
     seen = set()
     valid_assessments = []
     required = {
@@ -588,9 +759,13 @@ def validate_stage1(
             {
                 "candidate_id": candidate_id
                 or (item.get("candidate_id") if isinstance(item, dict) else None),
-                "candidate_rank": candidate_rank
-                if candidate_rank is not None
-                else (item.get("candidate_rank") if isinstance(item, dict) else None),
+                "candidate_rank": (
+                    candidate_rank
+                    if candidate_rank is not None
+                    else (
+                        item.get("candidate_rank") if isinstance(item, dict) else None
+                    )
+                ),
                 "error_code": "invalid_assessment",
                 "field": field or (field_match.group(1) if field_match else None),
                 "error": message,
@@ -629,8 +804,43 @@ def validate_stage1(
             )
             continue
         try:
-            if set(item) != required:
+            if set(item) - {"location_evidence_ids"} != required:
                 raise ValueError("Stage1 assessment schema mismatch")
+            selections = item.get("location_evidence_ids", [])
+            if not isinstance(selections, list) or len(selections) > 8:
+                raise ValueError("invalid Stage1 location_evidence_ids")
+            candidate = candidates_by_id[item["candidate_id"]]
+            evidence_by_id = {
+                evidence["evidence_id"]: evidence
+                for evidence in candidate.get("location_evidence", [])
+            }
+            selected_ids = set()
+            for selection in selections:
+                if not isinstance(selection, dict) or set(selection) != {
+                    "evidence_id",
+                    "role",
+                    "basis",
+                }:
+                    raise ValueError("invalid Stage1 location_evidence_ids schema")
+                evidence = evidence_by_id.get(selection["evidence_id"])
+                if selection["evidence_id"] in selected_ids:
+                    raise ValueError("invalid Stage1 location_evidence_ids duplicate")
+                selected_ids.add(selection["evidence_id"])
+                basis = selection["basis"]
+                if (
+                    evidence is None
+                    or selection["role"] not in {"event_location", "affected_area"}
+                    or not isinstance(basis, str)
+                    or not 2 <= len(basis.strip()) <= 500
+                    or not any(
+                        basis in document["title"]
+                        and document["url"] == evidence["source_url"]
+                        for document in candidate["representative_documents"]
+                    )
+                ):
+                    raise ValueError(
+                        "invalid Stage1 location_evidence_ids source/basis"
+                    )
             event_group = item["event_group"]
             if not isinstance(event_group, str) or not re.fullmatch(
                 r"E\d{3,}", event_group
@@ -664,6 +874,16 @@ def validate_stage1(
                 normalized = converter.convert(value).strip()
                 if not normalized:
                     raise ValueError(f"Stage1 {field} is blank after normalization")
+                if (
+                    len(normalized)
+                    > {
+                        "title_zh_tw": 500,
+                        "summary_zh_tw": 3000,
+                        "taiwan_impact_zh_tw": 2000,
+                        "reason_zh_tw": 2000,
+                    }[field]
+                ):
+                    raise ValueError(f"Stage1 {field} exceeds display contract length")
                 if normalized != value and normalization_lineage is not None:
                     normalization_lineage.append(
                         {"candidate_id": item["candidate_id"], "field": field}
@@ -736,7 +956,7 @@ def atomic_replace_json(path: Path, value: object) -> None:
 class GlobalEventsCollector(BaseCollector):
     name = "global_events"
     interval_minutes = getattr(config, "GLOBAL_EVENTS_INTERVAL", 60)
-    COLLECT_TIMEOUT = 900
+    COLLECT_TIMEOUT = 1800
 
     def __init__(self):
         super().__init__()
@@ -753,10 +973,16 @@ class GlobalEventsCollector(BaseCollector):
         self._stage1_usage: dict[str, Any] = {}
         self._stage1_observation: dict[str, Any] = {}
         self._normalization_lineage: list[dict[str, Any]] = []
+        self._pending_routing_work: dict[str, Any] | None = None
+        self._assessment_times: dict[str, str] = {}
 
     @property
     def checkpoint_path(self) -> Path:
         return Path(config.LOCAL_DATA_DIR) / self.name / "checkpoint.json"
+
+    @property
+    def routing_pending_path(self) -> Path:
+        return Path(config.LOCAL_DATA_DIR) / self.name / "routing_pending.json"
 
     @property
     def source_registry_path(self) -> Path:
@@ -848,7 +1074,9 @@ class GlobalEventsCollector(BaseCollector):
         payload = response.content
         if len(payload) != artifact.expected_bytes:
             raise ValueError(f"{artifact.stream}:{artifact.slot} size mismatch")
-        if hashlib.md5(payload).hexdigest() != artifact.expected_md5:  # noqa: S324 - provider checksum
+        if (
+            hashlib.md5(payload).hexdigest() != artifact.expected_md5
+        ):  # noqa: S324 - provider checksum
             raise ValueError(f"{artifact.stream}:{artifact.slot} md5 mismatch")
         return payload
 
@@ -896,6 +1124,7 @@ class GlobalEventsCollector(BaseCollector):
                 "urls": [d["url"] for d in c["representative_documents"]],
                 "coverage": c["coverage"],
                 "impact_signals": c["routing_evidence"]["impact_signals"],
+                "location_evidence": c.get("location_evidence", []),
             }
             for c in candidates
         ]
@@ -918,6 +1147,17 @@ class GlobalEventsCollector(BaseCollector):
                 "confidence",
                 "reason_zh_tw",
             ],
+            "assessment_optional_fields": {
+                "location_evidence_ids": {
+                    "type": "array",
+                    "max_items": 8,
+                    "item_fields": {
+                        "evidence_id": "copy an input evidence_id",
+                        "role": "event_location|affected_area",
+                        "basis": "exact substring from that evidence source URL's input title",
+                    },
+                },
+            },
             "decision_enum": ["keep_core", "keep_watch", "drop_noise"],
             "category_enum": [
                 "accident",
@@ -946,9 +1186,16 @@ class GlobalEventsCollector(BaseCollector):
             "json": {
                 "model": model,
                 "temperature": 0,
-                "max_tokens": max(
-                    256,
-                    int(getattr(config, "GLOBAL_EVENTS_QWEN_MAX_OUTPUT_TOKENS", 4096)),
+                "max_tokens": min(
+                    8192,
+                    max(
+                        256,
+                        int(
+                            getattr(
+                                config, "GLOBAL_EVENTS_QWEN_MAX_OUTPUT_TOKENS", 8192
+                            )
+                        ),
+                    ),
                 ),
                 "response_format": {"type": "json_object"},
                 # Qwen3.7 Flash exposes JSON mode but not JSON-schema
@@ -963,7 +1210,13 @@ class GlobalEventsCollector(BaseCollector):
                             "輸入只有 GDELT 標題與 metadata；只輸出 user "
                             "output_contract 指定的 JSON，不要 markdown、解釋或額外欄位；"
                             "所有中文欄位必須使用臺灣正體中文（zh-TW，例如臺灣、資訊、影響），"
-                            "不得混入簡體字。"
+                            "不得混入簡體字。每個候選都要回傳判斷，decision 只是分類，不是刪除指令。"
+                            "依事件本身的人命、生活、社會或跨境影響判斷；臺灣關聯獨立填寫，"
+                            "不得僅因與臺灣無關而降級或判為 drop_noise。低重要性資料仍要完整輸出。"
+                            "標題盡量40字內、摘要120字內、兩項理由各80字內，避免重複贅詞。"
+                            "location_evidence_ids 只選標題明確支持的發生地或受影響地，basis 必須逐字引用"
+                            "該 evidence source_url 的輸入標題片段；不得把發言者國籍、新聞來源所在地、"
+                            "單純背景提及當發生地。無法支持就回傳空陣列，不猜座標。"
                         ),
                     },
                     {
@@ -975,9 +1228,7 @@ class GlobalEventsCollector(BaseCollector):
                     },
                 ],
             },
-            "timeout": max(
-                30, int(getattr(config, "GLOBAL_EVENTS_QWEN_TIMEOUT", 90))
-            ),
+            "timeout": max(30, int(getattr(config, "GLOBAL_EVENTS_QWEN_TIMEOUT", 90))),
         }
         for attempt in range(OPENROUTER_429_MAX_ATTEMPTS):
             response = self._session.post(
@@ -1009,9 +1260,7 @@ class GlobalEventsCollector(BaseCollector):
             reasoning_units = completion_details.get("reasoning_tokens")
         self._stage1_usage = {
             "input_units": usage.get("prompt_tokens", usage.get("input_tokens")),
-            "output_units": usage.get(
-                "completion_tokens", usage.get("output_tokens")
-            ),
+            "output_units": usage.get("completion_tokens", usage.get("output_tokens")),
             "reasoning_units": reasoning_units,
             "cost_usd": usage.get("cost"),
         }
@@ -1019,7 +1268,9 @@ class GlobalEventsCollector(BaseCollector):
         choice = choices[0] if isinstance(choices, list) and choices else {}
         message = choice.get("message") if isinstance(choice, dict) else {}
         message = message if isinstance(message, dict) else {}
-        finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+        finish_reason = (
+            choice.get("finish_reason") if isinstance(choice, dict) else None
+        )
         content = message.get("content")
         content_length = len(content) if isinstance(content, str) else None
         self._stage1_observation = {
@@ -1059,6 +1310,124 @@ class GlobalEventsCollector(BaseCollector):
                 f"line={exc.lineno}, column={exc.colno}, char={exc.pos}"
             ) from exc
 
+    def _assess_in_chunks(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        """Bound output size and reuse completed chunks after provider failures."""
+        chunk_size = min(
+            10, max(1, int(getattr(config, "GLOBAL_EVENTS_QWEN_CHUNK_SIZE", 10)))
+        )
+        results = []
+        observations = []
+        response_hashes = []
+        totals: dict[str, Any] = {}
+        next_group = 1
+        for offset in range(0, len(candidates), chunk_size):
+            chunk = candidates[offset : offset + chunk_size]
+            cache_key = content_sha256(
+                {
+                    "model": getattr(
+                        config, "GLOBAL_EVENTS_QWEN_MODEL", "qwen/qwen3.7-flash"
+                    ),
+                    "prompt_version": STAGE1_PROMPT_VERSION,
+                    "candidates": chunk,
+                }
+            )
+            cache_path = (
+                Path(config.LOCAL_DATA_DIR)
+                / self.name
+                / "stage1_cache"
+                / f"{cache_key}.json"
+            )
+            try:
+                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                self._stage1_usage = {}
+                self._stage1_observation = {}
+                self._raw_response_sha256 = None
+                try:
+                    raw_result = self._request_stage1(chunk)
+                    if (
+                        not isinstance(raw_result, dict)
+                        or set(raw_result) != {"assessments"}
+                        or not isinstance(raw_result["assessments"], list)
+                    ):
+                        raise ValueError("Stage1 output must contain only assessments")
+                except Exception:
+                    # Preserve all earlier successful chunks and current error evidence.
+                    if observations:
+                        self._stage1_observation = {
+                            "chunks": observations + [self._stage1_observation],
+                            "completed_chunks": len(observations),
+                        }
+                    raise
+                cached = {
+                    "result": raw_result,
+                    "raw_response_sha256": self._raw_response_sha256,
+                    "observation": self._stage1_observation,
+                    "usage": self._stage1_usage,
+                    "assessed_at": datetime.now(UTC).isoformat(),
+                }
+                # Only complete JSON provider outputs are cached. The strict
+                # candidate validator still runs for cached responses too.
+                immutable_write(cache_path, cached)
+                cache_hit = False
+            else:
+                cache_hit = True
+            rejected: list[dict[str, Any]] = []
+            diagnostics: list[dict[str, Any]] = []
+            validated = validate_stage1(
+                cached["result"],
+                chunk,
+                self._normalization_lineage,
+                rejected,
+                diagnostics,
+            )
+            self._stage1_validation_rejections.extend(rejected)
+            self._stage1_validation_diagnostics.extend(diagnostics)
+            # E001 in two independent requests does not mean the same event.
+            groups: dict[str, str] = {}
+            for assessment in validated["assessments"]:
+                self._assessment_times[assessment["candidate_id"]] = cached[
+                    "assessed_at"
+                ]
+                local_group = assessment["event_group"]
+                if local_group not in groups:
+                    groups[local_group] = f"E{next_group:03d}"
+                    next_group += 1
+                assessment["event_group"] = groups[local_group]
+                results.append(assessment)
+            observation = {
+                **cached["observation"],
+                "candidate_count": len(chunk),
+                "cache_hit": cache_hit,
+                "raw_response_sha256": cached["raw_response_sha256"],
+            }
+            observations.append(observation)
+            response_hashes.append(
+                cached["raw_response_sha256"] or content_sha256(cached["result"])
+            )
+            for key, value in ({} if cache_hit else cached["usage"]).items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    totals[key] = totals.get(key, 0) + value
+            self._stage1_usage = totals
+            self._stage1_observation = {
+                "chunks": observations,
+                "completed_chunks": len(observations),
+                "usage": totals,
+            }
+            self._raw_response_sha256 = (
+                response_hashes[0]
+                if len(response_hashes) == 1
+                else content_sha256(response_hashes)
+            )
+        if totals.get("cost_usd", 0) > float(
+            getattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
+        ):
+            logger.warning(
+                "Qwen Stage1 run usage exceeded post-hoc cost alert threshold: %.6f",
+                totals["cost_usd"],
+            )
+        return {"assessments": results}
+
     def _upload_handoff(
         self,
         batch_path: Path,
@@ -1082,7 +1451,9 @@ class GlobalEventsCollector(BaseCollector):
         for path, key in uploads:
             if not s3.upload_file(path, key):
                 return False
-        manifest_path = batch_path.parent / f"{batch_path.stem}.manifest.json"
+        # Each attempt has its own immutable commit marker. A successful S3
+        # upload followed by a DB outage must remain safely retryable.
+        manifest_path = batch_path.parent / f"{batch_path.stem}.{run_id}.manifest.json"
         existed = manifest_path.exists()
         immutable_write(manifest_path, manifest)
         uploaded = s3.upload_file(
@@ -1108,7 +1479,24 @@ class GlobalEventsCollector(BaseCollector):
         self._normalization_lineage = []
         self._stage1_validation_rejections = []
         self._stage1_validation_diagnostics = []
+        self._pending_routing_work = None
+        self._assessment_times = {}
         checkpoints = self._load_checkpoints()
+        try:
+            routing_work = json.loads(
+                self.routing_pending_path.read_text(encoding="utf-8")
+            )
+        except FileNotFoundError:
+            routing_work = None
+        if routing_work and routing_work.get("version") != 1:
+            raise RuntimeError("unsupported global_events pending routing version")
+        if routing_work and all(
+            checkpoints.get(stream, "") >= slot
+            for stream, slot in routing_work["pending_checkpoints"].items()
+        ):
+            # A crash after committing the source checkpoint must not replay
+            # a fully drained queue on restart.
+            routing_work = None
         groups: dict[str, dict[str, Any]] = {}
         raw_paths = []
         raw_metadata = []
@@ -1117,7 +1505,7 @@ class GlobalEventsCollector(BaseCollector):
         stream_stats = {}
         errors = []
         pending: dict[str, str] = {}
-        for stream, index_url in SOURCE_INDEXES.items():
+        for stream, index_url in [] if routing_work else SOURCE_INDEXES.items():
             try:
                 index_response = self._session.get(
                     getattr(config, f"GLOBAL_EVENTS_{stream.upper()}_INDEX", index_url),
@@ -1196,8 +1584,8 @@ class GlobalEventsCollector(BaseCollector):
             if group["impact_signals"]
             and all(not row["noise_signals"] for row in group["rows"])
         ]
-        max_candidates = max(
-            1, int(getattr(config, "GLOBAL_EVENTS_QWEN_MAX_CANDIDATES", 15))
+        max_candidates = min(
+            100, max(1, int(getattr(config, "GLOBAL_EVENTS_QWEN_MAX_CANDIDATES", 100)))
         )
         routed.sort(
             key=lambda item: (
@@ -1207,28 +1595,45 @@ class GlobalEventsCollector(BaseCollector):
             ),
             reverse=True,
         )
-        routed = routed[:max_candidates]
         registry_hash = (
             hashlib.sha256(self.source_registry_path.read_bytes()).hexdigest()
             if self.source_registry_path.exists()
             else None
         )
-        batch = build_compact_batch(
-            routed,
-            source_manifest_sha256=content_sha256(source_manifest),
-            source_registry_sha256=registry_hash,
-            producer_git_commit=producer_sha,
-        )
+        if routing_work:
+            full_batch = routing_work["batch"]
+            source_manifest = routing_work["source_manifest"]
+            raw_metadata = routing_work["raw_metadata"]
+            raw_paths = [Path(raw["local_path"]) for raw in raw_metadata]
+            stream_stats = routing_work["streams"]
+            pending = routing_work["pending_checkpoints"]
+        else:
+            full_batch = build_compact_batch(
+                routed,
+                source_manifest_sha256=content_sha256(source_manifest),
+                source_registry_sha256=registry_hash,
+                producer_git_commit=producer_sha,
+            )
+            routing_work = {
+                "version": 1,
+                "batch": full_batch,
+                "source_manifest": source_manifest,
+                "raw_metadata": raw_metadata,
+                "streams": stream_stats,
+                "pending_checkpoints": pending,
+            }
+            if not errors:
+                # Persist the entire keyword-selected cohort before any model
+                # request, including overflow. Drain it before fetching more
+                # files; no source checkpoint or raw-success marker yet.
+                atomic_replace_json(self.routing_pending_path, routing_work)
+        all_candidates = full_batch["payload"]["candidates"]
+        batch = candidate_batch_slice(full_batch, all_candidates[:max_candidates])
+        deferred_count = max(0, len(all_candidates) - max_candidates)
         stage1: dict[str, Any] | None = None
         if batch["payload"]["candidates"] and not errors:
             try:
-                stage1 = validate_stage1(
-                    self._request_stage1(batch["payload"]["candidates"]),
-                    batch["payload"]["candidates"],
-                    self._normalization_lineage,
-                    self._stage1_validation_rejections,
-                    self._stage1_validation_diagnostics,
-                )
+                stage1 = self._assess_in_chunks(batch["payload"]["candidates"])
             except Exception as exc:
                 errors.append(f"stage1: {str(exc)[:300]}")
                 # Never upload an invalid/fake Stage1 artifact. The compact
@@ -1272,7 +1677,7 @@ class GlobalEventsCollector(BaseCollector):
                 "finished_at": finished_at,
                 "input_batch_id": batch["batch_id"],
                 "input_content_sha256": batch["content_sha256"],
-                "input_contract": "compact-candidate-batch-v1",
+                "input_contract": "compact-candidate-batch-v2",
                 "lineage_complete": True,
                 "archive_eligible": True,
                 "production_publishable": False,
@@ -1284,7 +1689,7 @@ class GlobalEventsCollector(BaseCollector):
                     config, "GLOBAL_EVENTS_QWEN_MODEL", "qwen/qwen3.7-flash"
                 ),
                 "prompt_version": STAGE1_PROMPT_VERSION,
-                "output_schema_version": "stage1-assessment-v1",
+                "output_schema_version": "stage1-assessment-v2",
                 "output_artifact_sha256": content_sha256(stage1),
                 "raw_response_sha256": self._raw_response_sha256,
                 "candidate_batch_sha256": batch["content_sha256"],
@@ -1303,7 +1708,7 @@ class GlobalEventsCollector(BaseCollector):
         batch_object_key = f"global_events/handoff/batches/{batch_path.name}"
         run_object_key = f"global_events/handoff/runs/{run_id}.json"
         manifest_object_key = (
-            f"global_events/handoff/manifests/{batch_path.stem}.manifest.json"
+            f"global_events/handoff/manifests/{batch_path.stem}.{run_id}.manifest.json"
         )
         manifest = {
             "schema_version": "global-events/handoff-manifest/v1",
@@ -1320,6 +1725,11 @@ class GlobalEventsCollector(BaseCollector):
             "stage1_sha256": content_sha256(stage1) if stage1 is not None else None,
             "raw_objects": raw_metadata,
             "streams": stream_stats,
+            "routing": {
+                "selected_count": len(all_candidates),
+                "assessed_limit": max_candidates,
+                "deferred_count": deferred_count,
+            },
             "stage1_observation": self._stage1_observation,
             "created_at": datetime.now(UTC).isoformat(),
             "archive_eligible": True if run_manifest is not None else False,
@@ -1336,9 +1746,14 @@ class GlobalEventsCollector(BaseCollector):
             if not errors:
                 errors.append("handoff: S3 manifest-last upload unavailable or failed")
         elif not errors:
-            for raw in raw_paths:
-                raw.with_suffix(".success").touch()
-            self._pending_checkpoints = pending
+            self._pending_routing_work = {
+                **routing_work,
+                "batch": candidate_batch_slice(
+                    full_batch, all_candidates[max_candidates:]
+                ),
+            }
+            if deferred_count == 0:
+                self._pending_checkpoints = pending
         manifest["archive_eligible"] = bool(handoff_ok and not errors)
         # Migration 389 deliberately exposes only terminal accepted/failed
         # states; source gaps and handoff failures are failed receipts, not a
@@ -1358,9 +1773,7 @@ class GlobalEventsCollector(BaseCollector):
             "source_manifest_sha256": batch["payload"]["source_manifest_sha256"],
             "source_registry_sha256": batch["payload"]["source_registry_sha256"],
             "producer_name": batch["payload"]["producer"]["name"],
-            "producer_profile_version": batch["payload"]["producer"][
-                "profile_version"
-            ],
+            "producer_profile_version": batch["payload"]["producer"]["profile_version"],
             "extractor_profile_version": batch["payload"]["producer"][
                 "extractor_profile_version"
             ],
@@ -1380,11 +1793,9 @@ class GlobalEventsCollector(BaseCollector):
             "run_id": run_id,
             "batch_id": batch["batch_id"] if run_status == "accepted" else None,
             "status": run_status,
-            "model": getattr(
-                config, "GLOBAL_EVENTS_QWEN_MODEL", "qwen/qwen3.7-flash"
-            ),
+            "model": getattr(config, "GLOBAL_EVENTS_QWEN_MODEL", "qwen/qwen3.7-flash"),
             "prompt_version": STAGE1_PROMPT_VERSION,
-            "output_schema_version": "stage1-assessment-v1",
+            "output_schema_version": "stage1-assessment-v2",
             "started_at": started_at,
             "finished_at": finished_at,
             "candidate_count": batch["payload"]["candidate_count"],
@@ -1419,6 +1830,14 @@ class GlobalEventsCollector(BaseCollector):
             ],
             "streams": stream_stats,
             "candidate_count": len(batch["payload"]["candidates"]),
+            "deferred_candidate_count": deferred_count,
+            "_candidate_display_records": (
+                candidate_display_records(
+                    batch, stage1, finished_at, self._assessment_times
+                )
+                if handoff_ok and stage1 is not None and not errors
+                else []
+            ),
             "handoff_manifest": manifest,
             "_supabase_receipts": self._supabase_receipts,
             "db_contract_status": "migration_389_receipts",
@@ -1433,9 +1852,23 @@ class GlobalEventsCollector(BaseCollector):
 
     def run(self) -> dict[str, Any]:
         stats = super().run()
-        if "error" not in stats and self._pending_checkpoints:
+        if "error" not in stats and self._pending_routing_work is not None:
+            remaining = self._pending_routing_work["batch"]["payload"][
+                "candidate_count"
+            ]
+            if remaining:
+                atomic_replace_json(
+                    self.routing_pending_path, self._pending_routing_work
+                )
+            else:
+                self._save_checkpoints(self._pending_checkpoints)
+                for raw in self._pending_routing_work["raw_metadata"]:
+                    Path(raw["local_path"]).with_suffix(".success").touch()
+                self.routing_pending_path.unlink(missing_ok=True)
+        elif "error" not in stats and self._pending_checkpoints:
             self._save_checkpoints(self._pending_checkpoints)
         self._pending_checkpoints = {}
+        self._pending_routing_work = None
         return stats
 
 

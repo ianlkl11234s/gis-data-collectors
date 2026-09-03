@@ -14,6 +14,7 @@ from collectors.global_events import (
     GlobalEventsCollector,
     artifact_sha256,
     build_compact_batch,
+    candidate_display_records,
     content_sha256,
     parse_gkg_artifact,
     parse_master_index,
@@ -162,9 +163,7 @@ def test_openrouter_none_content_has_single_clear_failure(monkeypatch):
 
         def json(self):
             return {
-                "choices": [
-                    {"finish_reason": "stop", "message": {"content": None}}
-                ]
+                "choices": [{"finish_reason": "stop", "message": {"content": None}}]
             }
 
     class Session:
@@ -198,9 +197,7 @@ def test_openrouter_429_retries_once_then_succeeds(monkeypatch):
     assert collector._request_stage1([]) == {"assessments": []}
     assert len(session.calls) == 2
     assert sleeps == [2.0]
-    assert session.calls[0][1]["json"]["model"] == session.calls[1][1]["json"][
-        "model"
-    ]
+    assert session.calls[0][1]["json"]["model"] == session.calls[1][1]["json"]["model"]
 
 
 def test_openrouter_non_429_does_not_retry(monkeypatch):
@@ -304,9 +301,9 @@ def test_openrouter_malformed_or_truncated_stage1_is_observable_and_rejected(
         "zh-TW"
     )
     assert "不得混入簡體字" in payload["messages"][0]["content"]
-    assert request_content["output_contract"][
-        "assessment_additional_properties"
-    ] is False
+    assert (
+        request_content["output_contract"]["assessment_additional_properties"] is False
+    )
     assert set(request_content["output_contract"]["assessment_required_fields"]) == {
         "candidate_id",
         "candidate_rank",
@@ -332,9 +329,10 @@ def test_openrouter_malformed_or_truncated_stage1_is_observable_and_rejected(
             "cost_usd": 0.001,
         },
     }
-    assert collector._raw_response_sha256 == hashlib.sha256(
-        content.encode("utf-8")
-    ).hexdigest()
+    assert (
+        collector._raw_response_sha256
+        == hashlib.sha256(content.encode("utf-8")).hexdigest()
+    )
     assert "assessments" not in str(collector._stage1_observation)
 
 
@@ -535,7 +533,9 @@ def test_hourly_operating_defaults(monkeypatch):
     assert config.GLOBAL_EVENTS_INTERVAL == 60
     assert config.GLOBAL_EVENTS_MAX_FILES_PER_STREAM == 8
     assert config.GLOBAL_EVENTS_INITIAL_SLOTS == 4
-    assert config.GLOBAL_EVENTS_QWEN_MAX_CANDIDATES == 15
+    assert config.GLOBAL_EVENTS_QWEN_MAX_CANDIDATES == 100
+    assert config.GLOBAL_EVENTS_QWEN_CHUNK_SIZE == 10
+    assert config.GLOBAL_EVENTS_QWEN_MAX_OUTPUT_TOKENS == 8192
     assert config.GLOBAL_EVENTS_QWEN_MAX_COST_USD == 0.02
 
 
@@ -590,9 +590,7 @@ def test_run_returns_base_stats_when_disabled(monkeypatch, tmp_path):
     assert "error" not in stats
 
 
-def test_handoff_uploads_compact_and_run_manifest_last_not_raw(
-    monkeypatch, tmp_path
-):
+def test_handoff_uploads_compact_and_run_manifest_last_not_raw(monkeypatch, tmp_path):
     import config
     import storage.s3
 
@@ -611,7 +609,9 @@ def test_handoff_uploads_compact_and_run_manifest_last_not_raw(
     batch = tmp_path / "batch_aaaaaaaaaaaaaaaaaaaaaaaa.json"
     run_manifest = tmp_path / "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json"
     batch.write_text("{}", encoding="utf-8")
-    run_manifest.write_text('{"schema_version":"global-events-stage1-shadow/v1"}', encoding="utf-8")
+    run_manifest.write_text(
+        '{"schema_version":"global-events-stage1-shadow/v1"}', encoding="utf-8"
+    )
     raw = tmp_path / "standard_20260901120000_deadbeef.zip"
     raw.write_bytes(b"raw")
     collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
@@ -624,7 +624,7 @@ def test_handoff_uploads_compact_and_run_manifest_last_not_raw(
     assert [name for name, _ in calls] == [
         batch.name,
         run_manifest.name,
-        f"{batch.stem}.manifest.json",
+        f"{batch.stem}.{run_manifest.stem}.manifest.json",
     ]
     assert not any(name.endswith(".zip") for name, _ in calls)
 
@@ -707,9 +707,7 @@ def test_s3_manifest_failure_does_not_advance_checkpoint_or_mark_raw(
     assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
 
 
-def test_s3_manifest_success_advances_both_checkpoints_after_run(
-    monkeypatch, tmp_path
-):
+def test_s3_manifest_success_advances_both_checkpoints_after_run(monkeypatch, tmp_path):
     import storage.s3
 
     payload = _zip([_row("one.example", "Routine world update")])
@@ -733,9 +731,7 @@ def test_s3_manifest_success_advances_both_checkpoints_after_run(
     assert batch_receipt["archive_eligible"] is True
     assert run_receipt["archive_eligible"] is True
     assert run_receipt["model"] == "qwen/qwen3.7-flash"
-    assert run_receipt["raw_response_sha256"] == content_sha256(
-        {"assessments": []}
-    )
+    assert run_receipt["raw_response_sha256"] == content_sha256({"assessments": []})
     assert batch_receipt["production_publishable"] is False
     assert run_receipt["production_publishable"] is False
     checkpoint = collector._load_checkpoints()
@@ -750,7 +746,7 @@ def test_s3_manifest_success_advances_both_checkpoints_after_run(
     run_files = list((tmp_path / "global_events" / "handoff").glob("**/run_*.json"))
     assert len(run_files) == 1
     run_manifest = json.loads(run_files[0].read_text(encoding="utf-8"))
-    assert run_manifest["schema_version"] == "global-events-stage1-shadow/v2"
+    assert run_manifest["schema_version"] == "global-events-stage1-shadow/v3"
     assert run_manifest["run_id"].startswith("run_")
     assert run_manifest["input_batch_id"] == batch_receipt["batch_id"]
     assert run_manifest["input_content_sha256"] == batch_receipt["content_sha256"]
@@ -790,7 +786,9 @@ def test_supabase_writer_failed_receipt_does_not_reserve_batch(monkeypatch):
 
     monkeypatch.setattr(writer, "_txn", fake_txn)
     monkeypatch.setattr(
-        writer_module, "execute_values", lambda _cur, sql, values: calls.append((sql, values))
+        writer_module,
+        "execute_values",
+        lambda _cur, sql, values: calls.append((sql, values)),
     )
     failed = {
         "_type": "collector_run",
@@ -800,9 +798,9 @@ def test_supabase_writer_failed_receipt_does_not_reserve_batch(monkeypatch):
     writer._write_multi_table(None, "global_events", [failed])
     assert len(calls) == 1
     with pytest.raises(ValueError, match="accepted.*batch"):
-        writer._write_multi_table(None, "global_events", [
-            {"_type": "collector_run", "status": "accepted"}
-        ])
+        writer._write_multi_table(
+            None, "global_events", [{"_type": "collector_run", "status": "accepted"}]
+        )
 
 
 def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
@@ -863,9 +861,10 @@ def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
             "cost_usd": 0.01,
         },
     }
-    assert result["_supabase_receipts"][0]["raw_response_sha256"] == hashlib.sha256(
-        malformed_content.encode("utf-8")
-    ).hexdigest()
+    assert (
+        result["_supabase_receipts"][0]["raw_response_sha256"]
+        == hashlib.sha256(malformed_content.encode("utf-8")).hexdigest()
+    )
     assert calls == []
     assert not (tmp_path / "global_events" / "checkpoint.json").exists()
     assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
@@ -913,9 +912,7 @@ def test_stage1_all_rejected_still_archives_and_advances_checkpoint(
         "standard": "20260901120000",
         "translation": "20260901120000",
     }
-    run_file = next(
-        (tmp_path / "global_events" / "handoff").glob("**/run_*.json")
-    )
+    run_file = next((tmp_path / "global_events" / "handoff").glob("**/run_*.json"))
     run_manifest = json.loads(run_file.read_text(encoding="utf-8"))
     assert run_manifest["result"] == {"assessments": []}
     assert run_manifest["valid_assessment_count"] == 0
@@ -1022,3 +1019,394 @@ def test_translation_404_fails_closed_without_stage1_s3_or_checkpoint(
     assert len(raw) == 1
     assert raw[0].name.startswith("standard_")
     assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
+
+
+def _fake_assessments(collector, candidates, *, decision="drop_noise"):
+    assessments = [_stage1_assessment(candidate) for candidate in candidates]
+    for assessment in assessments:
+        assessment["decision"] = decision
+        assessment["taiwan_relationship"] = "none"
+    result = {"assessments": assessments}
+    collector._raw_response_sha256 = content_sha256(result)
+    return result
+
+
+def test_hundred_drop_noise_candidates_are_retained_and_overflow_drains_first(
+    monkeypatch, tmp_path
+):
+    payload = _zip(
+        [
+            _row(f"news{index}.example", f"Major earthquake kills dozens {index}")
+            for index in range(101)
+        ]
+    )
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    calls = []
+
+    def assess(candidates):
+        calls.append([candidate["candidate_id"] for candidate in candidates])
+        return _fake_assessments(collector, candidates)
+
+    monkeypatch.setattr(collector, "_request_stage1", assess)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    first = collector.run()
+    assert "error" not in first
+    assert first["candidate_count"] == 100
+    assert first["deferred_candidate_count"] == 1
+    assert len(calls) == 10
+    assert all(len(chunk) == 10 for chunk in calls)
+    assert len(first["_candidate_display_records"]) == 100
+    assert all(
+        record["decision"] == "drop_noise" and record["taiwan_relationship"] == "none"
+        for record in first["_candidate_display_records"]
+    )
+    assert not collector._load_checkpoints()
+    assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
+    queued = json.loads(collector.routing_pending_path.read_text())
+    assert queued["batch"]["payload"]["candidate_count"] == 1
+
+    def no_refetch(*args, **kwargs):
+        raise AssertionError(
+            "pending source window must drain without downloading GDELT again"
+        )
+
+    collector._session.get = no_refetch
+    second = collector.run()
+    assert "error" not in second
+    assert second["candidate_count"] == 1
+    assert second["deferred_candidate_count"] == 0
+    assert len(calls) == 11
+    assert len({candidate_id for chunk in calls for candidate_id in chunk}) == 101
+    assert collector._load_checkpoints() == {
+        "standard": "20260901120000",
+        "translation": "20260901120000",
+    }
+    assert not collector.routing_pending_path.exists()
+    assert len(list((tmp_path / "global_events" / "raw").glob("**/*.success"))) == 2
+
+
+def test_failed_model_chunk_reuses_prior_complete_output_without_losing_queue(
+    monkeypatch, tmp_path
+):
+    payload = _zip(
+        [
+            _row(f"news{index}.example", f"Major earthquake kills dozens {index}")
+            for index in range(21)
+        ]
+    )
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    calls = []
+
+    def assess(candidates):
+        calls.append([candidate["candidate_id"] for candidate in candidates])
+        if len(calls) == 2:
+            raise ValueError("provider incomplete response")
+        return _fake_assessments(collector, candidates)
+
+    monkeypatch.setattr(collector, "_request_stage1", assess)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    assert "error" in collector.run()
+    assert not collector._load_checkpoints()
+    assert (
+        json.loads(collector.routing_pending_path.read_text())["batch"]["payload"][
+            "candidate_count"
+        ]
+        == 21
+    )
+    result = collector.run()
+    assert "error" not in result
+    assert len(calls) == 4  # 1 success + 1 failure, then only chunks 2 and 3.
+    assert calls[1] == calls[2]
+    assert len(result["_candidate_display_records"]) == 21
+    run_file = next(
+        path for path in (tmp_path / "global_events" / "handoff").glob("**/run_*.json")
+    )
+    run = json.loads(run_file.read_text())
+    assert run["stage1_observation"]["chunks"][0]["cache_hit"] is True
+    # Separate Qwen requests cannot accidentally share an event_group.
+    assert len({item["event_group"] for item in run["result"]["assessments"]}) == 3
+
+
+def test_candidate_location_requires_selected_evidence_and_literal_source_basis(
+    monkeypatch, tmp_path
+):
+    row = _row("one.example", "Major earthquake in Iran kills dozens")
+    row[9] = "1#Iran#IR##32#54#IR;1#France#FR##46#2#FR"
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, _zip([row]))
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+
+    def assess(candidates):
+        result = _fake_assessments(collector, candidates)
+        evidence = candidates[0]["location_evidence"]
+        assert {item["name"] for item in evidence} == {"Iran", "France"}
+        iran = next(item for item in evidence if item["name"] == "Iran")
+        result["assessments"][0]["location_evidence_ids"] = [
+            {
+                "evidence_id": iran["evidence_id"],
+                "role": "event_location",
+                "basis": "earthquake in Iran",
+            }
+        ]
+        return result
+
+    monkeypatch.setattr(collector, "_request_stage1", assess)
+    result = collector.run()
+    record = result["_candidate_display_records"][0]
+    assert record["decision"] == "drop_noise"
+    assert record["assessment_status"] == "assessed"
+    assert len(record["places"]) == 1
+    place = record["places"][0]
+    assert place["name"] == "Iran"
+    assert place["location_kind"] == "country_center"
+    assert place["country_code_scheme"] == "fips10"
+    assert (place["longitude"], place["latitude"]) == (54, 32)
+    assert place["evidence_basis"] == "earthquake in Iran"
+    assert place["source_kind"] == "gdelt_metadata_mention"
+    assert set(record) == {
+        "candidate_id",
+        "observed_at",
+        "assessed_at",
+        "assessment_status",
+        "ai_group_id",
+        "source_urls",
+        "source_headline",
+        "places",
+        "title_zh_tw",
+        "summary_zh_tw",
+        "category",
+        "severity",
+        "decision",
+        "taiwan_relationship",
+        "taiwan_impact_zh_tw",
+        "confidence",
+        "reason_zh_tw",
+    }
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {
+            "evidence_id": "loc_invented",
+            "role": "event_location",
+            "basis": "earthquake",
+        },
+        {
+            "evidence_id": "loc_known",
+            "role": "event_location",
+            "basis": "fabricated quote",
+        },
+        {
+            "evidence_id": "loc_known",
+            "role": "speaker_nationality",
+            "basis": "earthquake",
+        },
+        {
+            "evidence_id": "loc_known",
+            "role": "event_location",
+            "basis": "earthquake",
+            "longitude": 1,
+        },
+    ],
+)
+def test_invalid_location_selection_becomes_pending_not_a_lost_candidate(
+    monkeypatch, tmp_path, selection
+):
+    collector = _configure_enabled_collector(
+        monkeypatch,
+        tmp_path,
+        _zip([_row("one.example", "Major earthquake kills dozens")]),
+    )
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+
+    def assess(candidates):
+        result = _fake_assessments(collector, candidates)
+        selected = dict(selection)
+        if selected["evidence_id"] == "loc_known":
+            selected["evidence_id"] = candidates[0]["location_evidence"][0][
+                "evidence_id"
+            ]
+        result["assessments"][0]["location_evidence_ids"] = [selected]
+        return result
+
+    monkeypatch.setattr(collector, "_request_stage1", assess)
+    result = collector.run()
+    assert "error" not in result
+    assert collector._load_checkpoints()
+    record = result["_candidate_display_records"][0]
+    assert record["assessment_status"] == "pending"
+    assert record["decision"] is None
+    assert record["source_headline"] == "Major earthquake kills dozens"
+    assert record["places"] == []
+
+
+def test_db_failure_retries_same_durable_batch_with_new_manifest_marker(
+    monkeypatch, tmp_path
+):
+    import storage.s3
+
+    uploads = []
+
+    class SuccessfulS3:
+        def upload_file(self, path, key):
+            uploads.append(key)
+            return True
+
+    monkeypatch.setattr(storage.s3, "S3Storage", SuccessfulS3)
+    collector = _configure_enabled_collector(
+        monkeypatch,
+        tmp_path,
+        _zip([_row("one.example", "Major earthquake kills dozens")]),
+    )
+    requests_made = []
+
+    def assess(candidates):
+        requests_made.append(candidates)
+        return _fake_assessments(collector, candidates)
+
+    monkeypatch.setattr(collector, "_request_stage1", assess)
+    written_records = []
+
+    def failing_write(_name, result, _timestamp):
+        written_records.append(result["_candidate_display_records"])
+        return False
+
+    collector.supabase_writer.write = failing_write
+    assert "error" in collector.run()
+    assert not collector._load_checkpoints()
+    assert collector.routing_pending_path.exists()
+    collector.supabase_writer.write = lambda *args: True
+    result = collector.run()
+    assert "error" not in result
+    assert len(requests_made) == 1
+    assert result["_candidate_display_records"] == written_records[0]
+    markers = [key for key in uploads if "/manifests/" in key]
+    assert len(markers) == 2 and markers[0] != markers[1]
+    assert collector._load_checkpoints()
+
+
+def test_oversized_assessment_is_pending_while_other_candidate_advances(
+    monkeypatch, tmp_path
+):
+    collector = _configure_enabled_collector(
+        monkeypatch,
+        tmp_path,
+        _zip(
+            [
+                _row("one.example", "Major earthquake kills dozens one"),
+                _row("two.example", "Major earthquake kills dozens two"),
+            ]
+        ),
+    )
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+
+    def assess(candidates):
+        result = _fake_assessments(collector, candidates)
+        result["assessments"][0]["summary_zh_tw"] = "訊息" * 1501
+        return result
+
+    monkeypatch.setattr(collector, "_request_stage1", assess)
+    result = collector.run()
+    assert "error" not in result
+    assert [
+        record["assessment_status"] for record in result["_candidate_display_records"]
+    ] == ["pending", "assessed"]
+    assert collector._load_checkpoints()
+
+
+def test_oversized_source_url_stays_private_and_public_candidate_is_pending(
+    monkeypatch, tmp_path
+):
+    long_row = _row("one.example", "Major earthquake kills dozens one")
+    long_url = "https://one.example/" + "a" * 8192
+    long_row[4] = long_url
+    collector = _configure_enabled_collector(
+        monkeypatch,
+        tmp_path,
+        _zip(
+            [
+                long_row,
+                _row("two.example", "Major earthquake kills dozens two"),
+            ]
+        ),
+    )
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+    result = collector.run()
+    assert "error" not in result
+    records = result["_candidate_display_records"]
+    assert sorted(record["assessment_status"] for record in records) == [
+        "assessed",
+        "pending",
+    ]
+    pending = next(
+        record for record in records if record["assessment_status"] == "pending"
+    )
+    assert pending["source_urls"] == [] and pending["places"] == []
+    assert pending["decision"] is None
+    batch_file = next(
+        path
+        for path in (tmp_path / "global_events/handoff").glob("**/batch_*.json")
+        if not path.name.endswith(".manifest.json")
+    )
+    batch = json.loads(batch_file.read_text())
+    assert any(
+        document["url"] == long_url
+        for candidate in batch["payload"]["candidates"]
+        for document in candidate["representative_documents"]
+    )
+    assert collector._load_checkpoints()
+
+
+def test_supabase_candidate_ingestion_is_in_receipt_transaction_and_rejects_failed_run(
+    monkeypatch,
+):
+    from contextlib import contextmanager
+    from storage.supabase_writer import SupabaseWriter
+    import storage.supabase_writer as writer_module
+
+    calls = []
+
+    class Cursor:
+        def execute(self, sql, args):
+            calls.append((sql, args[0].adapted))
+
+    @contextmanager
+    def txn(_conn):
+        yield Cursor()
+
+    writer = SupabaseWriter.__new__(SupabaseWriter)
+    monkeypatch.setattr(writer, "_txn", txn)
+    monkeypatch.setattr(writer_module, "execute_values", lambda *args: None)
+    candidate = {"candidate_id": "cand_" + "a" * 24, "decision": "drop_noise"}
+    records = [
+        {
+            "_type": "collector_run",
+            "run_id": "run_" + "a" * 32,
+            "status": "accepted",
+            "archive_eligible": True,
+        },
+        {
+            "_type": "collector_batch",
+            "batch_id": "batch_" + "a" * 24,
+            "archive_eligible": True,
+        },
+        {"_type": "candidate_display", "candidate": candidate},
+    ]
+    writer._write_multi_table(None, "global_events", records)
+    assert calls == [
+        ("SELECT public.ingest_global_event_candidates(%s::jsonb)", [candidate])
+    ]
+    with pytest.raises(ValueError, match="failed.*candidate"):
+        writer._write_multi_table(
+            None,
+            "global_events",
+            [
+                {"_type": "collector_run", "status": "failed"},
+                {"_type": "candidate_display", "candidate": candidate},
+            ],
+        )
