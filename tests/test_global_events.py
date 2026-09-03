@@ -1254,7 +1254,7 @@ def test_missing_source_locations_stay_unlocated(monkeypatch, tmp_path):
         },
     ],
 )
-def test_invalid_location_selection_becomes_pending_not_a_lost_candidate(
+def test_invalid_optional_location_preserves_assessment_not_a_lost_candidate(
     monkeypatch, tmp_path, selection
 ):
     collector = _configure_enabled_collector(
@@ -1279,11 +1279,115 @@ def test_invalid_location_selection_becomes_pending_not_a_lost_candidate(
     assert "error" not in result
     assert collector._load_checkpoints()
     record = result["_candidate_display_records"][0]
-    assert record["assessment_status"] == "pending"
-    assert record["decision"] is None
+    assert record["assessment_status"] == "assessed"
+    assert record["decision"] == "drop_noise"
     assert record["source_headline"] == "Major earthquake kills dozens"
     assert len(record["places"]) == 1
     assert ":gdelt:metadata_fallback_" in record["places"][0]["location_lineage"]
+
+
+@pytest.mark.parametrize("relationship", ["none", "direct", "indirect", "unknown"])
+def test_blank_taiwan_impact_only_normalizes_explicit_none(relationship):
+    candidate = {"candidate_id": "cand_" + "a" * 24, "routing_rank": 1}
+    assessment = _stage1_assessment(candidate)
+    assessment.update(taiwan_relationship=relationship, taiwan_impact_zh_tw="")
+    lineage, rejected = [], []
+    result = validate_stage1(
+        {"assessments": [assessment]}, [candidate], lineage, rejected, []
+    )
+    if relationship == "none":
+        assert (
+            result["assessments"][0]["taiwan_impact_zh_tw"]
+            == "模型判斷無臺灣關聯，未提供補充說明。"
+        )
+        assert {
+            "candidate_id": candidate["candidate_id"],
+            "field": "taiwan_impact_zh_tw",
+        } in lineage
+        assert not rejected
+    else:
+        assert not result["assessments"]
+        assert rejected[0]["field"] == "taiwan_impact_zh_tw"
+
+
+def test_missing_rank_recovers_only_exact_input_candidate_id():
+    candidate = {"candidate_id": "cand_" + "a" * 24, "routing_rank": 17}
+    assessment = _stage1_assessment(candidate)
+    del assessment["candidate_rank"]
+    diagnostics = []
+    result = validate_stage1(
+        {"assessments": [assessment]}, [candidate], [], [], diagnostics
+    )
+    assert result["assessments"][0]["candidate_rank"] == 17
+    assert diagnostics[0]["reported_candidate_rank"] is None
+    assessment = _stage1_assessment(candidate)
+    del assessment["candidate_rank"]
+    assessment["candidate_id"] = "cand_" + "b" * 24
+    rejected = []
+    result = validate_stage1(
+        {"assessments": [assessment]}, [candidate], [], rejected, []
+    )
+    assert result["assessments"] == []
+    assert rejected[0]["error_code"] == "omitted_candidate"
+
+
+def test_cached_maintenance_replay_preserves_provider_times_and_source_checkpoint(
+    monkeypatch, tmp_path
+):
+    from scripts.replay_global_event_assessments import prepare_replay, apply_replay
+
+    collector = _configure_enabled_collector(
+        monkeypatch,
+        tmp_path,
+        _zip([_row("one.example", "Major earthquake kills dozens")]),
+    )
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+    stats = collector.run()
+    source = next((tmp_path / "global_events").glob("20*/*/*/global_events_*.json"))
+    # Test upload stub skips the commit marker but not the immutable source run.
+    output = json.loads(source.read_text())
+    source_manifest = output["handoff_manifest"]
+    checkpoint_before = collector.checkpoint_path.read_bytes()
+    plan = prepare_replay(
+        source, source_manifest["batch_id"], source_manifest["run_id"]
+    )
+    assert plan["run"]["stage1_observation"]["provider_called"] is False
+    assert plan["run"]["usage"]["cost_usd"] == 0
+    assert (
+        plan["output"]["_candidate_display_records"]
+        == stats["_candidate_display_records"]
+    )
+    assert collector.checkpoint_path.read_bytes() == checkpoint_before
+    assert not collector.routing_pending_path.exists()
+    writes = []
+
+    class Writer:
+        def write(self, name, payload, timestamp):
+            writes.append(payload)
+            return True
+
+    monkeypatch.setattr(GlobalEventsCollector, "_upload_handoff", lambda *args: True)
+    apply_replay(plan, Writer())
+    retry = prepare_replay(
+        source, source_manifest["batch_id"], source_manifest["run_id"]
+    )
+    assert retry == plan
+    apply_replay(retry, Writer())
+    assert writes[0] == writes[1]
+    assert collector.checkpoint_path.read_bytes() == checkpoint_before
+    assert (
+        len(list((tmp_path / "global_events" / "handoff").glob("**/run_*.json"))) == 2
+    )
+    # A missing cached response fails locally; it cannot call a provider.
+    cache_path = next((tmp_path / "global_events" / "stage1_cache").glob("*.json"))
+    cache_path.unlink()
+    with pytest.raises(FileNotFoundError):
+        prepare_replay(source, source_manifest["batch_id"], source_manifest["run_id"])
 
 
 def test_db_failure_retries_same_durable_batch_with_new_manifest_marker(

@@ -814,6 +814,20 @@ def validate_stage1(
         if not isinstance(item, dict):
             diagnose(item, "Stage1 assessment must be an object")
             continue
+        # The source owns routing ranks. A missing rank can be recovered only
+        # from the exact, unique candidate ID within this same request.
+        if "candidate_rank" not in item:
+            matching_ranks = [
+                rank
+                for rank, candidate_id in expected.items()
+                if candidate_id == item.get("candidate_id")
+            ]
+            if len(matching_ranks) == 1 and matching_ranks[0] not in seen:
+                diagnose(
+                    item,
+                    "Stage1 missing candidate_rank restored from exact input candidate_id",
+                )
+                item["candidate_rank"] = matching_ranks[0]
         rank = item.get("candidate_rank")
         if type(rank) is not int or rank not in expected or rank in seen:
             diagnose(item, "Stage1 candidate rank/id lineage mismatch")
@@ -833,23 +847,42 @@ def validate_stage1(
                 raise ValueError("Stage1 assessment schema mismatch")
             selections = item.get("location_evidence_ids", [])
             if not isinstance(selections, list) or len(selections) > 8:
-                raise ValueError("invalid Stage1 location_evidence_ids")
+                diagnose(
+                    item,
+                    "Stage1 optional location_evidence_ids rejected: invalid array",
+                )
+                selections = []
             candidate = candidates_by_id[item["candidate_id"]]
             evidence_by_id = {
                 evidence["evidence_id"]: evidence
                 for evidence in candidate.get("location_evidence", [])
             }
             selected_ids = set()
+            valid_selections = []
             for selection in selections:
                 if not isinstance(selection, dict) or set(selection) != {
                     "evidence_id",
                     "role",
                     "basis",
                 }:
-                    raise ValueError("invalid Stage1 location_evidence_ids schema")
+                    diagnose(
+                        item,
+                        "Stage1 optional location_evidence_ids rejected: invalid schema",
+                    )
+                    continue
+                if not isinstance(selection["evidence_id"], str):
+                    diagnose(
+                        item,
+                        "Stage1 optional location_evidence_ids rejected: invalid evidence_id",
+                    )
+                    continue
                 evidence = evidence_by_id.get(selection["evidence_id"])
                 if selection["evidence_id"] in selected_ids:
-                    raise ValueError("invalid Stage1 location_evidence_ids duplicate")
+                    diagnose(
+                        item,
+                        "Stage1 optional location_evidence_ids rejected: duplicate",
+                    )
+                    continue
                 selected_ids.add(selection["evidence_id"])
                 basis = selection["basis"]
                 if (
@@ -863,9 +896,14 @@ def validate_stage1(
                         for document in candidate["representative_documents"]
                     )
                 ):
-                    raise ValueError(
-                        "invalid Stage1 location_evidence_ids source/basis"
+                    diagnose(
+                        item,
+                        "Stage1 optional location_evidence_ids rejected: source/basis",
                     )
+                    continue
+                valid_selections.append(selection)
+            if "location_evidence_ids" in item:
+                item["location_evidence_ids"] = valid_selections
             event_group = item["event_group"]
             if not isinstance(event_group, str) or not re.fullmatch(
                 r"E\d{3,}", event_group
@@ -890,6 +928,17 @@ def validate_stage1(
                 "reason_zh_tw",
             ):
                 raw_value = item[field]
+                if (
+                    field == "taiwan_impact_zh_tw"
+                    and item["taiwan_relationship"] == "none"
+                    and isinstance(raw_value, str)
+                    and not raw_value.strip()
+                ):
+                    raw_value = "模型判斷無臺灣關聯，未提供補充說明。"
+                    if normalization_lineage is not None:
+                        normalization_lineage.append(
+                            {"candidate_id": item["candidate_id"], "field": field}
+                        )
                 if not isinstance(raw_value, str) or not raw_value.strip():
                     raise ValueError(f"Stage1 {field} is blank")
                 value = raw_value.strip()
