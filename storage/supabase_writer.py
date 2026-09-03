@@ -1862,11 +1862,14 @@ class SupabaseWriter:
         return records
 
     def _transform_global_events(self, result: dict, ts: datetime) -> list[dict]:
-        """Convert collector output to migration-389 immutable receipt records."""
+        """Immutable receipts plus the explicit migration-397 AI display DTO."""
         records = result.get('_supabase_receipts') or []
         if not isinstance(records, list):
             raise ValueError('[global_events] _supabase_receipts must be an array')
-        return records
+        candidates = result.get('_candidate_display_records') or []
+        if not isinstance(candidates, list):
+            raise ValueError('[global_events] _candidate_display_records must be an array')
+        return [*records, *({'_type': 'candidate_display', 'candidate': candidate} for candidate in candidates)]
 
     def _transform_global_climate_typhoon_positions(self, result: dict, ts: datetime) -> list[dict]:
         """颱風 time-point decomposed（JMA + JTWC 共用）：補 geom WKT。"""
@@ -2383,6 +2386,7 @@ class SupabaseWriter:
         if collector_name == 'global_events':
             batches = [r for r in records if r.get('_type') == 'collector_batch']
             runs = [r for r in records if r.get('_type') == 'collector_run']
+            candidates = [r['candidate'] for r in records if r.get('_type') == 'candidate_display']
             if len(runs) != 1 or len(batches) > 1:
                 raise ValueError('global_events requires one run and at most one batch receipt')
             run_status = runs[0].get('status')
@@ -2390,6 +2394,8 @@ class SupabaseWriter:
                 raise ValueError('accepted global_events run requires one batch receipt')
             if run_status == 'failed' and batches:
                 raise ValueError('failed global_events run cannot reserve a batch receipt')
+            if run_status == 'failed' and candidates:
+                raise ValueError('failed global_events run cannot publish candidate display records')
             if run_status not in {'accepted', 'failed'}:
                 raise ValueError('global_events run status must be accepted or failed')
             if bool(runs[0].get('archive_eligible')) != (run_status == 'accepted'):
@@ -2426,6 +2432,8 @@ class SupabaseWriter:
                     f"INSERT INTO intel.global_event_collector_run_receipts ({','.join(run_cols)}) VALUES %s ON CONFLICT (run_id) DO NOTHING",
                     [tuple(Json(row.get(c) or {}) if c == 'receipt' else row.get(c) for c in run_cols) for row in runs],
                 )
+                if candidates:
+                    cur.execute('SELECT public.ingest_global_event_candidates(%s::jsonb)', (Json(candidates),))
             logger.info('[global_events] migration-389 receipts batch=%s run=%s', batches[0]['batch_id'] if batches else None, runs[0]['run_id'])
             return
         if collector_name in (
