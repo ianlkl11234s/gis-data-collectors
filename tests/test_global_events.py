@@ -300,6 +300,10 @@ def test_openrouter_malformed_or_truncated_stage1_is_observable_and_rejected(
     assert "json_schema" not in payload
     request_content = json.loads(payload["messages"][1]["content"])
     assert request_content["output_contract"]["assessment_count"] == 1
+    assert request_content["output_contract"]["traditional_chinese_locale"].startswith(
+        "zh-TW"
+    )
+    assert "不得混入簡體字" in payload["messages"][0]["content"]
     assert request_content["output_contract"][
         "assessment_additional_properties"
     ] is False
@@ -387,6 +391,111 @@ def test_stage1_opencc_normalization_is_recorded_in_lineage(monkeypatch):
         "title_zh_tw",
         "taiwan_impact_zh_tw",
     }
+
+
+def test_stage1_opencc_non_idempotent_dictionary_runs_exactly_once(monkeypatch):
+    class FakeOpenCC:
+        def __init__(self, _profile):
+            pass
+
+        def convert(self, value):
+            if "進程" in value:
+                return value.replace("進程", "程序")
+            if "程序" in value:
+                return value.replace("程序", "程式")
+            return value
+
+    monkeypatch.setitem(sys.modules, "opencc", types.SimpleNamespace(OpenCC=FakeOpenCC))
+    candidate = {"routing_rank": 1, "candidate_id": "cand_" + "a" * 24}
+    assessment = _stage1_assessment(candidate)
+    assessment["summary_zh_tw"] = "進程仍在進行"
+    result = validate_stage1({"assessments": [assessment]}, [candidate])
+
+    assert result["assessments"][0]["summary_zh_tw"] == "程序仍在進行"
+
+
+def test_official_opencc_s2tw_preserves_canonical_wording():
+    from opencc import OpenCC
+
+    converter = OpenCC("s2tw.json")
+    assert converter.convert("真實模式與演算法") == "真實模式與演算法"
+    assert converter.convert("进程影响台灣") == "進程影響臺灣"
+
+
+def test_stage1_isolates_one_invalid_candidate_and_keeps_valid_candidate(monkeypatch):
+    class FakeOpenCC:
+        def __init__(self, _profile):
+            pass
+
+        def convert(self, value):
+            return value
+
+    monkeypatch.setitem(sys.modules, "opencc", types.SimpleNamespace(OpenCC=FakeOpenCC))
+    candidates = [
+        {"routing_rank": 1, "candidate_id": "cand_" + "a" * 24},
+        {"routing_rank": 2, "candidate_id": "cand_" + "b" * 24},
+    ]
+    invalid = _stage1_assessment(candidates[0], None)
+    valid = _stage1_assessment(candidates[1], "E002")
+    rejections = []
+
+    result = validate_stage1(
+        {"assessments": [invalid, valid]},
+        candidates,
+        validation_rejections=rejections,
+    )
+
+    assert [item["candidate_id"] for item in result["assessments"]] == [
+        candidates[1]["candidate_id"]
+    ]
+    assert rejections == [
+        {
+            "candidate_id": candidates[0]["candidate_id"],
+            "candidate_rank": 1,
+            "error_code": "invalid_assessment",
+            "field": "event_group",
+            "error": "invalid Stage1 event_group",
+        }
+    ]
+
+
+def test_stage1_reconciles_wrong_id_duplicate_unknown_and_omitted(monkeypatch):
+    class FakeOpenCC:
+        def __init__(self, _profile):
+            pass
+
+        def convert(self, value):
+            return value
+
+    monkeypatch.setitem(sys.modules, "opencc", types.SimpleNamespace(OpenCC=FakeOpenCC))
+    candidates = [
+        {"routing_rank": rank, "candidate_id": f"cand_{str(rank) * 24}"}
+        for rank in (1, 2, 3)
+    ]
+    wrong_id = _stage1_assessment(candidates[0])
+    wrong_id["candidate_id"] = "cand_" + "9" * 24
+    valid = _stage1_assessment(candidates[1], "E002")
+    duplicate = _stage1_assessment(candidates[1], "E003")
+    unknown = _stage1_assessment(
+        {"routing_rank": 99, "candidate_id": "cand_" + "8" * 24}, "E099"
+    )
+    rejections = []
+    diagnostics = []
+
+    result = validate_stage1(
+        {"assessments": [wrong_id, valid, duplicate, unknown, "not-an-object"]},
+        candidates,
+        validation_rejections=rejections,
+        validation_diagnostics=diagnostics,
+    )
+
+    assert [item["candidate_rank"] for item in result["assessments"]] == [2]
+    assert [(item["candidate_rank"], item["error_code"]) for item in rejections] == [
+        (1, "invalid_assessment"),
+        (3, "omitted_candidate"),
+    ]
+    assert [item["reported_candidate_rank"] for item in diagnostics] == [2, 99, None]
+    assert len(result["assessments"]) + len(rejections) == len(candidates)
 
 
 @pytest.mark.parametrize("event_group", [None, 123, "", " ", "event-001", "E12"])
@@ -641,14 +750,15 @@ def test_s3_manifest_success_advances_both_checkpoints_after_run(
     run_files = list((tmp_path / "global_events" / "handoff").glob("**/run_*.json"))
     assert len(run_files) == 1
     run_manifest = json.loads(run_files[0].read_text(encoding="utf-8"))
-    assert run_manifest["schema_version"] == "global-events-stage1-shadow/v1"
+    assert run_manifest["schema_version"] == "global-events-stage1-shadow/v2"
     assert run_manifest["run_id"].startswith("run_")
     assert run_manifest["input_batch_id"] == batch_receipt["batch_id"]
     assert run_manifest["input_content_sha256"] == batch_receipt["content_sha256"]
     assert run_manifest["archive_eligible"] is True
     assert run_manifest["production_publishable"] is False
     assert all("token" not in key.lower() for key in run_manifest["usage"])
-    assert run_manifest["traditional_chinese_gate"] == "canonical_final_passed"
+    assert run_manifest["traditional_chinese_gate"] == "canonical_all_passed"
+    assert run_manifest["validation_status"] == "accepted_all"
     assert set(run_manifest["result"]) == {"assessments"}
     handoff_manifest = stats["handoff_manifest"]
     batch_file = next(
@@ -761,7 +871,7 @@ def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
     assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
 
 
-def test_stage1_null_event_group_does_not_advance_checkpoint_or_create_archive(
+def test_stage1_all_rejected_still_archives_and_advances_checkpoint(
     monkeypatch, tmp_path
 ):
     import storage.s3
@@ -777,7 +887,7 @@ def test_stage1_null_event_group_does_not_advance_checkpoint_or_create_archive(
     payload = _zip([_row("one.example", "Major earthquake kills dozens")])
     calls = []
 
-    class UnexpectedS3:
+    class SuccessfulS3:
         def __init__(self):
             self.bucket = "private-test"
 
@@ -785,26 +895,47 @@ def test_stage1_null_event_group_does_not_advance_checkpoint_or_create_archive(
             calls.append(key)
             return True
 
-    monkeypatch.setattr(storage.s3, "S3Storage", UnexpectedS3)
+    monkeypatch.setattr(storage.s3, "S3Storage", SuccessfulS3)
     collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
 
     def null_event_group(candidates):
         return {"assessments": [_stage1_assessment(candidates[0], None)]}
 
     monkeypatch.setattr(collector, "_request_stage1", null_event_group)
-    result = collector.collect()
+    result = collector.run()
 
-    assert "invalid Stage1 event_group" in result["_collector_error"]
-    assert calls == []
-    assert len(result["_supabase_receipts"]) == 1
-    run_receipt = result["_supabase_receipts"][0]
-    assert run_receipt["status"] == "failed"
-    assert run_receipt["batch_id"] is None
-    assert run_receipt["archive_eligible"] is False
-    assert run_receipt["receipt"]["archive_eligible"] is False
-    assert not (tmp_path / "global_events" / "checkpoint.json").exists()
-    assert not list((tmp_path / "global_events" / "handoff").glob("**/run_*.json"))
-    assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
+    assert "error" not in result
+    batch_receipt, run_receipt = result["_supabase_receipts"]
+    assert run_receipt["status"] == "accepted"
+    assert run_receipt["batch_id"] == batch_receipt["batch_id"]
+    assert run_receipt["archive_eligible"] is True
+    assert collector._load_checkpoints() == {
+        "standard": "20260901120000",
+        "translation": "20260901120000",
+    }
+    run_file = next(
+        (tmp_path / "global_events" / "handoff").glob("**/run_*.json")
+    )
+    run_manifest = json.loads(run_file.read_text(encoding="utf-8"))
+    assert run_manifest["result"] == {"assessments": []}
+    assert run_manifest["valid_assessment_count"] == 0
+    assert run_manifest["rejected_assessment_count"] == 1
+    assert run_manifest["validation_status"] == "accepted_all_rejected"
+    assert run_manifest["traditional_chinese_gate"] == "canonical_survivors_passed"
+    assert (
+        run_manifest["valid_assessment_count"]
+        + run_manifest["rejected_assessment_count"]
+        == run_manifest["candidate_count"]
+    )
+    assert len(run_manifest["validation_rejections"]) == 1
+    rejection = run_manifest["validation_rejections"][0]
+    assert rejection["candidate_id"].startswith("cand_")
+    assert rejection["candidate_rank"] == 1
+    assert rejection["error_code"] == "invalid_assessment"
+    assert rejection["field"] == "event_group"
+    assert rejection["error"] == "invalid Stage1 event_group"
+    assert calls[-1].startswith("global_events/handoff/manifests/")
+    assert len(list((tmp_path / "global_events" / "raw").glob("**/*.success"))) == 2
 
 
 def test_openrouter_repeated_429_stops_after_two_and_keeps_failed_run(
