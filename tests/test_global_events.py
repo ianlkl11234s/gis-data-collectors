@@ -1162,6 +1162,7 @@ def test_candidate_location_requires_selected_evidence_and_literal_source_basis(
     assert (place["longitude"], place["latitude"]) == (54, 32)
     assert place["evidence_basis"] == "earthquake in Iran"
     assert place["source_kind"] == "gdelt_metadata_mention"
+    assert ":gdelt:metadata_fallback_" not in place["location_lineage"]
     assert set(record) == {
         "candidate_id",
         "observed_at",
@@ -1181,6 +1182,50 @@ def test_candidate_location_requires_selected_evidence_and_literal_source_basis(
         "confidence",
         "reason_zh_tw",
     }
+
+
+def test_unselected_source_locations_are_explicit_approximate_fallback(
+    monkeypatch, tmp_path
+):
+    row = _row("one.example", "Major earthquake kills dozens")
+    row[9] = (
+        "1#Iran#IR##32#54#IR;1#Iran#IR##32#54#IR;"
+        "4#Tehran#IR##35.69#51.39#112931;2#State#US##30#40#state;"
+        "4#Invalid#IR##95#200#bad"
+    )
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, _zip([row]))
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+    record = collector.run()["_candidate_display_records"][0]
+    assert record["decision"] == "drop_noise"
+    assert record["taiwan_relationship"] == "none"
+    assert [(p["name"], p["longitude"], p["latitude"]) for p in record["places"]] == [
+        ("Iran", 54, 32),
+        ("Tehran", 51.39, 35.69),
+    ]
+    for place in record["places"]:
+        assert ":gdelt:metadata_fallback_loc_" in place["location_lineage"]
+        assert place["source_kind"] == "gdelt_metadata_mention"
+        assert "未確認為精確發生地" in place["evidence_basis"]
+        assert place["evidence_url"] in record["source_urls"]
+
+
+def test_missing_source_locations_stay_unlocated(monkeypatch, tmp_path):
+    row = _row("one.example", "Major earthquake in Iran kills dozens")
+    row[9] = ""
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, _zip([row]))
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+    record = collector.run()["_candidate_display_records"][0]
+    assert record["places"] == []  # A country in the title is not invented geometry.
 
 
 @pytest.mark.parametrize(
@@ -1237,7 +1282,8 @@ def test_invalid_location_selection_becomes_pending_not_a_lost_candidate(
     assert record["assessment_status"] == "pending"
     assert record["decision"] is None
     assert record["source_headline"] == "Major earthquake kills dozens"
-    assert record["places"] == []
+    assert len(record["places"]) == 1
+    assert ":gdelt:metadata_fallback_" in record["places"][0]["location_lineage"]
 
 
 def test_db_failure_retries_same_durable_batch_with_new_manifest_marker(
