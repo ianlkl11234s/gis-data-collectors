@@ -35,7 +35,10 @@ tables:
   - {schema: live, table: ship_positions,            time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
   - {schema: live, table: ship_current,              time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
   - {schema: reference, table: marine_observation_stations, time_column: last_seen_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: shared station registry; CWA ownership/distribution provenance retained}
-  - {schema: live, table: marine_observation_readings, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: canonical long history; ISOHE writes same table under separate source_network}
+  # 2026-09-04 Disk IO 事故止血：原設 collected_at，但該欄無索引 → 每輪 health_snapshot 全掃 110MB 兩次。
+  # 表上 idx_marine_observation_readings_time 的 leading column 就是 observed_at，改看它即走 index probe。
+  # 實測兩欄位落差僅 2.3 秒（門檻 15 分），不影響 STALE 判定。
+  - {schema: live, table: marine_observation_readings, time_column: observed_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: canonical long history; ISOHE writes same table under separate source_network}
   - {schema: live, table: marine_observation_current, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: serving cache; current update only accepts newer observed_at}
   - {schema: live, table: marine_observation_quarantine, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: CWA reading IDs absent from metadata roster}
   - {schema: live, table: aisstream_ingest_runs,   time_column: started_at,    owner_collector: aisstream, expected_interval_min: 1440, critical: false, notes: AISStream run ledger}
@@ -121,7 +124,10 @@ tables:
   - {schema: live, table: public_health_weekly,      time_column: collected_at, owner_collector: cdc_public_health_weekly, expected_interval_min: 10080, critical: false, notes: 週四 11:00 跑一次}
 
   # ── 其他 reference ──────────────────────
-  - {schema: reference, table: foursquare_poi,           time_column: imported_at,  owner_collector: foursquare_poi, expected_interval_min: 43200, critical: false, notes: disabled reference dataset；不參與即時 freshness 事故判定}
+  # 2026-09-04 Disk IO 事故止血：此表 105 MB、imported_at 無索引，每輪 health_snapshot 對它全掃兩次。
+  # notes 本來就註明「不參與即時 freshness 事故判定」、30 天才更新一次，不該留在即時清冊裡。
+  # 還原方式：刪掉下一行開頭的「# 」即可。
+  #- {schema: reference, table: foursquare_poi,           time_column: imported_at,  owner_collector: foursquare_poi, expected_interval_min: 43200, critical: false, notes: disabled reference dataset；不參與即時 freshness 事故判定}
 
   # ── 2026-07-02 production 實測補齊（AR-05，與 cross_layer_map.yaml 自動補回區同步）──
   # 挑表原則：有 current 表優先（小、可 MAX）；current_touch_updated_at 的表用 updated_at
