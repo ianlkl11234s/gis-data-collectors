@@ -15,6 +15,7 @@ import io
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -57,8 +58,19 @@ def load_realtime_tables() -> list[dict]:
 # ────────────────────────────────────────────────────────────────────
 # Supabase realtime health
 # ────────────────────────────────────────────────────────────────────
+# 2026-09-04 Disk IO 事故止血：daily_report 一次執行內有 7 個 _section_* 各自呼叫
+# query_realtime_health()，查的是同一批表的同一份新鮮度資料 —— 同一份資料重算 7 次，
+# 每天多讀約 11GB（health_snapshot 單次要掃 1.8GB）。加表級 TTL 快取後，
+# 同一次報告產製內只會實際打 DB 一次。
+# TTL 600 秒：足夠涵蓋一次報告產製（數分鐘），又不會讓長駐 process 跨日殘留舊值。
+_HEALTH_CACHE_TTL = 600.0
+_health_cache: dict[tuple[str, str, str], tuple[float, dict]] = {}
+
+
 def query_realtime_health(tables: list[dict]) -> list[dict]:
     """call public.health_snapshot RPC 拿每張表的 max_time + count_24h。
+
+    同一批表在 _HEALTH_CACHE_TTL 秒內重複呼叫會直接走快取，不重打 DB。
 
     Returns: [{schema, table, max_time, count_24h, error}, ...]
     """
@@ -70,27 +82,56 @@ def query_realtime_health(tables: list[dict]) -> list[dict]:
         log.warning("psycopg2 not available — Supabase health 跳過")
         return []
 
-    payload = json.dumps([
-        {"schema": t["schema"], "table": t["table"], "time_column": t.get("time_column", "collected_at")}
+    now_ts = time.monotonic()
+    keys = [
+        (t["schema"], t["table"], t.get("time_column", "collected_at"))
         for t in tables
-    ])
+    ]
 
+    def _fresh(key: tuple[str, str, str]) -> dict | None:
+        hit = _health_cache.get(key)
+        if hit and now_ts - hit[0] < _HEALTH_CACHE_TTL:
+            return hit[1]
+        return None
+
+    missing = [t for t, k in zip(tables, keys) if _fresh(k) is None]
+
+    if missing:
+        payload = json.dumps([
+            {"schema": t["schema"], "table": t["table"], "time_column": t.get("time_column", "collected_at")}
+            for t in missing
+        ])
+        # DB 只回 (schema, table)，靠這張表對回 time_column 以組出快取 key
+        tc_by_st = {
+            (t["schema"], t["table"]): t.get("time_column", "collected_at")
+            for t in missing
+        }
+        try:
+            with psycopg2.connect(config.SUPABASE_DB_URL, connect_timeout=15) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT * FROM public.health_snapshot(%s::jsonb)", (payload,))
+                    for schema_n, table_n, max_time, count_24h, err in cur.fetchall():
+                        rec = {
+                            "schema": schema_n,
+                            "table": table_n,
+                            "max_time": max_time,
+                            "count_24h": count_24h or 0,
+                            "error": err,
+                        }
+                        key = (schema_n, table_n, tc_by_st.get((schema_n, table_n), "collected_at"))
+                        _health_cache[key] = (now_ts, rec)
+        except Exception as exc:
+            log.error(f"query_realtime_health 失敗: {exc}")
+            return []
+    else:
+        log.debug(f"query_realtime_health: {len(tables)} 表全部命中快取，跳過 DB")
+
+    # 依傳入順序回傳；DB 沒回的表就略過（與原行為一致）
     results = []
-    try:
-        with psycopg2.connect(config.SUPABASE_DB_URL, connect_timeout=15) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM public.health_snapshot(%s::jsonb)", (payload,))
-                for schema_n, table_n, max_time, count_24h, err in cur.fetchall():
-                    results.append({
-                        "schema": schema_n,
-                        "table": table_n,
-                        "max_time": max_time,
-                        "count_24h": count_24h or 0,
-                        "error": err,
-                    })
-    except Exception as exc:
-        log.error(f"query_realtime_health 失敗: {exc}")
-        return []
+    for key in keys:
+        rec = _fresh(key)
+        if rec is not None:
+            results.append(rec)
     return results
 
 
