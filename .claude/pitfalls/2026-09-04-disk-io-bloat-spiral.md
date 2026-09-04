@@ -33,6 +33,11 @@
 
 ### 第三層（最根本）：`*_current` 表的 UPSERT 膨脹
 
+> ⚠️ **本節的推論在當天稍後被實測推翻，見文末〈第 3 級：治本〉。**
+> 「全量 UPSERT 產生 dead tuple」是事實，但「所以要改 collector 做 content-dedup」
+> 這個推論**不成立** —— PostgreSQL 的 HOT 機制能讓這種更新自我回收，
+> 真正缺的是 HOT 成立的條件。最終治本**一行 collector 程式碼都沒改**。
+
 `storage/supabase_writer.py` 有一行註解：
 
 ```python
@@ -109,9 +114,97 @@ order by start_time desc limit 20;   -- 'server restarted' / 'job startup timeou
 執行時務必 `set lock_timeout='10s'`——`VACUUM FULL` 等鎖期間會把後續查詢全部排隊阻塞，
 拿不到鎖就放棄比排隊安全。
 
+### 第 3 級：治本（gis-platform PR #93/#94/#95）
+
+第 1、2 級是止血與清垃圾。以下四項處理「為什麼會累積」與「事故後浮上檯面的新大戶」。
+
+| PR | 對象 | 前 → 後 |
+|---|---|---|
+| #93 | `satellite_maneuvers` MV：CTE 被引用兩次 → materialize 218 萬列到 temp | temp **1330 → 83 MB**，34 → 12.8 s |
+| #94 | `refresh_road_congestion_daily`：每 30 分全量重算今天 → 增量 | **19.4 s → 66 ms** |
+| #94 | `health_snapshot`：砍掉 `count(*)` 全掃 | **1740 → 489 MB**（對事故基準 -72%）|
+| #95 | `*_current` 表 HOT update 調校 | HOT **8.8% → 88~99%**，dead tuple 歸零 |
+
+### ⭐ 最重要的一課：HOT 判定推翻了「要改 collector」的推論
+
+本檔第三層原本推論「collector 值沒變也全量 UPSERT → 要改成 content-dedup」。實測後發現**推論不完整**：
+
+**PostgreSQL 的 HOT (Heap-Only Tuple) 判定看的是「被索引的欄位有沒有變」，不是「有幾個欄位變」。**
+只要更新是 HOT，舊版本會在同一頁被 heap pruning 自動回收，**不需要 autovacuum 掃全表**。
+
+所以「每輪全量 UPSERT」本身不是問題 —— 問題是這些表**沒有 HOT 成立的條件**。
+量 `n_tup_hot_upd / n_tup_upd` 後，低 HOT 的表分成性質完全不同的兩類：
+
+| 類 | 表（實測 HOT） | 原因 | 處置 |
+|---|---|---|---|
+| **A** | `satellite_current` 0%、`ship_current` 3.8%、`aisstream_vessel_current` 7.9% | `geom` GiST 索引，**衛星和船真的在移動** | 更新是必要的，HOT 不可能成立。改 collector 也沒用，設 fillfactor 更是浪費（非 HOT 的新版本本來就能放別頁）→ **只解除 autovacuum 節流** |
+| **A** | `animal_adoption_current` 0% | `last_seen_at` 有索引且每輪 bump | 同上（該索引要不要留可另議）|
+| **B** | `road_sections_current` 8.8%、`youbike_current` 15.8%、`road_events_current` 36.8% | 索引欄位**都不會變**，純粹頁面沒 HOT 空間 | **`fillfactor=70` + 積極 autovacuum，零程式碼改動** |
+| — | `bus_current` 99.5%、`bus_intercity_current` 99.6%、`parking_lots_current` 99.6%、`tourist_shuttle_current` 99.7% | 本來就健康 | 不動 |
+
+**fillfactor 要 70 不是 80**：先試 80，`road_sections_current` 只從 8.8% 升到 34.8%。
+該表 8,021 列、每分鐘約 2,700 次更新（每列每 3 分鐘一次），20% 預留空間 2-3 輪就用完。
+→ **fillfactor 減少 dead tuple 的產生，autovacuum 回收剩下的，兩者互補，單靠任一個都不夠。**
+
+實測（套用後 15 分鐘的新增更新）：B 類 HOT 升到 88~99%、dead tuple 0~48、表大小持平；
+A 類 HOT 如預期沒改善（3.8%→4.5%）**但 dead tuple 為 0** —— 證明 `cost_delay=0` 解除節流後追得上。
+
+### 放棄「collector 內容沒變就不寫」（原計畫 A 案）的理由
+
+除了 HOT 已能解決問題外，A 案本身有兩個問題：
+
+1. **用弱訊號換強訊號**：它把監控的死活判斷從「這張表有沒有在寫」換成「collector 有沒有回報」。
+   兩者平常等價，**出事時不等價** —— collector 跑了、heartbeat 回報成功，但寫入因權限/schema
+   漂移而靜默失敗時，監控會顯示綠燈（同 [`2026-07-26-required-env-silent-skip`](./2026-07-26-required-env-silent-skip.md)）。
+   `collected_at` 才是「資料真的落地」的證據。
+2. **前提不成立**：實測 `metadata.collector_status` **覆蓋不全** —— `ship_ais`、`waste_positions`
+   等 13 個 collector 的 heartbeat 停在 6 月，但這些表都還在正常寫入（`ship_current` 7 分鐘前、
+   `waste_positions_realtime` 2 分鐘前）。它們走了不經 `SupabaseWriter.write()` 的路徑。
+
+## 效果與誠實的數字
+
+| | 每天讀取 |
+|---|---|
+| 事故當時 | ~330 GB |
+| 全部修完（15 分鐘窗口實測） | **~178 GB（-46%）** |
+
+⚠️ **過程中兩次高估改善幅度**，留檔警惕：
+- 第 2 級壓實後預估「~60 GB/天」→ 實際 ~220（漏算 `health_snapshot` 的 `count_24h` 結構性下限）
+- 治本後預估「~90 GB/天」→ 實測 178（把各項改善相加時低估了背景負載）
+
+**教訓：分項改善不能直接相加當總量預測，要實測。** 且 15 分鐘窗口誤差不小
+（剛好含不含一次 `health_snapshot` 就差 489 MB），要精確得量 1 小時以上。
+
+剩下的都是「必要的讀取」而非浪費：`bus_positions` INSERT ~30 GB/天、
+`refresh_bus_trails_daily` ~21 GB/天（可照 road_congestion 的增量模式再砍 ~15 GB）、
+`health_snapshot` ~16 GB、`satellite_maneuvers` ~10 GB。
+再往下砍要動產品行為（收集頻率、圖層更新頻率），屬取捨而非修 bug。
+
+**驗收標準：不再出現第四次重啟。** 前三次間隔 3 天 → 2 天，觀察到 2026-09-06 仍無重啟才算過關。
+
+## 待辦（副軌，不阻斷）
+
+1. `metadata.collector_status` 覆蓋不全 —— 13 個 collector heartbeat 停擺但表仍在寫
+2. `live.aisstream_archive_manifests` **從來沒被正確監控過** —— yaml 指定 `created_at`，表無此欄，每次探針都回錯誤
+3. **`drought_alert_current` 已 112 天沒寫**，超過 `expected_interval_min` 門檻 3.7 倍卻沒報警 —— 監控盲點
+
 ## 預防守則
 
-1. **`ON CONFLICT DO UPDATE` 不是 no-op**。值沒變也會產生 dead tuple。
+0. **⭐ 懷疑表膨脹時，先量 HOT 比例再決定要不要改程式**（2026-09-04 最大教訓）：
+   ```sql
+   select relname, n_tup_upd, n_tup_hot_upd,
+          round(100.0*n_tup_hot_upd/nullif(n_tup_upd,0),1) hot_pct,
+          n_dead_tup, pg_size_pretty(pg_relation_size(relid))
+   from pg_stat_user_tables where relname like '%_current' order by n_tup_upd desc;
+   ```
+   HOT 低時，比對「該表的**索引**欄位」與「每輪會變的欄位」有沒有交集：
+   **有交集 → 更新本來就必要，HOT 不可能，只能調 autovacuum；
+   無交集 → 是 fillfactor 問題，設 70 + 重整即可，不用碰程式碼。**
+   本次就是靠這一步，把「改 17 張表的 collector 寫入邏輯 + 改監控 + 修 13 個 heartbeat」
+   縮成「幾個 ALTER TABLE + VACUUM FULL」。
+
+1. **`ON CONFLICT DO UPDATE` 不是 no-op**。值沒變也會產生 dead tuple —— 但**這不一定是問題**，
+   只要更新是 HOT 就能自我回收（見上一條）。
    高頻全量 UPSERT 的 `*_current` 表要嘛只更新真正變動的列，要嘛接受 churn 並確認 autovacuum 跟得上。
 2. **膨脹的自檢指標是「每列 bytes」**，不是表大小。`ship_current` 19 萬列只佔 34 MB（0.18 KB/列）是健康的，
    `freeway_sections_current` 680 列佔 108 MB（166 KB/列）是病態的。純 catalog 查詢、零 IO，該進週巡檢。
@@ -125,6 +218,17 @@ order by start_time desc limit 20;   -- 'server restarted' / 'job startup timeou
    單次 1.8 GB × 6 次純浪費。跨 section 共用的查詢結果要提到最外層算一次。
 6. **autovacuum 也適用「執行時間 > 間隔 1/3 就追不上」**（ADR-0009 鐵則 2b）。
    per-table 設定調得再激進，只要單次 vacuum 掃描量 > churn 間隔內能處理的量，就是無效設定。
+   **Supabase 預設 `autovacuum_vacuum_cost_delay=2ms` 是節流**；高 churn 的小表要
+   per-table 設 `cost_delay=0`，否則 scale_factor 調再低也追不上（本次 `road_events_current`
+   有最激進的 threshold=500 卻仍膨脹 23 倍，就是被節流卡住）。
+
+7. **分項改善不能相加當總量預測**（2026-09-04 兩次高估的教訓）。
+   壓實後預估 60 GB/天實際 220、治本後預估 90 GB/天實測 178。
+   要給數字就實測，且窗口要夠長（15 分鐘窗口剛好含不含一次大 job 就差 489 MB）。
+
+8. **CTE 被引用兩次會被 materialize**。`WITH x AS (...)` 被兩個地方 SELECT 時，
+   PostgreSQL 會把整個 CTE 寫進 temp 檔。若 CTE 有幾百萬列 × 寬欄位，就是 GB 級的 temp IO。
+   過濾條件要**推進 CTE 內部**，讓 Run Condition 能提早終止（見 mig 401）。
 
 ## 誠實紀錄
 
