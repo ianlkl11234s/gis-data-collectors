@@ -110,6 +110,11 @@ _REALTIME_TABLES_EXEMPT = {
         "pla_tracks_runs（ledger）代監控；0 形狀是合法結果",
     "live.pla_activity_items":
         "pla_tracks_runs（ledger）代監控；0 項次是合法結果",
+    # accepted run 才會寫 batch，failed run 依 migration 389 的 CHECK 不得佔用
+    # batch_id —— 拿它當心跳會把「連續失敗」誤讀成「沒跑」。run_receipts 每輪
+    # 必有一列（accepted/failed 都寫），已列入 realtime_tables.yaml 代監控。
+    "intel.global_event_collector_batches":
+        "global_event_collector_run_receipts 代監控；failed run 依設計不寫 batch",
 }
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"

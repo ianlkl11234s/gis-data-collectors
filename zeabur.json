@@ -14,15 +14,39 @@
       "default": "60"
     },
     "GLOBAL_EVENTS_MAX_FILES_PER_STREAM": {
-      "description": "每個 GDELT stream 每輪最多處理檔案數；hourly 正常 4 檔、失敗追趕最多 8 檔",
+      "description": "每個 GDELT stream 每輪最多處理檔案數（正常速度）",
       "default": "8"
+    },
+    "GLOBAL_EVENTS_CATCHUP_FILES_PER_STREAM": {
+      "description": "checkpoint 落後超過 CATCHUP_LAG_HOURS 時，單輪放寬到幾檔以追回進度",
+      "default": "24"
+    },
+    "GLOBAL_EVENTS_CATCHUP_LAG_HOURS": {
+      "description": "落後幾小時開始進入 catch-up 模式",
+      "default": "6"
+    },
+    "GLOBAL_EVENTS_PENDING_TTL_HOURS": {
+      "description": "待評估佇列保鮮期；超過只記 receipt 不再送 LLM（新鮮度優先於完整性）",
+      "default": "48"
+    },
+    "GLOBAL_EVENTS_ARTIFACT_STALE_HOURS": {
+      "description": "已進 index 但超過此時數仍 404 的 ZIP 視為缺洞跳過，避免 cursor 永久卡死",
+      "default": "6"
+    },
+    "GLOBAL_EVENTS_MAX_SKIP_SLOTS": {
+      "description": "單輪最多跳過幾個 index 缺洞 slot",
+      "default": "96"
+    },
+    "GLOBAL_EVENTS_STAGE1_BUDGET_SECONDS": {
+      "description": "單輪 Stage1 送件軟預算（秒）；用盡後剩餘 chunk 留到下輪，不計 attempt",
+      "default": "1200"
     },
     "GLOBAL_EVENTS_INITIAL_SLOTS": {
       "description": "首次執行每個 GDELT stream 回補最近 15 分鐘 slots 數",
       "default": "4"
     },
     "GLOBAL_EVENTS_RAW_RETENTION_HOURS": {
-      "description": "成功 GDELT raw ZIP 的本地保留時間；失敗批次不自動刪除",
+      "description": "成功 GDELT raw ZIP 的本地保留時間；失敗批次改由 GLOBAL_EVENTS_ARCHIVE_RETENTION_DAYS（預設 3 天）清理",
       "default": "72"
     },
     "GLOBAL_EVENTS_QWEN_MODEL": {
@@ -30,12 +54,15 @@
       "default": "qwen/qwen3.7-flash"
     },
     "GLOBAL_EVENTS_QWEN_MAX_CANDIDATES": {
-      "description": "每輪送 Qwen Stage1 的 hard cap；超過只保留規則排序前段",
-      "default": "15"
+      "description": "每輪送 Qwen Stage1 的 hard cap；超過留在佇列，下輪依 newest-first 再取。2026-09-05 對齊 config.py 與 dashboard 實際值（皆為 100）",
+      "default": "100"
     },
     "GLOBAL_EVENTS_QWEN_MAX_OUTPUT_TOKENS": {
-      "description": "Qwen Stage1 response max output tokens",
-      "default": "4096"
+      "description": "Qwen Stage1 response max output tokens；2026-09-05 對齊 config.py 與 dashboard 實際值（皆為 8192）",
+      "default": "8192"
+    },
+    "GLOBAL_EVENTS_QWEN_FALLBACK_MODELS": {
+      "description": "OpenRouter models fallback（逗號分隔）；留空＝request body 與現況完全一致"
     },
     "GLOBAL_EVENTS_QWEN_MAX_COST_USD": {
       "description": "單輪 Qwen usage.cost post-hoc alert threshold；硬界線由 candidates/output tokens 控制",
