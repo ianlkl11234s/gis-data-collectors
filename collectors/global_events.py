@@ -86,6 +86,67 @@ NOISE_PATTERNS = {
         r"\b(?:album|box office|football match|tour de france|us open)\b", re.I
     ),
 }
+# Per-signal vetoes, not candidate-level drops: only the accidentally matched
+# signal is discarded, so a headline keeping any other impact signal is still
+# routed. Measured on 507 deduplicated production candidates (2026-09-03..04):
+# 32 candidates lose every signal, 28 of them were judged drop_noise (88%).
+# A `cyclone` rule was measured and deliberately rejected -- a forward-only
+# lookahead cannot tell "after Cyclone Narelle" (real aftermath) from
+# "Cyclone Opener" (a team name), and it cost more keep_core than it saved.
+IMPACT_VETOES = {
+    "national_politics": (
+        # French/Spanish idiom: coup de chauffe / coup de coeur / coup de theatre.
+        re.compile(r"\bcoup\s+(?:de|du|d[’'])", re.I),
+        # English idiom: "scores a major coup", "a rare coup for the museum".
+        re.compile(r"\b(?:major|big|great|real|rare)\s+coup\b", re.I),
+        re.compile(r"\bscores?\s+(?:a\s+)?(?:major\s+)?coup\b", re.I),
+    ),
+    "armed_conflict": (
+        re.compile(r"\bhome[- ]invasion\b", re.I),
+        re.compile(
+            r"\b(?:raccoon|privacy|ant|weed|plastic|tourist)\s+invasion\b", re.I
+        ),
+    ),
+    "major_disaster": (
+        re.compile(r"\b(?:political|cultural|financial|seismic)\s+earthquake\b", re.I),
+        # RAF Typhoon is an aircraft, not a storm.
+        re.compile(r"\btyphoon\s+(?:fighter|jet|aircraft|squadron)\b", re.I),
+    ),
+    "public_health": (
+        re.compile(
+            r"\b(?:cheating|loneliness|obesity|misinformation|violence|screen)"
+            r"\s+epidemic\b",
+            re.I,
+        ),
+    ),
+}
+
+
+def title_impact_signals(title: str) -> list[str]:
+    """Impact signals a headline still holds after its per-signal vetoes."""
+    return sorted(
+        name
+        for name, pattern in IMPACT_PATTERNS.items()
+        if pattern.search(title)
+        and not any(veto.search(title) for veto in IMPACT_VETOES.get(name, ()))
+    )
+OPENROUTER_MAX_ATTEMPTS = 3
+OPENROUTER_RETRY_FALLBACK_SECONDS = 5.0
+OPENROUTER_RETRY_CAP_SECONDS = 30.0
+# Transient transport failures only. 4xx other than 408/429 are deterministic
+# for an unchanged request body, so retrying them only burns the run budget.
+RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504, 522, 524})
+HTTP_MAX_ATTEMPTS = 3
+HTTP_RETRY_BASE_SECONDS = 2.0
+HTTP_RETRY_CAP_SECONDS = 30.0
+# A chunk that keeps failing is split, then finally released with
+# assessment_status=pending so one poisoned cohort cannot stall the queue.
+STAGE1_CHUNK_RELEASE_ATTEMPTS = 4
+PENDING_QUEUE_VERSION = 2
+STAGE1_PROMPT_VERSION = "global-events-stage1/v3"
+STAGE1_RUN_SCHEMA_VERSION = "global-events-stage1-shadow/v3"
+TRADITIONALIZATION_POLICY_VERSION = "opencc-1.4.2-s2tw-single-pass-2026-09-03.1"
+
 OPENROUTER_MAX_ATTEMPTS = 3
 OPENROUTER_RETRY_FALLBACK_SECONDS = 5.0
 OPENROUTER_RETRY_CAP_SECONDS = 30.0
@@ -338,11 +399,7 @@ def parse_gkg_artifact(artifact: GKGArtifact, payload: bytes) -> list[dict[str, 
                 url = canonical_url(row[4])
                 if not url or not title:
                     continue
-                impact = sorted(
-                    name
-                    for name, pattern in IMPACT_PATTERNS.items()
-                    if pattern.search(title)
-                )
+                impact = title_impact_signals(title)
                 noise = sorted(
                     name
                     for name, pattern in NOISE_PATTERNS.items()

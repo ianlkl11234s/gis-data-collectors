@@ -19,6 +19,7 @@ from collectors.global_events import (
     parse_gkg_artifact,
     parse_master_index,
     selected_artifact_manifest,
+    title_impact_signals,
     validate_stage1,
 )
 
@@ -1959,3 +1960,68 @@ def test_run_receipt_carries_collector_version(monkeypatch, tmp_path):
     assert run_receipt["receipt"]["collector_version_source"] == (
         "env:ZEABUR_GIT_COMMIT_SHA"
     )
+
+
+# --- Deterministic geography: per-signal vetoes, ADM1 downgrade, gazetteer ---
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # French idiom that used to route as a coup d'etat.
+        "Coup de chauffe à Cognac : trois jours de cirque, de danse et de vertige",
+        "Gala des 41es prix Gémeaux: le prix Coup de cœur de l'année",
+        # English idiom.
+        "Dustin Martin: Albury scores major coup with rare guest speaker",
+        # Metaphors, not events.
+        "Cheating epidemic in higher ed",
+        "Vanishing Trump signs in deep-red state could signal a political earthquake",
+        # A burglary is not an armed conflict; an aircraft is not a storm.
+        "Resident struck with crowbar in violent home invasion, police search",
+        "RAF Typhoon fighter jet set to fly over Enniskillen",
+    ],
+)
+def test_impact_vetoes_discard_idiomatic_signal_matches(title):
+    assert title_impact_signals(title) == []
+
+
+@pytest.mark.parametrize(
+    ("title", "signal"),
+    [
+        # The veto is per signal, so an "airstrike" headline survives the
+        # "what to know" explainer shape that a candidate-level filter killed.
+        ("What to know about a reported US airstrike that hit a wedding in Iran",
+         "armed_conflict"),
+        ("Military coup attempt fails in Guinea-Bissau", "national_politics"),
+        # No cyclone veto exists: a forward-only lookahead cannot separate
+        # aftermath reporting from a team name without losing real events.
+        ("Cyclone Narelle makes landfall in Queensland", "major_disaster"),
+        ("Congo's Ebola outbreak shows no signs of slowing", "public_health"),
+    ],
+)
+def test_impact_vetoes_keep_real_events_routable(title, signal):
+    assert signal in title_impact_signals(title)
+
+
+def test_vetoed_headline_never_reaches_stage1(monkeypatch, tmp_path):
+    payload = _zip(
+        [
+            _row("cognac.example", "Coup de chauffe à Cognac : trois jours de cirque"),
+            _row("wire.example", "US airstrike hit a wedding in Iran"),
+        ]
+    )
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    seen = []
+
+    def _capture(candidates):
+        seen.extend(
+            document["title"]
+            for candidate in candidates
+            for document in candidate["representative_documents"]
+        )
+        return _fake_assessments(collector, candidates)
+
+    monkeypatch.setattr(collector, "_request_stage1", _capture)
+    collector.run()
+    assert seen == ["US airstrike hit a wedding in Iran"]
