@@ -21,6 +21,7 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -130,23 +131,6 @@ def title_impact_signals(title: str) -> list[str]:
         if pattern.search(title)
         and not any(veto.search(title) for veto in IMPACT_VETOES.get(name, ()))
     )
-OPENROUTER_MAX_ATTEMPTS = 3
-OPENROUTER_RETRY_FALLBACK_SECONDS = 5.0
-OPENROUTER_RETRY_CAP_SECONDS = 30.0
-# Transient transport failures only. 4xx other than 408/429 are deterministic
-# for an unchanged request body, so retrying them only burns the run budget.
-RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504, 522, 524})
-HTTP_MAX_ATTEMPTS = 3
-HTTP_RETRY_BASE_SECONDS = 2.0
-HTTP_RETRY_CAP_SECONDS = 30.0
-# A chunk that keeps failing is split, then finally released with
-# assessment_status=pending so one poisoned cohort cannot stall the queue.
-STAGE1_CHUNK_RELEASE_ATTEMPTS = 4
-PENDING_QUEUE_VERSION = 2
-STAGE1_PROMPT_VERSION = "global-events-stage1/v3"
-STAGE1_RUN_SCHEMA_VERSION = "global-events-stage1-shadow/v3"
-TRADITIONALIZATION_POLICY_VERSION = "opencc-1.4.2-s2tw-single-pass-2026-09-03.1"
-
 OPENROUTER_MAX_ATTEMPTS = 3
 OPENROUTER_RETRY_FALLBACK_SECONDS = 5.0
 OPENROUTER_RETRY_CAP_SECONDS = 30.0
@@ -282,6 +266,188 @@ def parse_gkg_locations(raw: str) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+# GDELT names the article's own publisher as often as its subject, so only the
+# part of a headline before the first separator is searched for place names.
+HEADLINE_SEPARATOR_RE = re.compile(r"\s+[|｜]\s*|\s+[-–—]\s+|\s+[·]\s+")
+# Okina and the hyphen variants are marks *inside* a word, so folding them away
+# makes GDELT's "Hawaii" match a publisher's "Hawaiʻi".
+GAZETTEER_MARK_RE = re.compile("[ʻʼ‘­‐‑]")
+# The possessive apostrophes are word *boundaries*: without this "Egypt's South
+# Sinai" folds to "egypts" and stops matching the country "Egypt" entirely.
+GAZETTEER_BOUNDARY_RE = re.compile("['’]")
+GAZETTEER_MIN_NAME_LENGTH = 4
+GAZETTEER_RETENTION_DAYS = 7
+# Masthead words that GDELT also geocodes as settlements. Matching these turns
+# "… | The Independent" into a location assertion about a town.
+GAZETTEER_STOP_NAMES = frozenset(
+    {
+        "united",
+        "news",
+        "post",
+        "times",
+        "herald",
+        "mail",
+        "sun",
+        "star",
+        "mirror",
+        "independent",
+        "guardian",
+        "observer",
+        "tribune",
+        "journal",
+        "chronicle",
+        "gazette",
+        "record",
+        "review",
+        "press",
+        "daily",
+        "today",
+        "world",
+        "national",
+        "republic",
+        "union",
+        "standard",
+        "express",
+        "advertiser",
+        "bulletin",
+        "courier",
+        "dispatch",
+        "sentinel",
+        "telegraph",
+        "reporter",
+        "digital",
+        "online",
+        "media",
+        "radio",
+        "network",
+        "channel",
+        "weekly",
+        "monthly",
+        "magazine",
+        "live",
+        "wire",
+        "watch",
+        "voice",
+        "call",
+        "life",
+        "home",
+        "business",
+        "eagle",
+        "banner",
+        "beacon",
+        "leader",
+        "argus",
+        "enterprise",
+        "advance",
+        "age",
+        "reformer",
+    }
+)
+# GDELT location_type -> the public place kind the platform already allows.
+# Types 2 and 5 are first-level administrative areas: they carry a country code
+# but their coordinates are a state centroid, so they are only ever downgraded
+# to their country's own representative point, never published as-is.
+GKG_LOCATION_KINDS = {1: "country_center", 3: "city_center", 4: "city_center"}
+GKG_ADMIN1_LOCATION_TYPES = frozenset({2, 5})
+
+
+def gazetteer_key(name: str | None) -> str:
+    """Fold a place name to the form used for headline matching."""
+    if not isinstance(name, str):
+        return ""
+    folded = unicodedata.normalize("NFKD", name)
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    folded = GAZETTEER_BOUNDARY_RE.sub(" ", GAZETTEER_MARK_RE.sub("", folded))
+    return " ".join(folded.casefold().split())
+
+
+def _gazetteer_specificity(location_type: Any) -> int:
+    if location_type in (3, 4):
+        return 3
+    if location_type in GKG_ADMIN1_LOCATION_TYPES:
+        return 2
+    if location_type == 1:
+        return 1
+    return 0
+
+
+def gazetteer_entries_from_locations(
+    locations: Iterable[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Derive headline-matchable entries from GDELT's own geocoding.
+
+    Coordinates are never synthesised: every entry is a name/point pair GDELT
+    itself published for some article in the same window.
+    """
+    entries: dict[str, dict[str, Any]] = {}
+    for location in locations or []:
+        specificity = _gazetteer_specificity(location.get("location_type"))
+        if not specificity:
+            continue
+        longitude, latitude = location.get("longitude"), location.get("latitude")
+        if not all(
+            type(value) in (int, float) and math.isfinite(value)
+            for value in (longitude, latitude)
+        ):
+            continue
+        if not -180 <= longitude <= 180 or not -90 <= latitude <= 90:
+            continue
+        full_name = location.get("name")
+        if not isinstance(full_name, str) or not full_name.strip():
+            continue
+        # "Osoyoos, British Columbia, Canada" is only ever written as "Osoyoos"
+        # in a headline.
+        short_name = full_name.split(",", 1)[0].strip()
+        key = gazetteer_key(short_name)
+        if (
+            len(key) < GAZETTEER_MIN_NAME_LENGTH
+            or key in GAZETTEER_STOP_NAMES
+            or not any(ch.isalpha() for ch in key)
+        ):
+            continue
+        entry = {
+            "name": short_name,
+            "full_name": full_name,
+            "location_type": location["location_type"],
+            "country_code": location.get("country_code"),
+            "longitude": longitude,
+            "latitude": latitude,
+        }
+        existing = entries.get(key)
+        if existing is None or specificity > _gazetteer_specificity(
+            existing["location_type"]
+        ):
+            entries[key] = entry
+    return entries
+
+
+def gazetteer_lookup(
+    headline: str, gazetteer: dict[str, dict[str, Any]]
+) -> tuple[str, dict[str, Any]] | None:
+    """Longest place name the searchable part of a headline states verbatim."""
+    if not headline or not gazetteer:
+        return None
+    searchable = HEADLINE_SEPARATOR_RE.split(headline, 1)[0]
+    folded = gazetteer_key(searchable)
+    if not folded:
+        return None
+    best: tuple[str, dict[str, Any]] | None = None
+    for key, entry in gazetteer.items():
+        if best is not None and len(key) <= len(best[0]):
+            continue
+        if re.search(rf"(?<![0-9a-z]){re.escape(key)}(?![0-9a-z])", folded):
+            best = (key, entry)
+    if best is None:
+        return None
+    # The basis must quote the publisher's own words, not GDELT's spelling.
+    match = re.search(
+        rf"(?<![0-9A-Za-z])({re.escape(best[1]['name'])})(?![0-9A-Za-z])",
+        searchable,
+        re.I,
+    )
+    return (match.group(1) if match else best[1]["name"]), best[1]
 
 
 def _names(raw: str) -> list[str]:
@@ -615,14 +781,114 @@ def candidate_batch_slice(
     }
 
 
+def batch_country_anchors(batch: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Country representative points GDELT published anywhere in this batch.
+
+    A candidate that is still unlocated after the metadata fallback by
+    definition has no usable country evidence of its own, so an ADM1-only
+    mention can only be downgraded against a batch-wide anchor.
+    """
+    anchors: dict[str, dict[str, Any]] = {}
+    for candidate in batch["payload"]["candidates"]:
+        for evidence in candidate.get("location_evidence", []):
+            if evidence.get("location_type") != 1:
+                continue
+            country_code = evidence.get("country_code")
+            name = evidence.get("name")
+            longitude, latitude = evidence.get("longitude"), evidence.get("latitude")
+            if not country_code or not isinstance(name, str) or not name.strip():
+                continue
+            if not all(
+                type(value) in (int, float) and math.isfinite(value)
+                for value in (longitude, latitude)
+            ):
+                continue
+            if not -180 <= longitude <= 180 or not -90 <= latitude <= 90:
+                continue
+            existing = anchors.get(country_code)
+            # Lowest evidence_id wins so the same batch always anchors alike.
+            if existing is None or evidence["evidence_id"] < existing["evidence_id"]:
+                anchors[country_code] = {
+                    "evidence_id": evidence["evidence_id"],
+                    "name": name,
+                    "longitude": longitude,
+                    "latitude": latitude,
+                }
+    return anchors
+
+
+def headline_gazetteer_places(
+    documents: list[dict[str, Any]],
+    source_urls: list[str],
+    gazetteer: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Last resort for candidates GDELT never geocoded at all.
+
+    Both the name and its coordinates come from GDELT's own geocoding of some
+    other article; only the decision that this headline states that name is
+    ours, and ``evidence_basis`` quotes the headline itself wherever its
+    spelling allows, falling back to GDELT's spelling when the publisher used
+    diacritics GDELT does not. Migration 399 allowlists this ``source_kind``
+    for exactly this, and forbids it from ever claiming ``event_point``.
+    """
+    for document in documents:
+        if document["url"] not in source_urls:
+            continue
+        found = gazetteer_lookup(document.get("title") or "", gazetteer)
+        if found is None:
+            continue
+        matched, entry = found
+        kind = GKG_LOCATION_KINDS.get(entry["location_type"])
+        if kind is None:
+            # ADM1-only entries carry a state centroid; downgrading them needs
+            # a country anchor this path does not have.
+            continue
+        identity = (
+            kind,
+            entry.get("country_code"),
+            entry["name"],
+            entry["longitude"],
+            entry["latitude"],
+        )
+        url = document["url"]
+        # The platform's lineage grammar reserves '#' as the URL/basis
+        # separator, so a URL already containing one uses the opaque form.
+        lineage = (
+            f"{kind}:{url}#{matched}"
+            if "#" not in url
+            else f"{kind}:gdelt:headline_{content_sha256(identity)[:24]}"
+        )
+        return [
+            {
+                "place_key": f"place_{content_sha256(identity)[:24]}",
+                "name": entry["name"],
+                "country_code": entry.get("country_code"),
+                "country_code_scheme": "fips10",
+                "location_kind": kind,
+                "longitude": entry["longitude"],
+                "latitude": entry["latitude"],
+                "evidence_url": url,
+                "location_lineage": lineage,
+                "evidence_basis": (
+                    "依標題地名比對取得的代表位置，未確認為精確發生地："
+                    f"{matched}"
+                ),
+                "source_kind": "headline_gazetteer",
+            }
+        ]
+    return []
+
+
 def candidate_display_records(
     batch: dict[str, Any],
     stage1: dict[str, Any],
     assessed_at: str,
     assessment_times: dict[str, str] | None = None,
+    gazetteer: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Explicit public allowlist: AI assessments never become formal publications."""
     assessments = {item["candidate_id"]: item for item in stage1["assessments"]}
+    country_anchors = batch_country_anchors(batch)
     records = []
     for candidate in batch["payload"]["candidates"]:
         documents = candidate["representative_documents"]
@@ -673,11 +939,29 @@ def candidate_display_records(
             ):
                 continue
             # GKG country/city/landmark coordinates are representative only.
-            # State/ADM1 mentions stay unlocated rather than inventing a city.
-            kind = {1: "country_center", 3: "city_center", 4: "city_center"}.get(
-                evidence.get("location_type")
-            )
+            kind = GKG_LOCATION_KINDS.get(evidence.get("location_type"))
             longitude, latitude = evidence.get("longitude"), evidence.get("latitude")
+            name, basis = evidence["name"], selection["basis"]
+            country_code = evidence.get("country_code")
+            anchor = (
+                country_anchors.get(country_code)
+                if kind is None
+                and evidence.get("location_type") in GKG_ADMIN1_LOCATION_TYPES
+                else None
+            )
+            if anchor is not None:
+                # An ADM1 mention is real evidence of the country, but its
+                # coordinates are a state centroid. Publish the country point
+                # GDELT itself used elsewhere in this batch, and say so.
+                kind = "country_center"
+                name = anchor["name"]
+                longitude, latitude = anchor["longitude"], anchor["latitude"]
+                basis = (
+                    "來源僅提供一級行政區提及（"
+                    f"{evidence['name']}），降級為國家代表點；"
+                    "座標為 GDELT 在本輪其他文章中使用的該國固定質心，"
+                    "非本文報導之位置。"
+                )
             if kind is None or not all(
                 type(value) in (int, float) and math.isfinite(value)
                 for value in (longitude, latitude)
@@ -685,37 +969,33 @@ def candidate_display_records(
                 continue
             if not -180 <= longitude <= 180 or not -90 <= latitude <= 90:
                 continue
-            place_identity = (
-                kind,
-                evidence.get("country_code"),
-                evidence.get("name"),
-                longitude,
-                latitude,
-            )
+            place_identity = (kind, country_code, name, longitude, latitude)
             if place_identity in seen_places:
                 continue
             seen_places.add(place_identity)
             selected_place_found = selected_place_found or not is_fallback
             lineage_id = (
                 f"metadata_fallback_{evidence['evidence_id']}"
-                if is_fallback
+                if is_fallback or anchor is not None
                 else evidence["evidence_id"]
             )
             places.append(
                 {
                     "place_key": f"place_{content_sha256(place_identity)[:24]}",
-                    "name": evidence["name"],
-                    "country_code": evidence.get("country_code"),
+                    "name": name,
+                    "country_code": country_code,
                     "country_code_scheme": "fips10",
                     "location_kind": kind,
                     "longitude": longitude,
                     "latitude": latitude,
                     "evidence_url": evidence["source_url"],
                     "location_lineage": f"{kind}:gdelt:{lineage_id}",
-                    "evidence_basis": selection["basis"],
+                    "evidence_basis": basis,
                     "source_kind": "gdelt_metadata_mention",
                 }
             )
+        if not places and gazetteer:
+            places = headline_gazetteer_places(documents, source_urls, gazetteer)
         record = {
             "candidate_id": candidate["candidate_id"],
             "observed_at": parse_gdelt_ts(
@@ -1224,6 +1504,14 @@ class GlobalEventsCollector(BaseCollector):
         return Path(config.LOCAL_DATA_DIR) / self.name / "routing_pending.json"
 
     @property
+    def gazetteer_path(self) -> Path:
+        # Operational state, not an artifact: it sits at the collector root so
+        # neither _cleanup_local_artifacts (raw/handoff/stage1_cache only) nor
+        # tasks/archive.py (numeric YYYY/MM/DD directories only) can reach it.
+        # Its own rolling retention is applied in _save_gazetteer instead.
+        return Path(config.LOCAL_DATA_DIR) / self.name / "gazetteer.json"
+
+    @property
     def source_registry_path(self) -> Path:
         return (
             Path(__file__).resolve().parents[1]
@@ -1311,6 +1599,62 @@ class GlobalEventsCollector(BaseCollector):
                 **queue,
             },
         )
+
+    def _load_gazetteer(self) -> dict[str, dict[str, Any]]:
+        """Place names GDELT geocoded in recent rounds, for headline matching.
+
+        A corrupt or unreadable file is never fatal: the gazetteer is a pure
+        enrichment, and losing it only means some candidates stay unlocated.
+        """
+        try:
+            payload = json.loads(self.gazetteer_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return {}
+        entries = payload.get("entries")
+        if payload.get("version") != 1 or not isinstance(entries, dict):
+            return {}
+        return {
+            key: entry
+            for key, entry in entries.items()
+            if isinstance(entry, dict) and isinstance(key, str)
+        }
+
+    def _save_gazetteer(
+        self, stored: dict[str, dict[str, Any]], observed: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Merge this round's names in and drop names unseen for a week."""
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        cutoff = (
+            datetime.now(UTC) - timedelta(days=GAZETTEER_RETENTION_DAYS)
+        ).strftime("%Y-%m-%d")
+        merged = {
+            key: entry
+            for key, entry in stored.items()
+            if str(entry.get("last_seen") or "") >= cutoff
+        }
+        for key, entry in observed.items():
+            existing = merged.get(key)
+            # A more specific type wins; otherwise only the freshness moves, so
+            # a settled name keeps one stable coordinate across rounds.
+            if existing is None or _gazetteer_specificity(
+                entry["location_type"]
+            ) > _gazetteer_specificity(existing.get("location_type")):
+                merged[key] = {**entry, "last_seen": today}
+            else:
+                existing["last_seen"] = today
+        if merged:
+            atomic_replace_json(
+                self.gazetteer_path,
+                {
+                    "version": 1,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                    "retention_days": GAZETTEER_RETENTION_DAYS,
+                    "entries": merged,
+                },
+            )
+        else:
+            self.gazetteer_path.unlink(missing_ok=True)
+        return merged
 
     def _max_files_per_stream(self, checkpoint: str | None) -> int:
         """Allow a wider window while a stream is measurably behind."""
@@ -1970,6 +2314,10 @@ class GlobalEventsCollector(BaseCollector):
         queue = self._load_queue()
         now = datetime.now(UTC)
         groups: dict[str, dict[str, Any]] = {}
+        # Rounds that resume a queued cohort never re-parse a GKG file, so the
+        # names this round would observe must survive on disk to be usable.
+        stored_gazetteer = self._load_gazetteer()
+        observed_gazetteer: dict[str, dict[str, Any]] = {}
         raw_paths: list[Path] = []
         raw_metadata: list[dict[str, Any]] = []
         fetched_manifest: dict[str, list[dict[str, Any]]] = {}
@@ -2024,6 +2372,14 @@ class GlobalEventsCollector(BaseCollector):
                         }
                     )
                     for row in parse_gkg_artifact(artifact, payload):
+                        for key, entry in gazetteer_entries_from_locations(
+                            row["gkg_locations"]
+                        ).items():
+                            known = observed_gazetteer.get(key)
+                            if known is None or _gazetteer_specificity(
+                                entry["location_type"]
+                            ) > _gazetteer_specificity(known["location_type"]):
+                                observed_gazetteer[key] = entry
                         fingerprint = story_title_fingerprint(row["title"])
                         group = groups.setdefault(
                             fingerprint,
@@ -2438,6 +2794,7 @@ class GlobalEventsCollector(BaseCollector):
         )
         cleanup_stats = self._cleanup_local_artifacts()
         manifest["local_cleanup"] = cleanup_stats
+        gazetteer = self._save_gazetteer(stored_gazetteer, observed_gazetteer)
         result = {
             "data": [
                 {
@@ -2452,11 +2809,12 @@ class GlobalEventsCollector(BaseCollector):
             "deferred_candidate_count": deferred_count,
             "_candidate_display_records": (
                 candidate_display_records(
-                    batch, stage1, finished_at, self._assessment_times
+                    batch, stage1, finished_at, self._assessment_times, gazetteer
                 )
                 if handoff_ok and stage1 is not None and not errors
                 else []
             ),
+            "gazetteer_size": len(gazetteer),
             "handoff_manifest": manifest,
             "_supabase_receipts": self._supabase_receipts,
             "db_contract_status": "migration_389_receipts",

@@ -1,9 +1,12 @@
 import hashlib
 import io
 import json
+import os
+import re
 import sys
 import types
 import zipfile
+from datetime import datetime, timezone
 
 import pytest
 import requests
@@ -13,9 +16,13 @@ from collectors.global_events import (
     GKGIndexGap,
     GlobalEventsCollector,
     artifact_sha256,
+    batch_country_anchors,
     build_compact_batch,
     candidate_display_records,
     content_sha256,
+    gazetteer_entries_from_locations,
+    gazetteer_lookup,
+    headline_gazetteer_places,
     parse_gkg_artifact,
     parse_master_index,
     selected_artifact_manifest,
@@ -2025,3 +2032,378 @@ def test_vetoed_headline_never_reaches_stage1(monkeypatch, tmp_path):
     monkeypatch.setattr(collector, "_request_stage1", _capture)
     collector.run()
     assert seen == ["US airstrike hit a wedding in Iran"]
+
+
+def test_admin1_only_mention_is_downgraded_to_a_batch_country_anchor(
+    monkeypatch, tmp_path
+):
+    anchor_row = _row("wire.example", "Major earthquake kills dozens in Kansas")
+    anchor_row[9] = "1#United States#US##39.83#-98.58#US"
+    admin1_row = _row("mdot.example", "MDOT offers tips for peak hurricane season")
+    # Only a US state: real evidence of the country, but a state centroid.
+    admin1_row[9] = "2#Mississippi, United States#US#US28#32.75#-89.53#MS"
+    collector = _configure_enabled_collector(
+        monkeypatch, tmp_path, _zip([anchor_row, admin1_row])
+    )
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+    records = {
+        record["source_headline"]: record
+        for record in collector.run()["_candidate_display_records"]
+    }
+    place = records["MDOT offers tips for peak hurricane season"]["places"][0]
+    assert place["location_kind"] == "country_center"
+    # The published point is the country point GDELT used elsewhere in the
+    # batch, never the state centroid and never a synthesised coordinate.
+    assert (place["name"], place["longitude"], place["latitude"]) == (
+        "United States",
+        -98.58,
+        39.83,
+    )
+    assert place["country_code"] == "US"
+    assert place["location_lineage"].startswith(
+        "country_center:gdelt:metadata_fallback_loc_"
+    )
+    assert "降級為國家代表點" in place["evidence_basis"]
+    assert "Mississippi, United States" in place["evidence_basis"]
+    assert place["evidence_url"] in records[
+        "MDOT offers tips for peak hurricane season"
+    ]["source_urls"]
+
+
+def test_admin1_mention_stays_unlocated_without_a_country_anchor(
+    monkeypatch, tmp_path
+):
+    row = _row("mdot.example", "MDOT offers tips for peak hurricane season")
+    row[9] = "2#Mississippi, United States#US#US28#32.75#-89.53#MS"
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, _zip([row]))
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+    record = collector.run()["_candidate_display_records"][0]
+    assert record["places"] == []  # No anchor means no country point to borrow.
+
+
+def test_batch_country_anchor_is_lowest_evidence_id_per_country():
+    batch = {
+        "payload": {
+            "candidates": [
+                {
+                    "location_evidence": [
+                        {
+                            "evidence_id": "loc_bbb",
+                            "location_type": 1,
+                            "name": "United States",
+                            "country_code": "US",
+                            "longitude": 1.0,
+                            "latitude": 2.0,
+                        },
+                        # Not a country, and an out-of-range point: ignored.
+                        {
+                            "evidence_id": "loc_aaa",
+                            "location_type": 4,
+                            "name": "Newark",
+                            "country_code": "US",
+                            "longitude": 3.0,
+                            "latitude": 4.0,
+                        },
+                        {
+                            "evidence_id": "loc_000",
+                            "location_type": 1,
+                            "name": "Broken",
+                            "country_code": "US",
+                            "longitude": 999.0,
+                            "latitude": 4.0,
+                        },
+                    ]
+                },
+                {
+                    "location_evidence": [
+                        {
+                            "evidence_id": "loc_aab",
+                            "location_type": 1,
+                            "name": "United States",
+                            "country_code": "US",
+                            "longitude": 5.0,
+                            "latitude": 6.0,
+                        }
+                    ]
+                },
+            ]
+        }
+    }
+    anchors = batch_country_anchors(batch)
+    # Cross-candidate scan, deterministic winner: 'loc_aab' < 'loc_bbb'.
+    assert anchors["US"]["evidence_id"] == "loc_aab"
+    assert (anchors["US"]["longitude"], anchors["US"]["latitude"]) == (5.0, 6.0)
+
+
+def _gazetteer(*locations):
+    return gazetteer_entries_from_locations(list(locations))
+
+
+def _gkg_location(location_type, name, country_code, longitude, latitude):
+    return {
+        "location_type": location_type,
+        "name": name,
+        "country_code": country_code,
+        "adm1_code": None,
+        "longitude": longitude,
+        "latitude": latitude,
+        "feature_id": None,
+    }
+
+
+def test_gazetteer_matches_headline_place_and_quotes_it():
+    gazetteer = _gazetteer(
+        _gkg_location(1, "Egypt", "EG", 30.0, 27.0),
+        _gkg_location(4, "Osoyoos, British Columbia, Canada", "CA", -119.47, 49.03),
+    )
+    assert gazetteer_lookup(
+        "16 killed, 28 injured after bus overturns in Egypt's South Sinai", gazetteer
+    ) == ("Egypt", gazetteer["egypt"])
+    assert gazetteer_lookup(
+        "Small wildfire sparked northwest of Osoyoos", gazetteer
+    ) == ("Osoyoos", gazetteer["osoyoos"])
+
+
+def test_gazetteer_ignores_publisher_suffix_and_mastheads():
+    gazetteer = _gazetteer(
+        _gkg_location(4, "Grande Prairie, Alberta, Canada", "CA", -118.8, 55.17),
+    )
+    # The town only appears in the masthead after the separator.
+    assert (
+        gazetteer_lookup(
+            "Resident struck with crowbar in violent home invasion "
+            "| My Grande Prairie Now",
+            gazetteer,
+        )
+        is None
+    )
+    # A masthead word GDELT also geocodes never enters the gazetteer at all.
+    assert "independent" not in _gazetteer(
+        _gkg_location(4, "Independent, Missouri, United States", "US", -94.4, 39.1)
+    )
+
+
+def test_gazetteer_folds_diacritics_but_never_publishes_an_admin1_point():
+    gazetteer = _gazetteer(_gkg_location(2, "Hawaii, United States", "US", -155.5, 19.6))
+    headline = "President approves Major Disaster Declaration for Hawaiʻi"
+    matched, entry = gazetteer_lookup(headline, gazetteer)
+    assert matched == "Hawaii" and entry["location_type"] == 2
+    # An ADM1 entry has a state centroid and no anchor on this path, so the
+    # candidate stays unlocated rather than being drawn in the wrong place.
+    assert (
+        headline_gazetteer_places(
+            [{"title": headline, "url": "https://one.example/story"}],
+            ["https://one.example/story"],
+            gazetteer,
+        )
+        == []
+    )
+
+
+def test_gazetteer_place_is_source_bound_with_url_fragment_lineage():
+    gazetteer = _gazetteer(
+        _gkg_location(4, "Osoyoos, British Columbia, Canada", "CA", -119.47, 49.03)
+    )
+    documents = [
+        # Not in source_urls (oversized upstream): must be skipped, not used.
+        {"title": "Small wildfire near Osoyoos", "url": "https://skip.example/x"},
+        {
+            "title": "Small wildfire sparked northwest of Osoyoos",
+            "url": "https://one.example/story",
+        },
+    ]
+    (place,) = headline_gazetteer_places(
+        documents, ["https://one.example/story"], gazetteer
+    )
+    assert place["source_kind"] == "headline_gazetteer"
+    assert place["location_kind"] == "city_center"
+    assert place["evidence_url"] == "https://one.example/story"
+    assert place["location_lineage"] == "city_center:https://one.example/story#Osoyoos"
+    assert place["evidence_basis"] == (
+        "依標題地名比對取得的代表位置，未確認為精確發生地：Osoyoos"
+    )
+
+
+def test_gazetteer_lineage_falls_back_when_url_holds_a_fragment():
+    gazetteer = _gazetteer(
+        _gkg_location(4, "Osoyoos, British Columbia, Canada", "CA", -119.47, 49.03)
+    )
+    url = "https://one.example/story#comments"
+    (place,) = headline_gazetteer_places(
+        [{"title": "Wildfire near Osoyoos", "url": url}], [url], gazetteer
+    )
+    # '#' is the platform's lineage separator, so the opaque form is used.
+    assert place["location_lineage"].startswith("city_center:gdelt:headline_")
+    assert "#" not in place["location_lineage"].split(":", 1)[1]
+
+
+def test_gazetteer_persists_for_the_resume_path_and_expires(monkeypatch, tmp_path):
+    row = _row("wire.example", "Major earthquake kills dozens near Osoyoos")
+    row[9] = "4#Osoyoos, British Columbia, Canada#CA##49.03#-119.47#911"
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, _zip([row]))
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+    result = collector.run()
+    assert result["gazetteer_size"] >= 1
+    stored = json.loads(
+        (tmp_path / "global_events" / "gazetteer.json").read_text(encoding="utf-8")
+    )
+    assert stored["version"] == 1 and "osoyoos" in stored["entries"]
+
+    # A resumed round never re-parses a GKG file, so the disk copy is what
+    # makes headline matching work at all.
+    import config
+
+    monkeypatch.setattr(config, "LOCAL_DATA_DIR", tmp_path)
+    reloaded = GlobalEventsCollector()._load_gazetteer()
+    assert reloaded["osoyoos"]["name"] == "Osoyoos"
+
+    batch = {
+        "batch_id": "batch_" + "0" * 24,
+        "payload": {
+            "candidates": [
+                {
+                    "candidate_id": "cand_" + "0" * 24,
+                    "observation_window": {
+                        "first_slot": "20260901120000",
+                        "last_slot": "20260901120000",
+                    },
+                    "representative_documents": [
+                        {
+                            "title": "Small wildfire sparked northwest of Osoyoos",
+                            "url": "https://one.example/story",
+                        }
+                    ],
+                    "location_evidence": [],
+                }
+            ]
+        },
+    }
+    (record,) = candidate_display_records(
+        batch, {"assessments": []}, "2026-09-05T00:00:00+00:00", None, reloaded
+    )
+    assert record["places"][0]["source_kind"] == "headline_gazetteer"
+
+    # Names unseen for the retention window are forgotten.
+    aged = {"stale": {**reloaded["osoyoos"], "last_seen": "2020-01-01"}}
+    assert GlobalEventsCollector()._save_gazetteer(aged, {}) == {}
+
+
+def test_local_cleanup_never_prunes_the_gazetteer(monkeypatch, tmp_path):
+    import config
+
+    monkeypatch.setattr(config, "LOCAL_DATA_DIR", tmp_path)
+    collector = GlobalEventsCollector()
+    collector.gazetteer_path.parent.mkdir(parents=True, exist_ok=True)
+    collector.gazetteer_path.write_text('{"version": 1, "entries": {}}')
+    ancient = datetime.now(timezone.utc).timestamp() - 90 * 86400
+    os.utime(collector.gazetteer_path, (ancient, ancient))
+    collector._cleanup_local_artifacts()
+    # Operational state at the collector root, outside every retention sweep.
+    assert collector.gazetteer_path.exists()
+
+
+MIGRATION_399_PLACE_FIELDS = {
+    "place_key",
+    "name",
+    "country_code",
+    "country_code_scheme",
+    "location_kind",
+    "longitude",
+    "latitude",
+    "evidence_url",
+    "location_lineage",
+    "evidence_basis",
+    "source_kind",
+}
+
+
+def _assert_migration_399_place_contract(places, source_urls):
+    """Mirror the CHECK bodies in gis-platform migration 399.
+
+    Any violation makes ``ingest_global_event_candidates`` RAISE and reject the
+    whole batch, so every produced place is verified field by field here.
+    """
+    keys = set()
+    for place in places:
+        assert set(place) == MIGRATION_399_PLACE_FIELDS
+        assert place["place_key"].strip() and len(place["place_key"]) <= 200
+        assert place["name"].strip() and len(place["name"]) <= 300
+        assert place["location_kind"] in {
+            "event_point",
+            "city_center",
+            "country_center",
+            "unknown",
+        }
+        assert place["country_code_scheme"] in {"fips10", "iso2"}
+        assert place["source_kind"] in {
+            "gdelt_metadata_mention",
+            "reported",
+            "geocoded",
+            "headline_gazetteer",
+        }
+        assert len(place["country_code"] or "") <= 10
+        assert len(place["evidence_basis"] or "") <= 500
+        assert len(place["location_lineage"] or "") <= 2500
+        # Representative sources can never assert an exact event point.
+        assert not (
+            place["source_kind"] in {"gdelt_metadata_mention", "headline_gazetteer"}
+            and place["location_kind"] == "event_point"
+        )
+        assert -180 <= place["longitude"] <= 180
+        assert -90 <= place["latitude"] <= 90
+        assert place["evidence_url"] in source_urls
+        assert (place["evidence_basis"] or "").strip()
+        assert re.fullmatch(
+            place["location_kind"]
+            + r":(gdelt:[a-zA-Z0-9_-]+|https?://[^\s#]+#.+)",
+            place["location_lineage"],
+        )
+        assert place["place_key"] not in keys
+        keys.add(place["place_key"])
+
+
+def test_every_produced_place_satisfies_migration_399(monkeypatch, tmp_path):
+    anchor_row = _row("wire.example", "Major earthquake kills dozens in Kansas")
+    anchor_row[9] = (
+        "1#United States#US##39.83#-98.58#US;"
+        "4#Osoyoos, British Columbia, Canada#CA##49.03#-119.47#911"
+    )
+    admin1_row = _row("mdot.example", "MDOT offers tips for peak hurricane season")
+    admin1_row[9] = "2#Mississippi, United States#US#US28#32.75#-89.53#MS"
+    gazetteer_row = _row("bc.example", "Small wildfire northwest of Osoyoos now held")
+    gazetteer_row[9] = ""
+    collector = _configure_enabled_collector(
+        monkeypatch, tmp_path, _zip([anchor_row, admin1_row, gazetteer_row])
+    )
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+    records = collector.run()["_candidate_display_records"]
+    produced = {
+        place["source_kind"] for record in records for place in record["places"]
+    }
+    kinds = {
+        place["location_kind"] for record in records for place in record["places"]
+    }
+    assert produced == {"gdelt_metadata_mention", "headline_gazetteer"}
+    assert kinds == {"country_center", "city_center"}
+    for record in records:
+        _assert_migration_399_place_contract(record["places"], record["source_urls"])
