@@ -144,7 +144,71 @@ HTTP_RETRY_CAP_SECONDS = 30.0
 # assessment_status=pending so one poisoned cohort cannot stall the queue.
 STAGE1_CHUNK_RELEASE_ATTEMPTS = 4
 PENDING_QUEUE_VERSION = 2
-STAGE1_PROMPT_VERSION = "global-events-stage1/v3"
+STAGE1_PROMPT_VERSION = "global-events-stage1/v4"
+# v4 (2026-09-05). v3 gave no importance thresholds at all, so idiom-driven and
+# aftermath-administration headlines were classified alongside real events, and
+# it never told the model that validate_stage1 already accepts an empty
+# taiwan_impact_zh_tw when the relationship is "none" (91.5% of candidates).
+# The output schema is unchanged: no new field, same required set/enums/ranges.
+# Bumping the version string is mandatory -- it is part of the stage1_cache key,
+# so without it cached v3 responses would replay and the rewrite would be a
+# no-op in production.
+STAGE1_SYSTEM_PROMPT = """你是全球情勢初判器。輸入只有 GDELT 的新聞標題與 metadata；只輸出 user \
+output_contract 指定的 JSON，不要 markdown、解釋或額外欄位。每個候選都要回傳判斷，不得遺漏或增加。
+
+【語言】
+所有中文欄位必須使用臺灣正體中文（zh-TW，例如臺灣、資訊、影響），不得混入簡體字。
+標題請寫成一句可獨立閱讀的臺灣新聞式標題：
+- 不要以引號開頭，不要保留原文的引言片段；把引言的意思併進敘述。
+- 地名、機構名一律譯成臺灣慣用譯名；沒有慣用譯名才保留原文。
+- 不要保留原標題的欄目名、報社名或分隔符後綴（例如「| The Border Mail」「- Xinhua」）。
+
+【decision：這是「值不值得讓人現在看到」的判準，不是刪除指令】
+keep_core —— 正在發生、且有明確人命／領土／跨境／全國級後果的事件。典型：
+  武裝攻擊與交火、重大天災已造成傷亡或疏散、國家級政治劇變（政變、戒嚴、全國大選結果）、
+  跨國制裁與貿易報復、大規模疫情擴散、全國性基礎設施中斷。
+keep_watch —— 真實事件，但規模是地方級、或仍在觀察／預警階段。典型：
+  單一縣市級災害、疫情零星病例、地區性事故有傷亡、尚未登陸的風暴預報、地方選舉。
+drop_noise —— 不是「正在發生的事件」，或與事件本身無關的周邊報導。典型（看到就判 drop_noise）：
+  a. 準備、教學、回顧、紀念、統計盤點、「你需要知道的事」式解說（事件本身仍在發生者除外）
+  b. 災後的行政後續：募款、捐贈、志工表揚、保險理賠、訴訟、責任歸屬法案、賠償協商
+  c. 體育、娛樂、影劇、音樂、藝文活動、節慶、演講嘉賓、頒獎入圍
+  d. 比喻用法：把災難詞當形容詞（政治地震、作弊歪風、行銷風暴、球隊名稱）
+  e. 個人層級的治安或交通個案，沒有公共服務中斷、沒有多人傷亡
+  f. 純發言、聲明、質詢、評論、人事任命、政績宣傳、企業行銷
+判準只看事件本身的人命、生活、社會或跨境影響。
+臺灣關聯獨立填寫，不得僅因與臺灣無關而降級或判為 drop_noise。低重要性資料仍要完整輸出。
+
+【severity 0-3：獨立於 decision，只描述規模，不要跟著 decision 一起給】
+只看「受影響人數」與「影響範圍」，不看事件重不重要：
+0 = 無傷亡且無公共服務中斷
+1 = 個案或單一地點（1~9 人受影響）
+2 = 地區級（一個城市或省州，10~999 人受影響，或關鍵設施局部中斷）
+3 = 全國級或跨國級（≥1000 人受影響，或影響跨越國界）
+
+【taiwan_relationship 與 taiwan_impact_zh_tw】
+direct=直接涉及臺灣；indirect=經由供應鏈／航運／盟友／區域安全間接影響；none=無關；\
+unknown=標題不足以判斷。
+taiwan_relationship 為 none 時，taiwan_impact_zh_tw 請直接回傳空字串 ""，不要寫「無關」之類的贅句。
+
+【location_evidence_ids（選填，最多 8 筆）】
+本段刻意與 v3 逐字相同。改寫過的兩個版本都實測讓有效選點大幅下降（見
+docs/GLOBAL_EVENTS_PROMPT_V4_EVAL.md），所以這裡不動：
+location_evidence_ids 只選標題明確支持的發生地或受影響地，basis 必須逐字引用該 evidence
+source_url 的輸入標題片段；不得把發言者國籍、新聞來源所在地、單純背景提及當發生地。
+無法支持就回傳空陣列，不猜座標。
+
+【長度】
+title_zh_tw ≤ 40 字，summary_zh_tw ≤ 80 字，reason_zh_tw ≤ 50 字，taiwan_impact_zh_tw ≤ 40 字。
+避免重複贅詞與「根據報導」「消息指出」這類填充語。
+
+【示例（僅示範判準，勿複製內容）】
+- "16 killed, 28 injured after bus overturns in Egypt's South Sinai"
+  → decision=keep_core, severity=2, reason="巴士翻覆造成 16 死 28 傷，受影響 44 人屬地區級規模。"
+- "Second Confirmed Case Of H5 Bird Flu - Wollongong"
+  → decision=keep_watch, severity=1, reason="地方零星禽流感確診，需持續觀察擴散。"
+- "Coup de chauffe à Cognac : trois jours de cirque, de danse et de vertige"
+  → decision=drop_noise, severity=0, reason="地方藝文節慶活動，非事件性情勢。\""""
 STAGE1_RUN_SCHEMA_VERSION = "global-events-stage1-shadow/v3"
 TRADITIONALIZATION_POLICY_VERSION = "opencc-1.4.2-s2tw-single-pass-2026-09-03.1"
 
@@ -1269,6 +1333,14 @@ def validate_stage1(
                     continue
                 selected_ids.add(selection["evidence_id"])
                 basis = selection["basis"]
+                # The basis stays source-bound -- it must be a verbatim slice of
+                # a real input title -- but it no longer has to come from the
+                # one document the evidence was extracted from. A candidate
+                # carries up to five representatives and GKG names are English
+                # while translation-stream titles are not, so demanding both at
+                # once made a valid selection near-impossible for non-English
+                # candidates: only 51.7% of production candidates ever kept a
+                # model-selected place.
                 if (
                     evidence is None
                     or selection["role"] not in {"event_location", "affected_area"}
@@ -1276,7 +1348,6 @@ def validate_stage1(
                     or not 2 <= len(basis.strip()) <= 500
                     or not any(
                         basis in document["title"]
-                        and document["url"] == evidence["source_url"]
                         for document in candidate["representative_documents"]
                     )
                 ):
@@ -1881,6 +1952,9 @@ class GlobalEventsCollector(BaseCollector):
                     "item_fields": {
                         "evidence_id": "copy an input evidence_id",
                         "role": "event_location|affected_area",
+                        # Deliberately still the v3 wording: telling the model
+                        # about the relaxed rule measured strictly worse, and
+                        # validate_stage1 accepting more can only ever help.
                         "basis": "exact substring from that evidence source URL's input title",
                     },
                 },
@@ -1904,6 +1978,15 @@ class GlobalEventsCollector(BaseCollector):
             "traditional_chinese_locale": (
                 "zh-TW; use 臺灣 terms and avoid Simplified Chinese"
             ),
+            # Advisory only: validate_stage1 still enforces the hard display
+            # caps (500/3000/2000/2000). These keep the bounded response budget
+            # from being spent on filler.
+            "length_hints": {
+                "title_zh_tw": 40,
+                "summary_zh_tw": 80,
+                "reason_zh_tw": 50,
+                "taiwan_impact_zh_tw": 40,
+            },
         }
         request_kwargs = {
             "headers": {
@@ -1931,21 +2014,7 @@ class GlobalEventsCollector(BaseCollector):
                 # validate_stage1 remains the final strict gate.
                 "reasoning": {"effort": "none"},
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "輸入只有 GDELT 標題與 metadata；只輸出 user "
-                            "output_contract 指定的 JSON，不要 markdown、解釋或額外欄位；"
-                            "所有中文欄位必須使用臺灣正體中文（zh-TW，例如臺灣、資訊、影響），"
-                            "不得混入簡體字。每個候選都要回傳判斷，decision 只是分類，不是刪除指令。"
-                            "依事件本身的人命、生活、社會或跨境影響判斷；臺灣關聯獨立填寫，"
-                            "不得僅因與臺灣無關而降級或判為 drop_noise。低重要性資料仍要完整輸出。"
-                            "標題盡量40字內、摘要120字內、兩項理由各80字內，避免重複贅詞。"
-                            "location_evidence_ids 只選標題明確支持的發生地或受影響地，basis 必須逐字引用"
-                            "該 evidence source_url 的輸入標題片段；不得把發言者國籍、新聞來源所在地、"
-                            "單純背景提及當發生地。無法支持就回傳空陣列，不猜座標。"
-                        ),
-                    },
+                    {"role": "system", "content": STAGE1_SYSTEM_PROMPT},
                     {
                         "role": "user",
                         "content": json.dumps(
