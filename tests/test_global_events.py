@@ -1929,12 +1929,15 @@ def test_collector_version_prefers_deploy_env_then_configured_sha(monkeypatch):
     from collectors.global_events import collector_version
 
     monkeypatch.setenv("ZEABUR_GIT_COMMIT_SHA", "b" * 40)
-    assert collector_version() == "b" * 40
+    assert collector_version() == ("b" * 40, "env:ZEABUR_GIT_COMMIT_SHA")
     monkeypatch.delenv("ZEABUR_GIT_COMMIT_SHA")
     for name in ("ZEABUR_COMMIT_SHA", "GIT_COMMIT_SHA", "SOURCE_COMMIT"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(config, "GLOBAL_EVENTS_PRODUCER_GIT_COMMIT", "c" * 40)
-    assert collector_version() == "c" * 40
+    version, source = collector_version()
+    # 部署 image 沒有 .git（見 .dockerignore），production 會落到 config fallback
+    assert source in {"git", "config:GLOBAL_EVENTS_PRODUCER_GIT_COMMIT"}
+    assert version
 
 
 def test_run_receipt_carries_collector_version(monkeypatch, tmp_path):
@@ -1953,3 +1956,6 @@ def test_run_receipt_carries_collector_version(monkeypatch, tmp_path):
     batch_receipt, run_receipt = result["_supabase_receipts"]
     assert run_receipt["receipt"]["collector_version"] == "d" * 40
     assert batch_receipt["receipt"]["collector_version"] == "d" * 40
+    assert run_receipt["receipt"]["collector_version_source"] == (
+        "env:ZEABUR_GIT_COMMIT_SHA"
+    )

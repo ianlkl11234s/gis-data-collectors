@@ -54,11 +54,11 @@
       "default": "qwen/qwen3.7-flash"
     },
     "GLOBAL_EVENTS_QWEN_MAX_CANDIDATES": {
-      "description": "每輪送 Qwen Stage1 的 hard cap；超過留在佇列，下輪依 newest-first 再取。與 config.py 對齊為 100",
+      "description": "每輪送 Qwen Stage1 的 hard cap；超過留在佇列，下輪依 newest-first 再取。2026-09-05 對齊 config.py 與 dashboard 實際值（皆為 100）",
       "default": "100"
     },
     "GLOBAL_EVENTS_QWEN_MAX_OUTPUT_TOKENS": {
-      "description": "Qwen Stage1 response max output tokens；與 config.py 對齊為 8192",
+      "description": "Qwen Stage1 response max output tokens；2026-09-05 對齊 config.py 與 dashboard 實際值（皆為 8192）",
       "default": "8192"
     },
     "GLOBAL_EVENTS_QWEN_FALLBACK_MODELS": {

@@ -1054,8 +1054,14 @@ def merge_source_manifest(
     return {stream: entries for stream, entries in merged.items() if entries}
 
 
-def collector_version() -> str:
-    """Identify the code that produced a receipt, for cross-deploy triage."""
+def collector_version() -> tuple[str, str]:
+    """Identify the code that produced a receipt, for cross-deploy triage.
+
+    Returns ``(version, source)``. The source label matters: the deployment
+    image excludes ``.git`` (see .dockerignore), and the configured producer
+    SHA is pinned by hand, so it identifies the producer profile rather than
+    the running build. Without the label a receipt cannot say which it is.
+    """
     for name in (
         "ZEABUR_GIT_COMMIT_SHA",
         "ZEABUR_COMMIT_SHA",
@@ -1064,28 +1070,28 @@ def collector_version() -> str:
     ):
         value = (os.environ.get(name) or "").strip()
         if value:
-            return value[:40]
+            return value[:40], f"env:{name}"
+    try:
+        import subprocess  # noqa: PLC0415 - diagnostics-only, never on the hot path
+
+        revision = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        ).stdout.strip()
+        if revision:
+            return revision, "git"
+    except Exception:
+        pass
     configured = str(
         getattr(config, "GLOBAL_EVENTS_PRODUCER_GIT_COMMIT", "") or ""
     ).strip()
     if configured:
-        return configured[:40]
-    try:
-        import subprocess  # noqa: PLC0415 - diagnostics-only, never on the hot path
-
-        return (
-            subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"],
-                cwd=str(Path(__file__).resolve().parents[1]),
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=True,
-            ).stdout.strip()
-            or "unknown"
-        )
-    except Exception:
-        return "unknown"
+        return configured[:40], "config:GLOBAL_EVENTS_PRODUCER_GIT_COMMIT"
+    return "unknown", "unavailable"
 
 
 def immutable_write(path: Path, value: object) -> None:
@@ -2255,7 +2261,8 @@ class GlobalEventsCollector(BaseCollector):
             },
             "stage1_chunks": dict(self._stage1_chunk_stats),
             "stage1_observation": self._stage1_observation,
-            "collector_version": collector_version(),
+            "collector_version": collector_version()[0],
+            "collector_version_source": collector_version()[1],
             "created_at": datetime.now(UTC).isoformat(),
             "archive_eligible": True if run_manifest is not None else False,
             "production_publishable": False,
