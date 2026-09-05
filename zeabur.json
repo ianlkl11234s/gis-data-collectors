@@ -46,7 +46,7 @@
       "default": "4"
     },
     "GLOBAL_EVENTS_RAW_RETENTION_HOURS": {
-      "description": "成功 GDELT raw ZIP 的本地保留時間；失敗批次不自動刪除",
+      "description": "成功 GDELT raw ZIP 的本地保留時間；失敗批次改由 GLOBAL_EVENTS_ARCHIVE_RETENTION_DAYS（預設 3 天）清理",
       "default": "72"
     },
     "GLOBAL_EVENTS_QWEN_MODEL": {

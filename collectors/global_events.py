@@ -1410,13 +1410,10 @@ class GlobalEventsCollector(BaseCollector):
         days = max(1, int(config.get_retention_days(self.name)))
         cutoff = datetime.now(UTC).timestamp() - days * 86400
         root = Path(config.LOCAL_DATA_DIR) / self.name
-        # Never prune the queue itself, nor anything the queue still points at.
+        # Never prune the operational state itself. The raw ZIPs need no
+        # protection: once a slot is parsed its candidates live in the queue
+        # file, and the queue is bounded by a TTL shorter than this retention.
         protected = {str(self.routing_pending_path), str(self.checkpoint_path)}
-        try:
-            for raw in self._load_queue()["source_manifest"].values():
-                protected.update(str(item.get("local_path")) for item in raw)
-        except Exception:  # pragma: no cover - cleanup must never fail a run
-            pass
         for name, patterns in (
             ("raw", ("**/*.zip", "**/*.success")),
             ("handoff", ("**/*.json",)),
@@ -1898,6 +1895,7 @@ class GlobalEventsCollector(BaseCollector):
             }
         started_at = datetime.now(UTC).isoformat()
         run_id = f"run_{uuid.uuid4().hex}"
+        build_version, build_version_source = collector_version()
         producer_sha = getattr(config, "GLOBAL_EVENTS_PRODUCER_GIT_COMMIT", "")
         self._raw_response_sha256 = None
         self._stage1_usage = {}
@@ -2261,8 +2259,8 @@ class GlobalEventsCollector(BaseCollector):
             },
             "stage1_chunks": dict(self._stage1_chunk_stats),
             "stage1_observation": self._stage1_observation,
-            "collector_version": collector_version()[0],
-            "collector_version_source": collector_version()[1],
+            "collector_version": build_version,
+            "collector_version_source": build_version_source,
             "created_at": datetime.now(UTC).isoformat(),
             "archive_eligible": True if run_manifest is not None else False,
             "production_publishable": False,
