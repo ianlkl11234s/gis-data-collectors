@@ -1601,3 +1601,355 @@ def test_supabase_candidate_ingestion_is_in_receipt_transaction_and_rejects_fail
                 {"_type": "candidate_display", "candidate": candidate},
             ],
         )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 2026-09-05 停滯修復回歸測試（R1–R11）
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_index_get_retries_transient_5xx_then_succeeds(monkeypatch):
+    """R1：非 429 的暫時性錯誤以前完全不重試，一次 502 就讓整輪 failed。"""
+    sleeps = []
+    monkeypatch.setattr("collectors.global_events.time.sleep", sleeps.append)
+    responses = [
+        _OpenRouterResponse(502),
+        _OpenRouterResponse(503),
+        _FakeResponse(text="ok"),
+    ]
+    calls = []
+
+    class Flaky:
+        def get(self, url, timeout):
+            calls.append(url)
+            return responses[len(calls) - 1]
+
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = Flaky()
+    assert collector._get_with_retry("https://example/index", timeout=5).text == "ok"
+    assert len(calls) == 3
+    assert sleeps == [2.0, 4.0]
+
+
+def test_index_get_does_not_retry_deterministic_client_error(monkeypatch):
+    """R1：401/404 重試只是浪費預算，必須立刻放棄。"""
+    sleeps = []
+    monkeypatch.setattr("collectors.global_events.time.sleep", sleeps.append)
+    calls = []
+
+    class Forbidden:
+        def get(self, url, timeout):
+            calls.append(url)
+            return _OpenRouterResponse(403)
+
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = Forbidden()
+    with pytest.raises(requests.HTTPError):
+        collector._get_with_retry("https://example/index", timeout=5)
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_openrouter_retries_timeout_then_succeeds(monkeypatch):
+    """R1：連線 timeout 以前零重試。"""
+    import config
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    sleeps = []
+    monkeypatch.setattr("collectors.global_events.time.sleep", sleeps.append)
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
+    calls = []
+
+    class FlakySession:
+        def post(self, *args, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise requests.Timeout("read timed out")
+            return _OpenRouterResponse(200, payload=_openrouter_success_payload())
+
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = FlakySession()
+    assert collector._request_stage1([]) == {"assessments": []}
+    assert len(calls) == 2
+    assert sleeps == [2.0]
+
+
+def test_fallback_models_are_opt_in_and_absent_by_default(monkeypatch):
+    """R9：預設 request body 必須逐位元不變，否則 stage1 cache key 會全部失效。"""
+    import config
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
+    session = _OpenRouterSequence(
+        [_OpenRouterResponse(200, payload=_openrouter_success_payload())] * 2
+    )
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = session
+
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_QWEN_FALLBACK_MODELS", "")
+    collector._request_stage1([])
+    assert "models" not in session.calls[0][1]["json"]
+
+    monkeypatch.setattr(
+        config, "GLOBAL_EVENTS_QWEN_FALLBACK_MODELS", " openai/gpt-oss , "
+    )
+    collector._request_stage1([])
+    assert session.calls[1][1]["json"]["models"] == [
+        "qwen/qwen3.7-flash",
+        "openai/gpt-oss",
+    ]
+
+
+def test_chunk_size_backs_off_then_releases():
+    """R2：同一 chunk 連續失敗 → 10→5→2 → 放行。"""
+    from collectors.global_events import (
+        STAGE1_CHUNK_RELEASE_ATTEMPTS,
+        stage1_chunk_size,
+    )
+
+    assert [stage1_chunk_size(attempts, 10) for attempts in range(4)] == [10, 10, 5, 2]
+    assert STAGE1_CHUNK_RELEASE_ATTEMPTS == 4
+
+
+def test_repeatedly_refused_chunk_is_split_then_released_as_pending(
+    monkeypatch, tmp_path
+):
+    """R2：這正是停滯現場 —— 同一批候選每小時撞同一個 finish_reason='error'。"""
+    payload = _zip(
+        [
+            _row(f"news{index}.example", f"Major earthquake kills dozens {index}")
+            for index in range(4)
+        ]
+    )
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    sizes = []
+
+    def always_refused(candidates):
+        sizes.append(len(candidates))
+        raise ValueError(
+            "OpenRouter Stage1 incomplete response: finish_reason='error'"
+        )
+
+    monkeypatch.setattr(collector, "_request_stage1", always_refused)
+    monkeypatch.setattr(config_module(), "GLOBAL_EVENTS_QWEN_CHUNK_SIZE", 4)
+
+    for round_index in range(4):
+        result = collector.run()
+        assert "error" not in result, f"round {round_index} must stay accepted"
+        assert all(
+            record["assessment_status"] == "pending"
+            for record in result["_candidate_display_records"]
+        )
+    # 4 → 4 → 2+2 → 1+1+1+1：拆半階梯確實生效
+    assert sizes == [4, 4, 2, 2, 1, 1, 1, 1]
+    # 累積 4 次後放行，佇列清空，不再無限重送
+    assert not collector.routing_pending_path.exists()
+    assert result["handoff_manifest"]["routing"]["released_pending_count"] == 4
+
+
+def config_module():
+    import config
+
+    return config
+
+
+def test_expired_queue_entries_are_reported_not_resent(monkeypatch, tmp_path):
+    """R3：48h TTL —— 過期候選只記 receipt，不再佔用 LLM 預算。"""
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+
+    def refuse(candidates):
+        raise ValueError("provider refused")
+
+    monkeypatch.setattr(collector, "_request_stage1", refuse)
+    assert "error" not in collector.run()
+    queued = json.loads(collector.routing_pending_path.read_text())
+    assert len(queued["candidates"]) == 1
+
+    stale = "2026-01-01T00:00:00+00:00"
+    for state in queued["queue_state"].values():
+        state["queued_at"] = stale
+    collector.routing_pending_path.write_text(json.dumps(queued), encoding="utf-8")
+
+    sent = []
+    monkeypatch.setattr(
+        collector, "_request_stage1", lambda candidates: sent.append(candidates)
+    )
+    result = collector.run()
+    routing = result["handoff_manifest"]["routing"]
+    assert routing["expired_count"] == 1
+    assert routing["expired_sample"] == sorted(queued["queue_state"])
+    assert routing["pending_ttl_hours"] == 48
+    assert sent == []
+
+
+def test_catchup_widens_the_window_only_when_behind(monkeypatch):
+    """R6：每輪 8 檔 = 2 小時，落後 29 小時永遠追不回來。"""
+    import config
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_MAX_FILES_PER_STREAM", 8)
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_CATCHUP_FILES_PER_STREAM", 24)
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_CATCHUP_LAG_HOURS", 6)
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(hours=1)).strftime("%Y%m%d%H%M%S")
+    behind = (now - timedelta(hours=29)).strftime("%Y%m%d%H%M%S")
+
+    assert collector._max_files_per_stream(None) == 8
+    assert collector._max_files_per_stream(recent) == 8
+    assert collector._max_files_per_stream(behind) == 24
+
+
+def test_long_unavailable_artifact_is_skipped_so_the_cursor_moves(
+    monkeypatch, tmp_path
+):
+    """R5：index 有列、ZIP 永遠 404 的 slot 不得讓 stream 永久卡住。"""
+    import config
+    import storage.s3
+
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    base_session = collector._session
+
+    class NotReadyResponse:
+        status_code = 404
+        content = b""
+
+        def raise_for_status(self):
+            raise requests.HTTPError(response=self)
+
+    class AllZipsMissing:
+        headers = {}
+
+        def get(self, url, timeout):
+            if url.endswith(".zip"):
+                return NotReadyResponse()
+            return base_session.get(url, timeout)
+
+    class SuccessfulS3:
+        def __init__(self):
+            self.bucket = "private-test"
+
+        def upload_file(self, path, key):
+            return True
+
+    monkeypatch.setattr(storage.s3, "S3Storage", SuccessfulS3)
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_ARTIFACT_STALE_HOURS", 1)
+    collector._session = AllZipsMissing()
+    result = collector.run()
+
+    assert "error" not in result
+    assert collector._load_checkpoints() == {
+        "standard": "20260901120000",
+        "translation": "20260901120000",
+    }
+    assert result["streams"]["standard"]["skipped_slots"] == ["20260901120000"]
+
+
+def test_total_source_outage_still_fails_closed(monkeypatch, tmp_path):
+    """R4 的界線：解耦不等於靜音 —— 兩條 stream 全掛且無佇列時仍要 failed receipt。"""
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr("collectors.global_events.time.sleep", lambda _: None)
+
+    class Down:
+        headers = {}
+
+        def get(self, url, timeout):
+            raise requests.ConnectionError("dns failure")
+
+    collector._session = Down()
+    result = collector.collect()
+
+    assert "_collector_error" in result
+    assert len(result["_supabase_receipts"]) == 1
+    receipt = result["_supabase_receipts"][0]
+    assert receipt["status"] == "failed"
+    assert receipt["error_type"] == "source_or_stage1_failed"
+    assert "standard:" in receipt["error_message"]
+    assert "translation:" in receipt["error_message"]
+
+
+def test_missing_api_key_fails_the_round_instead_of_releasing_the_queue(
+    monkeypatch, tmp_path
+):
+    """R2 的界線：設定錯誤不得被當成 chunk 失敗，否則 4 輪後整個佇列被無評估放行。"""
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    result = collector.collect()
+
+    assert "_collector_error" in result
+    assert "OPENROUTER_API_KEY" in result["_collector_error"]
+    assert result["_supabase_receipts"][0]["status"] == "failed"
+
+
+def test_local_artifact_retention_prunes_the_three_unswept_directories(
+    monkeypatch, tmp_path
+):
+    """R11：raw/、handoff/、stage1_cache/ 都在 archive.py 的掃描範圍外。"""
+    import os
+
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    root = tmp_path / "global_events"
+    stale = [
+        root / "raw" / "2026" / "01" / "01" / "standard_20260101000000_dead.zip",
+        root / "handoff" / "2026" / "01" / "01" / "batch_old.json",
+        root / "stage1_cache" / f"{'a' * 64}.json",
+    ]
+    for path in stale:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+        old = datetime_epoch() - 30 * 86400
+        os.utime(path, (old, old))
+    fresh = root / "handoff" / "2026" / "09" / "05" / "batch_new.json"
+    fresh.parent.mkdir(parents=True, exist_ok=True)
+    fresh.write_text("{}", encoding="utf-8")
+
+    removed = collector._cleanup_local_artifacts()
+
+    assert removed == {"raw": 1, "handoff": 1, "stage1_cache": 1}
+    assert not any(path.exists() for path in stale)
+    assert fresh.exists()
+
+
+def datetime_epoch() -> float:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).timestamp()
+
+
+def test_collector_version_prefers_deploy_env_then_configured_sha(monkeypatch):
+    """R8：Zeabur image 不一定帶 .git，git rev-parse 會永遠回 unknown。"""
+    import config
+    from collectors.global_events import collector_version
+
+    monkeypatch.setenv("ZEABUR_GIT_COMMIT_SHA", "b" * 40)
+    assert collector_version() == "b" * 40
+    monkeypatch.delenv("ZEABUR_GIT_COMMIT_SHA")
+    for name in ("ZEABUR_COMMIT_SHA", "GIT_COMMIT_SHA", "SOURCE_COMMIT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_PRODUCER_GIT_COMMIT", "c" * 40)
+    assert collector_version() == "c" * 40
+
+
+def test_run_receipt_carries_collector_version(monkeypatch, tmp_path):
+    """R8：receipts 表沒有自由欄位，版本標記只能進既有的 receipt jsonb。"""
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setenv("ZEABUR_GIT_COMMIT_SHA", "d" * 40)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+    result = collector.run()
+
+    batch_receipt, run_receipt = result["_supabase_receipts"]
+    assert run_receipt["receipt"]["collector_version"] == "d" * 40
+    assert batch_receipt["receipt"]["collector_version"] == "d" * 40
