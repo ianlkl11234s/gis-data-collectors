@@ -58,9 +58,18 @@ def prepare_replay(source_output: Path, batch_id: str, source_run_id: str) -> di
         or source_manifest["batch_id"] != batch_id
     ):
         raise ValueError("replay requires the explicitly targeted accepted cohort")
-    handoff_dir = root / "handoff" / source_output.parent.relative_to(root)
-    batch_path = handoff_dir / f"{batch_id}.json"
-    source_run_path = handoff_dir / f"{source_run_id}.json"
+    # The collector files handoff artifacts under the UTC date while local
+    # storage uses the Taipei date, so the two disagree for eight hours a day.
+    # Resolve by name and fall back to the whole handoff tree.
+    def _artifact(name: str) -> Path:
+        direct = root / "handoff" / source_output.parent.relative_to(root) / name
+        if direct.exists():
+            return direct
+        return next((root / "handoff").glob(f"**/{name}"), direct)
+
+    batch_path = _artifact(f"{batch_id}.json")
+    source_run_path = _artifact(f"{source_run_id}.json")
+    handoff_dir = batch_path.parent
     if artifact_sha256(batch_path) != source_manifest["batch_sha256"]:
         raise ValueError("source batch artifact hash mismatch")
     if artifact_sha256(source_run_path) != source_manifest["run_sha256"]:

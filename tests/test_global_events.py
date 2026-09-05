@@ -125,9 +125,16 @@ def test_master_index_and_contiguous_gap():
     artifacts = parse_master_index(text, "standard")
     assert [item.slot for item in artifacts] == ["20260901120000", "20260901123000"]
     collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
-    collector._select_pending(artifacts, None)
-    with pytest.raises(GKGIndexGap):
-        collector._select_pending(artifacts, "20260901114500")
+    assert collector._select_pending(artifacts, None)[1] == []
+    selected, skipped = collector._select_pending(artifacts, "20260901114500")
+    # A real hole no longer freezes the cursor: it is skipped and reported so
+    # the following slot can still be processed.
+    assert [item.slot for item in selected] == [
+        "20260901120000",
+        "20260901123000",
+    ]
+    assert skipped == ["20260901121500"]
+    assert issubclass(GKGIndexGap, RuntimeError)
 
 
 def test_indexed_translation_404_is_explicit_artifact_unavailable(monkeypatch):
@@ -811,7 +818,7 @@ def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
     payload = _zip([_row("one.example", "Major earthquake kills dozens")])
     calls = []
 
-    class UnexpectedS3:
+    class RecordingS3:
         def __init__(self):
             self.bucket = "private-test"
 
@@ -819,7 +826,7 @@ def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
             calls.append(key)
             return True
 
-    monkeypatch.setattr(storage.s3, "S3Storage", UnexpectedS3)
+    monkeypatch.setattr(storage.s3, "S3Storage", RecordingS3)
     collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
     monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
     malformed_content = '{"assessments": ['
@@ -845,13 +852,23 @@ def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
             }
 
     collector._session.post = lambda *args, **kwargs: Stage1Response()
-    result = collector.collect()
+    result = collector.run()
 
-    assert "_collector_error" in result
-    assert len(result["_supabase_receipts"]) == 1
-    assert result["_supabase_receipts"][0]["status"] == "failed"
-    assert result["_supabase_receipts"][0]["error_type"] == "source_or_stage1_failed"
-    assert result["_supabase_receipts"][0]["receipt"]["stage1_observation"] == {
+    # A truncated provider response is now the chunk's problem, not the round's:
+    # the candidate ships as pending and the source cursor still advances.
+    assert "error" not in result
+    batch_receipt, run_receipt = result["_supabase_receipts"]
+    assert run_receipt["status"] == "accepted"
+    assert run_receipt["error_type"] is None
+    assert run_receipt["error_message"] is None
+    assert batch_receipt["archive_eligible"] is True
+    chunks = run_receipt["receipt"]["stage1_chunks"]
+    assert chunks["failed_chunk_count"] == 1
+    assert chunks["content_failure_count"] == 1
+    assert chunks["failed_candidate_count"] == 1
+    failure = run_receipt["receipt"]["stage1_observation"]["chunk_failures"][0]
+    assert failure["kind"] == "content"
+    assert failure["observation"] == {
         "finish_reason": "length",
         "content_length": len(malformed_content),
         "usage": {
@@ -861,13 +878,18 @@ def test_stage1_schema_failure_writes_only_failed_run_and_no_handoff(
             "cost_usd": 0.01,
         },
     }
-    assert (
-        result["_supabase_receipts"][0]["raw_response_sha256"]
-        == hashlib.sha256(malformed_content.encode("utf-8")).hexdigest()
-    )
-    assert calls == []
-    assert not (tmp_path / "global_events" / "checkpoint.json").exists()
-    assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
+    assert [record["assessment_status"] for record in result["_candidate_display_records"]] == [
+        "pending"
+    ]
+    assert calls[-1].startswith("global_events/handoff/manifests/")
+    assert collector._load_checkpoints() == {
+        "standard": "20260901120000",
+        "translation": "20260901120000",
+    }
+    # The refused cohort stays queued with one attempt spent.
+    queued = json.loads(collector.routing_pending_path.read_text())
+    assert queued["version"] == 2
+    assert [state["attempts"] for state in queued["queue_state"].values()] == [1]
 
 
 def test_stage1_all_rejected_still_archives_and_advances_checkpoint(
@@ -935,11 +957,12 @@ def test_stage1_all_rejected_still_archives_and_advances_checkpoint(
     assert len(list((tmp_path / "global_events" / "raw").glob("**/*.success"))) == 2
 
 
-def test_openrouter_repeated_429_stops_after_two_and_keeps_failed_run(
+def test_openrouter_repeated_429_is_a_provider_outage_that_costs_no_attempt(
     monkeypatch, tmp_path
 ):
     payload = _zip([_row("one.example", "Major earthquake kills dozens")])
     collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
     monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
     sleeps = []
     calls = []
@@ -950,30 +973,29 @@ def test_openrouter_repeated_429_stops_after_two_and_keeps_failed_run(
         return _OpenRouterResponse(429)
 
     collector._session.post = rate_limited
-    result = collector.collect()
+    result = collector.run()
 
-    assert len(calls) == 2
-    assert sleeps == [5.0]
-    assert result["_collector_error"].startswith("stage1:")
-    assert len(result["_supabase_receipts"]) == 1
-    run_receipt = result["_supabase_receipts"][0]
-    assert run_receipt["status"] == "failed"
-    assert run_receipt["batch_id"] is None
-    assert run_receipt["archive_eligible"] is False
-    assert run_receipt["error_type"] == "source_or_stage1_failed"
-    assert not (tmp_path / "global_events" / "checkpoint.json").exists()
-    assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
+    assert len(calls) == 3
+    assert sleeps == [5.0, 5.0]
+    # An OpenRouter incident must not burn the cohort's attempt budget, or a
+    # provider outage would release the whole queue as unassessed.
+    assert "error" not in result
+    chunks = result["stage1_chunks"]
+    assert chunks["provider_failure_count"] == 1
+    assert chunks["content_failure_count"] == 0
+    queued = json.loads(collector.routing_pending_path.read_text())
+    assert [state["attempts"] for state in queued["queue_state"].values()] == [0]
 
 
-def test_translation_404_fails_closed_without_stage1_s3_or_checkpoint(
+def test_translation_404_is_stream_scoped_and_standard_still_advances(
     monkeypatch, tmp_path
 ):
+    import config
     import storage.s3
 
     payload = _zip([_row("one.example", "Major earthquake kills dozens")])
     collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
     base_session = collector._session
-    openrouter_calls = []
 
     class NotReadyResponse:
         status_code = 404
@@ -990,35 +1012,39 @@ def test_translation_404_fails_closed_without_stage1_s3_or_checkpoint(
                 return NotReadyResponse()
             return base_session.get(url, timeout)
 
-        def post(self, *args, **kwargs):
-            openrouter_calls.append((args, kwargs))
-            raise AssertionError("OpenRouter must not be called after a source error")
 
-    class UnexpectedS3:
+    class SuccessfulS3:
         def __init__(self):
-            raise AssertionError("S3 must not be called after a source error")
+            self.bucket = "private-test"
 
-    monkeypatch.setattr(storage.s3, "S3Storage", UnexpectedS3)
+        def upload_file(self, path, key):
+            return True
+
+    monkeypatch.setattr(storage.s3, "S3Storage", SuccessfulS3)
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_ARTIFACT_STALE_HOURS", 1_000_000)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
     collector._session = Translation404Session()
-    result = collector.collect()
+    result = collector.run()
 
-    assert "_collector_error" in result
-    assert "translation:" in result["_collector_error"]
-    assert "HTTP 404" in result["_collector_error"]
-    assert result["health"]["status"] == "ERROR"
-    assert openrouter_calls == []
-    assert len(result["_supabase_receipts"]) == 1
-    receipt = result["_supabase_receipts"][0]
-    assert receipt["status"] == "failed"
-    assert receipt["error_type"] == "source_or_stage1_failed"
-    assert receipt["batch_id"] is None
-    assert receipt["output_artifact_sha256"] is None
-    assert receipt["raw_response_sha256"] is None
-    assert not (tmp_path / "global_events" / "checkpoint.json").exists()
+    # One stream being unavailable is no longer allowed to hold the other one
+    # hostage: standard ships and advances, translation simply retries.
+    assert "error" not in result
+    batch_receipt, run_receipt = result["_supabase_receipts"]
+    assert run_receipt["status"] == "accepted"
+    assert batch_receipt["archive_eligible"] is True
+    streams = run_receipt["receipt"]["streams"]
+    assert "artifact_unavailable" in streams["translation"]
+    assert "HTTP 404" in streams["translation"]["artifact_unavailable"]
+    assert "error" not in streams["standard"]
+    assert collector._load_checkpoints() == {"standard": "20260901120000"}
     raw = list((tmp_path / "global_events" / "raw").glob("**/*.zip"))
     assert len(raw) == 1
     assert raw[0].name.startswith("standard_")
-    assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
+    assert len(list((tmp_path / "global_events" / "raw").glob("**/*.success"))) == 1
 
 
 def _fake_assessments(collector, candidates, *, decision="drop_noise"):
@@ -1060,29 +1086,33 @@ def test_hundred_drop_noise_candidates_are_retained_and_overflow_drains_first(
         record["decision"] == "drop_noise" and record["taiwan_relationship"] == "none"
         for record in first["_candidate_display_records"]
     )
-    assert not collector._load_checkpoints()
-    assert not list((tmp_path / "global_events" / "raw").glob("**/*.success"))
     queued = json.loads(collector.routing_pending_path.read_text())
-    assert queued["batch"]["payload"]["candidate_count"] == 1
-
-    def no_refetch(*args, **kwargs):
-        raise AssertionError(
-            "pending source window must drain without downloading GDELT again"
-        )
-
-    collector._session.get = no_refetch
-    second = collector.run()
-    assert "error" not in second
-    assert second["candidate_count"] == 1
-    assert second["deferred_candidate_count"] == 0
-    assert len(calls) == 11
-    assert len({candidate_id for chunk in calls for candidate_id in chunk}) == 101
+    assert len(queued["candidates"]) == 1
+    # The source cursor is no longer hostage to the assessment queue: the files
+    # were fetched, parsed and durably queued, so they are done.
     assert collector._load_checkpoints() == {
         "standard": "20260901120000",
         "translation": "20260901120000",
     }
-    assert not collector.routing_pending_path.exists()
     assert len(list((tmp_path / "global_events" / "raw").glob("**/*.success"))) == 2
+
+    refetches = []
+    base_get = collector._session.get
+
+    def counted(url, timeout):
+        refetches.append(url)
+        return base_get(url, timeout)
+
+    collector._session.get = counted
+    second = collector.run()
+    assert "error" not in second
+    # Every round looks for new slots; the queue no longer suppresses the fetch.
+    assert any(url.endswith("masterfilelist.txt") for url in refetches)
+    assert second["candidate_count"] == 1
+    assert second["deferred_candidate_count"] == 0
+    assert len(calls) == 11
+    assert len({candidate_id for chunk in calls for candidate_id in chunk}) == 101
+    assert not collector.routing_pending_path.exists()
 
 
 def test_failed_model_chunk_reuses_prior_complete_output_without_losing_queue(
@@ -1105,26 +1135,37 @@ def test_failed_model_chunk_reuses_prior_complete_output_without_losing_queue(
 
     monkeypatch.setattr(collector, "_request_stage1", assess)
     monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
-    assert "error" in collector.run()
-    assert not collector._load_checkpoints()
-    assert (
-        json.loads(collector.routing_pending_path.read_text())["batch"]["payload"][
-            "candidate_count"
-        ]
-        == 21
-    )
+    first = collector.run()
+    # One refused chunk no longer fails the round: the other 11 candidates ship
+    # and only the refused cohort is requeued.
+    assert "error" not in first
+    assert first["stage1_chunks"]["failed_chunk_count"] == 1
+    assert collector._load_checkpoints() == {
+        "standard": "20260901120000",
+        "translation": "20260901120000",
+    }
+    queued = json.loads(collector.routing_pending_path.read_text())
+    assert len(queued["candidates"]) == 10
+    assert {state["attempts"] for state in queued["queue_state"].values()} == {1}
     result = collector.run()
     assert "error" not in result
-    assert len(calls) == 4  # 1 success + 1 failure, then only chunks 2 and 3.
-    assert calls[1] == calls[2]
-    assert len(result["_candidate_display_records"]) == 21
-    run_file = next(
-        path for path in (tmp_path / "global_events" / "handoff").glob("**/run_*.json")
+    assert len(calls) == 4  # 3 chunks, then only the requeued cohort.
+    assert calls[1] == calls[3]
+    assert len(result["_candidate_display_records"]) == 10
+    run_files = sorted(
+        (tmp_path / "global_events" / "handoff").glob("**/run_*.json"),
+        key=lambda path: path.stat().st_mtime,
     )
-    run = json.loads(run_file.read_text())
-    assert run["stage1_observation"]["chunks"][0]["cache_hit"] is True
+    first_run = json.loads(run_files[0].read_text())
     # Separate Qwen requests cannot accidentally share an event_group.
-    assert len({item["event_group"] for item in run["result"]["assessments"]}) == 3
+    assert len({item["event_group"] for item in first_run["result"]["assessments"]}) == 2
+    assert first_run["unassessed_candidate_count"] == 10
+    assert (
+        first_run["valid_assessment_count"]
+        + first_run["rejected_assessment_count"]
+        + first_run["unassessed_candidate_count"]
+        == first_run["candidate_count"]
+    )
 
 
 def test_candidate_location_requires_selected_evidence_and_literal_source_basis(

@@ -86,9 +86,19 @@ NOISE_PATTERNS = {
         r"\b(?:album|box office|football match|tour de france|us open)\b", re.I
     ),
 }
-OPENROUTER_429_MAX_ATTEMPTS = 2
+OPENROUTER_MAX_ATTEMPTS = 3
 OPENROUTER_RETRY_FALLBACK_SECONDS = 5.0
 OPENROUTER_RETRY_CAP_SECONDS = 30.0
+# Transient transport failures only. 4xx other than 408/429 are deterministic
+# for an unchanged request body, so retrying them only burns the run budget.
+RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504, 522, 524})
+HTTP_MAX_ATTEMPTS = 3
+HTTP_RETRY_BASE_SECONDS = 2.0
+HTTP_RETRY_CAP_SECONDS = 30.0
+# A chunk that keeps failing is split, then finally released with
+# assessment_status=pending so one poisoned cohort cannot stall the queue.
+STAGE1_CHUNK_RELEASE_ATTEMPTS = 4
+PENDING_QUEUE_VERSION = 2
 STAGE1_PROMPT_VERSION = "global-events-stage1/v3"
 STAGE1_RUN_SCHEMA_VERSION = "global-events-stage1-shadow/v3"
 TRADITIONALIZATION_POLICY_VERSION = "opencc-1.4.2-s2tw-single-pass-2026-09-03.1"
@@ -715,6 +725,43 @@ def openrouter_retry_delay(response: requests.Response) -> float:
     return min(delay, OPENROUTER_RETRY_CAP_SECONDS)
 
 
+def http_retry_delay(attempt: int, response: Any = None) -> float:
+    """Exponential backoff, except that 429 keeps honouring Retry-After."""
+    if getattr(response, "status_code", None) == 429:
+        return openrouter_retry_delay(response)
+    return min(HTTP_RETRY_CAP_SECONDS, HTTP_RETRY_BASE_SECONDS * (2**attempt))
+
+
+def classify_stage1_failure(exc: BaseException) -> str:
+    """Decide whether a Stage1 failure is the chunk's fault, the provider's, or ours.
+
+    ``content``  the model returned something unusable for this exact cohort;
+                 count an attempt so the cohort is split and eventually released.
+    ``provider`` transport-level outage after retries; isolate the chunk but do
+                 not blame it, otherwise an OpenRouter incident would burn every
+                 candidate's attempt budget and release the whole queue blind.
+    ``fatal``    misconfiguration (missing key, 401/403, missing OpenCC). Fail
+                 the run; retrying or releasing would hide a broken deployment.
+    """
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+        return "provider"
+    if isinstance(exc, requests.HTTPError):
+        status = getattr(exc.response, "status_code", None)
+        return "provider" if status in RETRYABLE_STATUS_CODES else "fatal"
+    if isinstance(exc, ValueError):
+        return "content"
+    return "fatal"
+
+
+def stage1_chunk_size(attempt_count: int, base: int) -> int:
+    """Back off the cohort size for chunks the provider keeps refusing."""
+    if attempt_count >= 3:
+        return max(1, base // 5)
+    if attempt_count >= 2:
+        return max(1, base // 2)
+    return base
+
+
 def validate_stage1(
     result: Any,
     candidates: list[dict[str, Any]],
@@ -990,6 +1037,57 @@ def validate_stage1(
     return result
 
 
+def merge_source_manifest(
+    queued: dict[str, list[dict[str, Any]]],
+    fetched: dict[str, list[dict[str, Any]]],
+    ttl_cutoff: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Accumulate slot lineage across rounds, pruned by the same TTL as the queue."""
+    merged: dict[str, list[dict[str, Any]]] = {}
+    for source in (queued, fetched):
+        for stream, entries in (source or {}).items():
+            by_slot = {item["slot"]: item for item in merged.get(stream, [])}
+            by_slot.update({item["slot"]: item for item in entries})
+            merged[stream] = [
+                by_slot[slot] for slot in sorted(by_slot) if slot >= ttl_cutoff
+            ]
+    return {stream: entries for stream, entries in merged.items() if entries}
+
+
+def collector_version() -> str:
+    """Identify the code that produced a receipt, for cross-deploy triage."""
+    for name in (
+        "ZEABUR_GIT_COMMIT_SHA",
+        "ZEABUR_COMMIT_SHA",
+        "GIT_COMMIT_SHA",
+        "SOURCE_COMMIT",
+    ):
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value[:40]
+    configured = str(
+        getattr(config, "GLOBAL_EVENTS_PRODUCER_GIT_COMMIT", "") or ""
+    ).strip()
+    if configured:
+        return configured[:40]
+    try:
+        import subprocess  # noqa: PLC0415 - diagnostics-only, never on the hot path
+
+        return (
+            subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(Path(__file__).resolve().parents[1]),
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            ).stdout.strip()
+            or "unknown"
+        )
+    except Exception:
+        return "unknown"
+
+
 def immutable_write(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = (
@@ -1047,8 +1145,12 @@ class GlobalEventsCollector(BaseCollector):
         self._stage1_usage: dict[str, Any] = {}
         self._stage1_observation: dict[str, Any] = {}
         self._normalization_lineage: list[dict[str, Any]] = []
-        self._pending_routing_work: dict[str, Any] | None = None
+        self._pending_queue: dict[str, Any] | None = None
+        self._pending_success_raw: list[str] = []
         self._assessment_times: dict[str, str] = {}
+        self._stage1_chunk_stats: dict[str, Any] = {}
+        self._stage1_failed_candidate_ids: list[str] = []
+        self._stage1_deferred_candidate_ids: list[str] = []
 
     @property
     def checkpoint_path(self) -> Path:
@@ -1103,39 +1205,145 @@ class GlobalEventsCollector(BaseCollector):
             },
         )
 
+    def _load_queue(self) -> dict[str, Any]:
+        """Read the durable assessment queue, tolerating the v1 layout."""
+        empty: dict[str, Any] = {
+            "candidates": [],
+            "queue_state": {},
+            "source_manifest": {},
+        }
+        try:
+            payload = json.loads(self.routing_pending_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return empty
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"invalid global_events pending queue: {exc}") from exc
+        version = payload.get("version")
+        if version == 1:
+            # v1 kept the remaining cohort inside a sliced compact batch.
+            return {
+                "candidates": list(
+                    payload.get("batch", {}).get("payload", {}).get("candidates", [])
+                ),
+                "queue_state": {},
+                "source_manifest": payload.get("source_manifest") or {},
+            }
+        if version != PENDING_QUEUE_VERSION:
+            raise RuntimeError("unsupported global_events pending routing version")
+        return {
+            "candidates": list(payload.get("candidates") or []),
+            "queue_state": dict(payload.get("queue_state") or {}),
+            "source_manifest": payload.get("source_manifest") or {},
+        }
+
+    def _save_queue(self, queue: dict[str, Any]) -> None:
+        if not queue["candidates"]:
+            self.routing_pending_path.unlink(missing_ok=True)
+            return
+        atomic_replace_json(
+            self.routing_pending_path,
+            {
+                "version": PENDING_QUEUE_VERSION,
+                "updated_at": datetime.now(UTC).isoformat(),
+                **queue,
+            },
+        )
+
+    def _max_files_per_stream(self, checkpoint: str | None) -> int:
+        """Allow a wider window while a stream is measurably behind."""
+        base = max(1, int(getattr(config, "GLOBAL_EVENTS_MAX_FILES_PER_STREAM", 8)))
+        if not checkpoint:
+            return base
+        catchup = max(
+            base, int(getattr(config, "GLOBAL_EVENTS_CATCHUP_FILES_PER_STREAM", 24))
+        )
+        lag_hours = float(getattr(config, "GLOBAL_EVENTS_CATCHUP_LAG_HOURS", 6))
+        try:
+            cursor = datetime.strptime(checkpoint, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+        except ValueError:
+            return base
+        behind = (datetime.now(UTC) - cursor).total_seconds() / 3600.0
+        return catchup if behind > lag_hours else base
+
+    def _get_with_retry(self, url: str, timeout: Any) -> requests.Response:
+        """GET with bounded exponential backoff on transient transport failures."""
+        last: Exception | None = None
+        for attempt in range(HTTP_MAX_ATTEMPTS):
+            error_response: Any = None
+            try:
+                response = self._session.get(url, timeout=timeout)
+                response.raise_for_status()
+                return response
+            except requests.HTTPError as exc:
+                error_response = exc.response if exc.response is not None else None
+                if getattr(error_response, "status_code", None) not in (
+                    RETRYABLE_STATUS_CODES
+                ):
+                    raise
+                last = exc
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                last = exc
+            if attempt + 1 >= HTTP_MAX_ATTEMPTS:
+                break
+            delay = http_retry_delay(attempt, error_response)
+            logger.warning(
+                "global_events GET retry %d/%d in %.1fs: %s",
+                attempt + 2,
+                HTTP_MAX_ATTEMPTS,
+                delay,
+                str(last)[:200],
+            )
+            time.sleep(delay)
+        raise last  # type: ignore[misc]
+
+    def _artifact_is_stale(self, artifact: GKGArtifact) -> bool:
+        """An indexed slot GDELT still has not published long after the fact."""
+        hours = float(getattr(config, "GLOBAL_EVENTS_ARTIFACT_STALE_HOURS", 6))
+        try:
+            published = datetime.strptime(artifact.slot, "%Y%m%d%H%M%S").replace(
+                tzinfo=UTC
+            )
+        except ValueError:
+            return False
+        return (datetime.now(UTC) - published).total_seconds() > hours * 3600
+
     def _select_pending(
         self, artifacts: list[GKGArtifact], checkpoint: str | None
-    ) -> list[GKGArtifact]:
-        max_files = max(
-            1, int(getattr(config, "GLOBAL_EVENTS_MAX_FILES_PER_STREAM", 8))
-        )
+    ) -> tuple[list[GKGArtifact], list[str]]:
+        """Return (selected, skipped_slots).
+
+        A real hole in the GDELT master index is skipped and reported, not
+        raised: a permanent gap used to freeze this stream's cursor forever.
+        """
+        max_files = self._max_files_per_stream(checkpoint)
         if not artifacts:
-            return []
+            return [], []
         if not checkpoint:
             return artifacts[
                 -max(1, int(getattr(config, "GLOBAL_EVENTS_INITIAL_SLOTS", 4))) :
-            ]
+            ], []
         by_slot = {item.slot: item for item in artifacts}
         cursor = datetime.strptime(checkpoint, "%Y%m%d%H%M%S")
-        selected = []
-        for _ in range(max_files):
+        latest = artifacts[-1].slot
+        max_skips = max(0, int(getattr(config, "GLOBAL_EVENTS_MAX_SKIP_SLOTS", 96)))
+        selected: list[GKGArtifact] = []
+        skipped: list[str] = []
+        while len(selected) < max_files and len(skipped) <= max_skips:
             cursor += timedelta(minutes=15)
             slot = cursor.strftime("%Y%m%d%H%M%S")
-            if slot not in by_slot:
-                if slot <= artifacts[-1].slot:
-                    raise GKGIndexGap(
-                        f"{artifacts[0].stream} index gap at {slot}", selected
-                    )
+            if slot > latest:
                 break
+            if slot not in by_slot:
+                skipped.append(slot)
+                continue
             selected.append(by_slot[slot])
-        return selected
+        return selected, skipped
 
     def _download_artifact(self, artifact: GKGArtifact) -> bytes:
-        response = self._session.get(
-            artifact.url, timeout=(20, max(60, config.REQUEST_TIMEOUT))
-        )
         try:
-            response.raise_for_status()
+            response = self._get_with_retry(
+                artifact.url, timeout=(20, max(60, config.REQUEST_TIMEOUT))
+            )
         except requests.HTTPError as exc:
             status_code = getattr(exc.response, "status_code", None)
             if status_code == 404:
@@ -1182,6 +1390,47 @@ class GlobalEventsCollector(BaseCollector):
             if marker.exists() and path.stat().st_mtime < cutoff:
                 path.unlink(missing_ok=True)
                 marker.unlink(missing_ok=True)
+
+    def _cleanup_local_artifacts(self) -> dict[str, int]:
+        """Bound the three directories tasks/archive.py cannot see.
+
+        ``_find_date_dirs`` only walks numeric ``YYYY/MM/DD`` roots directly
+        under a collector, so ``raw/``, ``handoff/`` and ``stage1_cache/`` were
+        outside every retention sweep and grew without limit. Failed raws are
+        included here; only the marker-based path was ever pruned before.
+        """
+        self._cleanup_success_raw()
+        removed = {"raw": 0, "handoff": 0, "stage1_cache": 0}
+        days = max(1, int(config.get_retention_days(self.name)))
+        cutoff = datetime.now(UTC).timestamp() - days * 86400
+        root = Path(config.LOCAL_DATA_DIR) / self.name
+        # Never prune the queue itself, nor anything the queue still points at.
+        protected = {str(self.routing_pending_path), str(self.checkpoint_path)}
+        try:
+            for raw in self._load_queue()["source_manifest"].values():
+                protected.update(str(item.get("local_path")) for item in raw)
+        except Exception:  # pragma: no cover - cleanup must never fail a run
+            pass
+        for name, patterns in (
+            ("raw", ("**/*.zip", "**/*.success")),
+            ("handoff", ("**/*.json",)),
+            ("stage1_cache", ("*.json",)),
+        ):
+            directory = root / name
+            if not directory.exists():
+                continue
+            for pattern in patterns:
+                for path in directory.glob(pattern):
+                    if str(path) in protected or not path.is_file():
+                        continue
+                    try:
+                        if path.stat().st_mtime >= cutoff:
+                            continue
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        continue
+                    removed[name] += 1
+        return removed
 
     def _request_stage1(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
         key = os.environ.get("OPENROUTER_API_KEY", "").strip()
@@ -1304,28 +1553,47 @@ class GlobalEventsCollector(BaseCollector):
             },
             "timeout": max(30, int(getattr(config, "GLOBAL_EVENTS_QWEN_TIMEOUT", 90))),
         }
-        for attempt in range(OPENROUTER_429_MAX_ATTEMPTS):
-            response = self._session.post(
-                "https://openrouter.ai/api/v1/chat/completions", **request_kwargs
-            )
+        # Opt-in provider routing. Empty by default, so the default request body
+        # (and therefore the stage1 cache key) is byte-for-byte unchanged.
+        fallbacks = [
+            name.strip()
+            for name in str(
+                getattr(config, "GLOBAL_EVENTS_QWEN_FALLBACK_MODELS", "") or ""
+            ).split(",")
+            if name.strip() and name.strip() != model
+        ]
+        if fallbacks:
+            request_kwargs["json"]["models"] = [model, *fallbacks]
+        for attempt in range(OPENROUTER_MAX_ATTEMPTS):
+            error_response: Any = None
             try:
+                response = self._session.post(
+                    "https://openrouter.ai/api/v1/chat/completions", **request_kwargs
+                )
                 response.raise_for_status()
                 break
             except requests.HTTPError as exc:
-                error_response = exc.response if exc.response is not None else response
+                error_response = exc.response if exc.response is not None else None
+                status = getattr(error_response, "status_code", None)
                 if (
-                    getattr(error_response, "status_code", None) != 429
-                    or attempt + 1 >= OPENROUTER_429_MAX_ATTEMPTS
+                    status not in RETRYABLE_STATUS_CODES
+                    or attempt + 1 >= OPENROUTER_MAX_ATTEMPTS
                 ):
                     raise
-                delay = openrouter_retry_delay(error_response)
-                logger.warning(
-                    "OpenRouter Stage1 HTTP 429; retrying attempt %d/%d in %.1fs",
-                    attempt + 2,
-                    OPENROUTER_429_MAX_ATTEMPTS,
-                    delay,
-                )
-                time.sleep(delay)
+                last_error: Exception = exc
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                if attempt + 1 >= OPENROUTER_MAX_ATTEMPTS:
+                    raise
+                last_error = exc
+            delay = http_retry_delay(attempt, error_response)
+            logger.warning(
+                "OpenRouter Stage1 transient failure; retrying attempt %d/%d in %.1fs: %s",
+                attempt + 2,
+                OPENROUTER_MAX_ATTEMPTS,
+                delay,
+                str(last_error)[:200],
+            )
+            time.sleep(delay)
         payload = response.json()
         usage = payload.get("usage") or {}
         completion_details = usage.get("completion_tokens_details")
@@ -1384,18 +1652,54 @@ class GlobalEventsCollector(BaseCollector):
                 f"line={exc.lineno}, column={exc.colno}, char={exc.pos}"
             ) from exc
 
-    def _assess_in_chunks(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
-        """Bound output size and reuse completed chunks after provider failures."""
-        chunk_size = min(
+    def _assess_in_chunks(
+        self,
+        candidates: list[dict[str, Any]],
+        attempts_by_id: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Bound output size, isolate poisoned chunks, and keep the queue moving.
+
+        A chunk the provider refuses no longer fails the whole round: the other
+        chunks still ship, the refused cohort records an attempt, and after
+        ``STAGE1_CHUNK_RELEASE_ATTEMPTS`` the caller releases it as
+        ``assessment_status=pending`` so the queue can drain.
+        """
+        base = min(
             10, max(1, int(getattr(config, "GLOBAL_EVENTS_QWEN_CHUNK_SIZE", 10)))
         )
+        attempts_by_id = attempts_by_id or {}
+        buckets: dict[int, list[dict[str, Any]]] = {}
+        for candidate in candidates:
+            size = stage1_chunk_size(
+                attempts_by_id.get(candidate["candidate_id"], 0), base
+            )
+            buckets.setdefault(size, []).append(candidate)
+        chunks: list[list[dict[str, Any]]] = []
+        # Largest (freshest, never-failed) cohorts first: under the soft budget
+        # the candidates that have not burned attempts are the ones to ship.
+        for size in sorted(buckets, reverse=True):
+            items = buckets[size]
+            for offset in range(0, len(items), size):
+                chunks.append(items[offset : offset + size])
+        budget = max(
+            60, int(getattr(config, "GLOBAL_EVENTS_STAGE1_BUDGET_SECONDS", 1200))
+        )
+        started = time.monotonic()
         results = []
         observations = []
         response_hashes = []
+        chunk_failures: list[dict[str, Any]] = []
+        failed_ids: list[str] = []
+        deferred_ids: list[str] = []
         totals: dict[str, Any] = {}
         next_group = 1
-        for offset in range(0, len(candidates), chunk_size):
-            chunk = candidates[offset : offset + chunk_size]
+        for index, chunk in enumerate(chunks):
+            chunk_ids = [candidate["candidate_id"] for candidate in chunk]
+            if index and time.monotonic() - started > budget:
+                # Stay inside COLLECT_TIMEOUT. Unsent chunks keep their attempt
+                # budget intact and are picked up by the next scheduled run.
+                deferred_ids.extend(chunk_ids)
+                continue
             cache_key = content_sha256(
                 {
                     "model": getattr(
@@ -1412,12 +1716,12 @@ class GlobalEventsCollector(BaseCollector):
                 / f"{cache_key}.json"
             )
             try:
-                cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            except FileNotFoundError:
-                self._stage1_usage = {}
-                self._stage1_observation = {}
-                self._raw_response_sha256 = None
                 try:
+                    cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                except FileNotFoundError:
+                    self._stage1_usage = {}
+                    self._stage1_observation = {}
+                    self._raw_response_sha256 = None
                     raw_result = self._request_stage1(chunk)
                     if (
                         not isinstance(raw_result, dict)
@@ -1425,36 +1729,55 @@ class GlobalEventsCollector(BaseCollector):
                         or not isinstance(raw_result["assessments"], list)
                     ):
                         raise ValueError("Stage1 output must contain only assessments")
-                except Exception:
-                    # Preserve all earlier successful chunks and current error evidence.
-                    if observations:
-                        self._stage1_observation = {
-                            "chunks": observations + [self._stage1_observation],
-                            "completed_chunks": len(observations),
-                        }
+                    cached = {
+                        "result": raw_result,
+                        "raw_response_sha256": self._raw_response_sha256,
+                        "observation": self._stage1_observation,
+                        "usage": self._stage1_usage,
+                        "assessed_at": datetime.now(UTC).isoformat(),
+                    }
+                    # Only complete JSON provider outputs are cached. The strict
+                    # candidate validator still runs for cached responses too.
+                    immutable_write(cache_path, cached)
+                    cache_hit = False
+                else:
+                    cache_hit = True
+                rejected: list[dict[str, Any]] = []
+                diagnostics: list[dict[str, Any]] = []
+                validated = validate_stage1(
+                    cached["result"],
+                    chunk,
+                    self._normalization_lineage,
+                    rejected,
+                    diagnostics,
+                )
+            except Exception as exc:
+                kind = classify_stage1_failure(exc)
+                if kind == "fatal":
+                    # Misconfiguration must stay loud: preserve the completed
+                    # chunks as evidence and let the round fail.
+                    self._stage1_observation = {
+                        "chunks": observations + [self._stage1_observation],
+                        "completed_chunks": len(observations),
+                    }
                     raise
-                cached = {
-                    "result": raw_result,
-                    "raw_response_sha256": self._raw_response_sha256,
-                    "observation": self._stage1_observation,
-                    "usage": self._stage1_usage,
-                    "assessed_at": datetime.now(UTC).isoformat(),
-                }
-                # Only complete JSON provider outputs are cached. The strict
-                # candidate validator still runs for cached responses too.
-                immutable_write(cache_path, cached)
-                cache_hit = False
-            else:
-                cache_hit = True
-            rejected: list[dict[str, Any]] = []
-            diagnostics: list[dict[str, Any]] = []
-            validated = validate_stage1(
-                cached["result"],
-                chunk,
-                self._normalization_lineage,
-                rejected,
-                diagnostics,
-            )
+                chunk_failures.append(
+                    {
+                        "kind": kind,
+                        "chunk_size": len(chunk),
+                        "candidate_ids": chunk_ids,
+                        "error": str(exc)[:300],
+                        "observation": self._stage1_observation or None,
+                    }
+                )
+                logger.warning(
+                    "global_events Stage1 chunk failed (%s, size=%d): %s",
+                    kind,
+                    len(chunk),
+                    str(exc)[:200],
+                )
+                (failed_ids if kind == "content" else deferred_ids).extend(chunk_ids)
+                continue
             self._stage1_validation_rejections.extend(rejected)
             self._stage1_validation_diagnostics.extend(diagnostics)
             # E001 in two independent requests does not mean the same event.
@@ -1483,16 +1806,39 @@ class GlobalEventsCollector(BaseCollector):
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     totals[key] = totals.get(key, 0) + value
             self._stage1_usage = totals
-            self._stage1_observation = {
-                "chunks": observations,
-                "completed_chunks": len(observations),
-                "usage": totals,
-            }
             self._raw_response_sha256 = (
                 response_hashes[0]
                 if len(response_hashes) == 1
                 else content_sha256(response_hashes)
             )
+        stage1 = {"assessments": results}
+        if not response_hashes:
+            # Migration 389 requires every accepted run to carry a response
+            # hash; with no complete provider output this is the canonical
+            # digest of the (possibly empty) Stage1 artifact, never a fake one.
+            self._raw_response_sha256 = content_sha256(stage1)
+        self._stage1_chunk_stats = {
+            "chunk_count": len(chunks),
+            "failed_chunk_count": len(chunk_failures),
+            "content_failure_count": sum(
+                1 for item in chunk_failures if item["kind"] == "content"
+            ),
+            "provider_failure_count": sum(
+                1 for item in chunk_failures if item["kind"] == "provider"
+            ),
+            "split_chunk_count": sum(1 for chunk in chunks if len(chunk) < base),
+            "failed_candidate_count": len(failed_ids),
+            "deferred_candidate_count": len(deferred_ids),
+        }
+        self._stage1_failed_candidate_ids = failed_ids
+        self._stage1_deferred_candidate_ids = deferred_ids
+        self._stage1_observation = {
+            "chunks": observations,
+            "completed_chunks": len(observations),
+            "usage": totals,
+            "chunk_failures": chunk_failures[:20],
+            **self._stage1_chunk_stats,
+        }
         if totals.get("cost_usd", 0) > float(
             getattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
         ):
@@ -1500,7 +1846,7 @@ class GlobalEventsCollector(BaseCollector):
                 "Qwen Stage1 run usage exceeded post-hoc cost alert threshold: %.6f",
                 totals["cost_usd"],
             )
-        return {"assessments": results}
+        return stage1
 
     def _upload_handoff(
         self,
@@ -1553,49 +1899,56 @@ class GlobalEventsCollector(BaseCollector):
         self._normalization_lineage = []
         self._stage1_validation_rejections = []
         self._stage1_validation_diagnostics = []
-        self._pending_routing_work = None
+        self._pending_queue = None
+        self._pending_success_raw = []
         self._assessment_times = {}
+        self._stage1_chunk_stats = {}
+        self._stage1_failed_candidate_ids = []
+        self._stage1_deferred_candidate_ids = []
         checkpoints = self._load_checkpoints()
-        try:
-            routing_work = json.loads(
-                self.routing_pending_path.read_text(encoding="utf-8")
-            )
-        except FileNotFoundError:
-            routing_work = None
-        if routing_work and routing_work.get("version") != 1:
-            raise RuntimeError("unsupported global_events pending routing version")
-        if routing_work and all(
-            checkpoints.get(stream, "") >= slot
-            for stream, slot in routing_work["pending_checkpoints"].items()
-        ):
-            # A crash after committing the source checkpoint must not replay
-            # a fully drained queue on restart.
-            routing_work = None
+        queue = self._load_queue()
+        now = datetime.now(UTC)
         groups: dict[str, dict[str, Any]] = {}
-        raw_paths = []
-        raw_metadata = []
-        source_manifest: dict[str, list[dict[str, Any]]] = {}
+        raw_paths: list[Path] = []
+        raw_metadata: list[dict[str, Any]] = []
+        fetched_manifest: dict[str, list[dict[str, Any]]] = {}
         index_snapshot_hashes: dict[str, str] = {}
-        stream_stats = {}
-        errors = []
+        stream_stats: dict[str, Any] = {}
+        stream_errors: dict[str, str] = {}
         pending: dict[str, str] = {}
-        for stream, index_url in [] if routing_work else SOURCE_INDEXES.items():
+        # Every round fetches new slots. Draining the assessment queue used to
+        # suppress the fetch entirely, which is how a stuck queue turned into a
+        # frozen source cursor and a 29-hour stall.
+        for stream, index_url in SOURCE_INDEXES.items():
             try:
-                index_response = self._session.get(
+                index_response = self._get_with_retry(
                     getattr(config, f"GLOBAL_EVENTS_{stream.upper()}_INDEX", index_url),
                     timeout=config.REQUEST_TIMEOUT,
                 )
-                index_response.raise_for_status()
                 index_text = index_response.text
                 index_snapshot_hashes[stream] = hashlib.sha256(
                     index_text.encode()
                 ).hexdigest()
                 artifacts = parse_master_index(index_text, stream)
-                selected = self._select_pending(artifacts, checkpoints.get(stream))
-                source_manifest[stream] = selected_artifact_manifest(selected)
-                completed = []
+                selected, skipped = self._select_pending(
+                    artifacts, checkpoints.get(stream)
+                )
+                fetched_manifest[stream] = selected_artifact_manifest(selected)
+                completed: list[str] = []
+                interrupted: str | None = None
                 for artifact in selected:
-                    payload = self._download_artifact(artifact)
+                    try:
+                        payload = self._download_artifact(artifact)
+                    except GKGArtifactUnavailable as exc:
+                        if self._artifact_is_stale(artifact):
+                            # Indexed hours ago and still not published: treat
+                            # it as a hole rather than freezing this stream.
+                            skipped.append(artifact.slot)
+                            continue
+                        # Keep whatever this stream already downloaded instead
+                        # of discarding the round's earlier files.
+                        interrupted = str(exc)[:300]
+                        break
                     raw = self._save_raw(artifact, payload, success=False)
                     raw_paths.append(raw)
                     raw_metadata.append(
@@ -1626,7 +1979,19 @@ class GlobalEventsCollector(BaseCollector):
                                 "documents": 0,
                             },
                         )
-                        group["rows"].append(row)
+                        # Only these row fields are read downstream. Catch-up
+                        # rounds hold up to 48 files at once, so the unused GKG
+                        # arrays (themes/persons/organisations/tone) are dropped
+                        # here rather than retained for every parsed document.
+                        group["rows"].append(
+                            {
+                                "title": row["title"],
+                                "url": row["url"],
+                                "source_domain": row["source_domain"],
+                                "gkg_locations": row["gkg_locations"],
+                                "noise_signals": row["noise_signals"],
+                            }
+                        )
                         group["domains"].add(row["source_domain"])
                         group["streams"].add(stream)
                         group["impact_signals"].update(row["impact_signals"])
@@ -1634,18 +1999,33 @@ class GlobalEventsCollector(BaseCollector):
                         group["first_slot"] = min(group["first_slot"], artifact.slot)
                         group["last_slot"] = max(group["last_slot"], artifact.slot)
                         group["documents"] += 1
+                    del payload
                     completed.append(artifact.slot)
-                if completed:
-                    pending[stream] = completed[-1]
+                advance = completed[-1] if completed else None
+                if interrupted is None and skipped:
+                    latest_skip = max(skipped)
+                    if advance is None or latest_skip > advance:
+                        advance = latest_skip
+                if advance:
+                    pending[stream] = advance
                 stream_stats[stream] = {
                     "checkpoint_before": checkpoints.get(stream),
                     "checkpoint_after": pending.get(stream, checkpoints.get(stream)),
                     "files_processed": len(completed),
+                    "files_selected": len(selected),
+                    "skipped_slots": sorted(skipped)[:32],
+                    "skipped_slot_count": len(skipped),
                     "latest_slot": artifacts[-1].slot if artifacts else None,
                     "index_sha256": index_snapshot_hashes[stream],
                 }
+                if interrupted:
+                    # Not a round-level error: the other stream is unaffected
+                    # and this cursor simply retries the same slot next run.
+                    stream_stats[stream]["artifact_unavailable"] = interrupted
             except Exception as exc:
-                errors.append(f"{stream}: {str(exc)[:300]}")
+                # Stream-scoped, never shared. A translation-stream outage used
+                # to fail the standard stream's checkpoint with it.
+                stream_errors[stream] = str(exc)[:300]
                 stream_stats[stream] = {
                     "checkpoint_before": checkpoints.get(stream),
                     "error": str(exc)[:300],
@@ -1661,59 +2041,112 @@ class GlobalEventsCollector(BaseCollector):
         max_candidates = min(
             100, max(1, int(getattr(config, "GLOBAL_EVENTS_QWEN_MAX_CANDIDATES", 100)))
         )
-        routed.sort(
-            key=lambda item: (
-                group_signal_priority(item["impact_signals"]),
-                len(item["domains"]),
-                item["fingerprint"],
-            ),
-            reverse=True,
-        )
         registry_hash = (
             hashlib.sha256(self.source_registry_path.read_bytes()).hexdigest()
             if self.source_registry_path.exists()
             else None
         )
-        if routing_work:
-            full_batch = routing_work["batch"]
-            source_manifest = routing_work["source_manifest"]
-            raw_metadata = routing_work["raw_metadata"]
-            raw_paths = [Path(raw["local_path"]) for raw in raw_metadata]
-            stream_stats = routing_work["streams"]
-            pending = routing_work["pending_checkpoints"]
-        else:
-            full_batch = build_compact_batch(
-                routed,
-                source_manifest_sha256=content_sha256(source_manifest),
-                source_registry_sha256=registry_hash,
-                producer_git_commit=producer_sha,
+        ttl_hours = max(1, int(getattr(config, "GLOBAL_EVENTS_PENDING_TTL_HOURS", 48)))
+        ttl_cutoff = (now - timedelta(hours=ttl_hours)).isoformat()
+        # Lineage outlives the queue entries it describes by a full day so a
+        # surviving candidate can never reference a pruned slot.
+        source_manifest = merge_source_manifest(
+            queue["source_manifest"],
+            fetched_manifest,
+            (now - timedelta(hours=ttl_hours + 24)).strftime("%Y%m%d%H%M%S"),
+        )
+        fresh_batch = build_compact_batch(
+            routed,
+            source_manifest_sha256=content_sha256(source_manifest),
+            source_registry_sha256=registry_hash,
+            producer_git_commit=producer_sha,
+        )
+        merged_by_id = {
+            **{
+                candidate["candidate_id"]: candidate
+                for candidate in queue["candidates"]
+            },
+            # A re-fetched slot yields the same content-addressed candidate_id;
+            # the newer copy simply replaces the queued one.
+            **{
+                candidate["candidate_id"]: candidate
+                for candidate in fresh_batch["payload"]["candidates"]
+            },
+        }
+        queued_at = {
+            candidate_id: str(
+                (queue["queue_state"].get(candidate_id) or {}).get("queued_at")
+                or now.isoformat()
             )
-            routing_work = {
-                "version": 1,
-                "batch": full_batch,
+            for candidate_id in merged_by_id
+        }
+        # Freshness over completeness: a candidate the model could not assess
+        # within the TTL is dropped with a receipt, never replayed for ever at
+        # the cost of today's events.
+        expired = [
+            candidate_id
+            for candidate_id in merged_by_id
+            if queued_at[candidate_id] < ttl_cutoff
+        ]
+        for candidate_id in expired:
+            merged_by_id.pop(candidate_id)
+        # Newest first, so a backlog never delays the current hour's events.
+        merged = sorted(
+            merged_by_id.values(),
+            key=lambda item: (
+                item["observation_window"]["first_slot"],
+                -item["routing_rank"],
+                item["candidate_id"],
+            ),
+            reverse=True,
+        )
+        attempts_by_id = {
+            candidate_id: int(state.get("attempts", 0))
+            for candidate_id, state in queue["queue_state"].items()
+            if candidate_id in merged_by_id
+        }
+        full_batch = candidate_batch_slice(fresh_batch, merged)
+        # Persist the whole cohort before any model request. No source
+        # checkpoint or raw-success marker exists yet.
+        self._save_queue(
+            {
+                "candidates": merged,
+                "queue_state": {
+                    candidate["candidate_id"]: {
+                        "attempts": attempts_by_id.get(candidate["candidate_id"], 0),
+                        "queued_at": queued_at[candidate["candidate_id"]],
+                    }
+                    for candidate in merged
+                },
                 "source_manifest": source_manifest,
-                "raw_metadata": raw_metadata,
-                "streams": stream_stats,
-                "pending_checkpoints": pending,
             }
-            if not errors:
-                # Persist the entire keyword-selected cohort before any model
-                # request, including overflow. Drain it before fetching more
-                # files; no source checkpoint or raw-success marker yet.
-                atomic_replace_json(self.routing_pending_path, routing_work)
+        )
         all_candidates = full_batch["payload"]["candidates"]
         batch = candidate_batch_slice(full_batch, all_candidates[:max_candidates])
         deferred_count = max(0, len(all_candidates) - max_candidates)
+        errors: list[str] = []
+        if (
+            len(stream_errors) == len(SOURCE_INDEXES)
+            and not all_candidates
+            and not queue["candidates"]
+        ):
+            # Nothing fetched, nothing queued: a genuine total source outage
+            # still fails closed instead of writing a cheerful empty receipt.
+            errors.append(
+                "; ".join(f"{name}: {text}" for name, text in sorted(stream_errors.items()))
+            )
         stage1: dict[str, Any] | None = None
         if batch["payload"]["candidates"] and not errors:
             try:
-                stage1 = self._assess_in_chunks(batch["payload"]["candidates"])
+                stage1 = self._assess_in_chunks(
+                    batch["payload"]["candidates"], attempts_by_id
+                )
             except Exception as exc:
                 errors.append(f"stage1: {str(exc)[:300]}")
                 # Never upload an invalid/fake Stage1 artifact. The compact
                 # batch and failed manifest/receipt remain auditable instead.
                 stage1 = None
-        elif not batch["payload"]["candidates"] and not errors:
+        elif not errors:
             stage1 = {"assessments": []}
             # Migration 389 requires an accepted run to carry a response hash;
             # for a deterministic no-candidate run this is the canonical empty
@@ -1758,6 +2191,12 @@ class GlobalEventsCollector(BaseCollector):
                 "candidate_count": batch["payload"]["candidate_count"],
                 "valid_assessment_count": valid_count,
                 "rejected_assessment_count": rejected_count,
+                # valid + rejected + unassessed == candidate_count. Isolated
+                # chunks are the third bucket introduced by chunk-level
+                # recovery; without it the accounting no longer closes.
+                "unassessed_candidate_count": (
+                    batch["payload"]["candidate_count"] - valid_count - rejected_count
+                ),
                 "validation_status": validation_status,
                 "model": getattr(
                     config, "GLOBAL_EVENTS_QWEN_MODEL", "qwen/qwen3.7-flash"
@@ -1797,14 +2236,26 @@ class GlobalEventsCollector(BaseCollector):
             "batch_sha256": batch_object_sha256,
             "batch_content_sha256": batch["content_sha256"],
             "stage1_sha256": content_sha256(stage1) if stage1 is not None else None,
+            # This round's downloads only. Accumulating them across a 48h queue
+            # would grow every receipt row without adding lineage.
             "raw_objects": raw_metadata,
             "streams": stream_stats,
+            "stream_errors": stream_errors,
             "routing": {
                 "selected_count": len(all_candidates),
                 "assessed_limit": max_candidates,
                 "deferred_count": deferred_count,
+                "expired_count": len(expired),
+                "expired_sample": sorted(expired)[:10],
+                "pending_ttl_hours": max(
+                    1, int(getattr(config, "GLOBAL_EVENTS_PENDING_TTL_HOURS", 48))
+                ),
+                "released_pending_count": 0,
+                "retried_candidate_count": 0,
             },
+            "stage1_chunks": dict(self._stage1_chunk_stats),
             "stage1_observation": self._stage1_observation,
+            "collector_version": collector_version(),
             "created_at": datetime.now(UTC).isoformat(),
             "archive_eligible": True if run_manifest is not None else False,
             "production_publishable": False,
@@ -1820,14 +2271,45 @@ class GlobalEventsCollector(BaseCollector):
             if not errors:
                 errors.append("handoff: S3 manifest-last upload unavailable or failed")
         elif not errors:
-            self._pending_routing_work = {
-                **routing_work,
-                "batch": candidate_batch_slice(
-                    full_batch, all_candidates[max_candidates:]
-                ),
+            shipped = {
+                candidate["candidate_id"] for candidate in batch["payload"]["candidates"]
             }
-            if deferred_count == 0:
-                self._pending_checkpoints = pending
+            blamed = set(self._stage1_failed_candidate_ids)
+            unreached = set(self._stage1_deferred_candidate_ids)
+            resolved = shipped - blamed - unreached
+            released = set()
+            next_attempts = dict(attempts_by_id)
+            for candidate_id in blamed:
+                attempts = next_attempts.get(candidate_id, 0) + 1
+                next_attempts[candidate_id] = attempts
+                if attempts >= STAGE1_CHUNK_RELEASE_ATTEMPTS:
+                    # Already published this round as assessment_status=pending
+                    # with every assessment field NULL. Letting it go is what
+                    # keeps one unassessable cohort from freezing the queue.
+                    released.add(candidate_id)
+            drained = resolved | released
+            manifest["routing"]["released_pending_count"] = len(released)
+            manifest["routing"]["retried_candidate_count"] = len(blamed - released)
+            remaining = [
+                candidate
+                for candidate in all_candidates
+                if candidate["candidate_id"] not in drained
+            ]
+            self._pending_queue = {
+                "candidates": remaining,
+                "queue_state": {
+                    candidate["candidate_id"]: {
+                        "attempts": next_attempts.get(candidate["candidate_id"], 0),
+                        "queued_at": queued_at[candidate["candidate_id"]],
+                    }
+                    for candidate in remaining
+                },
+                "source_manifest": source_manifest,
+            }
+            # The source cursor is no longer hostage to the assessment queue:
+            # files that were fetched, parsed and durably queued are done.
+            self._pending_checkpoints = pending
+            self._pending_success_raw = [str(path) for path in raw_paths]
         manifest["archive_eligible"] = bool(handoff_ok and not errors)
         # Migration 389 deliberately exposes only terminal accepted/failed
         # states; source gaps and handoff failures are failed receipts, not a
@@ -1892,7 +2374,8 @@ class GlobalEventsCollector(BaseCollector):
         self._supabase_receipts = (
             [batch_receipt, run_receipt] if run_status == "accepted" else [run_receipt]
         )
-        self._cleanup_success_raw()
+        cleanup_stats = self._cleanup_local_artifacts()
+        manifest["local_cleanup"] = cleanup_stats
         result = {
             "data": [
                 {
@@ -1915,6 +2398,10 @@ class GlobalEventsCollector(BaseCollector):
             "handoff_manifest": manifest,
             "_supabase_receipts": self._supabase_receipts,
             "db_contract_status": "migration_389_receipts",
+            "stream_errors": stream_errors,
+            "queued_candidate_count": len(all_candidates),
+            "expired_candidate_count": len(expired),
+            "stage1_chunks": dict(self._stage1_chunk_stats),
             "health": {
                 "status": "ERROR" if errors else "OK",
                 "freshness": "UNKNOWN" if not pending else "CURRENT",
@@ -1926,23 +2413,19 @@ class GlobalEventsCollector(BaseCollector):
 
     def run(self) -> dict[str, Any]:
         stats = super().run()
-        if "error" not in stats and self._pending_routing_work is not None:
-            remaining = self._pending_routing_work["batch"]["payload"][
-                "candidate_count"
-            ]
-            if remaining:
-                atomic_replace_json(
-                    self.routing_pending_path, self._pending_routing_work
-                )
-            else:
-                self._save_checkpoints(self._pending_checkpoints)
-                for raw in self._pending_routing_work["raw_metadata"]:
-                    Path(raw["local_path"]).with_suffix(".success").touch()
-                self.routing_pending_path.unlink(missing_ok=True)
-        elif "error" not in stats and self._pending_checkpoints:
+        if "error" not in stats and self._pending_queue is not None:
+            # Queue first, then the cursor, then the raw-success markers. A
+            # crash between any two steps only re-derives candidates that are
+            # content-addressed and idempotent on ingest.
+            self._save_queue(self._pending_queue)
             self._save_checkpoints(self._pending_checkpoints)
+            for path in self._pending_success_raw:
+                marker = Path(path).with_suffix(".success")
+                if Path(path).exists():
+                    marker.touch()
         self._pending_checkpoints = {}
-        self._pending_routing_work = None
+        self._pending_queue = None
+        self._pending_success_raw = []
         return stats
 
 
