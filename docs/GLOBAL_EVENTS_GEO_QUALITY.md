@@ -233,7 +233,12 @@ ADM1-only evidence 用該 anchor 的名稱與座標發佈 `country_center`，`ev
 
 ---
 
-## 8. ⚠️ 超出本文範圍、但優先序更高：資料延遲 34 小時
+## 8. 資料延遲：已由 PR #85 修復並驗證 ✅
+
+> **狀態（2026-09-05）**：已修復。本節保留原始分析當歷史脈絡，因為「穩態吞吐沒問題、
+> 落後全來自停機」這個判讀決定了 #85 採用的修法。
+
+### 8.1 當初觀測到的現象（2026-09-04）
 
 collector **有在跑**（最近 12 小時寫入 221 列），但處理到的 GKG slot 只到 2026-09-03 12:45 UTC。
 
@@ -243,12 +248,29 @@ collector **有在跑**（最近 12 小時寫入 221 列），但處理到的 GK
 | 2026-09-04 04:00 | 2026-09-03 00:45 | 27.3h |
 | 2026-09-04 23:00 | 2026-09-03 12:45 | **34.3h** |
 
-**穩態吞吐約 1:1，沒問題**（09-04 04:00 → 15:00：11 小時 wall-clock 推進 10 小時 GKG）。
-落後幾乎全部來自兩個空窗：09-03 13:00 → 09-04 04:00（15h）、09-04 15:00 → 23:00（8h）。
-空窗成因未證實（run log 在 Zeabur），合理假設是 OpenRouter 429 讓整輪 collect 失敗、checkpoint 不推進。
+**穩態吞吐約 1:1，本來就沒問題**（09-04 04:00 → 15:00：11 小時 wall-clock 推進 10 小時 GKG）。
+落後幾乎全部來自兩個空窗：09-03 13:00 → 09-04 04:00（15h）、09-04 15:00 → 23:00（8h），
+合理假設是 OpenRouter 429 讓整輪 collect 失敗、checkpoint 不推進。
 
-→ 使用者要的是「一定時間內看到正在發生的事」。**先看 log 再決定**；
-**不要**先調高 `GLOBAL_EVENTS_MAX_FILES_PER_STREAM`——若空窗真是 429，每輪塞更多候選只會更快撞限流。
+### 8.2 #85 怎麼修的
+
+因為根因是「停機」而不是「吞吐不足」，#85 沒有無條件放寬每輪檔數——那樣只會在 429 期間
+更快撞限流、把空窗拉更長。它做的是兩件事：
+
+1. **先讓一輪不再全有全無**：chunk 反覆失敗會被切小、最後以 `assessment_status=pending`
+   釋出，一個中毒的 cohort 不會卡住整個 queue，checkpoint 因此能繼續推進。
+2. **再讓落後時才加寬窗口**：`_max_files_per_stream()` 是**條件式**的——
+   只有當該 stream 的 checkpoint 落後超過 `GLOBAL_EVENTS_CATCHUP_LAG_HOURS`（預設 6 小時）
+   才放寬到 `GLOBAL_EVENTS_CATCHUP_FILES_PER_STREAM`（預設 24 檔／輪），追上後自動回到
+   `GLOBAL_EVENTS_MAX_FILES_PER_STREAM`（8 檔）。
+
+### 8.3 驗證（2026-09-05，#85 merged 後）
+
+- 08:25、09:28 兩輪 receipt 皆 `accepted`，並帶上 `collector_version`。
+- catch-up 生效：每 stream 24 檔／輪。
+- 落後從 **1 天 11 小時降到 1 天 1.5 小時**（單輪推進遠大於 1:1，正在收斂）。
+
+→ 剩下的是等它把 backlog 吃完；不需要再改參數。
 
 ---
 
@@ -256,7 +278,7 @@ collector **有在跑**（最近 12 小時寫入 221 列），但處理到的 GK
 
 | 順序 | 項目 | repo | 需 migration | 狀態 |
 |---|---|---|---|---|
-| 0 | §8 的 34 小時延遲 | data-collectors / Zeabur | ❌ | 待辦 |
+| 0 | §8 的資料延遲 | data-collectors / Zeabur | ❌ | ✅ PR #85（09-05 驗證，落後 1天11h → 1天1.5h） |
 | 1 | C-4 前端預設過濾 drop_noise | mini-taiwan-pulse | ❌ | 待辦 |
 | 2 | C-1 per-signal veto | data-collectors | ❌ | ✅ 本 PR |
 | 3 | A-1a ADM1 降級（batch 級 anchor） | data-collectors | ❌ | ✅ 本 PR |
