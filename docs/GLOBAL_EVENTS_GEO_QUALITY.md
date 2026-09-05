@@ -290,6 +290,6 @@ collector **有在跑**（最近 12 小時寫入 221 列），但處理到的 GK
 | 2 | C-1 per-signal veto | data-collectors | ❌ | ✅ 本 PR |
 | 3 | A-1a ADM1 降級（batch 級 anchor） | data-collectors | ❌ | ✅ 本 PR |
 | 4 | A-2 headline gazetteer | data-collectors | ❌ | ✅ 本 PR |
-| 5 | B prompt v4 + A-3 validator 放寬 | data-collectors | ❌ | ⚠️ **draft PR #87，等人拍板**：rubric 實測穩定有效，但模型選點 21/30 → 18/30、被丟棄選點 1 → 18，且已證實不是 location 措辭造成（改不回來）。`places` 非空持平 28/30，退步的是出處強度不是可見性 → [V4_EVAL §7](./GLOBAL_EVENTS_PROMPT_V4_EVAL.md) |
+| 5 | ~~B prompt v4~~ + A-3 validator 放寬 | data-collectors | ❌ | ❌ **建議不上**（draft PR #87）：五臂實測證明「加 rubric」與「維持 21/30 選點率」無法並存，location 措辭與長度上限兩種修法都試過且無效。改走 §5 C-4 前端顯示層 → [V4_EVAL §7](./GLOBAL_EVENTS_PROMPT_V4_EVAL.md) |
 | 6 | C-3 跨輪重複 cache | data-collectors | ❌ | backlog |
 | 7 | `admin1_center` 精確州級定位 | 4 個 repo | ✅ | 之後再議 |
