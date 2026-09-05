@@ -2407,3 +2407,205 @@ def test_every_produced_place_satisfies_migration_399(monkeypatch, tmp_path):
     assert kinds == {"country_center", "city_center"}
     for record in records:
         _assert_migration_399_place_contract(record["places"], record["source_urls"])
+
+
+# --- Stage1 prompt v4 + A-3 basis relaxation ---------------------------------
+
+STAGE1_PROMPT_VERSION_UNDER_TEST = "global-events-stage1/v4"
+
+
+def _basis_candidate():
+    """One story, two publishers: GKG geocodes Iran off the English wire copy
+    while only the French title names Tehran."""
+    return [
+        {
+            "candidate_id": "cand_" + "0" * 24,
+            "routing_rank": 1,
+            "representative_documents": [
+                {
+                    "title": "Major earthquake in Iran kills dozens",
+                    "url": "https://wire.example/story",
+                },
+                {
+                    "title": "Séisme meurtrier à Tehran, des dizaines de morts",
+                    "url": "https://presse.example/story",
+                },
+            ],
+            "location_evidence": [
+                {
+                    "evidence_id": "loc_" + "1" * 24,
+                    "location_type": 1,
+                    "name": "Iran",
+                    "country_code": "IR",
+                    "longitude": 54,
+                    "latitude": 32,
+                    "source_url": "https://wire.example/story",
+                }
+            ],
+        }
+    ]
+
+
+def _basis_result(candidates, basis):
+    assessment = _stage1_assessment(candidates[0])
+    assessment["location_evidence_ids"] = [
+        {
+            "evidence_id": candidates[0]["location_evidence"][0]["evidence_id"],
+            "role": "event_location",
+            "basis": basis,
+        }
+    ]
+    return {"assessments": [assessment]}
+
+
+def test_basis_may_quote_any_representative_title_of_the_candidate():
+    candidates = _basis_candidate()
+    diagnostics = []
+    # Verbatim from the *other* representative title, not the one this evidence
+    # was extracted from. v3 rejected this; A-3 accepts it.
+    validated = validate_stage1(
+        _basis_result(candidates, "Séisme meurtrier à Tehran"),
+        candidates,
+        None,
+        [],
+        diagnostics,
+    )
+    (selection,) = validated["assessments"][0]["location_evidence_ids"]
+    assert selection["basis"] == "Séisme meurtrier à Tehran"
+    assert diagnostics == []
+
+
+@pytest.mark.parametrize(
+    "basis",
+    [
+        "quake near Bushehr",  # In no input title at all.
+        "Earthquake In Iran",  # Right words, wrong casing: not verbatim.
+        "x",  # Below the 2-character floor.
+    ],
+)
+def test_basis_absent_from_every_title_is_still_rejected(basis):
+    candidates = _basis_candidate()
+    diagnostics = []
+    validated = validate_stage1(
+        _basis_result(candidates, basis), candidates, None, [], diagnostics
+    )
+    # The relaxation is about *which* title, never about dropping source
+    # binding: the selection is discarded but the assessment survives.
+    assert validated["assessments"][0]["location_evidence_ids"] == []
+    assert len(diagnostics) == 1
+    assert "source/basis" in diagnostics[0]["error"]
+
+
+def test_prompt_version_bump_changes_the_stage1_cache_key(monkeypatch, tmp_path):
+    import config
+    from collectors import global_events as module
+
+    monkeypatch.setattr(config, "LOCAL_DATA_DIR", tmp_path)
+    candidates = [{"candidate_id": "cand_" + "0" * 24, "routing_rank": 1}]
+
+    def _key():
+        return content_sha256(
+            {
+                "model": config.GLOBAL_EVENTS_QWEN_MODEL,
+                "prompt_version": module.STAGE1_PROMPT_VERSION,
+                "candidates": candidates,
+            }
+        )
+
+    current = _key()
+    monkeypatch.setattr(module, "STAGE1_PROMPT_VERSION", "global-events-stage1/v3")
+    assert _key() != current  # A v3 cache entry can never replay under v4.
+
+
+def test_stage1_prompt_v4_carries_the_importance_rubric_and_examples():
+    from collectors.global_events import STAGE1_PROMPT_VERSION, STAGE1_SYSTEM_PROMPT
+
+    assert STAGE1_PROMPT_VERSION == STAGE1_PROMPT_VERSION_UNDER_TEST
+    # The three decision labels must each be defined, not just named.
+    for label in ("keep_core", "keep_watch", "drop_noise"):
+        assert f"{label} ——" in STAGE1_SYSTEM_PROMPT
+    # All six drop_noise classes, the shapes v3 had no opinion about.
+    for marker in ("a. ", "b. ", "c. ", "d. ", "e. ", "f. "):
+        assert marker in STAGE1_SYSTEM_PROMPT
+    for phrase in (
+        "災後的行政後續",  # b: the Hawaii Food Basket shape
+        "比喻用法",  # d: cheating epidemic / political earthquake
+        "體育、娛樂",  # c: Cognac festival
+    ):
+        assert phrase in STAGE1_SYSTEM_PROMPT
+    # severity must be told to stand apart from decision (they were collinear).
+    assert "獨立於 decision" in STAGE1_SYSTEM_PROMPT
+    # validate_stage1 already accepts an empty impact for 'none'; say so.
+    assert 'taiwan_impact_zh_tw 請直接回傳空字串 ""' in STAGE1_SYSTEM_PROMPT
+    # The location paragraph must stay byte-identical to v3: both rewrites of
+    # it measured strictly worse (valid selections 21/30 -> 16/30 -> 4/30), so
+    # A-3 ships as a validator-only relaxation with no prompt-side change.
+    assert (
+        "basis 必須逐字引用該 evidence\n"
+        "source_url 的輸入標題片段" in STAGE1_SYSTEM_PROMPT
+    )
+    assert "原字複製" not in STAGE1_SYSTEM_PROMPT
+    # Three few-shot examples, one per decision.
+    assert STAGE1_SYSTEM_PROMPT.count("→ decision=") == 3
+    # Titles: no quoted lead, no masthead suffix.
+    assert "不要以引號開頭" in STAGE1_SYSTEM_PROMPT
+
+
+def test_stage1_prompt_v4_adds_no_output_field(monkeypatch, tmp_path):
+    """R7: the required set, enums and ranges must be byte-identical to v3."""
+    captured = {}
+    collector = _configure_enabled_collector(
+        monkeypatch, tmp_path, _zip([_row("one.example", "Major earthquake kills 30")])
+    )
+
+    class _Session:
+        def post(self, url, **kwargs):
+            captured.update(kwargs["json"])
+            return _OpenRouterResponse(200, payload=_openrouter_success_payload())
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    collector._session = _Session()
+    collector._request_stage1([{"routing_rank": 1, "candidate_id": "cand_x",
+                               "representative_documents": [], "coverage": {},
+                               "routing_evidence": {"impact_signals": []},
+                               "location_evidence": []}])
+    contract = json.loads(captured["messages"][1]["content"])["output_contract"]
+    assert contract["assessment_required_fields"] == [
+        "candidate_id",
+        "candidate_rank",
+        "decision",
+        "event_group",
+        "title_zh_tw",
+        "summary_zh_tw",
+        "category",
+        "severity",
+        "severity_source",
+        "taiwan_relationship",
+        "taiwan_impact_zh_tw",
+        "confidence",
+        "reason_zh_tw",
+    ]
+    assert set(contract["assessment_optional_fields"]) == {"location_evidence_ids"}
+    assert contract["decision_enum"] == ["keep_core", "keep_watch", "drop_noise"]
+    assert contract["category_enum"] == [
+        "accident", "crime", "disaster", "traffic", "health", "policy", "other"
+    ]
+    assert contract["taiwan_relationship_enum"] == [
+        "direct", "indirect", "none", "unknown"
+    ]
+    assert contract["severity_range"] == [0, 3]
+    assert contract["confidence_range"] == [0, 1]
+    assert contract["assessment_additional_properties"] is False
+    # A-3 is validator-only: the contract keeps the v3 wording because telling
+    # the model about the relaxation measured worse.
+    assert contract["assessment_optional_fields"]["location_evidence_ids"][
+        "item_fields"
+    ]["basis"] == "exact substring from that evidence source URL's input title"
+    # Advisory length hints only; the hard caps stay in validate_stage1.
+    assert contract["length_hints"] == {
+        "title_zh_tw": 40,
+        "summary_zh_tw": 80,
+        "reason_zh_tw": 50,
+        "taiwan_impact_zh_tw": 40,
+    }
+    assert captured["messages"][0]["content"].startswith("你是全球情勢初判器。")
