@@ -137,8 +137,8 @@ ADM1-only evidence 用該 anchor 的名稱與座標發佈 `country_center`，`ev
 
 `validate_stage1` 原本要求 `basis` 出自 evidence 所屬那一篇的標題，已放寬為「該候選任一代表文件標題」
 （仍然來源綁定、仍不可造座標）。
-**但 replay 評測顯示這個放寬完全沒有生效**（模型從未引用另一篇的標題）——
-見 [`GLOBAL_EVENTS_PROMPT_V4_EVAL.md`](./GLOBAL_EVENTS_PROMPT_V4_EVAL.md) §5.1。
+**但 replay 評測顯示這個放寬完全沒有生效**（四臂的 strict 與 relaxed 選點數完全相同，
+模型從未引用另一篇的標題）——見 [`GLOBAL_EVENTS_PROMPT_V4_EVAL.md`](./GLOBAL_EVENTS_PROMPT_V4_EVAL.md) §5.1。
 保留它是因為它只放寬接受條件、不可能變壞，但不要把它當成選點率的解方。
 
 ---
@@ -290,6 +290,6 @@ collector **有在跑**（最近 12 小時寫入 221 列），但處理到的 GK
 | 2 | C-1 per-signal veto | data-collectors | ❌ | ✅ 本 PR |
 | 3 | A-1a ADM1 降級（batch 級 anchor） | data-collectors | ❌ | ✅ 本 PR |
 | 4 | A-2 headline gazetteer | data-collectors | ❌ | ✅ 本 PR |
-| 5 | B prompt v4 + A-3 validator 放寬 | data-collectors | ❌ | ⚠️ draft PR：rubric 實測有效，location 段改寫實測有害已還原；合併前需再跑 3 次確認 |
+| 5 | B prompt v4 + A-3 validator 放寬 | data-collectors | ❌ | ⚠️ **draft PR #87，等人拍板**：rubric 實測穩定有效，但模型選點 21/30 → 18/30、被丟棄選點 1 → 18，且已證實不是 location 措辭造成（改不回來）。`places` 非空持平 28/30，退步的是出處強度不是可見性 → [V4_EVAL §7](./GLOBAL_EVENTS_PROMPT_V4_EVAL.md) |
 | 6 | C-3 跨輪重複 cache | data-collectors | ❌ | backlog |
 | 7 | `admin1_center` 精確州級定位 | 4 個 repo | ✅ | 之後再議 |
