@@ -18,9 +18,13 @@
 #   notes                 : 自由備註
 
 tables:
-  # global_events intentionally has no entry until gis-platform approves the
-  # current/version lifecycle migration; monitoring must not query invented DB
-  # table names. Its health is emitted in the private handoff manifest.
+  # 2026-09-05: migration 389/397 已 apply 且 collector 正在寫入這兩張表，
+  # 原本「不得監控尚未核准的表名」的理由已不成立 —— 也正是這個盲區讓 GDELT
+  # pipeline 停滯 29 小時都沒有任何告警。health_snapshot 是 SECURITY DEFINER
+  # 且 monitoring 走 SUPABASE_DB_URL（與 writer 同一條連線），所以 intel schema
+  # 的 FORCE RLS 不擋；若日報出現 permission denied，需要補 grant（見 PR）。
+  - {schema: intel, table: global_event_candidate_observations, time_column: available_at, owner_collector: global_events, expected_interval_min: 60, critical: false, notes: AI 候選觀測（migration 397）；pending/assessed 皆會寫入}
+  - {schema: intel, table: global_event_collector_run_receipts, time_column: finished_at, owner_collector: global_events, expected_interval_min: 60, critical: false, notes: migration 389 run receipts；停滯時這張表會先變 STALE}
   # ── 交通 ────────────────────────────────
   - {schema: live, table: youbike_snapshots,         time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
   - {schema: live, table: youbike_current,           time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
