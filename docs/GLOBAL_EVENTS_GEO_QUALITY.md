@@ -71,9 +71,13 @@
 `Wollongong`、`Mt Maunganui`、`Osoyoos`…），約 8 筆真的無地點（且其中 7 筆是 `drop_noise`，
 本來就不該進 LLM）。
 
-**為什麼只有 51.7% 有模型選點**：`validate_stage1` 要求 `basis` 是**該 evidence 所屬那一篇**標題的
-逐字子字串，但 GKG `name` 是英文而 translation stream 的標題是外文，這個門檻對外文候選近乎不可能通過。
-（此為程式＋樣本推導的機制，非量測值——rejection 只寫進 S3 run manifest，DB 看不到。）
+**為什麼只有 51.7% 有模型選點**：原本推論是 `validate_stage1` 要求 `basis` 出自**該 evidence 所屬
+那一篇**標題，對外文候選近乎不可能通過。
+
+> ⚠️ **此假說已於 2026-09-05 的 replay 評測被推翻**，見
+> [`GLOBAL_EVENTS_PROMPT_V4_EVAL.md`](./GLOBAL_EVENTS_PROMPT_V4_EVAL.md) §5.1：放寬前後
+> 有效選點數完全相同（模型從未產出「引自另一篇代表標題」的 basis），且 v3 在該樣本上本來就有
+> 70% 選點率。51.7% 更可能來自候選組成差異，而非 basis 規則。
 
 ### 使用者點名的例子，逐一歸因
 
@@ -129,14 +133,17 @@ ADM1-only evidence 用該 anchor 的名稱與座標發佈 `country_center`，`ev
 **A-2 淨增量 5/26 ≈ 19%（下限）**；桶「GKG 空但標題可推」的天花板是 10/26 ≈ 38%。
 跨輪字典成長後會往天花板靠。
 
-### A-3｜放寬 `basis` 綁定（**本 PR 不含，下一支**）
+### A-3｜放寬 `basis` 綁定 ⚠️ 已實作但**實測 0 效果**
 
-`validate_stage1` 目前要求 `basis` 出自 evidence 所屬那一篇的標題，建議放寬為「該候選任一代表文件標題」
-（仍然來源綁定、仍不可造座標）。這是唯一需要改 validator 的一項。
+`validate_stage1` 原本要求 `basis` 出自 evidence 所屬那一篇的標題，已放寬為「該候選任一代表文件標題」
+（仍然來源綁定、仍不可造座標）。
+**但 replay 評測顯示這個放寬完全沒有生效**（模型從未引用另一篇的標題）——
+見 [`GLOBAL_EVENTS_PROMPT_V4_EVAL.md`](./GLOBAL_EVENTS_PROMPT_V4_EVAL.md) §5.1。
+保留它是因為它只放寬接受條件、不可能變壞，但不要把它當成選點率的解方。
 
 ---
 
-## 4. 建議 B：prompt 改版（**本 PR 不含，下一支**）
+## 4. 建議 B：prompt 改版（v4 已實作，評測結果見 [V4_EVAL](./GLOBAL_EVENTS_PROMPT_V4_EVAL.md)）
 
 現行 stage1 prompt 的問題，逐條：
 
@@ -144,7 +151,7 @@ ADM1-only evidence 用該 anchor 的名稱與座標發佈 `country_center`，`ev
 |---|---|---|
 | B1 | **完全沒有重要性判準**——system prompt 只說「依人命、生活、社會或跨境影響判斷」，沒有 core/watch/drop 的門檻定義，也沒有例子。對照同 repo 的 `news_events.py` v2 prompt（`gis_relevance` / `severity` / `is_event` 三維度、每一級寫死定義），global_events 明顯落後。 | §2 表：使用者點名的 4 例有 3 例落在「準備／教學／回顧」「災後行政」「藝文活動」「比喻用法」四類 |
 | B2 | severity 與 decision 共線，前端沒有第二個排序維度 | §1.3 |
-| B3 | `taiwan_impact_zh_tw` 白寫（validator 早就允許 `none` 時留空） | §1.3 |
+| B3 | ~~`taiwan_impact_zh_tw` 白寫~~ **已推翻**：模型本來就有 29/30 回傳空字串，那 19.4 字是 validator 補的固定句 | [V4_EVAL](./GLOBAL_EVENTS_PROMPT_V4_EVAL.md) §5.2 |
 | B4 | 輸出長度撐滿：每筆 ~143 中文字，10 筆/chunk 撞 `content_length` 4.2k–8k 與偶發 `finish_reason=length` | §1.3 |
 | B5 | 繁中標題保留 ASCII 引號 lead、報社後綴、未譯地名 | §2 尼亞加拉那筆 |
 | B6 | 沒有 few-shot | — |
@@ -283,6 +290,6 @@ collector **有在跑**（最近 12 小時寫入 221 列），但處理到的 GK
 | 2 | C-1 per-signal veto | data-collectors | ❌ | ✅ 本 PR |
 | 3 | A-1a ADM1 降級（batch 級 anchor） | data-collectors | ❌ | ✅ 本 PR |
 | 4 | A-2 headline gazetteer | data-collectors | ❌ | ✅ 本 PR |
-| 5 | B prompt v4 + A-3 validator 放寬 | data-collectors | ❌ | 待辦（需先跑 §6 評測） |
+| 5 | B prompt v4 + A-3 validator 放寬 | data-collectors | ❌ | ⚠️ draft PR：rubric 實測有效，location 段改寫實測有害已還原；合併前需再跑 3 次確認 |
 | 6 | C-3 跨輪重複 cache | data-collectors | ❌ | backlog |
 | 7 | `admin1_center` 精確州級定位 | 4 個 repo | ✅ | 之後再議 |
