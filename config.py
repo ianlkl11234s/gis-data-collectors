@@ -346,6 +346,9 @@ _COLLECTOR_TOGGLES = (
     ('PLA_ACTIVITY_DAILY',           False, 30),   # 共機 @MoNDefense 每日通報（每 30 分鐘抓推特看當天有沒有更新）
     ('PLA_TRACKS_VECTORIZE',         False, 1440), # 共機航跡示意圖向量化（CV，非 API）；補齊 pla_activity_daily 已抓到 track_chart_url 但尚未向量化的日子，1 row/day 到 spatial.pla_tracks_runs
     ('CDC_PUBLIC_HEALTH_WEEKLY',     False, 360),  # ⚠️ Taiwan IP required — Zeabur 必設 false（od.cdc.gov.tw 連線 timeout）；實際走 external/cdc_public_health_weekly_vm/
+    ('JP_MEDICAL_NAVII',             False, 43200), # 日本醫療機構名錄（月度 hash/release 檢查；static artifact，不寫 Supabase）
+    ('JP_MEDICAL_IDWR',              False, 1440),  # 日本感染症週報：每日最近 4 週，月初全年重查，含跨年前一年
+    ('JP_MEDICAL_REPORTS',           False, 43200), # 日本醫療報告原始 intake；未審核 workbook 僅 raw-only
     ('YT_LIVE_VIDEO_RESOLVER',       False, 5),    # YouTube 14 家新聞台當前直播 videoId 解析（cron 5min，video_id 約 1-7 天換一次）
     ('CORRECTIONAL_DAILY_SNAPSHOT',  False, 1440), # 矯正機關每日收容動態（prisonmuseum.moj.gov.tw/jqw_pub/today.xml，全國總計 1 row/day，無金鑰）
     ('ANIMAL_ADOPTION',              False, 1440), # 農業部待認領養動物完整快照；成功全量才更新 current/daily，保留 S3 raw archive
@@ -372,6 +375,14 @@ _COLLECTOR_TOGGLES = (
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
     globals()[f'{_prefix}_ENABLED'] = _env_bool(f'{_prefix}_ENABLED', _en_default)
     globals()[f'{_prefix}_INTERVAL'] = int(os.getenv(f'{_prefix}_INTERVAL', str(_intv_default)))
+
+# Disabled by default; an authorized runtime must explicitly supply both paths.
+# This module never reads a .env file or logs credential values.
+ANALYTICS_ROOT = os.getenv('ANALYTICS_ROOT', '')
+PIPELINE_PYTHON = os.getenv('PIPELINE_PYTHON', '')
+JP_MEDICAL_PIPELINE_TIMEOUT_SECONDS = int(os.getenv('JP_MEDICAL_PIPELINE_TIMEOUT_SECONDS', '3600'))
+JP_MEDICAL_RAW_RETENTION_DAYS = int(os.getenv('JP_MEDICAL_RAW_RETENTION_DAYS', '7'))
+JP_MEDICAL_ARTIFACTS_ENABLED = _env_bool('JP_MEDICAL_ARTIFACTS_ENABLED', False)
 
 # Internet health — provider jobs remain independent but write one canonical
 # contract.  Country-level TW is the MVP; ASN coverage is added only after a
