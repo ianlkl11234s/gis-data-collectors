@@ -8,11 +8,13 @@
 2. 跳過今天（還在收集中）
 3. 將該日所有 JSON 壓成 collector/archives/YYYY-MM-DD.tar.gz
 4. 上傳 1 個 PUT 到 S3
-5. 清理：確認 tar.gz 存在後刪除整個日期目錄
+5. 清理：驗證封存內容 receipt 與遠端 identity 後，才刪除符合 retention 的日期目錄
 """
 
 import gc
-import io
+import gzip
+import hashlib
+import json
 import shutil
 import tarfile
 from datetime import datetime, timedelta
@@ -109,23 +111,52 @@ class ArchiveTask:
 
         return sorted(date_dirs)
 
-    def _create_tar_gz(self, date_dir: Path, collector_name: str) -> bytes:
-        """將日期目錄下所有 JSON 壓成 tar.gz
+    def _member_manifest(self, date_dir: Path) -> list[dict]:
+        members = []
+        for json_file in sorted(date_dir.glob('*.json')):
+            digest, size = hashlib.sha256(), 0
+            with json_file.open('rb') as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b''):
+                    digest.update(block); size += len(block)
+            members.append({'name': json_file.name, 'sha256': digest.hexdigest(), 'bytes': size})
+        return members
 
-        Args:
-            date_dir: 日期目錄（如 data/weather/2026/02/27/）
-            collector_name: 收集器名稱
+    def _create_tar_gz(self, date_dir: Path, destination: Path) -> None:
+        """Stream a deterministic tar.gz to disk; do not retain the archive in RAM."""
+        with destination.open('wb') as output:
+            with gzip.GzipFile(fileobj=output, mode='wb', mtime=0) as compressed:
+                with tarfile.open(fileobj=compressed, mode='w') as tar:
+                    for json_file in sorted(date_dir.glob('*.json')):
+                        tar.add(str(json_file), arcname=json_file.name)
 
-        Returns:
-            bytes: tar.gz 內容
-        """
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode='w:gz') as tar:
-            for json_file in sorted(date_dir.glob('*.json')):
-                # 歸檔內只存檔名（如 weather_0900.json），不含目錄結構
-                tar.add(str(json_file), arcname=json_file.name)
+    def _has_archive_space(self, json_files: list[Path]) -> bool:
+        return shutil.disk_usage(config.LOCAL_DATA_DIR).free >= sum(item.stat().st_size for item in json_files) + 1024 * 1024
 
-        return buf.getvalue()
+    def _has_only_manifest_files(self, date_dir: Path, members: list[dict]) -> bool:
+        expected = {member['name'] for member in members}
+        entries = list(date_dir.iterdir())
+        return len(entries) == len(expected) and all(entry.name in expected and entry.is_file() and not entry.is_symlink() for entry in entries)
+
+    def _receipt_path(self, collector_name: str, date_str: str) -> Path:
+        return config.LOCAL_DATA_DIR / '.archive-receipts' / collector_name / f'{date_str}.json'
+
+    def _write_receipt(self, collector_name: str, date_str: str, s3_key: str, members: list[dict], identity: dict) -> bool:
+        receipt = self._receipt_path(collector_name, date_str)
+        try:
+            receipt.parent.mkdir(parents=True, exist_ok=True)
+            temporary = receipt.with_suffix('.json.tmp')
+            temporary.write_text(json.dumps({'s3_key': s3_key, 'members': members, 'remote_identity': identity, 'checked_at': datetime.now().isoformat()}))
+            temporary.replace(receipt)
+            return True
+        except OSError:
+            return False
+
+    def _receipt_matches(self, collector_name: str, date_str: str, s3_key: str, members: list[dict]) -> dict | None:
+        try:
+            receipt = json.loads(self._receipt_path(collector_name, date_str).read_text())
+            return receipt if receipt.get('s3_key') == s3_key and receipt.get('members') == members and isinstance(receipt.get('remote_identity'), dict) else None
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
 
     def _archive_to_s3(self) -> dict:
         """壓縮並上傳 tar.gz 到 S3"""
@@ -151,33 +182,46 @@ class ArchiveTask:
             for date_str, date_dir in date_dirs:
                 s3_key = f"{collector_name}/archives/{date_str}.tar.gz"
 
-                # 檢查 S3 上是否已有此歸檔
-                if self.s3.archive_exists(s3_key):
-                    stats['skipped'] += 1
-                    continue
-
                 # 確認目錄中有 JSON 檔案
                 json_files = list(date_dir.glob('*.json'))
                 if not json_files:
                     continue
-
                 # 壓縮
                 try:
-                    tar_data = self._create_tar_gz(date_dir, collector_name)
+                    members = self._member_manifest(date_dir)
                 except Exception as e:
                     print(f"   ✗ {collector_name}/{date_str}: 壓縮失敗 - {e}")
                     stats['failed'] += 1
                     continue
+                receipt = self._receipt_matches(collector_name, date_str, s3_key, members)
+                if receipt is not None:
+                    identity = self.s3.archive_identity(s3_key)
+                    if identity['status'] == 'present' and identity['identity'] == receipt['remote_identity']:
+                        stats['skipped'] += 1
+                        continue
 
                 # 寫入臨時檔案再上傳
                 tmp_path = config.LOCAL_DATA_DIR / f".tmp_{collector_name}_{date_str}.tar.gz"
                 try:
-                    tmp_path.write_bytes(tar_data)
-                    if self.s3.upload_archive(tmp_path, s3_key):
-                        stats['uploaded'] += 1
-                        print(f"   ✓ {collector_name}/{date_str}: {len(json_files)} 個檔案 → tar.gz ({len(tar_data)} bytes)")
-                    else:
+                    verification = self.s3.verify_archive(s3_key, members)
+                    uploaded = False
+                    if verification['status'] == 'missing':
+                        if not self._has_archive_space(json_files):
+                            stats['failed'] += 1
+                            continue
+                        self._create_tar_gz(date_dir, tmp_path)
+                        if not self.s3.upload_archive(tmp_path, s3_key):
+                            stats['failed'] += 1
+                            continue
+                        uploaded = True
+                        verification = self.s3.verify_archive(s3_key, members)
+                    if verification['status'] != 'verified' or not self._write_receipt(collector_name, date_str, s3_key, members, verification['identity']):
                         stats['failed'] += 1
+                    elif uploaded:
+                        stats['uploaded'] += 1
+                        print(f"   ✓ {collector_name}/{date_str}: {len(json_files)} 個檔案 → tar.gz ({tmp_path.stat().st_size} bytes)")
+                    else:
+                        stats['skipped'] += 1
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
@@ -228,9 +272,18 @@ class ArchiveTask:
                 if dir_date >= cutoff_date:
                     continue
 
-                # 確認 S3 上已有 tar.gz 歸檔
                 s3_key = f"{collector_name}/archives/{date_str}.tar.gz"
-                if not self.s3.archive_exists(s3_key):
+                json_files = list(date_dir.glob('*.json'))
+                if not json_files:
+                    continue
+                members = self._member_manifest(date_dir)
+                if not self._has_only_manifest_files(date_dir, members):
+                    continue
+                receipt = self._receipt_matches(collector_name, date_str, s3_key, members)
+                if receipt is None:
+                    continue
+                identity = self.s3.archive_identity(s3_key)
+                if identity['status'] != 'present' or identity['identity'] != receipt['remote_identity']:
                     continue
 
                 # 刪除整個日期目錄
