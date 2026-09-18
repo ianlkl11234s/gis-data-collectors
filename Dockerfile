@@ -1,3 +1,21 @@
+# GFW browser assets require Linux-native Tippecanoe and PMTiles. Build pinned
+# binaries so production never depends on a developer workstation toolchain.
+FROM ubuntu:24.04 AS tippecanoe-builder
+ARG TIPPECANOE_VERSION=2.79.0
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential ca-certificates git libsqlite3-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${TIPPECANOE_VERSION}" \
+        https://github.com/felt/tippecanoe.git /src/tippecanoe \
+    && make -C /src/tippecanoe -j"$(nproc)" \
+    && install -Dm755 /src/tippecanoe/tippecanoe /out/usr/local/bin/tippecanoe
+
+FROM golang:1.23-bookworm AS pmtiles-builder
+ARG PMTILES_VERSION=v1.24.1
+RUN GOBIN=/out/usr/local/bin go install \
+    "github.com/protomaps/go-pmtiles@${PMTILES_VERSION}"
+
 # Data Collectors
 FROM python:3.11-slim
 
@@ -17,6 +35,11 @@ RUN apt-get update \
         libeccodes0 libeccodes-data \
         tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=tippecanoe-builder /out/usr/local/bin/tippecanoe /usr/local/bin/tippecanoe
+COPY --from=pmtiles-builder /out/usr/local/bin/go-pmtiles /usr/local/bin/pmtiles
+# Fail image creation immediately if the fixed production toolchain is broken.
+RUN tippecanoe --version && pmtiles version
 
 # 先複製依賴檔案（利用 Docker cache）
 COPY requirements.txt .
