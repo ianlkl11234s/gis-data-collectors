@@ -6,7 +6,10 @@ AWS S3 儲存
 """
 
 import io
+import hashlib
 import json
+import tarfile
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -139,17 +142,62 @@ class S3Storage:
         Returns:
             bool: 是否成功
         """
+        digest = hashlib.sha256()
+        with local_path.open('rb') as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b''):
+                digest.update(block)
+        checksum = digest.hexdigest()
         try:
             self.s3.upload_file(
                 str(local_path),
                 self.bucket,
                 s3_key,
-                ExtraArgs={'ContentType': 'application/gzip'}
+                ExtraArgs={'ContentType': 'application/gzip', 'Metadata': {'sha256': checksum, 'bytes': str(local_path.stat().st_size)}}
             )
             return True
         except Exception as e:
             print(f"   ✗ 上傳歸檔失敗 {s3_key}: {e}")
             return False
+
+    def archive_identity(self, s3_key: str) -> dict:
+        try:
+            head = self.s3.head_object(Bucket=self.bucket, Key=s3_key)
+        except self.ClientError as exc:
+            code = str(exc.response.get('Error', {}).get('Code', ''))
+            return {'status': 'missing' if code in {'404', 'NoSuchKey', 'NotFound'} else 'unknown'}
+        except Exception:
+            return {'status': 'unknown'}
+        return {'status': 'present', 'identity': {key: head.get(key) for key in ('ETag', 'VersionId', 'ContentLength')}}
+
+    def verify_archive(self, s3_key: str, expected_members: list[dict]) -> dict:
+        """Full tar member readback; legacy gzip headers are intentionally irrelevant."""
+        identity = self.archive_identity(s3_key)
+        if identity['status'] != 'present':
+            return identity
+        try:
+            request = {'Bucket': self.bucket, 'Key': s3_key}
+            if identity['identity'].get('VersionId'):
+                request['VersionId'] = identity['identity']['VersionId']
+            elif identity['identity'].get('ETag'):
+                request['IfMatch'] = identity['identity']['ETag']
+            response = self.s3.get_object(**request)
+            observed = []
+            with closing(response['Body']) as stream, tarfile.open(fileobj=stream, mode='r|gz') as archive:
+                for member in archive:
+                    if not member.isfile() or member.name != Path(member.name).name:
+                        return {'status': 'mismatch'}
+                    content = archive.extractfile(member)
+                    if content is None:
+                        return {'status': 'mismatch'}
+                    digest = hashlib.sha256()
+                    size = 0
+                    for block in iter(lambda: content.read(1024 * 1024), b''):
+                        digest.update(block); size += len(block)
+                    observed.append({'name': member.name, 'sha256': digest.hexdigest(), 'bytes': size})
+        except Exception:
+            return {'status': 'unknown'}
+        actual = {key: response.get(key, identity['identity'].get(key)) for key in ('ETag', 'VersionId', 'ContentLength')}
+        return {'status': 'verified', 'identity': actual} if sorted(observed, key=lambda member: member['name']) == expected_members else {'status': 'mismatch'}
 
     def archive_exists(self, s3_key: str) -> bool:
         """檢查 tar.gz 歸檔是否存在於 S3
