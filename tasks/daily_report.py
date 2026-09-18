@@ -7,6 +7,7 @@
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import shutil
 
 import config
 from utils.notify import (
@@ -19,6 +20,8 @@ from utils.notify import (
 # 與 collectors/base.py 保持一致的 Taipei 時區
 # 避免和 tz-aware 的 last_run 比較時爆出 offset-naive/aware 錯誤
 TAIPEI_TZ = timezone(timedelta(hours=8))
+DISK_WARN_PERCENT = 80
+DISK_CRITICAL_PERCENT = 90
 
 
 def _expected_archive_date(cfg: dict, today: datetime) -> str:
@@ -975,6 +978,9 @@ class DailyReportTask:
         if collector_stats:
             parts.append(f"  {' | '.join(collector_stats)}")
 
+        pressure = self._filesystem_pressure()
+        if pressure:
+            parts.append(f'  {pressure}')
         return '\n'.join(parts)
 
     def _section_s3_stats(self) -> str:
@@ -1207,13 +1213,35 @@ class DailyReportTask:
                 notify_silence_alert(c.name, last_str, c.interval_minutes)
 
     def _check_disk_usage(self):
-        """檢查磁碟使用量"""
+        """檢查 collector 資料量與所在檔案系統的可用容量。"""
         data_dir = config.LOCAL_DATA_DIR
         if not data_dir.exists():
             return
 
+        # 保留原本所有本地檔案的 35GB 門檻，不只計 JSON 或重用過期快取。
         used_bytes = sum(f.stat().st_size for f in data_dir.glob('**/*') if f.is_file())
         used_mb = used_bytes / (1024 * 1024)
 
         if used_mb > config.DISK_ALERT_THRESHOLD_MB:
             notify_disk_alert(used_mb, config.DISK_ALERT_THRESHOLD_MB)
+
+        pressure = self._filesystem_pressure()
+        if pressure:
+            print(pressure)
+
+    def _filesystem_pressure(self) -> str:
+        """Shared filesystem pressure, independently labelled from collector bytes."""
+        try:
+            disk = shutil.disk_usage(config.LOCAL_DATA_DIR)
+        except OSError:
+            return "⚠️ 無法讀取檔案系統容量"
+        usable = disk.used + disk.free
+        if usable <= 0:
+            return "⚠️ 檔案系統可用總容量為 0"
+        used_percent = disk.used * 100 / usable
+        free_mb = disk.free / (1024 * 1024)
+        if used_percent >= DISK_CRITICAL_PERCENT:
+            return f"🚨 共享檔案系統容量嚴重不足: {used_percent:.1f}% 已用，剩餘 {free_mb:.1f} MB"
+        if used_percent >= DISK_WARN_PERCENT:
+            return f"⚠️ 共享檔案系統容量警告: {used_percent:.1f}% 已用，剩餘 {free_mb:.1f} MB"
+        return ""

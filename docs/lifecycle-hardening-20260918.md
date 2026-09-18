@@ -7,3 +7,7 @@ Subsequent runs compare the current local manifest and remote HEAD identity with
 Cleanup preserves any directory containing unknown files, symlinks or subdirectories. Current-day raw and the existing collector-specific retention windows remain unchanged. Existing GFW licence gates remain unchanged. Receipts are verification evidence, not a replacement for the archive. Cloud deployment and a live restore/readback are separate acceptance gates.
 
 Validation: 17 archive lifecycle and GFW tests passed on 2026-09-18. Tests include corrupt/unknown remote content, changed local content, low-space receipt cleanup and unknown-file preservation.
+
+## Existing daily capacity health
+
+The existing daily report now includes shared filesystem pressure at 80% warning / 90% critical and free MB. Its existing 35GB collector alert still counts all local files, including SQLite/PMTiles scratch, independently of shared filesystem use. No new notification destination, cron or direct report send is introduced. Capacity lookup failure is explicit rather than reported healthy.
