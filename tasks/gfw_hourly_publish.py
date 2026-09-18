@@ -31,11 +31,13 @@ from scripts.gfw_hourly_grid_poc import (
 from scripts.gfw_hourly_release import (
     DEFAULT_LOOKAHEAD_HOURS,
     DEFAULT_LOOKBACK_HOURS,
+    RootCutoverUncertain,
     publish_release_to_s3,
 )
 from scripts.gfw_hourly_browser_assets import (
     build_grid_browser_assets,
     build_track_browser_assets,
+    require_gfw_asset_toolchain,
 )
 from scripts.gfw_hourly_tracks_poc import (
     GFWReportClient,
@@ -911,6 +913,7 @@ def build_unified_release(
             "rolling_source_days": settings.rolling_days,
             "published_releases_kept": settings.releases_to_keep,
             "rollback_release_count": settings.releases_to_keep - 1,
+            "successful_derived_releases": "retained_indefinitely",
         },
         "cache_contract": {
             "root_manifest": "public,max-age=60,s-maxage=60,stale-while-revalidate=300",
@@ -947,21 +950,29 @@ def build_unified_release(
     return manifest
 
 
-def _load_previous_root_manifest(client: Any, *, bucket: str, key: str) -> dict[str, Any] | None:
+def _load_previous_root_manifest(
+    client: Any, *, bucket: str, key: str
+) -> tuple[dict[str, Any] | None, str | None]:
     try:
         response = client.get_object(Bucket=bucket, Key=key)
     except Exception as exc:
         code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))
         if code in {"404", "NoSuchKey", "NotFound"}:
-            return None
+            return None, None
         raise
     if int(response.get("ContentLength", 0)) > 10 * 1024 * 1024:
         raise RuntimeError("existing GFW root manifest exceeds 10 MiB")
-    body = response["Body"].read()
+    stream = response["Body"]
+    try:
+        body = stream.read()
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
     parsed = json.loads(body)
     if not isinstance(parsed, dict):
         raise ValueError("existing GFW root manifest is not an object")
-    return parsed
+    return parsed, str(response.get("ETag") or "") or None
 
 
 def _ledger_release_contract(manifest: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -1192,6 +1203,7 @@ class GFWHourlyPublishTask:
         ledger: Any | None = None,
         report_client_factory: Callable[[str], GFWReportClient] | None = None,
         s3_client_factory: Callable[[], Any] | None = None,
+        toolchain_preflight: Callable[[], Any] | None = None,
         now: Callable[[], datetime] | None = None,
         sleep: Callable[[float], None] | None = None,
     ):
@@ -1200,6 +1212,7 @@ class GFWHourlyPublishTask:
         self.ledger = ledger or SupabasePublishLedger(self.settings.db_url)
         self.report_client_factory = report_client_factory or (lambda token: GFWReportClient(token))
         self.s3_client_factory = s3_client_factory or self._default_s3_client
+        self.toolchain_preflight = toolchain_preflight or require_gfw_asset_toolchain
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.sleep = sleep or time.sleep
 
@@ -1232,13 +1245,6 @@ class GFWHourlyPublishTask:
         if not _UTC_DATE.fullmatch(release_id):
             raise AssertionError("release id is not an ISO UTC date")
         run_id = str(uuid.uuid4())
-        prune_result = prune_expired_failed_spools(
-            self.settings.spool_root,
-            now=started_at,
-            retention_days=self.settings.failed_spool_retention_days,
-        )
-        for warning in prune_result["warnings"]:
-            logger.warning("GFW failed-spool cleanup retained an unknown tree: %s", warning)
         run_root = self.settings.spool_root / f"{release_id}-{run_id}"
         run_root.mkdir(parents=True, exist_ok=False)
         _atomic_json(run_root / "spool.json", {
@@ -1264,11 +1270,16 @@ class GFWHourlyPublishTask:
         }
         running_written = False
         cutover_done = False
+        cutover_uncertain = False
         succeeded_ledger_payload: dict[str, Any] | None = None
         try:
             # Hard gate: migration/DB failure must happen before any GFW request.
             self.ledger.write({**base_ledger, "status": "running"})
             running_written = True
+
+            # Verify local production tools only after a durable running ledger
+            # exists, but before creating the report client or making a fetch.
+            self.toolchain_preflight()
 
             tiles = make_tiles(
                 self.settings.bbox,
@@ -1308,7 +1319,7 @@ class GFWHourlyPublishTask:
             )
             s3_client = self.s3_client_factory()
             root_key = f"{self.settings.shadow_key_prefix}/manifest.json"
-            previous = _load_previous_root_manifest(
+            previous, previous_etag = _load_previous_root_manifest(
                 s3_client, bucket=self.settings.bucket, key=root_key
             )
             published = publish_release_to_s3(
@@ -1318,6 +1329,7 @@ class GFWHourlyPublishTask:
                 key_prefix=self.settings.shadow_key_prefix,
                 public_url_prefix=self.settings.shadow_public_url_prefix,
                 previous_root_manifest=previous,
+                previous_root_etag=previous_etag,
                 releases_to_keep=self.settings.releases_to_keep,
             )
             cutover_done = True
@@ -1367,15 +1379,22 @@ class GFWHourlyPublishTask:
                 "cleanup_warning": cleanup_warning,
             }
         except (Exception, KeyboardInterrupt) as exc:
+            cutover_uncertain = isinstance(exc, RootCutoverUncertain)
             try:
-                if cutover_done:
+                if cutover_done or cutover_uncertain:
                     _atomic_json(run_root / "spool.json", {
                         "run_id": run_id,
                         "release_id": release_id,
-                        "status": "cutover_succeeded_ledger_pending",
+                        "status": (
+                            "cutover_succeeded_ledger_pending" if cutover_done
+                            else "cutover_uncertain_reconciliation_pending"
+                        ),
                         "updated_at": self.now().astimezone(timezone.utc).isoformat(),
                         "error": _redacted_error(exc, self.settings.token),
-                        "reconciliation_file": "reconcile-ledger.json",
+                        "reconciliation_file": (
+                            "reconcile-ledger.json"
+                            if succeeded_ledger_payload is not None else None
+                        ),
                     })
                     if succeeded_ledger_payload is not None:
                         _atomic_json(
@@ -1392,7 +1411,7 @@ class GFWHourlyPublishTask:
                     })
             except Exception:
                 pass
-            if running_written and not cutover_done:
+            if running_written and not cutover_done and not cutover_uncertain:
                 try:
                     self.ledger.write({
                         **base_ledger,
@@ -1407,10 +1426,11 @@ class GFWHourlyPublishTask:
                     )
             # A reader-visible cutover is never relabelled failed merely because
             # the final succeeded-ledger call failed.  The spool is retained.
-            if cutover_done:
+            if cutover_done or cutover_uncertain:
                 logger.error(
-                    "GFW root cutover succeeded but succeeded ledger is pending reconciliation; "
+                    "GFW root cutover %s; ledger is pending reconciliation; "
                     "spool retained at %s",
+                    "succeeded" if cutover_done else "is uncertain",
                     run_root,
                 )
             else:

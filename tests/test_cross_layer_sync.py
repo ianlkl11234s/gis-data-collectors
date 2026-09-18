@@ -95,6 +95,10 @@ _REALTIME_TABLES_EXEMPT = {
         "parking_segments_current 代監控",
     "public.drought_alert_history":            # 與 current 同批寫入（hash 去重、事件驅動），單獨列只會 DEAD 噪音
         "drought_alert_current 代監控",
+    # Successful publication freshness is checked separately through the public RPC;
+    # MAX(started_at) would hide repeated failures. Covered by test_gfw_monitoring.py.
+    "live.gfw_hourly_publish_runs":
+        "public.get_gfw_hourly_publish_health() 代監控成功發布與來源日期",
     "live.road_sections_live":             # MAX() 會 timeout；只監控 road_sections_current
         "road_sections_current 代監控",
     "live.yt_live_history":                # 由 yt_live_current 代監控

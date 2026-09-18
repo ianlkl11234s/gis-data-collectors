@@ -309,6 +309,7 @@ def test_task_uses_one_ais_fetch_for_grid_tracks_then_sar_and_manifest_last(tmp_
         ledger=ledger,
         report_client_factory=lambda _token: client,
         s3_client_factory=lambda: s3,
+        toolchain_preflight=lambda: None,
         now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
     )
     result = task.run()
@@ -345,6 +346,7 @@ def test_ledger_gate_fails_before_report_network_and_preserves_failed_spool(tmp_
         ledger=ledger,
         report_client_factory=lambda token: client_factory_calls.append(token),
         s3_client_factory=lambda: _FakeS3(),
+        toolchain_preflight=lambda: None,
         now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
     )
     with pytest.raises(RuntimeError, match="migration missing"):
@@ -355,6 +357,30 @@ def test_ledger_gate_fails_before_report_network_and_preserves_failed_spool(tmp_
     assert json.loads((spools[0] / "spool.json").read_text())["status"] == "failed"
 
 
+def test_toolchain_preflight_fails_after_running_ledger_before_fetch_and_keeps_old_spool(tmp_path):
+    settings = _settings(tmp_path)
+    old = settings.spool_root / "2026-08-10-11111111-1111-1111-1111-111111111111"
+    old.mkdir(parents=True)
+    (old / "spool.json").write_text(json.dumps({
+        "status": "failed", "failed_at": "2026-08-10T00:00:00+00:00"
+    }))
+    ledger = _FakeLedger()
+    factory_calls = []
+    task = GFWHourlyPublishTask(
+        settings,
+        ledger=ledger,
+        report_client_factory=lambda _token: factory_calls.append(True),
+        s3_client_factory=lambda: _FakeS3(),
+        toolchain_preflight=lambda: (_ for _ in ()).throw(RuntimeError("toolchain missing")),
+        now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
+    )
+    with pytest.raises(RuntimeError, match="toolchain missing"):
+        task.run()
+    assert [payload["status"] for payload in ledger.payloads] == ["running", "failed"]
+    assert factory_calls == []
+    assert old.is_dir()
+
+
 def test_keyboard_interrupt_marks_running_attempt_failed_before_cutover(tmp_path):
     settings = _settings(tmp_path)
     ledger = _FakeLedger()
@@ -363,6 +389,7 @@ def test_keyboard_interrupt_marks_running_attempt_failed_before_cutover(tmp_path
         ledger=ledger,
         report_client_factory=lambda _token: _InterruptedReportClient(),
         s3_client_factory=lambda: _FakeS3(),
+        toolchain_preflight=lambda: None,
         now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
     )
     with pytest.raises(KeyboardInterrupt, match="operator cancelled"):
@@ -384,6 +411,7 @@ def test_cutover_ledger_failure_retries_without_writing_failed_and_keeps_reconci
         ledger=ledger,
         report_client_factory=lambda _token: _FakeReportClient(),
         s3_client_factory=lambda: s3,
+        toolchain_preflight=lambda: None,
         now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
         sleep=lambda _delay: None,
     )
@@ -425,3 +453,32 @@ def test_failed_spool_prune_is_bounded_and_preserves_unknown_tree(tmp_path):
     )
     assert result["warnings"]
     assert (unknown / "operator-note.txt").read_text() == "keep"
+
+
+def test_uncertain_cutover_retains_spool_without_false_ledger_receipt(tmp_path, fake_gfw_pmtiles, monkeypatch):
+    from scripts.gfw_hourly_release import RootCutoverUncertain
+
+    def uncertain(*args, **kwargs):
+        raise RootCutoverUncertain("root readback uncertain")
+
+    monkeypatch.setattr("tasks.gfw_hourly_publish.publish_release_to_s3", uncertain)
+    settings = _settings(tmp_path)
+    ledger = _FakeLedger()
+    task = GFWHourlyPublishTask(
+        settings,
+        ledger=ledger,
+        report_client_factory=lambda _token: _FakeReportClient(),
+        s3_client_factory=lambda: _FakeS3(),
+        toolchain_preflight=lambda: None,
+        now=lambda: datetime(2026, 8, 25, tzinfo=timezone.utc),
+    )
+    with pytest.raises(RootCutoverUncertain, match="root readback uncertain"):
+        task.run()
+    assert [payload["status"] for payload in ledger.payloads] == ["running"]
+    spools = list(settings.spool_root.iterdir())
+    assert len(spools) == 1
+    spool = json.loads((spools[0] / "spool.json").read_text())
+    assert spool["status"] == "cutover_uncertain_reconciliation_pending"
+    assert spool["reconciliation_file"] is None
+    assert not (spools[0] / "reconcile-ledger.json").exists()
+    assert list(spools[0].rglob("manifest.json"))

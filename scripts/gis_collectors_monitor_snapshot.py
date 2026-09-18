@@ -15,7 +15,20 @@ import boto3
 import psycopg2
 import yaml
 
-from gis_collectors_monitor_policy import classify_anomaly, classify_archive, transition_incident
+try:  # Direct execution from scripts/ on Hermes.
+    from gis_collectors_monitor_policy import (
+        classify_anomaly,
+        classify_archive,
+        classify_gfw_hourly_publish_health,
+        transition_incident,
+    )
+except ModuleNotFoundError:  # Package import for local tests.
+    from scripts.gis_collectors_monitor_policy import (
+        classify_anomaly,
+        classify_archive,
+        classify_gfw_hourly_publish_health,
+        transition_incident,
+    )
 
 REPO = Path("/opt/data/gis-data-collectors")
 TAIPEI = timezone(timedelta(hours=8))
@@ -28,6 +41,13 @@ REQUIRED = (
     "GIS_MONITOR_S3_ACCESS_KEY",
     "GIS_MONITOR_S3_SECRET_KEY",
 )
+
+
+def _json_datetime_or_date(value: object) -> str:
+    """Serialize only explicit health timestamps/dates as ISO 8601."""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
 
 
 def parse_archive_date(key: str) -> str | None:
@@ -70,6 +90,8 @@ def annotate_notification_state(out: dict, now: datetime) -> None:
         level = "critical"
         if candidate.get("kind") in {"supabase_unavailable", "s3_unavailable"}:
             level = "watch"
+        if candidate.get("kind") == "gfw_hourly_publish":
+            level = candidate.get("level", "watch")
         if candidate.get("kind") == "s3_archive":
             level = classify_archive(candidate, now).get("level", level)
         fingerprint = f"{candidate.get('kind')}:{candidate.get('target', candidate.get('collector', candidate.get('host', 'global')))}"
@@ -106,10 +128,12 @@ def main() -> None:
         out["incident_candidates"].append({
             "kind": "monitor_credentials_missing", "severity": "critical"
         })
-        print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
+        print(json.dumps(out, ensure_ascii=False, separators=(",", ":"), default=_json_datetime_or_date))
         return
 
-    tables = (yaml.safe_load((REPO / "config/realtime_tables.yaml").read_text(encoding="utf-8")) or {}).get("tables", [])
+    realtime_config = yaml.safe_load((REPO / "config/realtime_tables.yaml").read_text(encoding="utf-8")) or {}
+    tables = realtime_config.get("tables", [])
+    gfw_policy = realtime_config.get("gfw_hourly_publish_monitor", {})
     layer_map = yaml.safe_load((REPO / "config/cross_layer_map.yaml").read_text(encoding="utf-8")) or {}
 
     # Bounded read-only RPCs: one batched freshness snapshot plus one aggregate-only
@@ -120,10 +144,30 @@ def main() -> None:
             for t in tables
         ])
         storage: dict = {"status": "unknown"}
+        gfw_health: dict = {"state": "UNKNOWN", "level": "watch"}
         with psycopg2.connect(os.environ["GIS_MONITOR_SUPABASE_DB_URL"], connect_timeout=15) as conn:
             with conn.cursor() as cur:
+                cur.execute("SET TRANSACTION READ ONLY")
+                cur.execute("SET LOCAL statement_timeout = '15s'")
                 cur.execute("SELECT * FROM public.health_snapshot(%s::jsonb)", (payload,))
                 rows = cur.fetchall()
+                cur.execute("SAVEPOINT gfw_hourly_publish_health")
+                try:
+                    cur.execute("SELECT * FROM public.get_gfw_hourly_publish_health() LIMIT 1")
+                    gfw_row = cur.fetchone()
+                    if gfw_row is None:
+                        raise RuntimeError("GFW health returned no row")
+                    columns = [column.name for column in cur.description]
+                    gfw_health = classify_gfw_hourly_publish_health(
+                        dict(zip(columns, gfw_row)), now,
+                        source_lag_days=int(gfw_policy.get("source_lag_days", 5)),
+                        schedule_grace_hours=int(gfw_policy.get("schedule_grace_hours", 30)),
+                    )
+                except Exception as exc:
+                    cur.execute("ROLLBACK TO SAVEPOINT gfw_hourly_publish_health")
+                    gfw_health = {"state": "UNKNOWN", "level": "watch", "error_type": type(exc).__name__}
+                finally:
+                    cur.execute("RELEASE SAVEPOINT gfw_hourly_publish_health")
                 try:
                     cur.execute("SELECT total_bytes, oldest_observed_at, newest_observed_at FROM public.air_tickets_fare_offers_storage()")
                     storage_row = cur.fetchone()
@@ -193,6 +237,9 @@ def main() -> None:
             "anomalies": anomalies[:20],
             "air_tickets_fare_offers_storage": storage,
         }
+        out["gfw_hourly_publish"] = gfw_health
+        if gfw_health["state"] != "OK":
+            out["incident_candidates"].append({"kind": "gfw_hourly_publish", **gfw_health})
     except Exception as exc:
         out["supabase"] = {"status": "unavailable", "error_type": type(exc).__name__}
         out["incident_candidates"].append({"kind": "supabase_unavailable", "severity": "critical", "error_type": type(exc).__name__})
@@ -269,7 +316,7 @@ def main() -> None:
         out["incident_candidates"].append({"kind": "s3_unavailable", "severity": "critical", "error_type": type(exc).__name__})
 
     annotate_notification_state(out, now)
-    print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
+    print(json.dumps(out, ensure_ascii=False, separators=(",", ":"), default=_json_datetime_or_date))
 
 
 if __name__ == "__main__":
