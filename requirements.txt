@@ -8,7 +8,7 @@ python-dotenv>=1.0.0
 flask>=3.0.0
 
 # S3 儲存（選填）
-boto3>=1.28.0
+boto3>=1.43.97
 
 # Supabase 即時寫入（選填）
 psycopg2-binary>=2.9.0

@@ -120,6 +120,7 @@ class DailyReportTask:
         sections = [
             ("收集狀態", self._section_collector_status),
             ("Supabase realtime 寫入", self._section_supabase_realtime),
+            ("GFW 發布健康", self._section_gfw_hourly_publish),
             ("S3 archives 心跳", self._section_s3_archives),
             ("Supabase 備份健康", self._section_backup_health),
             ("Retention 覆蓋", self._section_retention_coverage),
@@ -505,6 +506,45 @@ class DailyReportTask:
 
         if not any(buckets[k] for k in ("DEAD", "STALE", "NEVER", "ERR")):
             parts.append("  ✅ 全部 OK")
+        return "\n".join(parts)
+
+    def _section_gfw_hourly_publish(self) -> str:
+        """Report GFW's last attempt separately from the current CDN release."""
+        from tasks import monitoring
+
+        health = monitoring.query_gfw_hourly_publish_health()
+        state = health.get("state", "UNKNOWN")
+        emoji = "✅" if state == "OK" else ("🔴" if health.get("level") == "critical" else "🟡")
+
+        def _utc(value):
+            if not isinstance(value, datetime):
+                return "—"
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+        parts = [f"\n🐟 *GFW 發布健康* {emoji} {state}"]
+        parts.append(
+            "  最近嘗試: "
+            f"{health.get('latest_attempt_status') or '—'} / "
+            f"{_utc(health.get('latest_attempt_started_at'))}"
+        )
+        parts.append(
+            "  最近成功 current: "
+            f"{_utc(health.get('published_at'))} / 資料 UTC 日期 "
+            f"{health.get('latest_complete_date') or '—'}"
+        )
+        if health.get("attempt_age_hours") is not None:
+            parts.append(f"  最近嘗試已 {health['attempt_age_hours']:.1f}h")
+        if health.get("success_age_hours") is not None:
+            parts.append(f"  最近成功已 {health['success_age_hours']:.1f}h")
+        if health.get("source_age_days") is not None:
+            parts.append(
+                f"  來源落後 {health['source_age_days']}d "
+                f"（允許 {health.get('source_lag_days', 5)}d；非前端 7d 視窗）"
+            )
+        if health.get("error_type"):
+            parts.append(f"  查詢狀態: {health['error_type']}")
         return "\n".join(parts)
 
     def _section_backup_health(self) -> str:

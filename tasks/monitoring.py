@@ -55,6 +55,22 @@ def load_realtime_tables() -> list[dict]:
     return data.get("tables", [])
 
 
+def load_gfw_hourly_publish_monitor_config() -> dict[str, int]:
+    """Return bounded GFW source-lag and daily-schedule policy from YAML."""
+    defaults = {"source_lag_days": 5, "schedule_grace_hours": 30}
+    if not _REALTIME_TABLES_YAML.exists():
+        return defaults
+    with open(_REALTIME_TABLES_YAML, encoding="utf-8") as f:
+        raw = (yaml.safe_load(f) or {}).get("gfw_hourly_publish_monitor", {})
+    for key, default in defaults.items():
+        try:
+            value = int(raw.get(key, default))
+            defaults[key] = value if value >= 0 else default
+        except (AttributeError, TypeError, ValueError):
+            pass
+    return defaults
+
+
 # ────────────────────────────────────────────────────────────────────
 # Supabase realtime health
 # ────────────────────────────────────────────────────────────────────
@@ -133,6 +149,36 @@ def query_realtime_health(tables: list[dict]) -> list[dict]:
         if rec is not None:
             results.append(rec)
     return results
+
+
+def query_gfw_hourly_publish_health(now: datetime | None = None) -> dict[str, Any]:
+    """Read GFW's current successful release and most recent attempt.
+
+    The public health RPC deliberately exposes the verified ``is_current``
+    release separately from the latest attempt, so a failed attempt's
+    ``started_at`` cannot be mistaken for fresh published data.
+    """
+    from scripts.gis_collectors_monitor_policy import classify_gfw_hourly_publish_health
+
+    policy = load_gfw_hourly_publish_monitor_config()
+    now = now or datetime.now(timezone.utc)
+    if not (config.SUPABASE_ENABLED and config.SUPABASE_DB_URL):
+        return {"state": "UNKNOWN", "level": "watch", "error_type": "supabase_disabled", **policy}
+    try:
+        import psycopg2
+        with psycopg2.connect(config.SUPABASE_DB_URL, connect_timeout=15) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET TRANSACTION READ ONLY")
+                cur.execute("SET LOCAL statement_timeout = '15s'")
+                cur.execute("SELECT * FROM public.get_gfw_hourly_publish_health() LIMIT 1")
+                row = cur.fetchone()
+                columns = [column.name for column in cur.description]
+        if row is None:
+            return {"state": "UNKNOWN", "level": "watch", "error_type": "empty_health_row", **policy}
+        return classify_gfw_hourly_publish_health(dict(zip(columns, row)), now, **policy)
+    except Exception as exc:
+        log.warning("query_gfw_hourly_publish_health failed: %s", type(exc).__name__)
+        return {"state": "UNKNOWN", "level": "watch", "error_type": type(exc).__name__, **policy}
 
 
 def classify_freshness(

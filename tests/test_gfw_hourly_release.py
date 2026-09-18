@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import hashlib
 import gzip
+import io
 from datetime import date, datetime, timezone
 
 import pytest
 
 from scripts.gfw_hourly_release import (
+    RootCutoverUncertain,
     build_daily_track_partition,
     manifest_assets,
     publish_release_to_s3,
@@ -22,10 +24,18 @@ class _FakeS3:
         self.objects = {}
         self.calls = []
         self.mismatch_key = mismatch_key
+        self.mismatch_remaining = 1 if mismatch_key else 0
 
     def put_object(self, **kwargs):
         key = kwargs["Key"]
         body = bytes(kwargs["Body"])
+        existing = self.objects.get(key)
+        if kwargs.get("IfNoneMatch") == "*" and existing is not None:
+            raise _PreconditionFailed()
+        if kwargs.get("IfMatch") is not None and (
+            existing is None or existing["ETag"] != kwargs["IfMatch"]
+        ):
+            raise _PreconditionFailed()
         self.calls.append(("put", key))
         self.objects[key] = {
             "Body": body,
@@ -33,21 +43,39 @@ class _FakeS3:
             "ContentType": kwargs.get("ContentType"),
             "ContentEncoding": kwargs.get("ContentEncoding"),
             "CacheControl": kwargs.get("CacheControl"),
+            "ETag": f'"{_sha(body)}"',
         }
+        return {"ETag": self.objects[key]["ETag"]}
+
+    def get_object(self, **kwargs):
+        key = kwargs["Key"]
+        if key not in self.objects:
+            raise _MissingKey()
+        item = self.objects[key]
+        return {"Body": io.BytesIO(item["Body"]), "ContentLength": len(item["Body"])}
 
     def head_object(self, **kwargs):
         key = kwargs["Key"]
         self.calls.append(("head", key))
         item = self.objects[key]
         metadata = dict(item["Metadata"])
-        if key == self.mismatch_key:
+        if key == self.mismatch_key and self.mismatch_remaining:
             metadata["sha256"] = "0" * 64
-        return {"ContentLength": len(item["Body"]), "Metadata": metadata}
+            self.mismatch_remaining -= 1
+        return {"ContentLength": len(item["Body"]), "Metadata": metadata, "ETag": item["ETag"]}
 
     def delete_object(self, **kwargs):
         key = kwargs["Key"]
         self.calls.append(("delete", key))
         self.objects.pop(key, None)
+
+
+class _MissingKey(Exception):
+    response = {"Error": {"Code": "NoSuchKey"}}
+
+
+class _PreconditionFailed(Exception):
+    response = {"Error": {"Code": "PreconditionFailed"}}
 
 
 def _sha(value):
@@ -360,7 +388,7 @@ def _previous_release(release_id):
     }
 
 
-def test_s3_prunes_only_manifest_enumerated_exact_old_release_keys_after_cutover(tmp_path):
+def test_s3_retains_all_manifest_enumerated_old_release_keys_after_cutover(tmp_path):
     release = stage_track_release(
         _collection(), root=tmp_path,
         latest_complete_date="2026-08-21",
@@ -373,20 +401,142 @@ def test_s3_prunes_only_manifest_enumerated_exact_old_release_keys_after_cutover
         ]
     }
     client = _FakeS3()
+    root_key = "public/gfw-hourly/manifest.json"
+    previous_body = json.dumps(previous, sort_keys=True, separators=(",", ":")).encode()
+    client.objects[root_key] = {
+        "Body": previous_body, "Metadata": {"sha256": _sha(previous_body)},
+        "ETag": '"previous"',
+    }
     result = publish_release_to_s3(
         client, release_dir=release, bucket="gfw-release-test",
         key_prefix="public/gfw-hourly",
         public_url_prefix="https://assets.example.test/gfw-hourly",
         previous_root_manifest=previous,
+        previous_root_etag='"previous"',
     )
-    expected_deleted = _previous_release("2026-08-19")["object_keys"]
-    assert result["deleted_object_keys"] == expected_deleted
+    assert result["deleted_object_keys"] == []
     root_put_index = client.calls.index(("put", "public/gfw-hourly/manifest.json"))
-    assert all(
-        client.calls.index(("delete", key)) > root_put_index
-        for key in expected_deleted
+    assert root_put_index == len(client.calls) - 2  # root PUT then HEAD; fake GET is uncaptured
+    assert not any(operation == "delete" for operation, _ in client.calls)
+    root = json.loads(client.objects["public/gfw-hourly/manifest.json"]["Body"])
+    assert [entry["release_id"] for entry in root["published_releases"]] == [
+        "2026-08-21", "2026-08-20"
+    ]
+
+
+def test_s3_reuses_only_byte_identical_immutable_release_object(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
     )
-    assert not any("2026-08-20" in key for key in result["deleted_object_keys"])
+    client = _FakeS3()
+    key = "public/gfw-hourly/releases/2026-08-21/days/2026-08-21.geojson"
+    client.objects[key] = {"Body": b"different", "Metadata": {"sha256": _sha(b"different")}}
+    with pytest.raises(RuntimeError, match="immutable S3 object differs"):
+        publish_release_to_s3(
+            client, release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+        )
+
+
+def test_s3_root_cutover_rejects_stale_etag_without_deleting_history(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    client = _FakeS3()
+    root_key = "public/gfw-hourly/manifest.json"
+    client.objects[root_key] = {
+        "Body": b'{"old":true}', "Metadata": {"sha256": _sha(b'{"old":true}')},
+        "ETag": '"current"',
+    }
+    with pytest.raises(_PreconditionFailed):
+        publish_release_to_s3(
+            client, release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+            previous_root_manifest={"published_releases": []},
+            previous_root_etag='"stale"',
+        )
+    assert client.objects[root_key]["Body"] == b'{"old":true}'
+    assert not any(operation == "delete" for operation, _ in client.calls)
+
+
+def test_s3_root_cutover_rejects_an_older_release_id(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    previous = {"release_id": "2026-08-22", "published_releases": []}
+    client = _FakeS3()
+    with pytest.raises(ValueError, match="non-monotonic"):
+        publish_release_to_s3(
+            client, release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+            previous_root_manifest=previous,
+            previous_root_etag='"previous"',
+        )
+    assert client.calls == []
+
+
+def test_s3_existing_root_without_etag_fails_closed(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    with pytest.raises(ValueError, match="ETag compare-and-swap"):
+        publish_release_to_s3(
+            _FakeS3(), release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+            previous_root_manifest={"published_releases": []},
+        )
+
+
+def test_s3_root_readback_failure_restores_previous_root_by_own_etag(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    root_key = "public/gfw-hourly/manifest.json"
+    previous = {"published_releases": []}
+    previous_body = json.dumps(previous, sort_keys=True, separators=(",", ":")).encode()
+    client = _FakeS3(mismatch_key=root_key)
+    client.objects[root_key] = {
+        "Body": previous_body, "Metadata": {"sha256": _sha(previous_body)},
+        "ETag": '"previous"',
+    }
+    with pytest.raises(RuntimeError, match="sha256 metadata mismatch"):
+        publish_release_to_s3(
+            client, release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+            previous_root_manifest=previous,
+            previous_root_etag='"previous"',
+        )
+    assert client.objects[root_key]["Body"] == previous_body
+
+
+def test_s3_first_root_readback_failure_is_uncertain_not_failed(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    root_key = "public/gfw-hourly/manifest.json"
+    with pytest.raises(RootCutoverUncertain, match="reconciliation"):
+        publish_release_to_s3(
+            _FakeS3(mismatch_key=root_key), release_dir=release,
+            bucket="gfw-release-test", key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+        )
 
 
 def test_s3_unknown_previous_key_fails_closed_before_upload_or_delete(tmp_path):
@@ -404,6 +554,7 @@ def test_s3_unknown_previous_key_fails_closed_before_upload_or_delete(tmp_path):
             key_prefix="public/gfw-hourly",
             public_url_prefix="https://assets.example.test/gfw-hourly",
             previous_root_manifest={"published_releases": [bad]},
+            previous_root_etag='"previous"',
         )
     assert client.calls == []
     assert release.exists()

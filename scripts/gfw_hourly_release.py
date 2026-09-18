@@ -31,6 +31,10 @@ _KEY_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _ASSET_TYPE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
+class RootCutoverUncertain(RuntimeError):
+    """The root may have changed but its safe restoration could not be verified."""
+
+
 def _canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -631,7 +635,7 @@ def publish_staged_release(
     }
 
 
-def _put_and_verify_s3(
+def _put_s3(
     client: Any,
     *,
     bucket: str,
@@ -641,7 +645,9 @@ def _put_and_verify_s3(
     content_type: str,
     cache_control: str,
     content_encoding: str | None = None,
-) -> None:
+    if_match: str | None = None,
+    if_none_match: bool = False,
+) -> str | None:
     request = dict(
         Bucket=bucket,
         Key=key,
@@ -652,13 +658,109 @@ def _put_and_verify_s3(
     )
     if content_encoding is not None:
         request["ContentEncoding"] = content_encoding
-    client.put_object(**request)
+    if if_match is not None:
+        request["IfMatch"] = if_match
+    elif if_none_match:
+        request["IfNoneMatch"] = "*"
+    response = client.put_object(**request) or {}
+    return str(response.get("ETag") or "") or None
+
+
+def _verify_s3_bytes(
+    client: Any, *, bucket: str, key: str, body: bytes, sha256: str
+) -> str | None:
     head = client.head_object(Bucket=bucket, Key=key)
     metadata = {str(name).lower(): str(value) for name, value in (head.get("Metadata") or {}).items()}
     if int(head.get("ContentLength", -1)) != len(body):
         raise RuntimeError(f"S3 HEAD ContentLength mismatch: {key}")
     if metadata.get("sha256") != sha256:
         raise RuntimeError(f"S3 HEAD sha256 metadata mismatch: {key}")
+    response = client.get_object(Bucket=bucket, Key=key)
+    stored = _read_s3_body(response)
+    if len(stored) != len(body) or _sha256_bytes(stored) != sha256:
+        raise RuntimeError(f"S3 GET sha256 mismatch: {key}")
+    return str(head.get("ETag") or "") or None
+
+
+def _read_s3_body(response: Any) -> bytes:
+    body = response["Body"]
+    try:
+        return body.read()
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+
+
+def _put_and_verify_s3(
+    client: Any,
+    *,
+    bucket: str,
+    key: str,
+    body: bytes,
+    sha256: str,
+    content_type: str,
+    cache_control: str,
+    content_encoding: str | None = None,
+    if_match: str | None = None,
+    if_none_match: bool = False,
+) -> str | None:
+    _put_s3(
+        client, bucket=bucket, key=key, body=body, sha256=sha256,
+        content_type=content_type, cache_control=cache_control,
+        content_encoding=content_encoding, if_match=if_match, if_none_match=if_none_match,
+    )
+    return _verify_s3_bytes(client, bucket=bucket, key=key, body=body, sha256=sha256)
+
+
+def _s3_missing(exc: Exception) -> bool:
+    code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))
+    return code in {"404", "NoSuchKey", "NotFound"}
+
+
+def _s3_precondition_failed(exc: Exception) -> bool:
+    code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))
+    return code in {"412", "PreconditionFailed"}
+
+
+def _put_immutable_and_verify_s3(
+    client: Any,
+    *,
+    bucket: str,
+    key: str,
+    body: bytes,
+    sha256: str,
+    content_type: str,
+    cache_control: str,
+) -> None:
+    """Create an immutable object once, or reuse only byte-identical content."""
+    try:
+        existing = client.get_object(Bucket=bucket, Key=key)
+    except Exception as exc:
+        if not _s3_missing(exc):
+            raise
+    else:
+        stored = _read_s3_body(existing)
+        if len(stored) != len(body) or _sha256_bytes(stored) != sha256:
+            raise RuntimeError(f"immutable S3 object differs from release asset: {key}")
+        return
+    try:
+        _put_and_verify_s3(
+            client, bucket=bucket, key=key, body=body, sha256=sha256,
+            content_type=content_type, cache_control=cache_control, if_none_match=True,
+        )
+    except Exception as exc:
+        # A concurrent writer can win the create-only race. Accept it only if
+        # its complete bytes match this immutable release exactly.
+        if not _s3_precondition_failed(exc):
+            raise
+        try:
+            existing = client.get_object(Bucket=bucket, Key=key)
+        except Exception:
+            raise
+        stored = _read_s3_body(existing)
+        if len(stored) != len(body) or _sha256_bytes(stored) != sha256:
+            raise RuntimeError(f"immutable S3 object differs from release asset: {key}")
 
 
 def _validate_previous_release_entry(
@@ -699,14 +801,15 @@ def publish_release_to_s3(
     key_prefix: str,
     public_url_prefix: str,
     previous_root_manifest: dict[str, Any] | None = None,
+    previous_root_etag: str | None = None,
     releases_to_keep: int = DEFAULT_RELEASES_TO_KEEP,
 ) -> dict[str, Any]:
     """Upload one generic immutable release and cut over its S3 root manifest last.
 
     ``client`` is intentionally injected and only needs boto3-compatible
-    ``put_object``, ``head_object``, and ``delete_object`` methods. No S3 list or
-    prefix delete is used; retention deletes only exact keys enumerated by the
-    prior root manifest after a verified root-manifest cutover.
+    ``put_object``, ``head_object``, and ``get_object`` methods. No S3 list or
+    delete is used: successful derived releases remain immutable history while
+    the root's published-releases index stays bounded for reader rollback.
     """
     bucket, key_prefix, public_url_prefix = _validate_s3_config(
         bucket=bucket, key_prefix=key_prefix, public_url_prefix=public_url_prefix
@@ -733,6 +836,19 @@ def publish_release_to_s3(
         ]
         if any(entry["release_id"] == release_id for entry in previous_entries):
             raise FileExistsError(f"immutable S3 release already recorded: {release_id}")
+        if not previous_root_etag:
+            raise ValueError("existing root manifest requires an ETag compare-and-swap guard")
+        previous_release_id = previous_root_manifest.get("release_id")
+        if previous_release_id is not None:
+            previous_release_id = str(previous_release_id)
+            if not _RELEASE_ID.fullmatch(previous_release_id):
+                raise ValueError("existing root manifest has an invalid release_id")
+            if release_id <= previous_release_id:
+                raise ValueError(
+                    "refusing a non-monotonic root cutover for an older or equal release_id"
+                )
+    elif previous_root_etag is not None:
+        raise ValueError("root ETag is invalid without an existing root manifest")
 
     origin_mapping = {
         "s3_key_prefix": key_prefix,
@@ -774,14 +890,12 @@ def publish_release_to_s3(
         reverse=True,
     )
     kept_entries = all_entries[:releases_to_keep]
-    retired_entries = all_entries[releases_to_keep:]
-    # Validate every future exact delete before the first upload/cutover.
-    for entry in retired_entries:
-        _validate_previous_release_entry(entry, key_prefix=key_prefix)
+    # Historical derived releases are retained indefinitely. The reader-visible
+    # root remains bounded to current plus one rollback release only.
 
     for asset, key in zip(assets, asset_keys):
         body = (release_dir / asset["path"]).read_bytes()
-        _put_and_verify_s3(
+        _put_immutable_and_verify_s3(
             client,
             bucket=bucket,
             key=key,
@@ -798,13 +912,13 @@ def publish_release_to_s3(
         )
     if run_key:
         run_body = run_path.read_bytes()
-        _put_and_verify_s3(
+        _put_immutable_and_verify_s3(
             client, bucket=bucket, key=run_key, body=run_body,
             sha256=_sha256_bytes(run_body), content_type="application/json",
             cache_control=RELEASE_CACHE_CONTROL,
         )
     release_manifest_body = _canonical(remote_release_manifest).encode("utf-8")
-    _put_and_verify_s3(
+    _put_immutable_and_verify_s3(
         client, bucket=bucket, key=release_manifest_key,
         body=release_manifest_body, sha256=_sha256_bytes(release_manifest_body),
         content_type="application/json", cache_control=RELEASE_CACHE_CONTROL,
@@ -828,33 +942,39 @@ def publish_release_to_s3(
     root_key = f"{key_prefix}/manifest.json"
     root_body = _canonical(root_manifest).encode("utf-8")
     try:
-        _put_and_verify_s3(
+        new_root_etag = _put_s3(
             client, bucket=bucket, key=root_key, body=root_body,
             sha256=_sha256_bytes(root_body), content_type="application/json",
             cache_control=ROOT_CACHE_CONTROL,
+            if_match=previous_root_etag,
+            if_none_match=previous_root_manifest is None,
         )
-    except Exception:
-        # Restore the prior reader-visible root when a root HEAD check fails.
-        if previous_root_manifest is None:
-            client.delete_object(Bucket=bucket, Key=root_key)
-        else:
-            previous_body = _canonical(previous_root_manifest).encode("utf-8")
+        _verify_s3_bytes(
+            client, bucket=bucket, key=root_key, body=root_body,
+            sha256=_sha256_bytes(root_body),
+        )
+    except Exception as exc:
+        # A failed CAS leaves the prior root authoritative. If PUT succeeded
+        # but readback failed, restore only when the writer's own ETag can
+        # still conditionally replace it; otherwise require reconciliation.
+        if _s3_precondition_failed(exc):
+            raise
+        if previous_root_manifest is None or not locals().get("new_root_etag"):
+            raise RootCutoverUncertain(
+                "root cutover outcome could not be verified; reconciliation is required"
+            ) from exc
+        previous_body = _canonical(previous_root_manifest).encode("utf-8")
+        try:
             _put_and_verify_s3(
                 client, bucket=bucket, key=root_key, body=previous_body,
                 sha256=_sha256_bytes(previous_body), content_type="application/json",
-                cache_control=ROOT_CACHE_CONTROL,
+                cache_control=ROOT_CACHE_CONTROL, if_match=new_root_etag,
             )
+        except Exception as restore_exc:
+            raise RootCutoverUncertain(
+                "root verification failed and conditional restoration was not verified"
+            ) from restore_exc
         raise
-
-    deleted_keys = []
-    delete_warnings = []
-    for entry in retired_entries:
-        for key in entry["object_keys"]:
-            try:
-                client.delete_object(Bucket=bucket, Key=key)
-                deleted_keys.append(key)
-            except Exception as exc:
-                delete_warnings.append({"key": key, "error": str(exc)})
     return {
         "bucket": bucket,
         "root_manifest_key": root_key,
@@ -862,8 +982,8 @@ def publish_release_to_s3(
         "root_manifest_bytes": len(root_body),
         "release_id": release_id,
         "uploaded_object_keys": object_keys,
-        "deleted_object_keys": deleted_keys,
-        "delete_warnings": delete_warnings,
+        "deleted_object_keys": [],
+        "delete_warnings": [],
         "public_manifest_url": f"{public_url_prefix}/manifest.json",
     }
 
