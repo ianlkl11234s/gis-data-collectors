@@ -178,8 +178,23 @@ def test_pmtiles_production_boundary_requires_real_binaries(tmp_path, monkeypatc
     monkeypatch.setattr(gfw_hourly_browser_assets, "TIPPECANOE", tmp_path / "missing-tippecanoe")
     monkeypatch.setattr(gfw_hourly_browser_assets, "PMTILES", tmp_path / "missing-pmtiles")
 
-    with pytest.raises(RuntimeError, match="executables are required"):
+    with pytest.raises(RuntimeError, match="executable is required"):
         gfw_hourly_browser_assets._pmtiles(
             named_inputs=[("gfw_grid", source)], output=tmp_path / "output.pmtiles",
             minimum_zoom=4, maximum_zoom=12,
         )
+
+
+def test_asset_toolchain_resolves_linux_path(tmp_path, monkeypatch):
+    for name in ("tippecanoe", "pmtiles"):
+        executable = tmp_path / name
+        executable.write_text("#!/bin/sh\n", encoding="utf-8")
+        executable.chmod(0o755)
+    monkeypatch.setattr(gfw_hourly_browser_assets, "TIPPECANOE", "")
+    monkeypatch.setattr(gfw_hourly_browser_assets, "PMTILES", "")
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    tippecanoe, pmtiles = gfw_hourly_browser_assets.require_gfw_asset_toolchain()
+
+    assert tippecanoe == (tmp_path / "tippecanoe").resolve()
+    assert pmtiles == (tmp_path / "pmtiles").resolve()
