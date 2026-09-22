@@ -974,19 +974,22 @@ def publish_release_to_s3(
             if_match=previous_root_etag,
             if_none_match=previous_root_manifest is None,
         )
+    except Exception as exc:
+        if _s3_precondition_failed(exc) or _s3_definitive_rejection(exc):
+            raise
+        raise RootCutoverUncertain(
+            "root cutover outcome could not be verified; reconciliation is required"
+        ) from exc
+
+    try:
         _verify_s3_bytes(
             client, bucket=bucket, key=root_key, body=root_body,
             sha256=_sha256_bytes(root_body),
         )
     except Exception as exc:
-        # A failed CAS leaves the prior root authoritative. If PUT succeeded
-        # but readback failed, restore only when the writer's own ETag can
-        # still conditionally replace it; otherwise require reconciliation.
-        if _s3_precondition_failed(exc):
-            raise
-        if _s3_definitive_rejection(exc):
-            raise
-        if previous_root_manifest is None or not locals().get("new_root_etag"):
+        # PUT succeeded. A readback failure cannot be classified as a write
+        # rejection because the new root may already be reader-visible.
+        if previous_root_manifest is None:
             raise RootCutoverUncertain(
                 "root cutover outcome could not be verified; reconciliation is required"
             ) from exc

@@ -567,6 +567,30 @@ def test_s3_definitive_root_rejection_is_failed_not_uncertain(tmp_path):
         )
 
 
+def test_s3_root_readback_access_denied_is_uncertain_after_successful_put(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    root_key = "public/gfw-hourly/manifest.json"
+
+    class Client(_FakeS3):
+        def get_object(self, **kwargs):
+            if kwargs["Key"] == root_key and root_key in self.objects:
+                raise _AccessDenied()
+            return super().get_object(**kwargs)
+
+    client = Client()
+    with pytest.raises(RootCutoverUncertain, match="reconciliation"):
+        publish_release_to_s3(
+            client, release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+        )
+    assert root_key in client.objects
+
+
 def test_s3_same_date_retry_uses_new_content_addressed_candidates(tmp_path):
     first = stage_track_release(
         _collection(), root=tmp_path / "first",
