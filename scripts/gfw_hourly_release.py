@@ -989,7 +989,7 @@ def publish_release_to_s3(
     except Exception as exc:
         # PUT succeeded. A readback failure cannot be classified as a write
         # rejection because the new root may already be reader-visible.
-        if previous_root_manifest is None:
+        if previous_root_manifest is None or not new_root_etag:
             raise RootCutoverUncertain(
                 "root cutover outcome could not be verified; reconciliation is required"
             ) from exc

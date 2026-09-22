@@ -591,6 +591,44 @@ def test_s3_root_readback_access_denied_is_uncertain_after_successful_put(tmp_pa
     assert root_key in client.objects
 
 
+def test_s3_root_readback_without_put_etag_never_restores_unconditionally(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    root_key = "public/gfw-hourly/manifest.json"
+    previous = {"published_releases": []}
+    previous_body = json.dumps(previous, sort_keys=True, separators=(",", ":")).encode()
+
+    class Client(_FakeS3):
+        def put_object(self, **kwargs):
+            result = super().put_object(**kwargs)
+            return {} if kwargs["Key"] == root_key else result
+
+        def get_object(self, **kwargs):
+            if kwargs["Key"] == root_key and self.objects[root_key]["Body"] != previous_body:
+                raise _AccessDenied()
+            return super().get_object(**kwargs)
+
+    client = Client()
+    client.objects[root_key] = {
+        "Body": previous_body,
+        "Metadata": {"sha256": _sha(previous_body)},
+        "ETag": '"previous"',
+    }
+    with pytest.raises(RootCutoverUncertain, match="reconciliation"):
+        publish_release_to_s3(
+            client, release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+            previous_root_manifest=previous,
+            previous_root_etag='"previous"',
+        )
+    assert [call for call in client.calls if call == ("put", root_key)] == [("put", root_key)]
+    assert client.objects[root_key]["Body"] != previous_body
+
+
 def test_s3_same_date_retry_uses_new_content_addressed_candidates(tmp_path):
     first = stage_track_release(
         _collection(), root=tmp_path / "first",
