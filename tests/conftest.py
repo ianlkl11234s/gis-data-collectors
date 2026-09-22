@@ -4,6 +4,7 @@ import os
 import socket
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import psycopg2
 import pytest
@@ -61,6 +62,63 @@ _APPLICATION_CREDENTIAL_ENV = (
 for _name in _APPLICATION_CREDENTIAL_ENV:
     os.environ.pop(_name, None)
 
+
+_ORIGINAL_HTTP_SEND = requests.sessions.Session.send
+_ORIGINAL_SOCKET_CONNECT = socket.socket.connect
+_ORIGINAL_SOCKET_CONNECT_EX = socket.socket.connect_ex
+_ORIGINAL_SOCKET_SENDTO = socket.socket.sendto
+_ORIGINAL_PSYCOPG2_CONNECT = psycopg2.connect
+_NETWORK_ATTEMPTS: list[str] = []
+_ACTIVE_LIVE_SUPABASE_DSN: str | None = None
+
+
+def _redacted_target(kind: str, target: object = None) -> str:
+    if kind == "http":
+        try:
+            return urlsplit(str(target)).hostname or "<redacted-host>"
+        except ValueError:
+            return "<redacted-host>"
+    if kind == "socket" and isinstance(target, tuple) and target:
+        return str(target[0])
+    if kind == "postgres":
+        return "<redacted-dsn>"
+    return "<redacted-target>"
+
+
+def _blocked_network(kind: str, target: object = None):
+    detail = f"{kind}: {_redacted_target(kind, target)}"
+    _NETWORK_ATTEMPTS.append(detail)
+    raise RuntimeError(f"unmocked external network access blocked in pytest ({detail})")
+
+
+def _guarded_http_send(_self, prepared, **_kwargs):
+    return _blocked_network("http", getattr(prepared, "url", None))
+
+
+def _guarded_socket_connect(_self, address):
+    return _blocked_network("socket", address)
+
+
+def _guarded_socket_sendto(_self, _data, address):
+    return _blocked_network("socket", address)
+
+
+def _guarded_psycopg2_connect(*args, **kwargs):
+    dsn = kwargs.get("dsn") or (args[0] if args else None)
+    if _ACTIVE_LIVE_SUPABASE_DSN and dsn == _ACTIVE_LIVE_SUPABASE_DSN:
+        return _ORIGINAL_PSYCOPG2_CONNECT(*args, **kwargs)
+    return _blocked_network("postgres", dsn)
+
+
+# Install guards before test module collection. Individual unit tests can still
+# monkeypatch these boundaries with deterministic fakes; teardown restores the
+# guarded version, not the real transport.
+requests.sessions.Session.send = _guarded_http_send
+socket.socket.connect = _guarded_socket_connect
+socket.socket.connect_ex = _guarded_socket_connect
+socket.socket.sendto = _guarded_socket_sendto
+psycopg2.connect = _guarded_psycopg2_connect
+
 # 讓 tests/ 內的 import 能找到專案根目錄的模組
 PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -77,37 +135,30 @@ def pytest_addoption(parser):
 
 
 @pytest.fixture(autouse=True)
-def deny_unmocked_external_network(monkeypatch, request):
-    """Fail every ordinary test that reaches an unmocked network boundary."""
-    if request.node.get_closest_marker("live_supabase"):
-        yield
-        return
+def audit_external_network(request):
+    """Permit only an explicitly opted-in, exactly matched test Supabase DSN."""
+    global _ACTIVE_LIVE_SUPABASE_DSN
 
-    attempts: list[str] = []
+    if _NETWORK_ATTEMPTS:
+        attempts = "; ".join(_NETWORK_ATTEMPTS)
+        _NETWORK_ATTEMPTS.clear()
+        pytest.fail("external network attempted before test setup: " + attempts)
 
-    def blocked(kind: str, target: object = None):
-        detail = f"{kind}: {target!r}"
-        attempts.append(detail)
-        raise RuntimeError(f"unmocked external network access blocked in pytest ({detail})")
-
-    monkeypatch.setattr(
-        requests.sessions.Session,
-        "send",
-        lambda _self, prepared, **_kwargs: blocked("http", getattr(prepared, "url", None)),
-    )
-    monkeypatch.setattr(
-        socket.socket,
-        "connect",
-        lambda _self, address: blocked("socket", address),
-    )
-    monkeypatch.setattr(
-        psycopg2,
-        "connect",
-        lambda *args, **kwargs: blocked("postgres", kwargs.get("dsn") or (args[0] if args else None)),
-    )
+    is_live_supabase = request.node.get_closest_marker("live_supabase") is not None
+    opted_in = request.config.getoption("--run-live-supabase")
+    test_dsn = os.environ.get("TEST_SUPABASE_DB_URL", "").strip()
+    _ACTIVE_LIVE_SUPABASE_DSN = test_dsn if is_live_supabase and opted_in and test_dsn else None
 
     yield
 
+    attempts = list(_NETWORK_ATTEMPTS)
+    _NETWORK_ATTEMPTS.clear()
+    _ACTIVE_LIVE_SUPABASE_DSN = None
+    expects_block = request.node.get_closest_marker("expects_network_block") is not None
+    if expects_block:
+        if not attempts:
+            pytest.fail("test expected the network guard to block an attempt")
+        return
     # Notification code intentionally catches transport exceptions. Retain a
     # teardown assertion so swallowed attempts still fail the originating test.
     if attempts:
