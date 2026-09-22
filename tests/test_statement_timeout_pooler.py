@@ -7,8 +7,8 @@ startup `options=-c statement_timeout=...` 會被 pooler 丟棄
 唯一可靠的做法是在【與工作語句同一個 transaction】內下 SET LOCAL，這正是
 `SupabaseWriter._txn()` 做的事。本測試同時驗證「缺陷仍在」與「_txn 有修好」。
 
-需要真實 DB：無 `SUPABASE_DB_URL` 環境變數時自動跳過（CI / 一般單測不受影響）。
-可重跑：`SUPABASE_DB_URL=... python3 -m pytest tests/test_statement_timeout_pooler.py -v`
+需要真實測試 DB，必須同時提供明確 flag 與測試專用 DSN：
+`TEST_SUPABASE_DB_URL=... python3 -m pytest --run-live-supabase tests/test_statement_timeout_pooler.py -v`
 """
 from __future__ import annotations
 
@@ -20,26 +20,33 @@ import pytest
 import psycopg2
 from psycopg2.errors import QueryCanceled
 
-DB_URL = os.environ.get("SUPABASE_DB_URL")
+pytestmark = pytest.mark.live_supabase
 
-pytestmark = pytest.mark.skipif(
-    not DB_URL,
-    reason="需要 SUPABASE_DB_URL（真實 Supavisor pooler）才能驗證 statement_timeout",
-)
+
+@pytest.fixture(scope="module")
+def live_supabase_dsn(request):
+    if not request.config.getoption("--run-live-supabase"):
+        pytest.skip("需要 --run-live-supabase 才會連線測試 Supabase")
+    dsn = os.environ.get("TEST_SUPABASE_DB_URL", "").strip()
+    if not dsn:
+        pytest.fail("--run-live-supabase 需要 TEST_SUPABASE_DB_URL（不可沿用 production DSN）")
+    return dsn
 
 
 @pytest.fixture
-def short_timeout_pool():
+def short_timeout_pool(monkeypatch, live_supabase_dsn):
     """建一個 statement_timeout=2s 的小型 pool，指向真實 pooler。用完即關。"""
     import config
-    config.SUPABASE_DB_URL = DB_URL  # worktree 無 .env，直接注入
+    monkeypatch.setattr(config, "SUPABASE_DB_URL", live_supabase_dsn)
 
     from storage.db import SupabaseConnectionPool
     pool = SupabaseConnectionPool(
         minconn=1, maxconn=2, statement_timeout_ms=2000,
     )
-    yield pool
-    pool.close()
+    try:
+        yield pool
+    finally:
+        pool.close()
 
 
 def test_startup_options_dropped_by_pooler(short_timeout_pool):
@@ -61,7 +68,7 @@ def test_startup_options_dropped_by_pooler(short_timeout_pool):
     )
 
 
-def test_txn_enforces_statement_timeout(short_timeout_pool):
+def test_txn_enforces_statement_timeout(short_timeout_pool, live_supabase_dsn):
     """驗證修正：SupabaseWriter._txn() 用 SET LOCAL 讓 statement_timeout 真的生效。
 
     在 _txn transaction 內 SHOW 應為 2s，且 pg_sleep(5) 會在 ~2s 被砍
@@ -69,7 +76,7 @@ def test_txn_enforces_statement_timeout(short_timeout_pool):
     """
     from storage.supabase_writer import SupabaseWriter
 
-    writer = SupabaseWriter(DB_URL)
+    writer = SupabaseWriter(live_supabase_dsn)
     writer._pool.close()
     writer._pool = short_timeout_pool  # 換成 2s timeout 的 pool
 
