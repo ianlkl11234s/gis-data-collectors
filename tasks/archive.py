@@ -26,6 +26,8 @@ import config
 class ArchiveTask:
     """歸檔任務管理器"""
 
+    INTERNAL_DATA_DIRS = {'.archive-receipts'}
+
     def __init__(self):
         self.s3 = None
         self._init_s3()
@@ -169,7 +171,10 @@ class ArchiveTask:
             return stats
 
         for collector_dir in config.LOCAL_DATA_DIR.iterdir():
-            if not collector_dir.is_dir():
+            if (
+                not collector_dir.is_dir()
+                or collector_dir.name in self.INTERNAL_DATA_DIRS
+            ):
                 continue
 
             collector_name = collector_dir.name
@@ -222,6 +227,9 @@ class ArchiveTask:
                         print(f"   ✓ {collector_name}/{date_str}: {len(json_files)} 個檔案 → tar.gz ({tmp_path.stat().st_size} bytes)")
                     else:
                         stats['skipped'] += 1
+                except Exception as e:
+                    print(f"   ✗ {collector_name}/{date_str}: 歸檔失敗 - {e}")
+                    stats['failed'] += 1
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
@@ -252,7 +260,10 @@ class ArchiveTask:
             return stats
 
         for collector_dir in config.LOCAL_DATA_DIR.iterdir():
-            if not collector_dir.is_dir():
+            if (
+                not collector_dir.is_dir()
+                or collector_dir.name in self.INTERNAL_DATA_DIRS
+            ):
                 continue
 
             collector_name = collector_dir.name
@@ -272,22 +283,26 @@ class ArchiveTask:
                 if dir_date >= cutoff_date:
                     continue
 
-                s3_key = f"{collector_name}/archives/{date_str}.tar.gz"
-                json_files = list(date_dir.glob('*.json'))
-                if not json_files:
-                    continue
-                members = self._member_manifest(date_dir)
-                if not self._has_only_manifest_files(date_dir, members):
-                    continue
-                receipt = self._receipt_matches(collector_name, date_str, s3_key, members)
-                if receipt is None:
-                    continue
-                identity = self.s3.archive_identity(s3_key)
-                if identity['status'] != 'present' or identity['identity'] != receipt['remote_identity']:
-                    continue
+                try:
+                    s3_key = f"{collector_name}/archives/{date_str}.tar.gz"
+                    json_files = list(date_dir.glob('*.json'))
+                    if not json_files:
+                        continue
+                    members = self._member_manifest(date_dir)
+                    if not self._has_only_manifest_files(date_dir, members):
+                        continue
+                    receipt = self._receipt_matches(collector_name, date_str, s3_key, members)
+                    if receipt is None:
+                        continue
+                    identity = self.s3.archive_identity(s3_key)
+                    if identity['status'] != 'present' or identity['identity'] != receipt['remote_identity']:
+                        continue
 
-                # 刪除整個日期目錄
-                shutil.rmtree(date_dir)
+                    # 刪除整個日期目錄
+                    shutil.rmtree(date_dir)
+                except (OSError, ValueError, TypeError, KeyError) as e:
+                    print(f"   ⚠️ {collector_name}/{date_str}: 清理跳過 - {e}")
+                    continue
                 deleted_count += 1
                 stats['deleted'] += 1
 
@@ -321,7 +336,10 @@ class ArchiveTask:
             return status
 
         for collector_dir in config.LOCAL_DATA_DIR.iterdir():
-            if not collector_dir.is_dir():
+            if (
+                not collector_dir.is_dir()
+                or collector_dir.name in self.INTERNAL_DATA_DIRS
+            ):
                 continue
 
             files = list(collector_dir.glob('**/*.json'))
