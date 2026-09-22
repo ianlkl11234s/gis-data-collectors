@@ -66,3 +66,27 @@ def test_production_style_dsn_is_blocked_and_redacted():
         psycopg2.connect(sentinel)
     assert sentinel not in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
+
+
+@pytest.mark.expects_network_block
+def test_live_dsn_cannot_be_redirected_with_connection_kwargs(monkeypatch):
+    from tests import conftest as test_bootstrap
+
+    test_dsn = "postgresql://test-user:test-pass@test-db.invalid/test"
+    original_connect = test_bootstrap._ORIGINAL_PSYCOPG2_CONNECT
+    calls = []
+
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(test_bootstrap, "_ACTIVE_LIVE_SUPABASE_DSN", test_dsn)
+    monkeypatch.setattr(test_bootstrap, "_ORIGINAL_PSYCOPG2_CONNECT", spy)
+
+    with pytest.raises(RuntimeError, match="postgres: <redacted-dsn>"):
+        test_bootstrap._guarded_psycopg2_connect(
+            test_dsn,
+            host="other-db.invalid",
+        )
+
+    assert calls == []

@@ -70,6 +70,10 @@ _ORIGINAL_SOCKET_SENDTO = socket.socket.sendto
 _ORIGINAL_PSYCOPG2_CONNECT = psycopg2.connect
 _NETWORK_ATTEMPTS: list[str] = []
 _ACTIVE_LIVE_SUPABASE_DSN: str | None = None
+_POSTGRES_TARGET_OVERRIDES = frozenset({
+    "database", "dbname", "host", "hostaddr", "password", "port",
+    "service", "servicefile", "user",
+})
 
 
 def _redacted_target(kind: str, target: object = None) -> str:
@@ -105,7 +109,10 @@ def _guarded_socket_sendto(_self, _data, address):
 
 def _guarded_psycopg2_connect(*args, **kwargs):
     dsn = kwargs.get("dsn") or (args[0] if args else None)
-    if _ACTIVE_LIVE_SUPABASE_DSN and dsn == _ACTIVE_LIVE_SUPABASE_DSN:
+    target_overrides = _POSTGRES_TARGET_OVERRIDES.intersection(kwargs)
+    if (_ACTIVE_LIVE_SUPABASE_DSN
+            and dsn == _ACTIVE_LIVE_SUPABASE_DSN
+            and not target_overrides):
         return _ORIGINAL_PSYCOPG2_CONNECT(*args, **kwargs)
     return _blocked_network("postgres", dsn)
 
