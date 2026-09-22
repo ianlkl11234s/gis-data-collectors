@@ -211,7 +211,7 @@ def classify_freshness(
 # S3 archive 健康
 # ────────────────────────────────────────────────────────────────────
 def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[str, str]:
-    """掃 S3 archives 拿每個 collector 的最新歸檔日期。
+    """依 cross-layer map 的 bounded prefixes 取每個 collector 最新歸檔日期。
 
     Returns: {collector_name: 'YYYY-MM-DD'}
     """
@@ -226,41 +226,29 @@ def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[s
 
     result: dict[str, str] = {}
     try:
-        # 掃 root 下所有 collector_name/archives/ 結構
+        cross_layer = load_cross_layer_map()
         paginator = s3.s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=config.S3_BUCKET, Prefix=""):
-            for obj in page.get("Contents", []):
-                key = obj["Key"]
-                if "/archives/" in key and key.endswith(".tar.gz"):
-                    collector_name = key.split("/archives/")[0]
-                    # 日期格式為 YYYY-MM-DD.tar.gz
-                    fname = key.rsplit("/", 1)[-1]
-                    date_part = fname.replace(".tar.gz", "")
-                elif key.startswith("aisstream/raw/v1/") and key.endswith(".manifest.json"):
-                    # AISStream 不是 archive.py 的日 tarball，而是每小時 gzip
-                    # NDJSON + manifest；仍納入 daily report 的日期新鮮度檢查。
-                    match = re.search(r"/date=(\d{4}-\d{2}-\d{2})/", key)
-                    if not match:
-                        continue
-                    collector_name = "aisstream"
-                    date_part = match.group(1)
-                elif key.startswith("ripe_ris_live/raw/v1/") and key.endswith(".manifest.json"):
-                    # RIS Live uses durable 15-minute gzip NDJSON + manifest,
-                    # not ArchiveTask daily tarballs.
-                    match = re.search(r"/date=(\d{4}-\d{2}-\d{2})/", key)
-                    if not match:
-                        continue
-                    collector_name = "ripe_ris_live"
-                    date_part = match.group(1)
-                else:
+        for collector_name, collector in cross_layer.items():
+            if prefix_filter and not collector_name.startswith(prefix_filter):
+                continue
+            for spec in collector.get("s3_prefixes", []):
+                if not spec.get("expected_daily"):
                     continue
-                if len(date_part) != 10 or date_part.count("-") != 2:
+                prefix = str(spec.get("prefix", ""))
+                if not prefix:
                     continue
-                if prefix_filter and not collector_name.startswith(prefix_filter):
-                    continue
-                # 取最大日期（字典序 YYYY-MM-DD 等同時序）
-                if collector_name not in result or date_part > result[collector_name]:
-                    result[collector_name] = date_part
+                for page in paginator.paginate(Bucket=config.S3_BUCKET, Prefix=prefix):
+                    for obj in page.get("Contents", []):
+                        # Covers archive tarballs, raw partition manifests,
+                        # derived release directories, and dated JPG charts.
+                        matches = re.findall(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)", obj["Key"])
+                        for date_part in matches:
+                            try:
+                                datetime.strptime(date_part, "%Y-%m-%d")
+                            except ValueError:
+                                continue
+                            if collector_name not in result or date_part > result[collector_name]:
+                                result[collector_name] = date_part
     except Exception as exc:
         log.error(f"list_archive_dates_per_collector 失敗: {exc}")
     return result

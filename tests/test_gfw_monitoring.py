@@ -87,3 +87,45 @@ def test_gfw_real_shaped_health_is_json_serializable_with_explicit_iso_dates():
     assert payload["gfw_hourly_publish"]["published_at"] == "2026-08-26T00:00:00+00:00"
     assert payload["gfw_hourly_publish"]["attempt_age_hours"] == 22.0
     assert payload["gfw_hourly_publish"]["success_age_hours"] == 575.0
+
+
+def test_archive_dates_scan_only_configured_prefixes_and_accept_dated_assets(monkeypatch):
+    calls = []
+
+    class Paginator:
+        def paginate(self, **kwargs):
+            calls.append(kwargs["Prefix"])
+            objects = {
+                "demo/archives/": [
+                    "demo/archives/2026-09-20.tar.gz",
+                    "demo/archives/2026-09-21.tar.gz",
+                ],
+                "pla/track_charts/": [
+                    "pla/track_charts/2026/09/2026-09-21.jpg",
+                ],
+            }
+            return [{"Contents": [{"Key": key} for key in objects[kwargs["Prefix"]]]}]
+
+    class Client:
+        def get_paginator(self, name):
+            assert name == "list_objects_v2"
+            return Paginator()
+
+    class Storage:
+        def __init__(self):
+            self.s3 = Client()
+
+    import storage.s3
+    monkeypatch.setattr(monitoring.config, "S3_BUCKET", "test")
+    monkeypatch.setattr(storage.s3, "S3Storage", Storage)
+    monkeypatch.setattr(monitoring, "load_cross_layer_map", lambda: {
+        "demo": {"s3_prefixes": [{"prefix": "demo/archives/", "expected_daily": True}]},
+        "pla": {"s3_prefixes": [{"prefix": "pla/track_charts/", "expected_daily": True}]},
+        "ignored": {"s3_prefixes": [{"prefix": "ignored/", "expected_daily": False}]},
+    })
+
+    assert monitoring.list_archive_dates_per_collector() == {
+        "demo": "2026-09-21",
+        "pla": "2026-09-21",
+    }
+    assert calls == ["demo/archives/", "pla/track_charts/"]
