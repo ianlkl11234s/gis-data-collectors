@@ -234,10 +234,12 @@ class DailyReportTask:
         except Exception:
             vm_ok, vm_total, vm_lost = 0, 0, 0
 
+        disk_severity, disk_message = self._filesystem_pressure_state()
+
         # verdict
-        if sb_critical_bad or s3_critical_severe or vm_lost > 0:
+        if sb_critical_bad or s3_critical_severe or vm_lost > 0 or disk_severity == "critical":
             verdict, emoji = "嚴重", "🔴"
-        elif sb_bad or s3_stale or col_err:
+        elif sb_bad or s3_stale or col_err or disk_severity in {"warning", "unknown"}:
             verdict, emoji = "有問題", "🟡"
         else:
             verdict, emoji = "正常", "🟢"
@@ -256,6 +258,7 @@ class DailyReportTask:
             if s3_stale: bits.append(f"S3 落後 {s3_stale}")
             if vm_lost: bits.append(f"VM 失聯 {vm_lost}")
             if col_err: bits.append(f"collector 錯誤 {col_err}")
+            if disk_message: bits.append(disk_message)
             if bits:
                 lines.append("  " + " · ".join(bits))
         lines.append("⏬ 詳細日報接續")
@@ -333,6 +336,7 @@ class DailyReportTask:
             pass
 
         collector_err = sum(1 for c in self.collectors if c.get_status().get("error_count", 0) > 0)
+        disk_severity, disk_message = self._filesystem_pressure_state()
 
         cross_break = 0
         try:
@@ -378,9 +382,11 @@ class DailyReportTask:
             pass
 
         # 判定 verdict
-        if sb_critical_bad or s3_critical_severe or vm_lost > 0:
+        if sb_critical_bad or s3_critical_severe or vm_lost > 0 or disk_severity == "critical":
             verdict = "🔴 *嚴重*（需要處理）"
-        elif (sb_dead + sb_stale + sb_never + sb_err + s3_stale + cross_break + collector_err) > 0:
+        elif (
+            sb_dead + sb_stale + sb_never + sb_err + s3_stale + cross_break + collector_err
+        ) > 0 or disk_severity in {"warning", "unknown"}:
             verdict = "🟡 *有問題*（非 critical）"
         else:
             verdict = "🟢 *正常*（全綠）"
@@ -393,6 +399,8 @@ class DailyReportTask:
             f"  S3 落後: {s3_stale} | 跨層斷層: {cross_break} | VM 失聯: {vm_lost}"
         )
         parts.append(f"  Collector 有錯誤: {collector_err} 個")
+        if disk_message:
+            parts.append(f"  檔案系統: {disk_message}")
         parts.append("  詳情見下方各區塊；待辦見「今日 Action」")
         return "\n".join(parts)
 
@@ -949,7 +957,7 @@ class DailyReportTask:
         today_str = datetime.now().strftime('%Y/%m/%d')
 
         for collector_dir in sorted(data_dir.iterdir()):
-            if not collector_dir.is_dir():
+            if not collector_dir.is_dir() or collector_dir.name == '.archive-receipts':
                 continue
 
             # 計算所有 JSON（排除 latest.json）
@@ -1140,6 +1148,14 @@ class DailyReportTask:
 
         actions: list[str] = []
 
+        disk_severity, disk_message = self._filesystem_pressure_state()
+        if disk_severity == "critical":
+            actions.append(f"立即清理或擴充共享檔案系統（{disk_message}）")
+        elif disk_severity == "warning":
+            actions.append(f"規劃清理或擴充共享檔案系統（{disk_message}）")
+        elif disk_severity == "unknown":
+            actions.append(f"檢查共享檔案系統容量監控（{disk_message}）")
+
         # 1. SB DEAD 表（critical 優先）
         rt_tables = monitoring.load_realtime_tables()
         rt_meta = {(t["schema"], t["table"]): t for t in rt_tables}
@@ -1229,19 +1245,23 @@ class DailyReportTask:
         if pressure:
             print(pressure)
 
-    def _filesystem_pressure(self) -> str:
-        """Shared filesystem pressure, independently labelled from collector bytes."""
+    def _filesystem_pressure_state(self) -> tuple[str, str]:
+        """Return severity and message for shared filesystem capacity."""
         try:
             disk = shutil.disk_usage(config.LOCAL_DATA_DIR)
         except OSError:
-            return "⚠️ 無法讀取檔案系統容量"
+            return "unknown", "⚠️ 無法讀取檔案系統容量"
         usable = disk.used + disk.free
         if usable <= 0:
-            return "⚠️ 檔案系統可用總容量為 0"
+            return "unknown", "⚠️ 檔案系統可用總容量為 0"
         used_percent = disk.used * 100 / usable
         free_mb = disk.free / (1024 * 1024)
         if used_percent >= DISK_CRITICAL_PERCENT:
-            return f"🚨 共享檔案系統容量嚴重不足: {used_percent:.1f}% 已用，剩餘 {free_mb:.1f} MB"
+            return "critical", f"🚨 共享檔案系統容量嚴重不足: {used_percent:.1f}% 已用，剩餘 {free_mb:.1f} MB"
         if used_percent >= DISK_WARN_PERCENT:
-            return f"⚠️ 共享檔案系統容量警告: {used_percent:.1f}% 已用，剩餘 {free_mb:.1f} MB"
-        return ""
+            return "warning", f"⚠️ 共享檔案系統容量警告: {used_percent:.1f}% 已用，剩餘 {free_mb:.1f} MB"
+        return "ok", ""
+
+    def _filesystem_pressure(self) -> str:
+        """Shared filesystem pressure, independently labelled from collector bytes."""
+        return self._filesystem_pressure_state()[1]

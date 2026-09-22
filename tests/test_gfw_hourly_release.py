@@ -78,6 +78,10 @@ class _PreconditionFailed(Exception):
     response = {"Error": {"Code": "PreconditionFailed"}}
 
 
+class _AccessDenied(Exception):
+    response = {"Error": {"Code": "AccessDenied"}}
+
+
 def _sha(value):
     return hashlib.sha256(value).hexdigest()
 
@@ -311,13 +315,15 @@ def test_s3_uploads_generic_assets_verifies_head_and_puts_root_manifest_last(tmp
     put_keys = [key for operation, key in client.calls if operation == "put"]
     root_key = "public/gfw-hourly/manifest.json"
     assert put_keys[-1] == root_key
-    assert put_keys[:-1] == [
+    assert put_keys[:3] == [
         "public/gfw-hourly/releases/2026-08-21/days/2026-08-21.geojson",
         "public/gfw-hourly/releases/2026-08-21/hours/20260821T00Z.geojson",
         "public/gfw-hourly/releases/2026-08-21/hours/details/20260821T00Z/a.json.gz",
-        "public/gfw-hourly/releases/2026-08-21/run.json",
-        "public/gfw-hourly/releases/2026-08-21/manifest.json",
     ]
+    assert put_keys[3].startswith("public/gfw-hourly/releases/2026-08-21/run-")
+    assert put_keys[3].endswith(".json")
+    assert put_keys[4].startswith("public/gfw-hourly/releases/2026-08-21/manifest-")
+    assert put_keys[4].endswith(".json")
     for key in put_keys:
         assert ("head", key) in client.calls
         assert client.objects[key]["Metadata"]["sha256"] == _sha(
@@ -537,6 +543,139 @@ def test_s3_first_root_readback_failure_is_uncertain_not_failed(tmp_path):
             bucket="gfw-release-test", key_prefix="public/gfw-hourly",
             public_url_prefix="https://assets.example.test/gfw-hourly",
         )
+
+
+def test_s3_definitive_root_rejection_is_failed_not_uncertain(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    root_key = "public/gfw-hourly/manifest.json"
+
+    class Client(_FakeS3):
+        def put_object(self, **kwargs):
+            if kwargs["Key"] == root_key:
+                raise _AccessDenied()
+            return super().put_object(**kwargs)
+
+    with pytest.raises(_AccessDenied):
+        publish_release_to_s3(
+            Client(), release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+        )
+
+
+def test_s3_root_readback_access_denied_is_uncertain_after_successful_put(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    root_key = "public/gfw-hourly/manifest.json"
+
+    class Client(_FakeS3):
+        def get_object(self, **kwargs):
+            if kwargs["Key"] == root_key and root_key in self.objects:
+                raise _AccessDenied()
+            return super().get_object(**kwargs)
+
+    client = Client()
+    with pytest.raises(RootCutoverUncertain, match="reconciliation"):
+        publish_release_to_s3(
+            client, release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+        )
+    assert root_key in client.objects
+
+
+def test_s3_root_readback_without_put_etag_never_restores_unconditionally(tmp_path):
+    release = stage_track_release(
+        _collection(), root=tmp_path,
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+    )
+    root_key = "public/gfw-hourly/manifest.json"
+    previous = {"published_releases": []}
+    previous_body = json.dumps(previous, sort_keys=True, separators=(",", ":")).encode()
+
+    class Client(_FakeS3):
+        def put_object(self, **kwargs):
+            result = super().put_object(**kwargs)
+            return {} if kwargs["Key"] == root_key else result
+
+        def get_object(self, **kwargs):
+            if kwargs["Key"] == root_key and self.objects[root_key]["Body"] != previous_body:
+                raise _AccessDenied()
+            return super().get_object(**kwargs)
+
+    client = Client()
+    client.objects[root_key] = {
+        "Body": previous_body,
+        "Metadata": {"sha256": _sha(previous_body)},
+        "ETag": '"previous"',
+    }
+    with pytest.raises(RootCutoverUncertain, match="reconciliation"):
+        publish_release_to_s3(
+            client, release_dir=release, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+            previous_root_manifest=previous,
+            previous_root_etag='"previous"',
+        )
+    assert [call for call in client.calls if call == ("put", root_key)] == [("put", root_key)]
+    assert client.objects[root_key]["Body"] != previous_body
+
+
+def test_s3_same_date_retry_uses_new_content_addressed_candidates(tmp_path):
+    first = stage_track_release(
+        _collection(), root=tmp_path / "first",
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+        generated_at="2026-08-22T00:00:00+00:00",
+    )
+    second = stage_track_release(
+        _collection(), root=tmp_path / "second",
+        latest_complete_date="2026-08-21",
+        date_start="2026-08-21", date_end="2026-08-21",
+        generated_at="2026-08-22T01:00:00+00:00",
+    )
+    root_key = "public/gfw-hourly/manifest.json"
+
+    class Client(_FakeS3):
+        reject_root = True
+
+        def put_object(self, **kwargs):
+            if kwargs["Key"] == root_key and self.reject_root:
+                raise _AccessDenied()
+            return super().put_object(**kwargs)
+
+    client = Client()
+    with pytest.raises(_AccessDenied):
+        publish_release_to_s3(
+            client, release_dir=first, bucket="gfw-release-test",
+            key_prefix="public/gfw-hourly",
+            public_url_prefix="https://assets.example.test/gfw-hourly",
+        )
+    first_candidates = {
+        key for key in client.objects
+        if "/2026-08-21/run-" in key or "/2026-08-21/manifest-" in key
+    }
+
+    client.reject_root = False
+    result = publish_release_to_s3(
+        client, release_dir=second, bucket="gfw-release-test",
+        key_prefix="public/gfw-hourly",
+        public_url_prefix="https://assets.example.test/gfw-hourly",
+    )
+    second_candidates = {
+        key for key in result["uploaded_object_keys"]
+        if "/2026-08-21/run-" in key or "/2026-08-21/manifest-" in key
+    }
+    assert first_candidates.isdisjoint(second_candidates)
+    assert json.loads(client.objects[root_key]["Body"])["release_id"] == "2026-08-21"
 
 
 def test_s3_unknown_previous_key_fails_closed_before_upload_or_delete(tmp_path):

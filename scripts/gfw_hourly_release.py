@@ -723,6 +723,21 @@ def _s3_precondition_failed(exc: Exception) -> bool:
     return code in {"412", "PreconditionFailed"}
 
 
+def _s3_definitive_rejection(exc: Exception) -> bool:
+    """Return true only when S3 explicitly rejected the root write."""
+    code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))
+    return code in {
+        "AccessDenied",
+        "AllAccessDisabled",
+        "InvalidAccessKeyId",
+        "InvalidArgument",
+        "InvalidBucketName",
+        "InvalidRequest",
+        "NoSuchBucket",
+        "SignatureDoesNotMatch",
+    }
+
+
 def _put_immutable_and_verify_s3(
     client: Any,
     *,
@@ -788,7 +803,12 @@ def _validate_previous_release_entry(
     if len(set(normalized_keys)) != len(normalized_keys):
         raise ValueError(f"previous release {release_id} repeats an object key")
     manifest_key = str(entry.get("manifest_key", ""))
-    if manifest_key != f"{expected_prefix}manifest.json" or manifest_key not in normalized_keys:
+    manifest_name = manifest_key.removeprefix(expected_prefix)
+    if (
+        not manifest_key.startswith(expected_prefix)
+        or not re.fullmatch(r"manifest(?:-[0-9a-f]{64})?\.json", manifest_name)
+        or manifest_key not in normalized_keys
+    ):
         raise ValueError(f"previous release {release_id} has an invalid manifest_key")
     return {**entry, "release_id": release_id, "manifest_key": manifest_key, "object_keys": normalized_keys}
 
@@ -873,8 +893,15 @@ def publish_release_to_s3(
     run_path = release_dir / "run.json"
     if run_path.exists() and (run_path.is_symlink() or not run_path.is_file()):
         raise ValueError(f"run ledger is not a plain file: {run_path}")
-    release_manifest_key = f"{release_prefix}/manifest.json"
-    run_key = f"{release_prefix}/run.json" if run_path.is_file() else None
+    run_body = run_path.read_bytes() if run_path.is_file() else None
+    run_key = (
+        f"{release_prefix}/run-{_sha256_bytes(run_body)}.json"
+        if run_body is not None else None
+    )
+    release_manifest_body = _canonical(remote_release_manifest).encode("utf-8")
+    release_manifest_key = (
+        f"{release_prefix}/manifest-{_sha256_bytes(release_manifest_body)}.json"
+    )
     object_keys = [*asset_keys]
     if run_key:
         object_keys.append(run_key)
@@ -911,13 +938,11 @@ def publish_release_to_s3(
             cache_control=RELEASE_CACHE_CONTROL,
         )
     if run_key:
-        run_body = run_path.read_bytes()
         _put_immutable_and_verify_s3(
             client, bucket=bucket, key=run_key, body=run_body,
             sha256=_sha256_bytes(run_body), content_type="application/json",
             cache_control=RELEASE_CACHE_CONTROL,
         )
-    release_manifest_body = _canonical(remote_release_manifest).encode("utf-8")
     _put_immutable_and_verify_s3(
         client, bucket=bucket, key=release_manifest_key,
         body=release_manifest_body, sha256=_sha256_bytes(release_manifest_body),
@@ -949,17 +974,22 @@ def publish_release_to_s3(
             if_match=previous_root_etag,
             if_none_match=previous_root_manifest is None,
         )
+    except Exception as exc:
+        if _s3_precondition_failed(exc) or _s3_definitive_rejection(exc):
+            raise
+        raise RootCutoverUncertain(
+            "root cutover outcome could not be verified; reconciliation is required"
+        ) from exc
+
+    try:
         _verify_s3_bytes(
             client, bucket=bucket, key=root_key, body=root_body,
             sha256=_sha256_bytes(root_body),
         )
     except Exception as exc:
-        # A failed CAS leaves the prior root authoritative. If PUT succeeded
-        # but readback failed, restore only when the writer's own ETag can
-        # still conditionally replace it; otherwise require reconciliation.
-        if _s3_precondition_failed(exc):
-            raise
-        if previous_root_manifest is None or not locals().get("new_root_etag"):
+        # PUT succeeded. A readback failure cannot be classified as a write
+        # rejection because the new root may already be reader-visible.
+        if previous_root_manifest is None or not new_root_etag:
             raise RootCutoverUncertain(
                 "root cutover outcome could not be verified; reconciliation is required"
             ) from exc

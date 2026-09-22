@@ -73,3 +73,51 @@ def test_existing_report_includes_shared_filesystem_warning(monkeypatch, data_di
 def test_zero_capacity_is_unknown(monkeypatch, data_dir):
     monkeypatch.setattr(daily_report.shutil, "disk_usage", lambda _: DiskUsage(0, 0, 0))
     assert "容量為 0" in DailyReportTask([])._filesystem_pressure()
+
+
+def _stub_monitoring(monkeypatch):
+    from tasks import monitoring
+
+    monkeypatch.setattr(monitoring, "load_realtime_tables", lambda: [])
+    monkeypatch.setattr(monitoring, "query_realtime_health", lambda *_: [])
+    monkeypatch.setattr(monitoring, "load_cross_layer_map", lambda: {})
+    monkeypatch.setattr(monitoring, "list_archive_dates_per_collector", lambda: {})
+    monkeypatch.setattr(monitoring, "list_vm_health_snapshots", lambda **_: [])
+    monkeypatch.setattr(monitoring, "load_anomaly_state", lambda: {})
+
+
+def test_critical_disk_pressure_sets_speed_digest_red(monkeypatch, data_dir):
+    _stub_monitoring(monkeypatch)
+    monkeypatch.setattr(daily_report.shutil, "disk_usage", lambda _: DiskUsage(100, 90, 10))
+    digest = DailyReportTask([])._build_speed_digest()
+    assert "🔴 *嚴重*" in digest
+    assert "共享檔案系統" in digest
+
+
+def test_critical_disk_pressure_sets_health_summary_red(monkeypatch, data_dir):
+    _stub_monitoring(monkeypatch)
+    monkeypatch.setattr(daily_report.shutil, "disk_usage", lambda _: DiskUsage(100, 90, 10))
+    summary = DailyReportTask([])._section_health_summary()
+    assert "🔴 *嚴重*" in summary
+    assert "檔案系統" in summary
+
+
+def test_critical_disk_pressure_creates_first_action(monkeypatch, data_dir):
+    _stub_monitoring(monkeypatch)
+    monkeypatch.setattr(daily_report.shutil, "disk_usage", lambda _: DiskUsage(100, 90, 10))
+    action = DailyReportTask([])._section_today_action()
+    assert "1. 立即清理或擴充共享檔案系統" in action
+
+
+def test_file_stats_excludes_internal_archive_receipts(monkeypatch, data_dir):
+    monkeypatch.setattr(daily_report.shutil, "disk_usage", lambda _: DiskUsage(100, 1, 99))
+    receipt = data_dir / '.archive-receipts/demo/2020-01-02.json'
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('{}')
+    payload = data_dir / 'demo/2020/01/02/demo.json'
+    payload.parent.mkdir(parents=True)
+    payload.write_text('{}')
+
+    report = DailyReportTask([])._section_file_stats()
+    assert "總計: *1* 個" in report
+    assert ".archive-receipts" not in report
