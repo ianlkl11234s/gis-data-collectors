@@ -17,3 +17,7 @@ Focused publisher, browser assets, monitoring and daily-report tests cover immut
 Live read-only inspection found the v3 release still at 2026-08-21 and current S3 lifecycle rules without expiration. Existing release payload is approximately 0.99 GB; each retained revision adds storage. No source fetch, publisher rerun, schedule change, production root mutation or deployment was performed.
 
 Deploy the frontend's manifest-directed safe mirror first, then this collector. Keep the existing 08:30 Asia/Taipei schedule. After normal execution, require succeeded ledger, advancing complete source date, matching S3/HTTP root, seven UTC days, valid bytes/SHA and Range 206, and matching frontend freshness. Repeat acceptance on the following scheduled day and verify the previous S3 release remains. A merged commit or healthy container alone does not prove recovery.
+
+## Follow-up 2026-09-26: spool retention restored
+
+Without the promised disk-capacity supervision, failed spools accumulated to 13 GB on the main-site `/data` volume (10 failed runs of 1–2 GB each, plus orphaned `running` spools left by container restarts). Automatic pruning is restored at task start with a narrower contract: only `failed` spools (by `failed_at`) and orphaned `running` spools (by `started_at`) older than `GFW_HOURLY_FAILED_SPOOL_RETENTION_DAYS` (default 7) are removed, and only when every file matches the known spool layout. `cutover_*` spools awaiting reconciliation are never pruned. The 13.1 GB backlog was removed manually the same day after re-checking every spool status.

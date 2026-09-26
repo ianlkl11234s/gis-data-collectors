@@ -357,12 +357,18 @@ def test_ledger_gate_fails_before_report_network_and_preserves_failed_spool(tmp_
     assert json.loads((spools[0] / "spool.json").read_text())["status"] == "failed"
 
 
-def test_toolchain_preflight_fails_after_running_ledger_before_fetch_and_keeps_old_spool(tmp_path):
+def test_toolchain_preflight_fails_after_running_ledger_before_fetch_and_prunes_only_expired_failed_spool(tmp_path):
     settings = _settings(tmp_path)
     old = settings.spool_root / "2026-08-10-11111111-1111-1111-1111-111111111111"
     old.mkdir(parents=True)
     (old / "spool.json").write_text(json.dumps({
         "status": "failed", "failed_at": "2026-08-10T00:00:00+00:00"
+    }))
+    pending = settings.spool_root / "2026-08-10-33333333-3333-3333-3333-333333333333"
+    pending.mkdir(parents=True)
+    (pending / "spool.json").write_text(json.dumps({
+        "status": "cutover_uncertain_reconciliation_pending",
+        "updated_at": "2026-08-10T00:00:00+00:00",
     }))
     ledger = _FakeLedger()
     factory_calls = []
@@ -378,7 +384,8 @@ def test_toolchain_preflight_fails_after_running_ledger_before_fetch_and_keeps_o
         task.run()
     assert [payload["status"] for payload in ledger.payloads] == ["running", "failed"]
     assert factory_calls == []
-    assert old.is_dir()
+    assert not old.exists()
+    assert pending.is_dir()
 
 
 def test_keyboard_interrupt_marks_running_attempt_failed_before_cutover(tmp_path):
@@ -442,6 +449,17 @@ def test_failed_spool_prune_is_bounded_and_preserves_unknown_tree(tmp_path):
     )
     assert result["pruned"] == [old_name]
 
+    recent = root / "2026-08-28-44444444-4444-4444-4444-444444444444"
+    recent.mkdir()
+    (recent / "spool.json").write_text(json.dumps({
+        "status": "failed", "failed_at": "2026-08-28T00:00:00+00:00"
+    }))
+    result = prune_expired_failed_spools(
+        root, now=datetime(2026, 8, 30, tzinfo=timezone.utc), retention_days=7
+    )
+    assert result["pruned"] == []
+    assert recent.is_dir()
+
     unknown = root / "2026-08-20-22222222-2222-2222-2222-222222222222"
     unknown.mkdir()
     (unknown / "spool.json").write_text(json.dumps({
@@ -453,6 +471,34 @@ def test_failed_spool_prune_is_bounded_and_preserves_unknown_tree(tmp_path):
     )
     assert result["warnings"]
     assert (unknown / "operator-note.txt").read_text() == "keep"
+
+
+def test_orphaned_running_spool_is_pruned_only_after_retention(tmp_path):
+    root = tmp_path / "spool"
+    orphan = root / "2026-08-10-55555555-5555-5555-5555-555555555555"
+    fresh = root / "2026-08-29-66666666-6666-6666-6666-666666666666"
+    ledger_pending = root / "2026-08-10-77777777-7777-7777-7777-777777777777"
+    for path, payload in (
+        (orphan, {"status": "running", "started_at": "2026-08-15T00:30:00+00:00"}),
+        (fresh, {"status": "running", "started_at": "2026-08-30T00:30:00+00:00"}),
+        (ledger_pending, {
+            "status": "cutover_succeeded_ledger_pending",
+            "updated_at": "2026-08-10T00:00:00+00:00",
+        }),
+    ):
+        path.mkdir(parents=True)
+        (path / "spool.json").write_text(json.dumps(payload))
+    (orphan / "work" / "ais").mkdir(parents=True)
+    (orphan / "work" / "ais" / "shared-fetch.json").write_text("{}")
+
+    result = prune_expired_failed_spools(
+        root, now=datetime(2026, 8, 30, 1, tzinfo=timezone.utc), retention_days=7
+    )
+
+    assert result == {"pruned": [orphan.name], "warnings": []}
+    assert not orphan.exists()
+    assert fresh.is_dir()
+    assert ledger_pending.is_dir()
 
 
 def test_uncertain_cutover_retains_spool_without_false_ledger_receipt(tmp_path, fake_gfw_pmtiles, monkeypatch):
