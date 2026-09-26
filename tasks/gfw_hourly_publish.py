@@ -1161,7 +1161,12 @@ def _validated_failed_spool_paths(run_root: Path) -> tuple[list[Path], list[Path
 def prune_expired_failed_spools(
     spool_root: Path, *, now: datetime, retention_days: int
 ) -> dict[str, list[Any]]:
-    """Prune only failed spools older than the bounded retention contract."""
+    """Prune failed spools, and orphaned running spools, past the retention contract.
+
+    A ``running`` spool older than the retention window can only belong to a
+    process that died (the task timeout is hours, retention is days).
+    ``cutover_*`` spools await operator reconciliation and are never pruned.
+    """
     if retention_days < 1:
         raise ValueError("failed spool retention must be at least one day")
     spool_root.mkdir(parents=True, exist_ok=True)
@@ -1174,12 +1179,17 @@ def prune_expired_failed_spools(
         ledger_path = candidate / "spool.json"
         try:
             ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
-            if ledger.get("status") != "failed":
+            status = ledger.get("status")
+            if status == "failed":
+                stamp_key = "failed_at"
+            elif status == "running":
+                stamp_key = "started_at"
+            else:
                 continue
-            failed_at = datetime.fromisoformat(str(ledger["failed_at"]).replace("Z", "+00:00"))
-            if failed_at.tzinfo is None:
-                raise ValueError("failed_at must include timezone")
-            if failed_at.astimezone(timezone.utc) > threshold:
+            stamp = datetime.fromisoformat(str(ledger[stamp_key]).replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                raise ValueError(f"{stamp_key} must include timezone")
+            if stamp.astimezone(timezone.utc) > threshold:
                 continue
             files, directories = _validated_failed_spool_paths(candidate)
             for path in files:
@@ -1245,6 +1255,15 @@ class GFWHourlyPublishTask:
         if not _UTC_DATE.fullmatch(release_id):
             raise AssertionError("release id is not an ISO UTC date")
         run_id = str(uuid.uuid4())
+        prune_result = prune_expired_failed_spools(
+            self.settings.spool_root,
+            now=started_at,
+            retention_days=self.settings.failed_spool_retention_days,
+        )
+        if prune_result["pruned"]:
+            logger.info("GFW spool cleanup pruned expired spools: %s", prune_result["pruned"])
+        for warning in prune_result["warnings"]:
+            logger.warning("GFW failed-spool cleanup retained an unknown tree: %s", warning)
         run_root = self.settings.spool_root / f"{release_id}-{run_id}"
         run_root.mkdir(parents=True, exist_ok=False)
         _atomic_json(run_root / "spool.json", {
