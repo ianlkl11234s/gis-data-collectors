@@ -59,7 +59,8 @@ _UTC_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SPOOL_RUN = re.compile(
     r"^\d{4}-\d{2}-\d{2}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
-_TILE_FILE = re.compile(r"^r\d{2}c\d{2}\.(?:points|sar-unmatched)\.ndjson$")
+# Leading dot + .tmp: a shard left half-written by a crash must not block pruning.
+_TILE_FILE = re.compile(r"^\.?r\d{2}c\d{2}\.(?:points|sar-unmatched)\.ndjson(?:\.tmp)?$")
 _HOUR_FILE = re.compile(r"^\.?\d{8}T\d{2}Z\.geojson(?:\.tmp)?$")
 _DAY_FILE = re.compile(r"^\.?\d{4}-\d{2}-\d{2}\.geojson(?:\.tmp)?$")
 _HOUR_PM = re.compile(r"^\d{8}T\d{2}Z\.pmtiles$")
