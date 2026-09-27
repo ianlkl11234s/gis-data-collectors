@@ -176,7 +176,9 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(WicSewerCollector, "北市雨水下水道水位收集器", "WIC_SEWER"),
     CollectorEntry(WicEvacuateCollector, "北市疏散門狀態收集器", "WIC_EVACUATE"),
     CollectorEntry(WicPumbCollector, "北市抽水站運轉收集器", "WIC_PUMB"),
-    CollectorEntry(NewsEventsCollector, "News Events 新聞事件收集器", "NEWS_EVENTS", ("GEMINI_API_KEY",)),
+    # LLM key depends on NEWS_EVENTS_LLM_PROVIDER; the collector validates the
+    # selected provider at runtime so OpenRouter is not blocked by Gemini preflight.
+    CollectorEntry(NewsEventsCollector, "News Events 新聞事件收集器", "NEWS_EVENTS"),
     CollectorEntry(GlobalEventsCollector, "GDELT Global Events metadata/Qwen 收集器", "GLOBAL_EVENTS", ("OPENROUTER_API_KEY",)),
     CollectorEntry(TwseMarketIndexCollector, "TWSE 加權指數即時收集器", "TWSE_MARKET_INDEX"),
     CollectorEntry(FoodPricesCollector, "食品價格（菜/魚/肉/蛋批發價）收集器", "FOOD_PRICES"),

@@ -2,7 +2,7 @@
 新聞事件收集器（news_events）
 
 長期收集台灣即時新聞 RSS，經 URL 正規化 + simhash 跨媒體去重後，
-用 Gemini Flash-Lite batch（20 則 packing）抽取「正規化地點（縣市+鄉鎮）+
+用 Gemini Flash-Lite（預設）或 OpenRouter batch（20 則 packing）抽取「正規化地點（縣市+鄉鎮）+
 分類 + 摘要」，寫入 live.news_events。每 20 分鐘執行一次。
 
 資料來源（URL 來自 mini-taiwan-pulse/docs/research/news-layer-revival-2026-06.md）：
@@ -325,6 +325,11 @@ LLM_BATCH_SLEEP = 0.5  # batch 間隔秒數
 
 CATEGORY_ENUM = ('accident', 'crime', 'disaster', 'traffic', 'health', 'policy', 'other')
 
+
+class NewsAnnotationError(RuntimeError):
+    """新聞 annotation 不完整時中止整輪，避免未分類資料寫入。"""
+
+
 # Gemini Flash-Lite 標準（非 batch API）單價，USD / 1M tokens（2026-06）
 GEMINI_PRICE_INPUT_PER_MTOK = 0.10
 GEMINI_PRICE_OUTPUT_PER_MTOK = 0.40
@@ -439,7 +444,7 @@ class NewsEventsCollector(BaseCollector):
         if self._gazetteer.is_empty():
             logger.warning(
                 f"[{self.name}] gazetteer 為空（DB 與本地 cache 皆不可用），"
-                f"本輪將以無地點模式入庫"
+                f"有新新聞時本輪將中止，避免未分類資料入庫"
             )
         return self._gazetteer
 
@@ -636,6 +641,23 @@ class NewsEventsCollector(BaseCollector):
         self._llm_client = genai.Client(api_key=api_key)
         return self._llm_client
 
+    @staticmethod
+    def _llm_provider() -> str:
+        provider = str(getattr(config, 'NEWS_EVENTS_LLM_PROVIDER', 'gemini') or '').strip().lower()
+        if provider not in ('gemini', 'openrouter'):
+            raise RuntimeError("NEWS_EVENTS_LLM_PROVIDER must be gemini or openrouter")
+        return provider
+
+    def _validate_llm_config(self) -> str:
+        """驗證選定 provider 的 key；絕不將 key 帶入例外或 log。"""
+        provider = self._llm_provider()
+        key_name = 'GEMINI_API_KEY' if provider == 'gemini' else 'OPENROUTER_API_KEY'
+        if not getattr(config, key_name, None):
+            raise NewsAnnotationError(
+                f"{key_name} unavailable; refusing to write unclassified news records"
+            )
+        return provider
+
     def _build_system_prompt(self, gaz: TownshipGazetteer) -> str:
         """固定 system prompt（>1024 tokens → 觸發 Gemini implicit prompt cache）"""
         if self._system_prompt is None:
@@ -658,9 +680,6 @@ class NewsEventsCollector(BaseCollector):
 
     def _llm_extract_batch(self, batch: list[dict], gaz: TownshipGazetteer) -> tuple[dict, dict]:
         """單一 batch（<=20 則）→ {idx: annotation}，回傳 (annotations, usage)"""
-        from google.genai import types
-
-        client = self._init_llm()
         lines = []
         for i, it in enumerate(batch):
             payload = {'idx': i, 'title': it['title'], 'summary': it['summary']}
@@ -668,25 +687,65 @@ class NewsEventsCollector(BaseCollector):
                 payload['county_hint'] = it['county_hint']
             lines.append(json.dumps(payload, ensure_ascii=False))
 
-        response = client.models.generate_content(
-            model=getattr(config, 'GEMINI_MODEL', 'gemini-3.1-flash-lite-preview'),
-            contents='\n'.join(lines),
-            config=types.GenerateContentConfig(
-                system_instruction=self._build_system_prompt(gaz),
-                response_mime_type='application/json',
-                temperature=0.1,
-            ),
-        )
+        provider = self._llm_provider()
+        if provider == 'gemini':
+            from google.genai import types
 
-        usage = {'input': 0, 'output': 0, 'cached': 0}
-        meta = getattr(response, 'usage_metadata', None)
-        if meta:
-            usage['input'] = meta.prompt_token_count or 0
-            usage['output'] = meta.candidates_token_count or 0
-            usage['cached'] = getattr(meta, 'cached_content_token_count', 0) or 0
+            client = self._init_llm()
+            response = client.models.generate_content(
+                model=getattr(config, 'GEMINI_MODEL', 'gemini-3.1-flash-lite-preview'),
+                contents='\n'.join(lines),
+                config=types.GenerateContentConfig(
+                    system_instruction=self._build_system_prompt(gaz),
+                    response_mime_type='application/json',
+                    temperature=0.1,
+                ),
+            )
+            raw = response.text
+            usage = {'input': 0, 'output': 0, 'cached': 0}
+            meta = getattr(response, 'usage_metadata', None)
+            if meta:
+                usage['input'] = meta.prompt_token_count or 0
+                usage['output'] = meta.candidates_token_count or 0
+                usage['cached'] = getattr(meta, 'cached_content_token_count', 0) or 0
+        else:
+            key = getattr(config, 'OPENROUTER_API_KEY', None)
+            if not key:
+                raise RuntimeError("OPENROUTER_API_KEY unavailable")
+            response = self._session.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {key}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'model': getattr(config, 'NEWS_EVENTS_OPENROUTER_MODEL', 'qwen/qwen3.7-flash'),
+                    'temperature': 0.1,
+                    'messages': [
+                        {'role': 'system', 'content': self._build_system_prompt(gaz)},
+                        {'role': 'user', 'content': '\n'.join(lines)},
+                    ],
+                },
+                timeout=max(1, int(getattr(config, 'NEWS_EVENTS_OPENROUTER_TIMEOUT', 60))),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            choices = payload.get('choices') if isinstance(payload, dict) else None
+            choice = choices[0] if isinstance(choices, list) and choices else None
+            message = choice.get('message') if isinstance(choice, dict) else None
+            raw = message.get('content') if isinstance(message, dict) else None
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError("OpenRouter response missing message content")
+            usage_payload = payload.get('usage') if isinstance(payload, dict) else {}
+            usage_payload = usage_payload if isinstance(usage_payload, dict) else {}
+            usage = {
+                'input': usage_payload.get('prompt_tokens', usage_payload.get('input_tokens', 0)) or 0,
+                'output': usage_payload.get('completion_tokens', usage_payload.get('output_tokens', 0)) or 0,
+                'cached': usage_payload.get('cached_tokens', 0) or 0,
+            }
 
         annotations: dict[int, dict] = {}
-        for obj in self._parse_llm_json(response.text):
+        for obj in self._parse_llm_json(raw):
             if not isinstance(obj, dict):
                 continue
             idx = obj.get('idx')
@@ -695,7 +754,7 @@ class NewsEventsCollector(BaseCollector):
         return annotations, usage
 
     def _annotate_items(self, items: list[dict], gaz: TownshipGazetteer) -> dict:
-        """所有新項目分 batch 丟 LLM，結果直接寫回 item dicts；回傳 usage 統計"""
+        """完整 annotation 所有新項目；任一 batch 異常即中止整輪。"""
         total_usage = {'input': 0, 'output': 0, 'cached': 0, 'batches': 0, 'failed_batches': 0}
 
         for start in range(0, len(items), LLM_BATCH_SIZE):
@@ -707,10 +766,18 @@ class NewsEventsCollector(BaseCollector):
                 total_usage['batches'] += 1
                 for k in ('input', 'output', 'cached'):
                     total_usage[k] += usage[k]
-            except Exception as e:
+            except Exception:
                 total_usage['failed_batches'] += 1
-                print(f"   ⚠ LLM batch 失敗（{len(batch)} 則以無地點入庫）: {e}")
-                annotations = {}
+                raise NewsAnnotationError(
+                    f"LLM annotation batch failed ({len(batch)} records); refusing to write this run"
+                ) from None
+
+            expected_indexes = set(range(len(batch)))
+            if set(annotations) != expected_indexes:
+                total_usage['failed_batches'] += 1
+                raise NewsAnnotationError(
+                    "LLM annotation batch incomplete; refusing to write this run"
+                )
 
             for i, it in enumerate(batch):
                 ann = annotations.get(i) or {}
@@ -747,7 +814,7 @@ class NewsEventsCollector(BaseCollector):
 
     @staticmethod
     def _no_location_defaults(items: list[dict]):
-        """dry-run / LLM 不可用時的欄位補齊（照樣入得了庫）"""
+        """dry-run 預覽的欄位補齊（不會入庫）。"""
         for it in items:
             it.setdefault('county', None)
             it.setdefault('township', None)
@@ -778,25 +845,38 @@ class NewsEventsCollector(BaseCollector):
 
         gaz = self._load_gazetteer()
         usage = {'input': 0, 'output': 0, 'cached': 0, 'batches': 0, 'failed_batches': 0}
+        llm_provider: Optional[str] = None
+        llm_model: Optional[str] = None
 
         if self.dry_run:
             print("   [dry-run] 跳過 LLM 地點抽取與 DB 寫入")
             self._no_location_defaults(fresh)
         elif not fresh:
             pass
-        elif gaz.is_empty() or not getattr(config, 'GEMINI_API_KEY', None):
-            print("   ⚠ gazetteer 或 GEMINI_API_KEY 不可用，本輪以無地點模式入庫")
-            self._no_location_defaults(fresh)
-        else:
-            usage = self._annotate_items(fresh, gaz)
-            cost = (
-                usage['input'] / 1e6 * GEMINI_PRICE_INPUT_PER_MTOK
-                + usage['output'] / 1e6 * GEMINI_PRICE_OUTPUT_PER_MTOK
+        elif gaz.is_empty():
+            raise NewsAnnotationError(
+                "township gazetteer unavailable; refusing to write unclassified news records"
             )
+        else:
+            llm_provider = self._validate_llm_config()
+            llm_model = (
+                getattr(config, 'GEMINI_MODEL', 'gemini-3.1-flash-lite-preview')
+                if llm_provider == 'gemini'
+                else getattr(config, 'NEWS_EVENTS_OPENROUTER_MODEL', 'qwen/qwen3.7-flash')
+            )
+            usage = self._annotate_items(fresh, gaz)
+            cost_text = ""
+            if llm_provider == 'gemini':
+                cost = (
+                    usage['input'] / 1e6 * GEMINI_PRICE_INPUT_PER_MTOK
+                    + usage['output'] / 1e6 * GEMINI_PRICE_OUTPUT_PER_MTOK
+                )
+                cost_text = f" | 約 ${cost:.5f} USD/輪"
             print(
-                f"   LLM: {usage['batches']} batch (失敗 {usage['failed_batches']}) | "
-                f"tokens in {usage['input']} (cached {usage['cached']}) / out {usage['output']} | "
-                f"約 ${cost:.5f} USD/輪"
+                f"   LLM ({llm_provider}/{llm_model}): "
+                f"{usage['batches']} batch (失敗 {usage['failed_batches']}) | "
+                f"tokens in {usage['input']} (cached {usage['cached']}) / out {usage['output']}"
+                f"{cost_text}"
             )
 
         records = []
@@ -839,9 +919,17 @@ class NewsEventsCollector(BaseCollector):
             'llm_tokens_input': usage['input'],
             'llm_tokens_cached': usage['cached'],
             'llm_tokens_output': usage['output'],
-            'llm_cost_usd': round(
-                usage['input'] / 1e6 * GEMINI_PRICE_INPUT_PER_MTOK
-                + usage['output'] / 1e6 * GEMINI_PRICE_OUTPUT_PER_MTOK, 6,
+            'llm_provider': llm_provider,
+            'llm_model': llm_model,
+            # Gemini uses the documented local estimate. OpenRouter pricing is
+            # model/provider specific, so do not report a Gemini-derived cost.
+            'llm_cost_usd': (
+                round(
+                    usage['input'] / 1e6 * GEMINI_PRICE_INPUT_PER_MTOK
+                    + usage['output'] / 1e6 * GEMINI_PRICE_OUTPUT_PER_MTOK, 6,
+                )
+                if llm_provider == 'gemini'
+                else None
             ),
         }
         # dry-run 不帶 data → base.run() 不會存檔 / 寫 DB
@@ -881,5 +969,5 @@ if __name__ == "__main__":
         for r in out.get('dry_run_preview', []):
             print(f"  · [{r['source']}] {r['title'][:50]} → {r['url_norm'][:80]}")
     else:
-        # 完整執行（需 SUPABASE_ENABLED + GEMINI_API_KEY）
+        # 完整執行（需 SUPABASE_ENABLED + 選定 provider 的 API key）
         NewsEventsCollector().run()
