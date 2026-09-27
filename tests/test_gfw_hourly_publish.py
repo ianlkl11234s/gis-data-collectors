@@ -685,3 +685,23 @@ def test_report_client_fetch_to_file_streams_200_body(tmp_path):
     assert target.read_bytes() == body
     assert session.kwargs["stream"] is True
     assert not target.with_name(target.name + ".tmp").exists()
+
+
+def test_failed_spool_with_half_written_shards_is_still_pruned(tmp_path):
+    root = tmp_path / "spool"
+    spool = root / "2026-08-10-88888888-8888-8888-8888-888888888888"
+    (spool / "work" / "ais").mkdir(parents=True)
+    (spool / "work" / "sar").mkdir(parents=True)
+    (spool / "spool.json").write_text(json.dumps({
+        "status": "failed", "failed_at": "2026-08-10T00:00:00+00:00"
+    }))
+    (spool / "work" / "ais" / ".r01c02.points.ndjson.tmp").write_text("{}\n")
+    (spool / "work" / "ais" / ".r01c03.ais-report.json.tmp").write_text("{")
+    (spool / "work" / "sar" / ".r00c00.sar-unmatched.ndjson.tmp").write_text("{}\n")
+
+    result = prune_expired_failed_spools(
+        root, now=datetime(2026, 8, 30, tzinfo=timezone.utc), retention_days=7
+    )
+
+    assert result == {"pruned": [spool.name], "warnings": []}
+    assert not spool.exists()
