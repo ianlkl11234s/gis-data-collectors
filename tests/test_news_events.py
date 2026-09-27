@@ -343,6 +343,8 @@ class TestLlmProviders:
         monkeypatch.setattr(config, 'OPENROUTER_API_KEY', 'test-openrouter-key')
         monkeypatch.setattr(config, 'NEWS_EVENTS_OPENROUTER_MODEL', 'qwen/qwen3.7-flash')
         monkeypatch.setattr(config, 'NEWS_EVENTS_OPENROUTER_TIMEOUT', 23)
+        monkeypatch.setattr(config, 'NEWS_EVENTS_OPENROUTER_MAX_TOKENS', 2048)
+        monkeypatch.setattr(config, 'NEWS_EVENTS_OPENROUTER_REASONING_ENABLED', False)
 
         annotations, usage = collector._llm_extract_batch(
             [{'title': '測試標題', 'summary': '測試摘要'}], gazetteer
@@ -353,6 +355,8 @@ class TestLlmProviders:
         response.raise_for_status.assert_called_once()
         _, kwargs = collector._session.post.call_args
         assert kwargs['json']['model'] == 'qwen/qwen3.7-flash'
+        assert kwargs['json']['max_tokens'] == 2048
+        assert kwargs['json']['reasoning'] == {'enabled': False}
         assert kwargs['json']['messages'][0]['role'] == 'system'
         assert kwargs['timeout'] == 23
 
