@@ -721,6 +721,14 @@ class NewsEventsCollector(BaseCollector):
                 json={
                     'model': getattr(config, 'NEWS_EVENTS_OPENROUTER_MODEL', 'qwen/qwen3.7-flash'),
                     'temperature': 0.1,
+                    'max_tokens': max(
+                        1, int(getattr(config, 'NEWS_EVENTS_OPENROUTER_MAX_TOKENS', 4096))
+                    ),
+                    'reasoning': {
+                        'enabled': bool(getattr(
+                            config, 'NEWS_EVENTS_OPENROUTER_REASONING_ENABLED', False
+                        ))
+                    },
                     'messages': [
                         {'role': 'system', 'content': self._build_system_prompt(gaz)},
                         {'role': 'user', 'content': '\n'.join(lines)},
