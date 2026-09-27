@@ -8,10 +8,19 @@ news_events collector 的純函式單元測試（不打網路、不碰 DB）
 """
 
 import base64
+import json
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
+import requests
 
+import config
+import collectors.news_events as news_events
 from collectors.news_events import (
+    NewsAnnotationError,
+    NewsEventsCollector,
     SIMHASH_DUP_THRESHOLD,
     TownshipGazetteer,
     clean_title,
@@ -223,3 +232,182 @@ class TestGazetteerValidate:
         lines = gazetteer.prompt_lines()
         assert '63000050 臺北市 中正區' in lines
         assert len(lines) == 5
+
+
+# ============================================================
+# LLM annotation fail-closed
+# ============================================================
+
+@pytest.fixture
+def annotation_items():
+    return [
+        {'title': '臺北市中正區火警', 'summary': '測試摘要一'},
+        {'title': '高雄市鼓山區事故', 'summary': '測試摘要二'},
+    ]
+
+
+def _annotation(idx=0):
+    return {
+        'idx': idx,
+        'county': '臺北市',
+        'township': '中正區',
+        'category': 'accident',
+        'summary': '火警摘要',
+        'confidence': 0.9,
+        'gis_relevance': 3,
+        'severity': 2,
+        'is_event': True,
+    }
+
+
+def _usage():
+    return {'input': 1, 'output': 1, 'cached': 0}
+
+
+class TestAnnotationFailClosed:
+
+    def test_all_batches_failing_raises_without_defaults(self, monkeypatch, gazetteer, annotation_items):
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 2)
+        collector._llm_extract_batch = Mock(side_effect=RuntimeError('provider unavailable'))
+
+        with pytest.raises(NewsAnnotationError, match='batch failed'):
+            collector._annotate_items(annotation_items, gazetteer)
+
+        assert 'category' not in annotation_items[0]
+
+    def test_partial_batch_failure_aborts_whole_run(self, monkeypatch, gazetteer, annotation_items):
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 1)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SLEEP', 0)
+        collector._llm_extract_batch = Mock(side_effect=[({0: _annotation()}, _usage()), RuntimeError('timeout')])
+
+        with pytest.raises(NewsAnnotationError, match='refusing to write this run'):
+            collector._annotate_items(annotation_items, gazetteer)
+
+        assert collector._llm_extract_batch.call_count == 2
+
+    def test_missing_response_index_raises(self, monkeypatch, gazetteer, annotation_items):
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 2)
+        collector._llm_extract_batch = Mock(return_value=({0: _annotation()}, _usage()))
+
+        with pytest.raises(NewsAnnotationError, match='batch incomplete'):
+            collector._annotate_items(annotation_items, gazetteer)
+
+        assert 'category' not in annotation_items[0]
+
+    def test_dry_run_remains_offline_without_annotation(self, monkeypatch, annotation_items):
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        collector.dry_run = True
+        collector._fetch_all_feeds = Mock(return_value=(annotation_items, 1, 0))
+        collector._dedup = Mock(return_value=(annotation_items, {'dup_url': 0, 'dup_simhash': 0}))
+        collector._load_gazetteer = Mock(return_value=TownshipGazetteer([]))
+        collector._annotate_items = Mock(side_effect=AssertionError('dry-run must not call LLM'))
+        for index, item in enumerate(annotation_items):
+            item.update({
+                'source': 'test',
+                'url': f'https://example.test/{index}',
+                'url_norm': f'https://example.test/{index}',
+                'published_ts': '2026-09-28T00:00:00+08:00',
+                'title_simhash': index,
+            })
+
+        result = collector.collect()
+
+        assert 'data' not in result
+        assert len(result['dry_run_preview']) == 2
+        assert result['dry_run_preview'][0]['category'] == 'other'
+        collector._annotate_items.assert_not_called()
+
+
+class TestLlmProviders:
+
+    @staticmethod
+    def _collector():
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        collector._system_prompt = None
+        collector._llm_client = None
+        collector._session = Mock()
+        return collector
+
+    def test_openrouter_success_uses_existing_json_contract(self, monkeypatch, gazetteer):
+        collector = self._collector()
+        response = Mock()
+        response.json.return_value = {
+            'choices': [{'message': {'content': json.dumps([_annotation()])}}],
+            'usage': {'prompt_tokens': 11, 'completion_tokens': 7},
+        }
+        collector._session.post.return_value = response
+        monkeypatch.setattr(config, 'NEWS_EVENTS_LLM_PROVIDER', 'openrouter')
+        monkeypatch.setattr(config, 'OPENROUTER_API_KEY', 'test-openrouter-key')
+        monkeypatch.setattr(config, 'NEWS_EVENTS_OPENROUTER_MODEL', 'qwen/qwen3.7-flash')
+        monkeypatch.setattr(config, 'NEWS_EVENTS_OPENROUTER_TIMEOUT', 23)
+
+        annotations, usage = collector._llm_extract_batch(
+            [{'title': '測試標題', 'summary': '測試摘要'}], gazetteer
+        )
+
+        assert annotations == {0: _annotation()}
+        assert usage == {'input': 11, 'output': 7, 'cached': 0}
+        response.raise_for_status.assert_called_once()
+        _, kwargs = collector._session.post.call_args
+        assert kwargs['json']['model'] == 'qwen/qwen3.7-flash'
+        assert kwargs['json']['messages'][0]['role'] == 'system'
+        assert kwargs['timeout'] == 23
+
+    def test_openrouter_http_failure_propagates_to_fail_closed_gate(self, monkeypatch, gazetteer):
+        collector = self._collector()
+        response = Mock()
+        response.raise_for_status.side_effect = requests.HTTPError('401')
+        collector._session.post.return_value = response
+        monkeypatch.setattr(config, 'NEWS_EVENTS_LLM_PROVIDER', 'openrouter')
+        monkeypatch.setattr(config, 'OPENROUTER_API_KEY', 'test-openrouter-key')
+
+        with pytest.raises(NewsAnnotationError, match='refusing to write this run') as exc:
+            collector._annotate_items([{'title': '測試', 'summary': ''}], gazetteer)
+
+        assert '401' not in str(exc.value)
+
+    def test_openrouter_malformed_response_is_rejected(self, monkeypatch, gazetteer):
+        collector = self._collector()
+        response = Mock()
+        response.json.return_value = {'choices': [{'message': {'content': 'not-json'}}]}
+        collector._session.post.return_value = response
+        monkeypatch.setattr(config, 'NEWS_EVENTS_LLM_PROVIDER', 'openrouter')
+        monkeypatch.setattr(config, 'OPENROUTER_API_KEY', 'test-openrouter-key')
+
+        with pytest.raises(json.JSONDecodeError):
+            collector._llm_extract_batch([{'title': '測試', 'summary': ''}], gazetteer)
+
+    def test_openrouter_missing_key_is_rejected_before_annotation(self, monkeypatch):
+        collector = self._collector()
+        monkeypatch.setattr(config, 'NEWS_EVENTS_LLM_PROVIDER', 'openrouter')
+        monkeypatch.setattr(config, 'OPENROUTER_API_KEY', '')
+
+        with pytest.raises(NewsAnnotationError, match='OPENROUTER_API_KEY unavailable'):
+            collector._validate_llm_config()
+
+    def test_gemini_path_remains_default_provider(self, monkeypatch, gazetteer):
+        collector = self._collector()
+        response = Mock()
+        response.text = json.dumps([_annotation()])
+        response.usage_metadata = SimpleNamespace(
+            prompt_token_count=13, candidates_token_count=5, cached_content_token_count=2
+        )
+        client = Mock()
+        client.models.generate_content.return_value = response
+        collector._llm_client = client
+        fake_module = ModuleType('google.genai')
+        fake_module.types = SimpleNamespace(GenerateContentConfig=lambda **kwargs: kwargs)
+        monkeypatch.setitem(sys.modules, 'google.genai', fake_module)
+        monkeypatch.setattr(config, 'NEWS_EVENTS_LLM_PROVIDER', 'gemini')
+        monkeypatch.setattr(config, 'GEMINI_MODEL', 'gemini-regression-model')
+
+        annotations, usage = collector._llm_extract_batch(
+            [{'title': '測試標題', 'summary': '測試摘要'}], gazetteer
+        )
+
+        assert annotations == {0: _annotation()}
+        assert usage == {'input': 13, 'output': 5, 'cached': 2}
+        assert client.models.generate_content.call_args.kwargs['model'] == 'gemini-regression-model'

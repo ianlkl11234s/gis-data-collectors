@@ -642,9 +642,14 @@ WASTE_MATCH_MAX_POINTS = int(os.getenv('WASTE_MATCH_MAX_POINTS', '100'))  # OSRM
 WASTE_MATCH_RADIUS_M = int(os.getenv('WASTE_MATCH_RADIUS_M', '50'))
 WASTE_MATCH_MIN_CONFIDENCE = float(os.getenv('WASTE_MATCH_MIN_CONFIDENCE', '0.35'))
 
-# 新聞事件 LLM 地點抽取（Gemini）
+# 新聞事件 LLM 地點抽取（預設 Gemini；OpenRouter 為顯式 opt-in）
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-3.1-flash-lite-preview')
+NEWS_EVENTS_LLM_PROVIDER = os.getenv('NEWS_EVENTS_LLM_PROVIDER', 'gemini').strip().lower()
+NEWS_EVENTS_OPENROUTER_MODEL = os.getenv(
+    'NEWS_EVENTS_OPENROUTER_MODEL', 'qwen/qwen3.7-flash'
+)
+NEWS_EVENTS_OPENROUTER_TIMEOUT = int(os.getenv('NEWS_EVENTS_OPENROUTER_TIMEOUT', '60'))
 
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')
