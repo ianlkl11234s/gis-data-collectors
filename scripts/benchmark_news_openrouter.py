@@ -203,11 +203,25 @@ def evaluate_annotations(rows: list[dict[str, Any]], annotations: list[dict[str,
     duplicates = sorted(idx for idx, count in counts.items() if count > 1)
     invalid_idx = sorted(idx for idx in counts if idx not in expected)
     location_claims = valid_locations = 0
+    county_claims = valid_counties = 0
+    township_claims = valid_townships = 0
+    downgraded_to_county = 0
     field_valid = {field: 0 for field in VALID_FIELDS}
     for item in valid.values():
-        if item.get("county") is not None or item.get("township") is not None:
+        raw_county = gazetteer._norm(item.get("county"))
+        raw_township = gazetteer._norm(item.get("township"))
+        if raw_county or raw_township:
             location_claims += 1
-            if gazetteer.validate(item.get("county"), item.get("township"))["admin_code"]:
+            county_valid = raw_county in gazetteer.county_codes
+            township_valid = bool(raw_township) and (raw_county, raw_township) in gazetteer.township_codes
+            if raw_county:
+                county_claims += 1
+                valid_counties += int(county_valid)
+            if raw_township:
+                township_claims += 1
+                valid_townships += int(township_valid)
+                downgraded_to_county += int(county_valid and not township_valid)
+            if county_valid and (not raw_township or township_valid):
                 valid_locations += 1
         if item.get("category") in CATEGORY_ENUM:
             field_valid["category"] += 1
@@ -221,8 +235,16 @@ def evaluate_annotations(rows: list[dict[str, Any]], annotations: list[dict[str,
         "expected": len(rows), "returned_objects": len(annotations), "unique_valid_idx": len(valid),
         "missing_idx": missing, "duplicate_idx": duplicates, "invalid_idx": invalid_idx,
         "json_complete": not missing and not duplicates and not invalid_idx and len(valid) == len(rows),
-        "gazetteer": {"location_claims": location_claims, "valid_claims": valid_locations,
-                       "validation_rate": valid_locations / location_claims if location_claims else None},
+        "gazetteer": {
+            "location_claims": location_claims,
+            "valid_claims": valid_locations,
+            "validation_rate": valid_locations / location_claims if location_claims else None,
+            "county_claims": county_claims,
+            "valid_counties": valid_counties,
+            "township_claims": township_claims,
+            "valid_townships": valid_townships,
+            "downgraded_to_county": downgraded_to_county,
+        },
         "field_consistency": {field: {"valid": value, "rate": value / len(rows) if rows else None}
                               for field, value in field_valid.items()},
     }

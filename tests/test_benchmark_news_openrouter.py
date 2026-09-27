@@ -48,6 +48,23 @@ def test_partial_response_is_not_json_complete(rows, gazetteer):
     assert "gold_accuracy" not in metrics
 
 
+def test_invalid_township_is_not_counted_as_valid_gazetteer_claim(rows, gazetteer):
+    predicted = [annotation(0, "臺北市", "建成區"), annotation(1, "高雄市", None)]
+
+    metrics = benchmark.evaluate_annotations(rows, predicted, gazetteer)
+
+    assert metrics["gazetteer"] == {
+        "location_claims": 2,
+        "valid_claims": 1,
+        "validation_rate": 0.5,
+        "county_claims": 2,
+        "valid_counties": 2,
+        "township_claims": 1,
+        "valid_townships": 0,
+        "downgraded_to_county": 1,
+    }
+
+
 def test_malformed_provider_response_is_safe_and_has_no_content(monkeypatch, rows, gazetteer):
     response = Mock()
     response.json.return_value = {"choices": [{"message": {"content": "not-json-secret-news"}}]}
