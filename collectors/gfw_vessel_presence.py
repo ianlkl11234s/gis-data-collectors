@@ -16,7 +16,7 @@ import hashlib
 import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Iterable, Iterator
 
 import requests
 
@@ -167,8 +167,21 @@ class GFWVesselPresenceCollector(BaseCollector):
 
     @staticmethod
     def normalize_entries(payload: Any, *, snapshot_date: str, received_at: str, zone: str, dataset: str = GFW_DATASET) -> list[dict]:
-        rows: list[dict] = []
-        for index, source in enumerate(_unwrap_entries(payload)):
+        return list(GFWVesselPresenceCollector.iter_normalized_entries(
+            payload, snapshot_date=snapshot_date, received_at=received_at, zone=zone, dataset=dataset,
+        ))
+
+    @staticmethod
+    def iter_normalized_entries(payload: Any, *, snapshot_date: str, received_at: str, zone: str, dataset: str = GFW_DATASET) -> Iterator[dict]:
+        """Lazy form of normalize_entries for callers that stream rows to disk."""
+        return GFWVesselPresenceCollector.iter_normalized_rows(
+            _unwrap_entries(payload), snapshot_date=snapshot_date, received_at=received_at, zone=zone, dataset=dataset,
+        )
+
+    @staticmethod
+    def iter_normalized_rows(sources: Iterable[dict], *, snapshot_date: str, received_at: str, zone: str, dataset: str = GFW_DATASET) -> Iterator[dict]:
+        """Normalize already-unwrapped source rows (e.g. from a streaming parser)."""
+        for index, source in enumerate(sources):
             vessel_id = _first(source, "vessel_id", "vesselId", "vesselIdRaw", "id", "ship_id")
             if vessel_id is None:
                 continue
@@ -209,8 +222,7 @@ class GFWVesselPresenceCollector(BaseCollector):
             }
             normalized["record_hash"] = _canonical_hash(normalized)
             normalized["source_event_key"] = _canonical_hash({"dataset": dataset, "vessel_id": vessel_id, "observed_at": observed_at, "longitude": longitude, "latitude": latitude})
-            rows.append(normalized)
-        return rows
+            yield normalized
 
     def _fetch_report(self, polygon: dict, start: str, end: str) -> tuple[dict, str | None]:
         if not self._token:

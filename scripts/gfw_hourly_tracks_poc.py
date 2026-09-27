@@ -257,6 +257,40 @@ class GFWReportClient:
         group_by: str | None = "VESSEL_ID",
         filters: tuple[str, ...] = (),
     ) -> tuple[Any, str | None]:
+        return self._fetch(bbox, start, end, dataset=dataset, group_by=group_by, filters=filters)
+
+    def fetch_to_file(
+        self,
+        bbox: tuple[float, float, float, float],
+        start: str,
+        end: str,
+        *,
+        path: Path,
+        dataset: str = GFW_DATASET,
+        group_by: str | None = "VESSEL_ID",
+        filters: tuple[str, ...] = (),
+    ) -> tuple[Path | Any, str | None]:
+        """Like fetch, but stream a 200 body to ``path`` instead of parsing it.
+
+        Returns ``(path, resolved)`` for a streamed body, whose completeness
+        (nextOffset) the caller must check while parsing, or ``(payload,
+        resolved)`` for an already-validated payload from last-report recovery.
+        """
+        return self._fetch(
+            bbox, start, end, dataset=dataset, group_by=group_by, filters=filters, stream_to=path,
+        )
+
+    def _fetch(
+        self,
+        bbox: tuple[float, float, float, float],
+        start: str,
+        end: str,
+        *,
+        dataset: str,
+        group_by: str | None,
+        filters: tuple[str, ...],
+        stream_to: Path | None = None,
+    ) -> tuple[Any, str | None]:
         west, south, east, north = bbox
         params = {
             "format": "JSON",
@@ -279,9 +313,22 @@ class GFWReportClient:
                 json=body,
                 headers=self._headers,
                 timeout=self.timeout,
+                **({"stream": True} if stream_to is not None else {}),
             )
             self.stats["post_requests"] += 1
             self._record_response(response)
+            if stream_to is not None and response.status_code == 200:
+                temporary = stream_to.with_name(f"{stream_to.name}.tmp")
+                try:
+                    with temporary.open("wb") as handle:
+                        for chunk in response.iter_content(chunk_size=1024 * 1024):
+                            handle.write(chunk)
+                    temporary.replace(stream_to)
+                except BaseException:
+                    temporary.unlink(missing_ok=True)
+                    raise
+                resolved = response.headers.get("x-datasets") or response.headers.get("X-Datasets")
+                return stream_to, resolved
             payload = self._json(response)
             if response.status_code == 200:
                 self._validate_complete(payload)

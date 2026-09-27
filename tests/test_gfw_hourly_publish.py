@@ -528,3 +528,160 @@ def test_uncertain_cutover_retains_spool_without_false_ledger_receipt(tmp_path, 
     assert spool["reconciliation_file"] is None
     assert not (spools[0] / "reconcile-ledger.json").exists()
     assert list(spools[0].rglob("manifest.json"))
+
+
+def _fake_python(tmp_path, body):
+    script = tmp_path / "fake-python"
+    script.write_text(
+        "#!/bin/sh\n"
+        'while [ "$#" -gt 0 ]; do [ "$1" = "--result-file" ] && out="$2"; shift; done\n'
+        + body
+    )
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_run_in_subprocess_returns_child_result(tmp_path):
+    from tasks.gfw_hourly_publish import run_in_subprocess
+
+    python = _fake_python(tmp_path, 'printf \'{"run_id": "r1", "latest_complete_date": "2026-09-22"}\' > "$out"\n')
+    assert run_in_subprocess(python=python) == {"run_id": "r1", "latest_complete_date": "2026-09-22"}
+
+
+def test_run_in_subprocess_raises_on_failure_and_flags_signal_kill(tmp_path):
+    from tasks.gfw_hourly_publish import run_in_subprocess
+
+    with pytest.raises(RuntimeError, match="exited with code 3"):
+        run_in_subprocess(python=_fake_python(tmp_path, "exit 3\n"))
+    with pytest.raises(RuntimeError, match="likely OOM"):
+        run_in_subprocess(python=_fake_python(tmp_path, "kill -9 $$\n"))
+
+
+def test_child_main_runs_one_publish_and_writes_result(tmp_path, monkeypatch):
+    import tasks.gfw_hourly_publish as module
+
+    class _Task:
+        def run(self):
+            return {"run_id": "r2", "finished_at": datetime(2026, 9, 27, tzinfo=timezone.utc)}
+
+    monkeypatch.setattr(module, "GFWHourlyPublishTask", _Task)
+    out = tmp_path / "result.json"
+    assert module._child_main(["--result-file", str(out)]) == 0
+    assert json.loads(out.read_text()) == {"run_id": "r2", "finished_at": "2026-09-27 00:00:00+00:00"}
+
+
+# --- streaming AIS report parse (OOM fix) ---------------------------------
+
+_V = "public-global-presence:v3.0"
+
+
+def _row(i, **extra):
+    return {
+        "callsign": f"BX{i}", "date": f"2026-09-16T{i % 24:02d}:00:00Z", "flag": "TWN",
+        "hours": 0.5 + i / 1000, "imo": None, "lat": 25.0 + i / 1e4, "lon": 122.5 + i / 1e4,
+        "mmsi": f"41600{i:04d}", "shipName": f"SHIP {i}", "vesselId": f"v-{i % 7}",
+        "vesselType": "FISHING", **extra,
+    }
+
+
+_STREAM_SHAPES = {
+    "wrapped": {"entries": [{_V: [_row(i) for i in range(40)]}], "nextOffset": None, "total": 40},
+    "wrapped_null_then_rows": {"entries": [{_V: None}, {_V: [_row(i) for i in range(5)]}], "nextOffset": 0},
+    "flat_rows": {"entries": [_row(i) for i in range(12)], "limit": None},
+    "flat_with_bad_rows": {"entries": [_row(1), {"note": "no id"}, _row(2, lat=None), _row(3, lon="x")]},
+}
+
+
+class _StreamingClient:
+    def __init__(self, payload, resolved=_V):
+        self.payload, self.resolved = payload, resolved
+        self.stats = {"post_requests": 0, "recovery_requests": 0, "retries": 0,
+                      "http_statuses": {}, "last_rate_limit_headers": {}}
+
+    def fetch_to_file(self, bbox, start, end, *, path, **kwargs):
+        self.stats["post_requests"] += 1
+        path.write_text(json.dumps(self.payload))
+        return path, self.resolved
+
+
+class _DictClient(_StreamingClient):
+    def fetch(self, bbox, start, end, **kwargs):
+        self.stats["post_requests"] += 1
+        return json.loads(json.dumps(self.payload)), self.resolved
+
+
+
+def _tile_shard(tmp_path, client, name):
+    from tasks.gfw_hourly_publish import _fetch_tile_points
+
+    tile = make_tiles(DEFAULT_BBOX, tile_size_degrees=360.0)[0]
+    work = tmp_path / name
+    work.mkdir()
+    shard = work / f"{tile.tile_id}.points.ndjson"
+    report = work / f".{tile.tile_id}.ais-report.json"
+    counts = _fetch_tile_points(
+        client, tile, "2026-09-16", "2026-09-23", shard=shard, report_path=report,
+        normalize_kwargs={"snapshot_date": "2026-09-22", "received_at": "2026-09-27T00:30:00+00:00",
+                          "zone": tile.tile_id},
+    )
+    assert not report.exists()
+    return counts, shard.read_bytes()
+
+
+@pytest.mark.parametrize("shape", sorted(_STREAM_SHAPES))
+def test_streamed_tile_shard_is_byte_identical_to_in_memory_parse(tmp_path, shape, caplog):
+    payload = _STREAM_SHAPES[shape]
+    with caplog.at_level("WARNING"):
+        streamed = _tile_shard(tmp_path, _StreamingClient(payload), "stream")
+    assert "parsing in memory" not in caplog.text  # really streamed, no fallback
+    in_memory = _tile_shard(tmp_path, _DictClient(payload), "dict")
+    assert streamed == in_memory
+    assert streamed[0][0] > 0
+
+
+def test_unstreamable_report_shape_falls_back_to_full_parse(tmp_path, caplog):
+    payload = {"data": [{_V: [_row(i) for i in range(6)]}]}
+    with caplog.at_level("WARNING"):
+        streamed = _tile_shard(tmp_path, _StreamingClient(payload), "stream")
+    assert streamed == _tile_shard(tmp_path, _DictClient(payload), "dict")
+    assert streamed[0][0] == 6
+    assert "parsing in memory" in caplog.text
+
+
+def test_streamed_report_with_next_offset_fails_closed(tmp_path):
+    payload = {"entries": [{_V: [_row(1)]}], "nextOffset": 100}
+    with pytest.raises(RuntimeError, match="non-zero nextOffset"):
+        _tile_shard(tmp_path, _StreamingClient(payload), "stream")
+
+
+def test_report_client_fetch_to_file_streams_200_body(tmp_path):
+    from scripts.gfw_hourly_tracks_poc import GFWReportClient
+
+    body = json.dumps({"entries": [{_V: [_row(1)]}], "nextOffset": None}).encode()
+
+    class _StreamResponse:
+        status_code = 200
+        headers = {"x-datasets": _V}
+
+        def iter_content(self, chunk_size):
+            return (body[i:i + 7] for i in range(0, len(body), 7))
+
+        def json(self):  # pragma: no cover - must not be called for a streamed 200
+            raise AssertionError("streamed body was parsed in memory")
+
+    class _Session:
+        def __init__(self):
+            self.kwargs = None
+
+        def request(self, method, url, **kwargs):
+            self.kwargs = kwargs
+            return _StreamResponse()
+
+    session = _Session()
+    client = GFWReportClient("secret", session=session)
+    target = tmp_path / ".r00c00.ais-report.json"
+    source, resolved = client.fetch_to_file((122.0, 23.0, 125.0, 26.0), "2026-09-16", "2026-09-23", path=target)
+    assert source == target and resolved == _V
+    assert target.read_bytes() == body
+    assert session.kwargs["stream"] is True
+    assert not target.with_name(target.name + ".tmp").exists()

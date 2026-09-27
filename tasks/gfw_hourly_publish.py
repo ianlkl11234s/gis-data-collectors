@@ -20,7 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 
 import config
 from collectors.gfw_vessel_presence import GFW_DATASET, GFWVesselPresenceCollector
@@ -69,6 +69,128 @@ _BUCKET_GZIP = re.compile(r"^\.?[0-9a-f]\.json\.gz(?:\.tmp)?$")
 _GRID_INPUT = re.compile(r"^\.?\d{8}T\d{2}Z\.ndjson(?:\.tmp)?$")
 _TRACK_INPUT = re.compile(r"^\.?\d{4}-\d{2}-\d{2}-(?:edges|singletons)\.ndjson(?:\.tmp)?$")
 _HOUR_STAMP = re.compile(r"^\d{8}T\d{2}Z$")
+
+
+_VESSEL_ID_KEYS = ("vessel_id", "vesselId", "vesselIdRaw", "id", "ship_id")
+_NEXT_OFFSET_KEYS = ("nextOffset", "next_offset")
+_REPORT_FILE = re.compile(r"^\.r\d{2}c\d{2}\.ais-report\.json(?:\.tmp)?$")
+_CONTAINER_START = ("start_map", "start_array")
+_CONTAINER_END = ("end_map", "end_array")
+
+
+class UnexpectedReportShape(ValueError):
+    """The saved report is not in the shape the streaming parser supports."""
+
+
+class StreamedReport:
+    """Yield vessel rows from a saved GFW report without building the whole tree.
+
+    Supports ``{"entries": [row | {"<dataset>": [row, ...] | null}, ...],
+    "nextOffset": ...}`` with scalar extra root keys, yielding rows in the same
+    order as ``_unwrap_entries``.  Anything else raises UnexpectedReportShape so
+    the caller can fall back to a full parse; it never silently drops rows.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.next_offset: Any = None
+
+    @property
+    def complete(self) -> bool:
+        return self.next_offset in (None, "", 0, "0")
+
+    def _note_offset(self, value: Any) -> None:
+        if value not in (None, "", 0, "0") and self.next_offset in (None, "", 0, "0"):
+            self.next_offset = value
+
+    @staticmethod
+    def _build(event: str, value: Any, events: Iterator) -> Any:
+        import ijson
+
+        if event not in _CONTAINER_START:
+            return value
+        builder = ijson.ObjectBuilder()
+        builder.event(event, value)
+        depth = 1
+        for _prefix, nested_event, nested_value in events:
+            builder.event(nested_event, nested_value)
+            if nested_event in _CONTAINER_START:
+                depth += 1
+            elif nested_event in _CONTAINER_END:
+                depth -= 1
+                if depth == 0:
+                    return builder.value
+        raise UnexpectedReportShape("report ended inside a value")
+
+    def _emit(self, row: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        for key in _NEXT_OFFSET_KEYS:
+            if key in row:
+                self._note_offset(row[key])
+        if any(key in row for key in _VESSEL_ID_KEYS):
+            yield row
+        elif any(isinstance(value, (dict, list)) for value in row.values()):
+            raise UnexpectedReportShape("id-less entry with nested values")
+
+    def _rows(self, events: Iterator) -> Iterator[dict[str, Any]]:
+        for _prefix, event, value in events:
+            if event == "end_array":
+                return
+            if event == "start_map":
+                yield from self._emit(self._build(event, value, events))
+            elif event == "start_array":
+                raise UnexpectedReportShape("nested array inside a dataset row list")
+        raise UnexpectedReportShape("report ended inside a row list")
+
+    def _entries(self, events: Iterator) -> Iterator[dict[str, Any]]:
+        for _prefix, event, _value in events:
+            if event == "end_array":
+                return
+            if event != "start_map":
+                raise UnexpectedReportShape(f"unexpected entries item: {event}")
+            _prefix, event, key = next(events)
+            if event == "end_map":
+                continue
+            _prefix, value_event, value = next(events)
+            if (
+                value_event in ("start_array", "null")
+                and isinstance(key, str)
+                and key.startswith("public-global-presence:")
+            ):
+                if value_event == "start_array":
+                    yield from self._rows(events)
+                if next(events)[1] != "end_map":
+                    raise UnexpectedReportShape("dataset wrapper has more than one key")
+                continue
+            row = {key: self._build(value_event, value, events)}
+            for _prefix, event, key in events:
+                if event == "end_map":
+                    break
+                _prefix, value_event, value = next(events)
+                row[key] = self._build(value_event, value, events)
+            yield from self._emit(row)
+        raise UnexpectedReportShape("report ended inside entries")
+
+    def iter_rows(self) -> Iterator[dict[str, Any]]:
+        import ijson
+
+        with self.path.open("rb") as handle:
+            events = iter(ijson.parse(handle, use_float=True))
+            if next(events)[1] != "start_map":
+                raise UnexpectedReportShape("report root is not an object")
+            saw_entries = False
+            for _prefix, event, key in events:
+                if event == "end_map":
+                    break
+                _prefix, value_event, value = next(events)
+                if key == "entries" and value_event == "start_array":
+                    saw_entries = True
+                    yield from self._entries(events)
+                elif key in _NEXT_OFFSET_KEYS:
+                    self._note_offset(self._build(value_event, value, events))
+                elif value_event in _CONTAINER_START:
+                    raise UnexpectedReportShape(f"unsupported container at root key {key!r}")
+            if not saw_entries:
+                raise UnexpectedReportShape("report has no entries array")
 
 
 def _canonical(value: Any) -> bytes:
@@ -257,6 +379,64 @@ def _validate_fetch_completeness(
     }
 
 
+def _accepted_points(rows: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    return (
+        row for row in rows
+        if row.get("presence_quality") == "accepted"
+        and row.get("longitude") is not None
+        and row.get("latitude") is not None
+    )
+
+
+def _fetch_tile_points(
+    client: Any,
+    tile: Tile,
+    start_text: str,
+    end_text: str,
+    *,
+    shard: Path,
+    report_path: Path,
+    normalize_kwargs: dict[str, Any],
+) -> tuple[int, int, str | None]:
+    """Fetch one AIS tile and write its accepted points shard.
+
+    A 200 body is streamed to disk and parsed row by row: parsing a dense tile
+    in memory held body + text + object tree (several GB) and OOM-killed the
+    container.  The raw report is deleted before returning either way.
+    """
+    if not hasattr(client, "fetch_to_file"):
+        source, resolved = client.fetch(tile.bbox, start_text, end_text)
+    else:
+        source, resolved = client.fetch_to_file(tile.bbox, start_text, end_text, path=report_path)
+    dataset = resolved or GFW_DATASET
+    try:
+        if isinstance(source, Path):
+            report = StreamedReport(source)
+            try:
+                rows = GFWVesselPresenceCollector.iter_normalized_rows(
+                    report.iter_rows(), dataset=dataset, **normalize_kwargs,
+                )
+                row_count, invalid_count = _write_points(shard, _accepted_points(rows))
+                if not report.complete:
+                    raise RuntimeError(f"GFW tile {tile.tile_id} returned a non-zero nextOffset")
+                return row_count, invalid_count, resolved
+            except UnexpectedReportShape as exc:
+                logger.warning(
+                    "GFW tile %s report shape not streamable (%s); parsing in memory",
+                    tile.tile_id, exc,
+                )
+                source = json.loads(source.read_bytes())
+        if not _report_next_offset_complete(source):
+            raise RuntimeError(f"GFW tile {tile.tile_id} returned a non-zero nextOffset")
+        rows = GFWVesselPresenceCollector.iter_normalized_entries(
+            source, dataset=dataset, **normalize_kwargs,
+        )
+        row_count, invalid_count = _write_points(shard, _accepted_points(rows))
+        return row_count, invalid_count, resolved
+    finally:
+        report_path.unlink(missing_ok=True)
+
+
 def fetch_shared_normalized_shards(
     *,
     client: GFWReportClient,
@@ -277,24 +457,17 @@ def fetch_shared_normalized_shards(
 
     for tile in tiles:
         before = _request_counter_snapshot(client.stats)
-        payload, resolved = client.fetch(tile.bbox, start_text, end_text)
-        if not _report_next_offset_complete(payload):
-            raise RuntimeError(f"GFW tile {tile.tile_id} returned a non-zero nextOffset")
-        normalized = GFWVesselPresenceCollector.normalize_entries(
-            payload,
-            snapshot_date=latest.isoformat(),
-            received_at=received_at,
-            zone=tile.tile_id,
-            dataset=resolved or GFW_DATASET,
-        )
-        accepted = (
-            row for row in normalized
-            if row.get("presence_quality") == "accepted"
-            and row.get("longitude") is not None
-            and row.get("latitude") is not None
-        )
         shard = work_dir / f"{tile.tile_id}.points.ndjson"
-        row_count, invalid_count = _write_points(shard, accepted)
+        row_count, invalid_count, resolved = _fetch_tile_points(
+            client, tile, start_text, end_text,
+            shard=shard,
+            report_path=work_dir / f".{tile.tile_id}.ais-report.json",
+            normalize_kwargs={
+                "snapshot_date": latest.isoformat(),
+                "received_at": received_at,
+                "zone": tile.tile_id,
+            },
+        )
         shard_paths.append(shard)
         total_rows += row_count
         invalid_rows += invalid_count
@@ -310,8 +483,6 @@ def fetch_shared_normalized_shards(
             "next_offset_complete": True,
             "request_counts": _request_counter_delta(before, client.stats),
         })
-        # The raw payload is deliberately neither serialized nor retained.
-        del payload, normalized
 
     state = {
         "schema_version": 1,
@@ -1119,7 +1290,7 @@ def _validated_failed_spool_paths(run_root: Path) -> tuple[list[Path], list[Path
             if parts == ("spool.json",):
                 allowed = True
             elif parts[:2] == ("work", "ais") and len(parts) == 3:
-                allowed = bool(_TILE_FILE.fullmatch(parts[2])) or parts[2] in {
+                allowed = bool(_TILE_FILE.fullmatch(parts[2]) or _REPORT_FILE.fullmatch(parts[2])) or parts[2] in {
                     "shared-fetch.json", ".shared-fetch.json.tmp",
                     "hourly-grid.sqlite3", "hourly-grid.sqlite3-journal",
                     "finalize.sqlite3", "finalize.sqlite3-journal",
@@ -1455,3 +1626,54 @@ class GFWHourlyPublishTask:
             else:
                 logger.error("GFW hourly publish failed; spool retained at %s", run_root)
             raise
+
+
+def run_in_subprocess(*, python: str | None = None) -> dict[str, Any]:
+    """Run one publish in a child process so its memory peak cannot OOM the collectors.
+
+    Parsing a dense tile's report holds several GB at once; in-process that
+    ratcheted the long-lived collector process upward each day until the host
+    OOM-killed it.  The child exits after one run, returning memory to the OS,
+    and marks itself the preferred OOM victim.
+    """
+    import subprocess
+    import sys
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="gfw-hourly-") as tmp:
+        result_path = Path(tmp) / "result.json"
+        completed = subprocess.run(
+            [python or sys.executable, "-c",
+             "import sys; from tasks.gfw_hourly_publish import _child_main; "
+             "sys.exit(_child_main(sys.argv[1:]))",
+             "--result-file", str(result_path)],
+            cwd=Path(__file__).resolve().parents[1],
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"GFW hourly publish child exited with code {completed.returncode}"
+                + (" (killed by signal; likely OOM)" if completed.returncode < 0 else "")
+            )
+        return json.loads(result_path.read_text(encoding="utf-8"))
+
+
+def _child_main(argv: list[str]) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run one GFW hourly publish (child process).")
+    parser.add_argument("--result-file", required=True, type=Path)
+    args = parser.parse_args(argv)
+    try:
+        # Raising our own score needs no privilege; the host then kills us, not main.py.
+        Path("/proc/self/oom_score_adj").write_text("1000")
+    except OSError:
+        pass
+    logging.basicConfig(
+        level=getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")).upper(), logging.INFO),
+        format="%(asctime)s [gfw-child] %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    result = GFWHourlyPublishTask().run()
+    _atomic_json(args.result_file, json.loads(json.dumps(result, default=str)))
+    return 0

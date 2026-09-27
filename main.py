@@ -37,6 +37,7 @@ from tasks import (
     GFWHourlyPublishTask,
     MiniTaipeiPublishTask,
 )
+from tasks.gfw_hourly_publish import run_in_subprocess as run_gfw_hourly_publish_in_subprocess
 from utils.notify import notify_archive_complete, notify_trails_export
 
 
@@ -385,7 +386,8 @@ def run_gfw_hourly_publish_task():
         sched = get_scheduler()
         schedule.every().day.at(publish_time).do(
             sched.submit,
-            _as_task("gfw_hourly_publish", task.run, timeout=7200),
+            # Child process: the fetch peak (GBs) must not OOM-kill every collector.
+            _as_task("gfw_hourly_publish", run_gfw_hourly_publish_in_subprocess, timeout=7200),
         )
         print(
             f"\n✓ GFW hourly unified publish 已設定 "
