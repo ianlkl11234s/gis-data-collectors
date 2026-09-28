@@ -19,18 +19,135 @@ import requests
 import config
 import collectors.news_events as news_events
 from collectors.news_events import (
+    LOCATION_EVIDENCE_METHOD_VERSION,
+    LOCATION_PRECISIONS,
+    LOCATION_ROLES,
+    LOCATION_SCOPES,
+    LOCATION_STATUSES,
     NewsAnnotationError,
     NewsEventsCollector,
     SIMHASH_DUP_THRESHOLD,
     TownshipGazetteer,
+    article_relation_candidates_json,
+    build_article_relation_candidates,
+    build_location_evidence,
     clean_title,
     decode_google_news_url,
     hamming_distance,
+    location_evidence_json,
     normalize_url,
     simhash64,
     to_signed_64,
     to_unsigned_64,
 )
+
+
+# ============================================================
+# Location evidence POC（純 contract；不接 DB）
+# ============================================================
+
+class TestLocationEvidencePoc:
+
+    def test_explicit_lucao_overrides_conflicting_yunlin_hint(self):
+        evidence = build_location_evidence({
+            'title': '鹿草鄉農路事故造成交通受阻',
+            'summary': '雲林縣鄰近民眾協助通報。',
+            'county_hint': '雲林縣',
+        })
+
+        assert evidence.location_scope == 'taiwan_local'
+        assert evidence.location_status == 'accepted'
+        assert evidence.resolved_county == '嘉義縣'
+        assert evidence.county_hint == '雲林縣'
+        assert evidence.evidence_text == '鹿草鄉'
+        assert evidence.evidence_field == 'title'
+        assert evidence.location_precision == 'township'
+        assert evidence.location_role == 'event_site'
+
+    def test_national_news_is_not_forced_to_feed_county(self):
+        evidence = build_location_evidence({
+            'title': '立法院三讀通過全國交通安全修法',
+            'summary': '',
+            'county_hint': '高雄市',
+        })
+
+        assert evidence.location_scope == 'taiwan_national'
+        assert evidence.location_status == 'accepted'
+        assert evidence.location_precision == 'none'
+        assert evidence.resolved_county is None
+        assert evidence.evidence_text == '全國'
+
+    def test_multiple_explicit_counties_are_retained_as_multi_scope(self):
+        evidence = build_location_evidence({
+            'title': '臺北市與高雄市同步舉行防災演練', 'summary': '',
+        })
+
+        assert evidence.location_scope == 'taiwan_multi'
+        assert evidence.location_status == 'accepted'
+        assert evidence.location_precision == 'county'
+        assert evidence.evidence_text == '臺北市、高雄市'
+        assert evidence.resolved_county is None
+
+    def test_foreign_news_is_an_accepted_country_event_site(self):
+        evidence = build_location_evidence({'title': '日本北海道發生強震', 'summary': ''})
+
+        assert evidence.location_scope == 'foreign'
+        assert evidence.location_status == 'accepted'
+        assert evidence.location_precision == 'country'
+        assert evidence.location_role == 'event_site'
+
+    def test_legislative_yuan_protest_is_not_inferred_as_national(self):
+        evidence = build_location_evidence({'title': '立法院外抗議要求政府回應', 'summary': ''})
+
+        assert evidence.location_scope == 'unknown'
+        assert evidence.location_status == 'unresolved'
+        assert evidence.location_precision == 'none'
+
+    def test_missing_location_is_unknown_and_hint_stays_unresolved(self):
+        evidence = build_location_evidence({
+            'title': '市場價格波動引發討論', 'summary': '', 'county_hint': '雲林縣',
+        })
+
+        assert evidence.location_scope == 'unknown'
+        assert evidence.location_status == 'unresolved'
+        assert evidence.location_precision == 'none'
+        assert evidence.evidence_field == 'county_hint'
+        assert evidence.resolved_county is None
+
+    def test_contract_has_required_provenance_and_json_is_pure(self):
+        article = {'title': '鹿草鄉公園旁事故', 'summary': '', 'county_hint': '雲林縣'}
+        before = dict(article)
+        evidence = build_location_evidence(article)
+        payload = json.loads(location_evidence_json(article))
+
+        assert article == before
+        assert evidence.method_version == LOCATION_EVIDENCE_METHOD_VERSION
+        assert payload == evidence.to_dict()
+        assert payload['location_scope'] in LOCATION_SCOPES
+        assert payload['location_status'] in LOCATION_STATUSES
+        assert payload['location_precision'] in LOCATION_PRECISIONS
+        assert payload['location_role'] in LOCATION_ROLES
+        for key in ('evidence_text', 'evidence_field', 'location_role', 'resolver', 'method_version'):
+            assert payload[key]
+
+
+class TestArticleRelationCandidates:
+
+    def test_simhash_near_duplicate_is_retained_as_candidate(self):
+        articles = [
+            {'article_id': 'cna-1', 'title': '高雄鼓山民宅火警 消防出動30人搶救'},
+            {'article_id': 'ltn-2', 'title': '高雄鼓山民宅火警　消防出動30人搶救 - 自由時報'},
+            {'article_id': 'other-3', 'title': '立法院三讀通過交通安全修法'},
+        ]
+
+        candidates = build_article_relation_candidates(articles)
+        assert len(candidates) == 1
+        candidate = candidates[0]
+        assert candidate.left_article_key == 'cna-1'
+        assert candidate.right_article_key == 'ltn-2'
+        assert candidate.relation_type == 'same_story_candidate'
+        assert candidate.hamming_distance <= SIMHASH_DUP_THRESHOLD
+        assert json.loads(article_relation_candidates_json(articles)) == [candidate.to_dict()]
 
 
 # ============================================================
