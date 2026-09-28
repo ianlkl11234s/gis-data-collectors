@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
 import config
-from collectors.gfw_vessel_presence import GFW_DATASET, GFWVesselPresenceCollector
+from collectors.gfw_vessel_presence import GFW_DATASET, GFWVesselPresenceCollector, _next_offset
 from scripts.gfw_hourly_grid_poc import (
     _finalize_disk_backed as finalize_grid,
     _write_points,
@@ -179,19 +179,34 @@ class StreamedReport:
             if next(events)[1] != "start_map":
                 raise UnexpectedReportShape("report root is not an object")
             saw_entries = False
+            entry_rows = 0
+            other_containers: list[str] = []
             for _prefix, event, key in events:
                 if event == "end_map":
                     break
                 _prefix, value_event, value = next(events)
                 if key == "entries" and value_event == "start_array":
                     saw_entries = True
-                    yield from self._entries(events)
+                    for row in self._entries(events):
+                        entry_rows += 1
+                        yield row
                 elif key in _NEXT_OFFSET_KEYS:
                     self._note_offset(self._build(value_event, value, events))
                 elif value_event in _CONTAINER_START:
-                    raise UnexpectedReportShape(f"unsupported container at root key {key!r}")
+                    # Live reports carry e.g. "metadata": {} beside entries.
+                    # _unwrap_entries ignores such keys whenever entries has
+                    # rows; keep them small-and-skipped, and remember the
+                    # non-empty ones in case entries turns out empty.
+                    container = self._build(value_event, value, events)
+                    self._note_offset(_next_offset(container))
+                    if container:
+                        other_containers.append(key)
             if not saw_entries:
                 raise UnexpectedReportShape("report has no entries array")
+            if entry_rows == 0 and other_containers:
+                raise UnexpectedReportShape(
+                    f"entries is empty but root has containers {other_containers!r}"
+                )
 
 
 def _canonical(value: Any) -> bytes:

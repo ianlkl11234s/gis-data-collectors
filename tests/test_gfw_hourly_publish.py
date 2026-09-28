@@ -585,6 +585,14 @@ def _row(i, **extra):
 
 
 _STREAM_SHAPES = {
+    # Shape of a live report captured 2026-09-28 (root metadata before entries).
+    "live_v4_metadata_first": {
+        "total": 1, "limit": None, "offset": None, "nextOffset": None, "metadata": {},
+        "entries": [{"public-global-presence:v4.0": [_row(i) for i in range(30)]}],
+    },
+    "metadata_after_entries": {
+        "entries": [{_V: [_row(i) for i in range(8)]}], "metadata": {"source": "gfw", "tags": ["a"]},
+    },
     "wrapped": {"entries": [{_V: [_row(i) for i in range(40)]}], "nextOffset": None, "total": 40},
     "wrapped_null_then_rows": {"entries": [{_V: None}, {_V: [_row(i) for i in range(5)]}], "nextOffset": 0},
     "flat_rows": {"entries": [_row(i) for i in range(12)], "limit": None},
@@ -592,23 +600,30 @@ _STREAM_SHAPES = {
 }
 
 
-class _StreamingClient:
+class _PayloadClient:
     def __init__(self, payload, resolved=_V):
         self.payload, self.resolved = payload, resolved
         self.stats = {"post_requests": 0, "recovery_requests": 0, "retries": 0,
                       "http_statuses": {}, "last_rate_limit_headers": {}}
 
+
+class _StreamingClient(_PayloadClient):
     def fetch_to_file(self, bbox, start, end, *, path, **kwargs):
         self.stats["post_requests"] += 1
         path.write_text(json.dumps(self.payload))
         return path, self.resolved
 
 
-class _DictClient(_StreamingClient):
+class _DictClient(_PayloadClient):
+    # No fetch_to_file: must exercise the in-memory path.
     def fetch(self, bbox, start, end, **kwargs):
         self.stats["post_requests"] += 1
         return json.loads(json.dumps(self.payload)), self.resolved
 
+
+
+def test_dict_client_really_takes_the_in_memory_path():
+    assert not hasattr(_DictClient({}), "fetch_to_file")
 
 
 def _tile_shard(tmp_path, client, name):
@@ -646,6 +661,22 @@ def test_unstreamable_report_shape_falls_back_to_full_parse(tmp_path, caplog):
     assert streamed == _tile_shard(tmp_path, _DictClient(payload), "dict")
     assert streamed[0][0] == 6
     assert "parsing in memory" in caplog.text
+
+
+def test_empty_entries_with_other_root_container_falls_back(tmp_path, caplog):
+    payload = {"metadata": {}, "entries": [], "data": [{_V: [_row(i) for i in range(4)]}]}
+    with caplog.at_level("WARNING"):
+        streamed = _tile_shard(tmp_path, _StreamingClient(payload), "stream")
+    assert streamed == _tile_shard(tmp_path, _DictClient(payload), "dict")
+    assert streamed[0][0] == 4
+    assert "parsing in memory" in caplog.text
+
+
+def test_next_offset_nested_in_root_metadata_fails_closed(tmp_path):
+    payload = {"metadata": {"nextOffset": 50}, "entries": [{_V: [_row(1)]}]}
+    # (The in-memory path gets the same guarantee from GFWReportClient.fetch.)
+    with pytest.raises(RuntimeError, match="non-zero nextOffset"):
+        _tile_shard(tmp_path, _StreamingClient(payload), "stream")
 
 
 def test_streamed_report_with_next_offset_fails_closed(tmp_path):
