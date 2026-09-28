@@ -149,6 +149,23 @@ class TestArticleRelationCandidates:
         assert candidate.hamming_distance <= SIMHASH_DUP_THRESHOLD
         assert json.loads(article_relation_candidates_json(articles)) == [candidate.to_dict()]
 
+    def test_same_stable_article_identity_is_not_a_self_relation(self):
+        articles = [
+            {'url': 'https://example.test/repeated', 'title': '鹿草鄉農路事故造成交通受阻'},
+            {'url': 'https://example.test/repeated', 'title': '鹿草鄉農路事故造成交通受阻'},
+            {'url': 'https://example.test/other-source', 'title': '鹿草鄉農路事故造成交通受阻'},
+        ]
+
+        candidates = build_article_relation_candidates(articles)
+
+        assert candidates
+        assert all(candidate.left_article_key != candidate.right_article_key for candidate in candidates)
+        assert any(
+            {candidate.left_article_key, candidate.right_article_key}
+            == {'https://example.test/repeated', 'https://example.test/other-source'}
+            for candidate in candidates
+        )
+
 
 # ============================================================
 # URL 正規化

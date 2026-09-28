@@ -411,13 +411,16 @@ def build_article_relation_candidates(
         else simhash64(clean_title(str(article.get('title') or '')))
         for article in articles
     ]
+    article_keys = [_article_relation_key(article, index) for index, article in enumerate(articles)]
     for left in range(len(articles)):
         for right in range(left + 1, len(articles)):
+            # 相同穩定身份表示輸入集重複同一篇文章，不是可供審查的文章間關聯。
+            if article_keys[left] == article_keys[right]:
+                continue
             distance = hamming_distance(hashes[left], hashes[right])
             if distance <= threshold:
                 candidates.append(ArticleRelationCandidate(
-                    _article_relation_key(articles[left], left),
-                    _article_relation_key(articles[right], right),
+                    article_keys[left], article_keys[right],
                     'same_story_candidate', distance,
                 ))
     return candidates
