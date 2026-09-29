@@ -1649,8 +1649,9 @@ def run_in_subprocess(*, python: str | None = None) -> dict[str, Any]:
 
     Parsing a dense tile's report holds several GB at once; in-process that
     ratcheted the long-lived collector process upward each day until the host
-    OOM-killed it.  The child exits after one run, returning memory to the OS,
-    and marks itself the preferred OOM victim.
+    OOM-killed it.  The child exits after one run, returning memory to the OS.
+    (It cannot be made the preferred OOM victim: the platform already sets
+    oom_score_adj=1000 on every process in the container, PID 1 included.)
     """
     import subprocess
     import sys
@@ -1680,11 +1681,6 @@ def _child_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Run one GFW hourly publish (child process).")
     parser.add_argument("--result-file", required=True, type=Path)
     args = parser.parse_args(argv)
-    try:
-        # Raising our own score needs no privilege; the host then kills us, not main.py.
-        Path("/proc/self/oom_score_adj").write_text("1000")
-    except OSError:
-        pass
     logging.basicConfig(
         level=getattr(logging, str(getattr(config, "LOG_LEVEL", "INFO")).upper(), logging.INFO),
         format="%(asctime)s [gfw-child] %(levelname)s %(name)s: %(message)s",
