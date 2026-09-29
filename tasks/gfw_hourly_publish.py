@@ -59,16 +59,23 @@ _UTC_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SPOOL_RUN = re.compile(
     r"^\d{4}-\d{2}-\d{2}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
-# Leading dot + .tmp: a shard left half-written by a crash must not block pruning.
-_TILE_FILE = re.compile(r"^\.?r\d{2}c\d{2}\.(?:points|sar-unmatched)\.ndjson(?:\.tmp)?$")
-_HOUR_FILE = re.compile(r"^\.?\d{8}T\d{2}Z\.geojson(?:\.tmp)?$")
-_DAY_FILE = re.compile(r"^\.?\d{4}-\d{2}-\d{2}\.geojson(?:\.tmp)?$")
+# Final name, or leading dot + .tmp together: a shard left half-written by a crash must
+# not block pruning, but half-matching lookalikes (.X without .tmp, X.tmp) stay unknown.
+_TILE_FILE = re.compile(
+    r"^(?:r\d{2}c\d{2}\.(?:points|sar-unmatched)\.ndjson"
+    r"|\.r\d{2}c\d{2}\.(?:points|sar-unmatched)\.ndjson\.tmp)$"
+)
+_HOUR_FILE = re.compile(r"^(?:\d{8}T\d{2}Z\.geojson|\.\d{8}T\d{2}Z\.geojson\.tmp)$")
+_DAY_FILE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}\.geojson|\.\d{4}-\d{2}-\d{2}\.geojson\.tmp)$")
 _HOUR_PM = re.compile(r"^\d{8}T\d{2}Z\.pmtiles$")
 _DAY_PM = re.compile(r"^\d{4}-\d{2}-\d{2}\.pmtiles$")
-_FRAME_GZIP = re.compile(r"^\.?\d{8}T\d{2}Z\.geojson\.gz(?:\.tmp)?$")
-_BUCKET_GZIP = re.compile(r"^\.?[0-9a-f]\.json\.gz(?:\.tmp)?$")
-_GRID_INPUT = re.compile(r"^\.?\d{8}T\d{2}Z\.ndjson(?:\.tmp)?$")
-_TRACK_INPUT = re.compile(r"^\.?\d{4}-\d{2}-\d{2}-(?:edges|singletons)\.ndjson(?:\.tmp)?$")
+_FRAME_GZIP = re.compile(r"^(?:\d{8}T\d{2}Z\.geojson\.gz|\.\d{8}T\d{2}Z\.geojson\.gz\.tmp)$")
+_BUCKET_GZIP = re.compile(r"^(?:[0-9a-f]\.json\.gz|\.[0-9a-f]\.json\.gz\.tmp)$")
+_GRID_INPUT = re.compile(r"^(?:\d{8}T\d{2}Z\.ndjson|\.\d{8}T\d{2}Z\.ndjson\.tmp)$")
+_TRACK_INPUT = re.compile(
+    r"^(?:\d{4}-\d{2}-\d{2}-(?:edges|singletons)\.ndjson"
+    r"|\.\d{4}-\d{2}-\d{2}-(?:edges|singletons)\.ndjson\.tmp)$"
+)
 _HOUR_STAMP = re.compile(r"^\d{8}T\d{2}Z$")
 
 
