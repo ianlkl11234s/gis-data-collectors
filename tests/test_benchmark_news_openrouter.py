@@ -150,3 +150,14 @@ def test_without_gold_report_never_claims_accuracy(rows, gazetteer):
 
     assert "gold_accuracy" not in metrics
     assert "Gold exact accuracy" not in benchmark._markdown(report)
+
+
+def test_concurrent_run_reports_observed_provider_cost(monkeypatch, rows, gazetteer):
+    def fake_request(model, *args, **kwargs):
+        return {"model": model, "annotations": [], "latency_seconds": 0, "error": None,
+                "tokens": {"input": 1, "output": 1}, "provider_cost_usd": 0.25}
+    monkeypatch.setattr(benchmark, "_request_model", fake_request)
+
+    report = benchmark.run_benchmark(rows, ["a", "b"], gazetteer, "test-key", 10, -1, 2)
+
+    assert report["provider_cost_observed_usd"] == 0.5

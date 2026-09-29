@@ -321,6 +321,9 @@ def run_benchmark(rows: list[dict[str, Any]], models: list[str], gazetteer: Town
                 ),
                 pending,
             ):
+                cost = response.get("provider_cost_usd")
+                if isinstance(cost, (int, float)):
+                    spent += float(cost)
                 report["models"].append(evaluate(response))
     report["provider_cost_observed_usd"] = round(spent, 8)
     report["max_cost_usd"] = max_cost_usd
