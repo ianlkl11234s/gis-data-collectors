@@ -161,3 +161,14 @@ def test_concurrent_run_reports_observed_provider_cost(monkeypatch, rows, gazett
     report = benchmark.run_benchmark(rows, ["a", "b"], gazetteer, "test-key", 10, -1, 2)
 
     assert report["provider_cost_observed_usd"] == 0.5
+
+
+def test_extra_idxless_object_is_not_json_complete(rows, gazetteer):
+    predicted = [annotation(0), annotation(1), {"note": "extra object without idx"}]
+
+    metrics = benchmark.evaluate_annotations(rows, predicted, gazetteer)
+
+    assert metrics["missing_idx"] == [] and metrics["duplicate_idx"] == []
+    assert metrics["returned_objects"] == 3
+    assert metrics["json_complete"] is False
+    assert benchmark.evaluate_annotations(rows, predicted[:2], gazetteer)["json_complete"] is True
