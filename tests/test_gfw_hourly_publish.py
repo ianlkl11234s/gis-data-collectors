@@ -748,3 +748,50 @@ def test_failed_spool_with_half_written_shards_is_still_pruned(tmp_path):
 
     assert result == {"pruned": [spool.name], "warnings": []}
     assert not spool.exists()
+
+
+def test_raw_ais_report_is_scrubbed_even_before_retention_expires(tmp_path):
+    import os
+
+    now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+    root = tmp_path / "spool"
+
+    def make(name, payload):
+        spool = root / name
+        (spool / "work" / "ais").mkdir(parents=True)
+        (spool / "spool.json").write_text(json.dumps(payload))
+        raw = spool / "work" / "ais" / ".r01c02.ais-report.json"
+        raw.write_text("{" * 10)
+        shard = spool / "work" / "ais" / "r01c02.points.ndjson"
+        shard.write_text("{}\n")
+        return raw, shard
+
+    failed_raw, failed_shard = make(
+        "2026-08-30-11111111-1111-1111-1111-111111111111",
+        {"status": "failed", "failed_at": "2026-08-30T11:00:00+00:00"},
+    )
+    stale_raw, _ = make(
+        "2026-08-30-22222222-2222-2222-2222-222222222222",
+        {"status": "running", "started_at": "2026-08-30T09:00:00+00:00"},
+    )
+    live_raw, _ = make(
+        "2026-08-30-33333333-3333-3333-3333-333333333333",
+        {"status": "running", "started_at": "2026-08-30T11:55:00+00:00"},
+    )
+    pending_raw, _ = make(
+        "2026-08-30-44444444-4444-4444-4444-444444444444",
+        {"status": "cutover_succeeded_ledger_pending", "updated_at": "2026-08-30T10:00:00+00:00"},
+    )
+    stale_ts = (now - timedelta(hours=2)).timestamp()
+    live_ts = (now - timedelta(minutes=1)).timestamp()
+    os.utime(stale_raw, (stale_ts, stale_ts))
+    os.utime(live_raw, (live_ts, live_ts))
+
+    result = prune_expired_failed_spools(root, now=now, retention_days=7)
+
+    assert result == {"pruned": [], "warnings": []}
+    assert not failed_raw.exists()
+    assert failed_shard.exists()  # only raw reports are scrubbed before retention expiry
+    assert not stale_raw.exists()
+    assert live_raw.exists()  # possibly a live run
+    assert pending_raw.exists()  # cutover_* spools are never touched
