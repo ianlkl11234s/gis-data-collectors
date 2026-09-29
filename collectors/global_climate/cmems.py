@@ -111,6 +111,11 @@ class CmemsCollector(BaseCollector):
             "-o", str(out_dir),
             "--output-filename", out_file.name,
             "--force-download",
+            # 0 = 不用 dask：只在寫檔時讀裁切後的範圍。預設（-1）會把整份請求
+            # 一次解壓，currents 峰值 2.0–2.2G 曾讓主機 OOM；實測 0 → 495MB、
+            # 輸出與預設逐格相同（2026-09-29）。別改成 1：chunk 套在全球多年
+            # 資料集上才裁切，任務圖爆炸，13 秒就衝上 1.7G。
+            "--chunk-size-limit", "0",
         ]
         for v in ds_cfg["variables"]:
             cmd += ["--variable", v]
