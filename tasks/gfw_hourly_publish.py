@@ -360,7 +360,7 @@ def _report_next_offset_complete(payload: Any) -> bool:
     """Duplicate the source completion guard in the persisted fetch ledger."""
     if not isinstance(payload, dict):
         raise ValueError("GFW report payload must be an object")
-    return payload.get("nextOffset") in (None, 0, "0")
+    return _next_offset(payload) is None
 
 
 def _validate_fetch_completeness(
