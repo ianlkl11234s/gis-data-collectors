@@ -148,6 +148,10 @@ def _request_model(model: str, rows: list[dict[str, Any]], gazetteer: TownshipGa
             item["county_hint"] = row["county_hint"]
         prompt_rows.append(json.dumps(item, ensure_ascii=False))
     started = time.monotonic()
+    # Usage is captured as soon as a response arrives so a later parse failure of a billed
+    # response still reports its cost (otherwise the budget guard would treat it as free).
+    tokens: dict[str, Any] = {"input": None, "output": None}
+    cost: Any = None
     try:
         request_body: dict[str, Any] = {
             "model": model,
@@ -172,6 +176,11 @@ def _request_model(model: str, rows: list[dict[str, Any]], gazetteer: TownshipGa
         )
         response.raise_for_status()
         payload = response.json()
+        usage = payload.get("usage") if isinstance(payload, dict) else {}
+        usage = usage if isinstance(usage, dict) else {}
+        tokens = {"input": usage.get("prompt_tokens", usage.get("input_tokens")),
+                  "output": usage.get("completion_tokens", usage.get("output_tokens"))}
+        cost = usage.get("cost")
         choices = payload.get("choices") if isinstance(payload, dict) else None
         choice = choices[0] if isinstance(choices, list) and choices else {}
         message = choice.get("message") if isinstance(choice, dict) else {}
@@ -179,16 +188,12 @@ def _request_model(model: str, rows: list[dict[str, Any]], gazetteer: TownshipGa
         if not isinstance(content, str) or not content.strip():
             raise ValueError("response has no message content")
         annotations = _parse_annotations(content)
-        usage = payload.get("usage") if isinstance(payload, dict) else {}
-        usage = usage if isinstance(usage, dict) else {}
         return {"model": model, "annotations": annotations, "latency_seconds": round(time.monotonic() - started, 4),
-                "tokens": {"input": usage.get("prompt_tokens", usage.get("input_tokens")),
-                           "output": usage.get("completion_tokens", usage.get("output_tokens"))},
-                "provider_cost_usd": usage.get("cost"), "error": None}
+                "tokens": tokens, "provider_cost_usd": cost, "error": None}
     except Exception as exc:
         # Never retain request/response bodies or provider text: either can contain news.
         return {"model": model, "annotations": [], "latency_seconds": round(time.monotonic() - started, 4),
-                "tokens": {"input": None, "output": None}, "provider_cost_usd": None,
+                "tokens": tokens, "provider_cost_usd": cost,
                 "error": f"OpenRouter request failed ({type(exc).__name__})"}
 
 

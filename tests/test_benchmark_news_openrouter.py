@@ -77,6 +77,36 @@ def test_malformed_provider_response_is_safe_and_has_no_content(monkeypatch, row
     assert "secret-news" not in result["error"]
 
 
+def test_parse_failure_of_billed_response_keeps_cost_and_tokens(monkeypatch, rows, gazetteer):
+    response = Mock()
+    response.json.return_value = {
+        "choices": [{"message": {"content": "not-json"}}],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 20, "cost": 0.012},
+    }
+    monkeypatch.setattr(benchmark.requests, "post", Mock(return_value=response))
+
+    result = benchmark._request_model("model-a", rows, gazetteer, "test-key", 10)
+
+    assert result["error"] == "OpenRouter request failed (JSONDecodeError)"
+    assert result["provider_cost_usd"] == 0.012
+    assert result["tokens"] == {"input": 100, "output": 20}
+
+
+def test_budget_counts_cost_of_unparseable_billed_response(monkeypatch, rows, gazetteer):
+    response = Mock()
+    response.json.return_value = {
+        "choices": [{"message": {"content": "not-json"}}], "usage": {"cost": 0.5},
+    }
+    post = Mock(return_value=response)
+    monkeypatch.setattr(benchmark.requests, "post", post)
+
+    report = benchmark.run_benchmark(rows, ["first", "second"], gazetteer, "test-key", 10, 0.5, 1)
+
+    assert post.call_count == 1
+    assert report["models"][1]["skipped"] == "hard_budget_stop"
+    assert report["provider_cost_observed_usd"] == 0.5
+
+
 def test_structured_request_disables_reasoning_and_caps_output(monkeypatch, rows, gazetteer):
     response = Mock()
     response.json.return_value = {
