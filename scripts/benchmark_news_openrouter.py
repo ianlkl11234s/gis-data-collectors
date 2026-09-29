@@ -4,6 +4,10 @@ The script never imports or runs the collector write path and never writes
 ``live.news_events``.  Use a local JSONL sample, or opt into a bounded SELECT
 with ``--db-sample``.  Results default to /tmp so benchmark artifacts are not
 accidentally committed.
+
+``--max-cost-usd`` is a soft cap: spend is only known after a provider response, so the
+first request (and any single in-flight request) can exceed it. Set ``--max-tokens`` to
+bound the cost of each request.
 """
 
 from __future__ import annotations
@@ -293,7 +297,8 @@ def run_benchmark(rows: list[dict[str, Any]], models: list[str], gazetteer: Town
         return report
     spent = 0.0
     pending = list(models)
-    # A budget is only enforceable between provider responses. Keep such runs sequential;
+    # The budget is a soft cap enforced only between provider responses (the first request
+    # is never bounded by it; use --max-tokens to bound per-request cost). Keep such runs sequential;
     # otherwise concurrent calls could start after the cap has been reached.
     workers = 1 if max_cost_usd >= 0 else max(1, concurrency)
     def evaluate(response: dict[str, Any]) -> dict[str, Any]:
@@ -363,7 +368,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--models", default="qwen/qwen3.7-flash")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--timeout", type=int, default=60)
-    parser.add_argument("--max-cost-usd", type=float, default=0.05, help="negative disables cap")
+    parser.add_argument("--max-cost-usd", type=float, default=0.05, help="soft cap checked between requests after each response, so the first request "
+                             "may exceed it (bound per-request cost with --max-tokens); negative disables")
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--structured", action="store_true", help="require strict JSON Schema output")
