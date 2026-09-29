@@ -322,6 +322,7 @@ class TownshipGazetteer:
 
 LLM_BATCH_SIZE = 15  # v2 output 變多（多 3 欄），降 batch 防超時
 LLM_BATCH_SLEEP = 0.5  # batch 間隔秒數
+OPENROUTER_RETRY_DELAYS = (2.0, 5.0)  # 429 / 5xx / 連線 / read timeout 重試 2 次（backoff 秒數）
 
 CATEGORY_ENUM = ('accident', 'crime', 'disaster', 'traffic', 'health', 'policy', 'other')
 
@@ -678,6 +679,24 @@ class NewsEventsCollector(BaseCollector):
             return []
         return parsed if isinstance(parsed, list) else []
 
+    @staticmethod
+    def _openrouter_post(send):
+        """呼叫 OpenRouter；429／5xx／連線錯誤／read timeout 重試 2 次，其他 4xx 直接拋出。"""
+        for attempt in range(len(OPENROUTER_RETRY_DELAYS) + 1):
+            try:
+                response = send()
+                response.raise_for_status()
+                return response
+            except (requests.HTTPError, requests.ConnectionError, requests.ReadTimeout) as exc:
+                status = getattr(getattr(exc, 'response', None), 'status_code', None)
+                if isinstance(exc, requests.HTTPError):
+                    retryable = isinstance(status, int) and (status == 429 or status >= 500)
+                else:
+                    retryable = True
+                if not retryable or attempt >= len(OPENROUTER_RETRY_DELAYS):
+                    raise
+            time.sleep(OPENROUTER_RETRY_DELAYS[attempt])
+
     def _llm_extract_batch(self, batch: list[dict], gaz: TownshipGazetteer) -> tuple[dict, dict]:
         """單一 batch（<=20 則）→ {idx: annotation}，回傳 (annotations, usage)"""
         lines = []
@@ -712,7 +731,7 @@ class NewsEventsCollector(BaseCollector):
             key = getattr(config, 'OPENROUTER_API_KEY', None)
             if not key:
                 raise RuntimeError("OPENROUTER_API_KEY unavailable")
-            response = self._session.post(
+            response = self._openrouter_post(lambda: self._session.post(
                 'https://openrouter.ai/api/v1/chat/completions',
                 headers={
                     'Authorization': f'Bearer {key}',
@@ -735,8 +754,7 @@ class NewsEventsCollector(BaseCollector):
                     ],
                 },
                 timeout=max(1, int(getattr(config, 'NEWS_EVENTS_OPENROUTER_TIMEOUT', 60))),
-            )
-            response.raise_for_status()
+            ))
             payload = response.json()
             choices = payload.get('choices') if isinstance(payload, dict) else None
             choice = choices[0] if isinstance(choices, list) and choices else None
