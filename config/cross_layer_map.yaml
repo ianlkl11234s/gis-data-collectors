@@ -609,6 +609,40 @@ cdc_public_health_weekly:
   critical: false
   notes: CDC 開放資料每週更新，僅週四 11:00 抓一次寫 SB
 
+# Static Japan medical artifacts are outside Supabase.  Raw archive and public
+# deploy-assets are independent, opt-in operations; none is deployed yet.
+jp_medical_navii:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 43200
+  supabase_tables: []
+  s3_prefixes:
+    - {prefix: jp_medical/raw/, expected_daily: false}
+    - {prefix: deploy-assets/medical/jp/jp_medical_navii/, expected_daily: false}
+  critical: false
+  notes: static facility release; not deployed
+
+jp_medical_idwr:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 1440
+  supabase_tables: []
+  s3_prefixes:
+    - {prefix: jp_medical/raw/, expected_daily: false}
+    - {prefix: deploy-assets/medical/jp/jp_medical_idwr/, expected_daily: false}
+  critical: false
+  notes: daily last-four-week check, month-start annual recheck; not deployed
+
+jp_medical_reports:
+  enabled: false
+  deployment: disabled
+  expected_interval_min: 43200
+  supabase_tables: []
+  s3_prefixes:
+    - {prefix: jp_medical/raw/, expected_daily: false}
+  critical: false
+  notes: workbook/PDF/ZIP can be raw-only; public release requires separate review
+
 waste_match:
   enabled: false
   deployment: disabled

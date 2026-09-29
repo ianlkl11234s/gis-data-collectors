@@ -30,6 +30,7 @@ from .food_prices import FoodPricesCollector
 from .pla_activity_daily import PlaActivityDailyCollector
 from .pla_tracks_vectorize import PlaTracksVectorizeCollector
 from .cdc_public_health_weekly import CdcPublicHealthWeeklyCollector
+from .jp_medical import JapanMedicalNaviiCollector, JapanMedicalIdwrCollector, JapanMedicalReportsCollector
 from .yt_live_video_resolver import YtLiveVideoResolverCollector
 from .flight_fr24 import FlightFR24Collector
 from .flight_fr24_zone import FlightFR24ZoneCollector
@@ -185,6 +186,9 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(PlaActivityDailyCollector, "中共解放軍臺海周邊動態每日收集器", "PLA_ACTIVITY_DAILY"),
     CollectorEntry(PlaTracksVectorizeCollector, "共機航跡示意圖向量化收集器", "PLA_TRACKS_VECTORIZE"),
     CollectorEntry(CdcPublicHealthWeeklyCollector, "CDC 公衛週報收集器", "CDC_PUBLIC_HEALTH_WEEKLY"),
+    CollectorEntry(JapanMedicalNaviiCollector, "日本醫療 Navi 名錄收集器", "JP_MEDICAL_NAVII", ("ANALYTICS_ROOT", "PIPELINE_PYTHON")),
+    CollectorEntry(JapanMedicalIdwrCollector, "日本感染症週報收集器", "JP_MEDICAL_IDWR", ("ANALYTICS_ROOT", "PIPELINE_PYTHON")),
+    CollectorEntry(JapanMedicalReportsCollector, "日本醫療報告收集器", "JP_MEDICAL_REPORTS", ("ANALYTICS_ROOT", "PIPELINE_PYTHON")),
     CollectorEntry(YtLiveVideoResolverCollector, "YouTube 新聞直播 videoId 解析器", "YT_LIVE_VIDEO_RESOLVER",
                    ("YOUTUBE_API_KEY",)),
     CollectorEntry(CorrectionalDailySnapshotCollector, "矯正機關每日收容動態收集器", "CORRECTIONAL_DAILY_SNAPSHOT"),
