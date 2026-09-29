@@ -239,7 +239,8 @@ def evaluate_annotations(rows: list[dict[str, Any]], annotations: list[dict[str,
     result: dict[str, Any] = {
         "expected": len(rows), "returned_objects": len(annotations), "unique_valid_idx": len(valid),
         "missing_idx": missing, "duplicate_idx": duplicates, "invalid_idx": invalid_idx,
-        "json_complete": not missing and not duplicates and not invalid_idx and len(valid) == len(rows),
+        "json_complete": (not missing and not duplicates and not invalid_idx and len(valid) == len(rows)
+                          and len(annotations) == len(rows)),
         "gazetteer": {
             "location_claims": location_claims,
             "valid_claims": valid_locations,
