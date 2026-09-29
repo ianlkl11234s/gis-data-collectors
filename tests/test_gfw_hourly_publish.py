@@ -795,3 +795,45 @@ def test_raw_ais_report_is_scrubbed_even_before_retention_expires(tmp_path):
     assert not stale_raw.exists()
     assert live_raw.exists()  # possibly a live run
     assert pending_raw.exists()  # cutover_* spools are never touched
+
+
+@pytest.mark.parametrize("name, good, lookalikes", [
+    ("_TILE_FILE", ["r01c02.points.ndjson", ".r01c02.sar-unmatched.ndjson.tmp"],
+     [".r01c02.points.ndjson", "r01c02.points.ndjson.tmp"]),
+    ("_HOUR_FILE", ["20260810T01Z.geojson", ".20260810T01Z.geojson.tmp"],
+     [".20260810T01Z.geojson", "20260810T01Z.geojson.tmp"]),
+    ("_DAY_FILE", ["2026-08-10.geojson", ".2026-08-10.geojson.tmp"],
+     [".2026-08-10.geojson", "2026-08-10.geojson.tmp"]),
+    ("_FRAME_GZIP", ["20260810T01Z.geojson.gz", ".20260810T01Z.geojson.gz.tmp"],
+     [".20260810T01Z.geojson.gz", "20260810T01Z.geojson.gz.tmp"]),
+    ("_BUCKET_GZIP", ["a.json.gz", ".a.json.gz.tmp"], [".a.json.gz", "a.json.gz.tmp"]),
+    ("_GRID_INPUT", ["20260810T01Z.ndjson", ".20260810T01Z.ndjson.tmp"],
+     [".20260810T01Z.ndjson", "20260810T01Z.ndjson.tmp"]),
+    ("_TRACK_INPUT", ["2026-08-10-edges.ndjson", ".2026-08-10-singletons.ndjson.tmp"],
+     [".2026-08-10-edges.ndjson", "2026-08-10-edges.ndjson.tmp"]),
+])
+def test_spool_file_patterns_reject_half_matching_lookalikes(name, good, lookalikes):
+    from tasks import gfw_hourly_publish as module
+
+    pattern = getattr(module, name)
+    assert all(pattern.fullmatch(value) for value in good)
+    assert not any(pattern.fullmatch(value) for value in lookalikes)
+
+
+def test_failed_spool_preserves_lookalike_file_instead_of_deleting(tmp_path):
+    root = tmp_path / "spool"
+    spool = root / "2026-08-10-99999999-9999-9999-9999-999999999999"
+    (spool / "work" / "ais").mkdir(parents=True)
+    (spool / "spool.json").write_text(json.dumps({
+        "status": "failed", "failed_at": "2026-08-10T00:00:00+00:00"
+    }))
+    lookalike = spool / "work" / "ais" / ".r01c02.points.ndjson"
+    lookalike.write_text("{}\n")
+
+    result = prune_expired_failed_spools(
+        root, now=datetime(2026, 8, 30, tzinfo=timezone.utc), retention_days=7
+    )
+
+    assert result["pruned"] == []
+    assert result["warnings"] and "unknown file" in result["warnings"][0]["error"]
+    assert lookalike.exists()
