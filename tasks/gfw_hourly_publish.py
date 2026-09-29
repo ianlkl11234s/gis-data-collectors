@@ -1345,6 +1345,31 @@ def _validated_failed_spool_paths(run_root: Path) -> tuple[list[Path], list[Path
     return files, sorted(directories, key=lambda value: len(value.parts), reverse=True)
 
 
+_RUNNING_REPORT_GRACE_SECONDS = 600
+
+
+def _scrub_raw_reports(run_root: Path, *, status: str, now_ts: float) -> list[str]:
+    """Unlink raw ``.rXXcYY.ais-report.json`` files left by a crashed run.
+
+    Raw GFW responses may be multi-GB and must never outlive the run
+    (docs/GFW_VESSEL_PRESENCE.md), regardless of the spool retention age.
+    A ``running`` spool may belong to a live process, so only files idle for
+    ``_RUNNING_REPORT_GRACE_SECONDS`` are removed there.
+    """
+    work_dir = run_root / "work" / "ais"
+    removed: list[str] = []
+    if work_dir.is_symlink() or not work_dir.is_dir():
+        return removed
+    for child in work_dir.iterdir():
+        if child.is_symlink() or not child.is_file() or not _REPORT_FILE.fullmatch(child.name):
+            continue
+        if status == "running" and now_ts - child.stat().st_mtime < _RUNNING_REPORT_GRACE_SECONDS:
+            continue
+        child.unlink()
+        removed.append(child.name)
+    return removed
+
+
 def prune_expired_failed_spools(
     spool_root: Path, *, now: datetime, retention_days: int
 ) -> dict[str, list[Any]]:
@@ -1373,6 +1398,7 @@ def prune_expired_failed_spools(
                 stamp_key = "started_at"
             else:
                 continue
+            _scrub_raw_reports(candidate, status=status, now_ts=now.timestamp())
             stamp = datetime.fromisoformat(str(ledger[stamp_key]).replace("Z", "+00:00"))
             if stamp.tzinfo is None:
                 raise ValueError(f"{stamp_key} must include timezone")
