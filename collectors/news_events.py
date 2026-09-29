@@ -757,9 +757,36 @@ class NewsEventsCollector(BaseCollector):
             if not isinstance(obj, dict):
                 continue
             idx = obj.get('idx')
-            if isinstance(idx, int) and 0 <= idx < len(batch):
+            if type(idx) is int and 0 <= idx < len(batch):
+                if idx in annotations:
+                    raise NewsAnnotationError(
+                        "LLM annotation batch has duplicate idx; refusing to write this run"
+                    )
                 annotations[idx] = obj
         return annotations, usage
+
+    @staticmethod
+    def _validate_annotation(ann: dict) -> None:
+        """單則 annotation 必須欄位齊全且型別／範圍正確，否則 fail-closed。
+
+        url_norm upsert 為 do_nothing，寫入的錯誤標註無法事後被覆蓋，故寧可中止整輪。
+        """
+        def _ok_level(v):
+            return type(v) is int and 0 <= v <= 3
+
+        valid = (
+            isinstance(ann, dict)
+            and ann.get('category') in CATEGORY_ENUM
+            and isinstance(ann.get('is_event'), bool)
+            and _ok_level(ann.get('gis_relevance'))
+            and _ok_level(ann.get('severity'))
+            and 'county' in ann
+            and 'township' in ann
+        )
+        if not valid:
+            raise NewsAnnotationError(
+                "LLM annotation object invalid; refusing to write this run"
+            )
 
     def _annotate_items(self, items: list[dict], gaz: TownshipGazetteer) -> dict:
         """完整 annotation 所有新項目；任一 batch 異常即中止整輪。"""
@@ -786,6 +813,12 @@ class NewsEventsCollector(BaseCollector):
                 raise NewsAnnotationError(
                     "LLM annotation batch incomplete; refusing to write this run"
                 )
+            for ann in annotations.values():
+                try:
+                    self._validate_annotation(ann)
+                except NewsAnnotationError:
+                    total_usage['failed_batches'] += 1
+                    raise
 
             for i, it in enumerate(batch):
                 ann = annotations.get(i) or {}
@@ -809,11 +842,17 @@ class NewsEventsCollector(BaseCollector):
 
                 # v2 三維度：gis_relevance / severity / is_event（不合法值留 NULL，DB 允許）
                 def _int_in_range(v, lo, hi):
-                    try:
-                        n = int(v)
-                        return n if lo <= n <= hi else None
-                    except (TypeError, ValueError):
-                        return None
+                    # bool 是 int 子類，True/False 不可被當成 1/0
+                    if type(v) is not int:
+                        try:
+                            if isinstance(v, bool):
+                                return None
+                            n = int(v)
+                        except (TypeError, ValueError):
+                            return None
+                    else:
+                        n = v
+                    return n if lo <= n <= hi else None
                 it['gis_relevance'] = _int_in_range(ann.get('gis_relevance'), 0, 3)
                 it['severity']      = _int_in_range(ann.get('severity'), 0, 3)
                 raw_event = ann.get('is_event')
