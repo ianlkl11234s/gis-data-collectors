@@ -230,9 +230,9 @@ def evaluate_annotations(rows: list[dict[str, Any]], annotations: list[dict[str,
                 valid_locations += 1
         if item.get("category") in CATEGORY_ENUM:
             field_valid["category"] += 1
-        if isinstance(item.get("gis_relevance"), int) and 0 <= item["gis_relevance"] <= 3:
+        if type(item.get("gis_relevance")) is int and 0 <= item["gis_relevance"] <= 3:  # bool is not a level
             field_valid["gis_relevance"] += 1
-        if isinstance(item.get("severity"), int) and 0 <= item["severity"] <= 3:
+        if type(item.get("severity")) is int and 0 <= item["severity"] <= 3:  # bool is not a level
             field_valid["severity"] += 1
         if isinstance(item.get("is_event"), bool):
             field_valid["is_event"] += 1
