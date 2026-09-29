@@ -433,6 +433,67 @@ class TestLlmProviders:
 
         assert '401' not in str(exc.value)
 
+    @staticmethod
+    def _http_error(status):
+        err = requests.HTTPError(str(status))
+        err.response = SimpleNamespace(status_code=status)
+        return err
+
+    @staticmethod
+    def _ok_response():
+        response = Mock()
+        response.json.return_value = {'choices': [{'message': {'content': json.dumps([_annotation()])}}]}
+        return response
+
+    def _run_openrouter(self, monkeypatch, gazetteer, side_effects):
+        collector = self._collector()
+        collector._session.post.side_effect = side_effects
+        monkeypatch.setattr(config, 'NEWS_EVENTS_LLM_PROVIDER', 'openrouter')
+        monkeypatch.setattr(config, 'OPENROUTER_API_KEY', 'test-openrouter-key')
+        sleeps = []
+        monkeypatch.setattr(news_events.time, 'sleep', sleeps.append)
+        return collector, sleeps
+
+    @pytest.mark.parametrize('failure', [
+        'http429', 'http503', requests.ConnectionError('reset'), requests.ReadTimeout('slow'),
+    ])
+    def test_openrouter_transient_failure_is_retried(self, monkeypatch, gazetteer, failure):
+        if failure == 'http429':
+            bad = Mock(); bad.raise_for_status.side_effect = self._http_error(429)
+        elif failure == 'http503':
+            bad = Mock(); bad.raise_for_status.side_effect = self._http_error(503)
+        else:
+            bad = failure
+        collector, sleeps = self._run_openrouter(
+            monkeypatch, gazetteer, [bad, bad, self._ok_response()]
+        )
+
+        annotations, _ = collector._llm_extract_batch([{'title': 't', 'summary': 's'}], gazetteer)
+
+        assert annotations == {0: _annotation()}
+        assert collector._session.post.call_count == 3
+        assert sleeps == list(news_events.OPENROUTER_RETRY_DELAYS)
+
+    def test_openrouter_gives_up_after_two_retries(self, monkeypatch, gazetteer):
+        bad = Mock(); bad.raise_for_status.side_effect = self._http_error(500)
+        collector, sleeps = self._run_openrouter(monkeypatch, gazetteer, [bad, bad, bad, bad])
+
+        with pytest.raises(requests.HTTPError):
+            collector._llm_extract_batch([{'title': 't', 'summary': 's'}], gazetteer)
+
+        assert collector._session.post.call_count == 3
+
+    @pytest.mark.parametrize('status', [400, 401, 402, 404])
+    def test_openrouter_other_4xx_is_not_retried(self, monkeypatch, gazetteer, status):
+        bad = Mock(); bad.raise_for_status.side_effect = self._http_error(status)
+        collector, sleeps = self._run_openrouter(monkeypatch, gazetteer, [bad, self._ok_response()])
+
+        with pytest.raises(requests.HTTPError):
+            collector._llm_extract_batch([{'title': 't', 'summary': 's'}], gazetteer)
+
+        assert collector._session.post.call_count == 1
+        assert sleeps == []
+
     def test_openrouter_malformed_response_is_rejected(self, monkeypatch, gazetteer):
         collector = self._collector()
         response = Mock()
