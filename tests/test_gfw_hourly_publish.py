@@ -679,6 +679,18 @@ def test_next_offset_nested_in_root_metadata_fails_closed(tmp_path):
         _tile_shard(tmp_path, _StreamingClient(payload), "stream")
 
 
+def test_report_next_offset_complete_detects_nested_cursor():
+    from tasks.gfw_hourly_publish import _report_next_offset_complete
+
+    assert _report_next_offset_complete({"entries": [], "nextOffset": None})
+    assert _report_next_offset_complete({"entries": [], "nextOffset": 0})
+    assert not _report_next_offset_complete({"entries": [], "metadata": {"nextOffset": 100}})
+    assert not _report_next_offset_complete({"entries": [{"x": {"next_offset": "7"}}]})
+    assert not _report_next_offset_complete({"entries": [], "nextOffset": 100})
+    with pytest.raises(ValueError):
+        _report_next_offset_complete([])
+
+
 def test_streamed_report_with_next_offset_fails_closed(tmp_path):
     payload = {"entries": [{_V: [_row(1)]}], "nextOffset": 100}
     with pytest.raises(RuntimeError, match="non-zero nextOffset"):
