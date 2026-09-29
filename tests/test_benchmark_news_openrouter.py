@@ -172,3 +172,12 @@ def test_extra_idxless_object_is_not_json_complete(rows, gazetteer):
     assert metrics["returned_objects"] == 3
     assert metrics["json_complete"] is False
     assert benchmark.evaluate_annotations(rows, predicted[:2], gazetteer)["json_complete"] is True
+
+
+def test_bool_is_not_a_valid_level_field(rows, gazetteer):
+    bad = dict(annotation(0), gis_relevance=True, severity=False)
+
+    metrics = benchmark.evaluate_annotations(rows, [bad, annotation(1)], gazetteer)
+
+    assert metrics["field_consistency"]["gis_relevance"]["valid"] == 1
+    assert metrics["field_consistency"]["severity"]["valid"] == 1
