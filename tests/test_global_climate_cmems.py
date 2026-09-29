@@ -41,3 +41,19 @@ def test_subset_runs_copernicusmarine_behind_oom_prefix(tmp_path, monkeypatch):
     cmd = calls[0]
     assert cmd[:len(OOM_FIRST_PREFIX)] == OOM_FIRST_PREFIX
     assert cmd[len(OOM_FIRST_PREFIX):][:2] == ["copernicusmarine", "subset"]
+
+
+def test_subset_disables_dask_chunking(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(cmems.subprocess, "run", fake_run)
+    collector = object.__new__(CmemsCollector)
+    for ds in CMEMS_DATASETS:
+        collector._subset(ds, tmp_path)
+    for cmd in calls:
+        i = cmd.index("--chunk-size-limit")
+        assert cmd[i + 1] == "0"
