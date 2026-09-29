@@ -297,6 +297,66 @@ class TestAnnotationFailClosed:
 
         assert 'category' not in annotation_items[0]
 
+    @pytest.mark.parametrize('mutate', [
+        lambda a: a.pop('category'),
+        lambda a: a.update(category='bogus'),
+        lambda a: a.update(is_event='true'),
+        lambda a: a.pop('is_event'),
+        lambda a: a.update(gis_relevance=True),
+        lambda a: a.update(severity=False),
+        lambda a: a.update(gis_relevance=4),
+        lambda a: a.update(severity=-1),
+        lambda a: a.update(severity='2'),
+        lambda a: a.pop('county'),
+        lambda a: a.pop('township'),
+    ])
+    def test_invalid_annotation_object_raises(self, monkeypatch, gazetteer, annotation_items, mutate):
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 2)
+        bad = _annotation(1)
+        mutate(bad)
+        collector._llm_extract_batch = Mock(return_value=({0: _annotation(0), 1: bad}, _usage()))
+
+        with pytest.raises(NewsAnnotationError, match='invalid'):
+            collector._annotate_items(annotation_items, gazetteer)
+
+        assert 'category' not in annotation_items[0]
+
+    def test_bare_idx_object_raises(self, monkeypatch, gazetteer, annotation_items):
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 2)
+        collector._llm_extract_batch = Mock(return_value=({0: _annotation(0), 1: {'idx': 1}}, _usage()))
+
+        with pytest.raises(NewsAnnotationError):
+            collector._annotate_items(annotation_items, gazetteer)
+
+    def test_null_county_township_keys_present_is_accepted(self, monkeypatch, gazetteer, annotation_items):
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 2)
+        no_loc = dict(_annotation(1), county=None, township=None, confidence=None)
+        collector._llm_extract_batch = Mock(return_value=({0: _annotation(0), 1: no_loc}, _usage()))
+
+        collector._annotate_items(annotation_items, gazetteer)
+
+        assert annotation_items[1]['confidence'] == 0.0
+        assert annotation_items[0]['gis_relevance'] == 3
+        assert annotation_items[0]['is_event'] is True
+
+    def test_duplicate_idx_raises(self, monkeypatch, gazetteer):
+        collector = TestLlmProviders._collector()
+        response = Mock()
+        response.json.return_value = {
+            'choices': [{'message': {'content': json.dumps([_annotation(0), _annotation(0)])}}],
+        }
+        collector._session.post.return_value = response
+        monkeypatch.setattr(config, 'NEWS_EVENTS_LLM_PROVIDER', 'openrouter')
+        monkeypatch.setattr(config, 'OPENROUTER_API_KEY', 'k')
+
+        with pytest.raises(NewsAnnotationError, match='duplicate'):
+            collector._llm_extract_batch(
+                [{'title': 't', 'summary': 's'}, {'title': 't2', 'summary': 's2'}], gazetteer
+            )
+
     def test_dry_run_remains_offline_without_annotation(self, monkeypatch, annotation_items):
         collector = NewsEventsCollector.__new__(NewsEventsCollector)
         collector.dry_run = True
