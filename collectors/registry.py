@@ -88,6 +88,15 @@ from .animal_shelter_outcomes import AnimalShelterOutcomesCollector, AnimalShelt
 from .animal_welfare_points import AnimalVeterinaryClinicsCollector, AnimalLicensedPetBusinessesCollector, AnimalProtectionOfficesCollector
 from .immigration_apis_airport import ImmigrationApisAirportCollector
 from .npa_traffic_accident_a1 import NpaTrafficAccidentA1Collector
+from .gov_events_snapshot import (
+    GovEventsTpcFire145800Collector,
+    GovEventsPcc5988Collector,
+    GovEventsTwse22817Collector,
+    GovEventsTwse22818Collector,
+    GovEventsFda6133Collector,
+    GovEventsMoi7069Collector,
+    GovEventsMoe31768Collector,
+)
 from .global_climate.usgs_earthquake import UsgsEarthquakeCollector
 from .global_climate.jma_typhoon import JmaTyphoonCollector
 from .global_climate.jtwc import JtwcCollector
@@ -197,6 +206,15 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(ImmigrationApisAirportCollector, "移民署機場入出境 APIS 收集器", "IMMIGRATION_APIS_AIRPORT"),
     CollectorEntry(NpaTrafficAccidentA1Collector, "警政署即時 A1 交通事故收集器", "NPA_TRAFFIC_ACCIDENT_A1"),
     CollectorEntry(TpmlSeatCollector, "北市圖座位即時收集器", "TPML_SEAT"),
+    # === gov_events 政府裁罰/稽查紅燈快照（2026-08-14）===
+    # 皆免金鑰 → required_env 空；端點/踩雷見 taipei-gis-analytics/docs/topic-research/gov_events/endpoints.md
+    CollectorEntry(GovEventsTpcFire145800Collector, "北市消防重大不合格場所快照收集器", "GOV_EVENTS_TPC_FIRE_145800"),
+    CollectorEntry(GovEventsPcc5988Collector, "工程會拒絕往來廠商名單快照收集器", "GOV_EVENTS_PCC_5988"),
+    CollectorEntry(GovEventsTwse22817Collector, "證期局上市公司裁罰快照收集器", "GOV_EVENTS_TWSE_22817"),
+    CollectorEntry(GovEventsTwse22818Collector, "證期局上櫃公司裁罰快照收集器", "GOV_EVENTS_TWSE_22818"),
+    CollectorEntry(GovEventsFda6133Collector, "食藥署邊境查驗不合格快照收集器", "GOV_EVENTS_FDA_6133"),
+    CollectorEntry(GovEventsMoi7069Collector, "消防署全國重大不合格場所快照收集器", "GOV_EVENTS_MOI_7069"),
+    CollectorEntry(GovEventsMoe31768Collector, "教育部留遊學契約查核快照收集器", "GOV_EVENTS_MOE_31768"),
     # === 全球氣候（plan-misty-fog 2026-06-28）===
     CollectorEntry(UsgsEarthquakeCollector, "USGS 全球地震 hourly 收集器", "GLOBAL_CLIMATE_USGS_EARTHQUAKE"),
     CollectorEntry(JmaTyphoonCollector, "JMA RSMC Tokyo 颱風收集器", "GLOBAL_CLIMATE_JMA_TYPHOON"),

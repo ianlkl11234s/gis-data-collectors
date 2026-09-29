@@ -359,6 +359,18 @@ _COLLECTOR_TOGGLES = (
     ('NPA_TRAFFIC_ACCIDENT_A1',      False, 720),  # 警政署即時 A1 交通事故（24h 死亡，累積年度，每日 1-2 次抓 dedup by hash）
     ('TPML_SEAT',                    False, 10),   # 北市圖座位即時 (seat.tpml.edu.tw，6 分館 29 區，無金鑰；來源無 timestamp → observed_at=收集時刻；閉館全 0 → is_closed)
     ('FOOD_PRICES',                  False, 1440), # 農業部四類批發價（蔬果/漁產/毛豬/家禽，無金鑰）；T+1 更新故每日 1 次即可，約 52 次請求/日、~2,000 row/日
+    # === gov_events 政府裁罰/稽查「不收就流失」紅燈快照（2026-08-14）===
+    # 端點實測全文：taipei-gis-analytics/docs/topic-research/gov_events/endpoints.md
+    # 6 支上游只呈現「現在有效名單」或「近 N 年窗口」，歷史持續消失 → 快照 + DB 端 diff 才推得出除名事件。
+    # 全部無金鑰（required_env 皆為空）；其中 4 支憑證缺 SKI/斷鏈，collector 內建 verify=False。
+    # ⚠️ Supabase transformer 尚未註冊（表結構待分流表拍板）→ 現在誤開只寫本地檔，不寫 DB。
+    ('GOV_EVENTS_TPC_FIRE_145800',   False, 10080), # 北市消防重大不合格場所（名單型，實測 4 筆；週更足以抓到每一版）
+    ('GOV_EVENTS_PCC_5988',          False, 1440),  # 工程會拒絕往來廠商現行名單（實測 1,815 筆；Expire 最小值為隔日 → 日更是保住除名事件的最低頻率）
+    ('GOV_EVENTS_TWSE_22817',        False, 10080), # 證期局上市裁罰（實測 21 筆，僅當年度）；⚠️ 12 月底那次快照是該年度最後存檔機會
+    ('GOV_EVENTS_TWSE_22818',        False, 10080), # 證期局上櫃裁罰（實測 19 筆，僅當年度）
+    ('GOV_EVENTS_FDA_6133',          False, 10080), # 食藥署邊境查驗不合格（實測 2,550 筆，滾動窗口 ~3.6 年）；上游 7 日更
+    ('GOV_EVENTS_MOI_7069',          False, 43200), # 消防署全國重大不合格（實測 168 筆，狀態名單）；上游 4 個月未更，月更已遠快於上游
+    ('GOV_EVENTS_MOE_31768',         False, 43200), # 教育部留遊學契約查核（實測 929 筆，全為民國114年度單年快照）；⚠️ 30 日節奏無前例，待拍板
     # === 全球氣候（plan-misty-fog 2026-06-28）===
     ('GLOBAL_CLIMATE_USGS_EARTHQUAKE', False, 60),  # USGS hourly feed M≥任意（無認證、GeoJSON），全球地震寫 live.earthquakes_global；台灣周邊 1y M≥4.0 約 172 筆
     ('GLOBAL_CLIMATE_JMA_TYPHOON',     False, 180), # JMA RSMC Tokyo 颱風（無認證、JSON）；targetTc.json 空就 idle；展開為 typhoon_positions row source='jma'
