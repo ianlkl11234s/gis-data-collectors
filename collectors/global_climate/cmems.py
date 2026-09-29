@@ -54,6 +54,13 @@ CMEMS_DATASETS = [
     },
 ]
 
+# 讓 subset 子程序成為主機 OOM 的優先犧牲者：它單次可衝到 1.7–2.2G，
+# 主程序跑滿一天後約 1.65G，兩者相加曾讓整個容器被 OOM 殺掉（2026-09-29）。
+# 用 sh + exec 設定而非 preexec_fn，因為 collector 跑在 thread pool 裡。
+OOM_FIRST_PREFIX = [
+    "sh", "-c", '{ echo 1000 > /proc/self/oom_score_adj; } 2>/dev/null; exec "$@"', "sh",
+]
+
 BBOX_TAIWAN = {"min_lon": 90, "max_lon": 180, "min_lat": -15, "max_lat": 55}  # 廣域西太+東南亞+中太 90°×70°（前為西太 100-160/0-45；再前台灣 117-126/19-27）
 
 
@@ -113,7 +120,7 @@ class CmemsCollector(BaseCollector):
                 "--maximum-depth", str(ds_cfg["depth_range"][1]),
             ]
         try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=900)
+            subprocess.run(OOM_FIRST_PREFIX + cmd, check=True, capture_output=True, timeout=900)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             stderr = getattr(e, "stderr", b"")
             if isinstance(stderr, bytes):
