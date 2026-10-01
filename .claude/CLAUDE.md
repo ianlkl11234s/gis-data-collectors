@@ -67,6 +67,7 @@ Registry + toggle list 自動處理：
 - **政府憑證缺 SKI** → requests 用 `verify=False`（NHI ER / 台電核安 / IoW USWG 都踩過）
 - **二進位資料走 base64 轉接 Supabase**（CWA imagery 模式）— 不要直接 bytea
 - **`cleanup_expired_partitions()` 是硬編碼清單，不會自動掃新分區表**（migration 220 錯誤假設踩過）— 新分區表沒加進清單 = 永遠不清理，2026-07 因此 7 張表累到 DB 52GB 產生磁碟費。用 `select * from metadata.check_retention_coverage()` 查漏網
+- **新表必開 RLS**：建在 API 暴露 schema（live/reference/spatial…）的表，同一支 migration 就要 ENABLE RLS + anon/authenticated SELECT policy（範本 gis-platform `418_funeral_enable_rls.sql`）；reference/spatial 預設自動 grant anon 讀，漏開會收 Supabase CRITICAL `rls_disabled_in_public` 告警（2026-09-27 踩過）
 - **schema 現況**：表已全量在 `live` schema（ADR-0010，2026-07-24），新表建 live、RPC 建 public；歷程見 ADR-0009/0010
 - **走 Supavisor transaction pool（6543）絕不可下 session 級 SET**（含 psycopg2 set_session）：會殘留在共享 backend 毒到其他 client（2026-07-24 collector 唯讀爆炸事故）；只讀查詢用 autocommit 或 SET LOCAL，長 session 走 5432 — 詳見 `pitfalls/2026-07-24-supavisor-session-set-poisoning.md`
 
