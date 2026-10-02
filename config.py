@@ -358,6 +358,11 @@ _COLLECTOR_TOGGLES = (
     ('IMMIGRATION_APIS_AIRPORT',     False, 60),   # 移民署機場入出境 6 端點 demographic snapshot（無時間戳，每細格 paxCnt，無金鑰）
     ('NPA_TRAFFIC_ACCIDENT_A1',      False, 720),  # 警政署即時 A1 交通事故（24h 死亡，累積年度，每日 1-2 次抓 dedup by hash）
     ('TPML_SEAT',                    False, 10),   # 北市圖座位即時 (seat.tpml.edu.tw，6 分館 29 區，無金鑰；來源無 timestamp → observed_at=收集時刻；閉館全 0 → is_closed)
+    # 環境即時測站 wave2（2026-10-02；gis-platform 419–422）
+    ('NUSC_GAMMA_RADIATION',         False, 15),   # 核安會全國環境輻射 63 站（datagov 119233，上游 5 分；與台電 NUCLEAR_RADIATION 不同網路）；measurements 30 天
+    ('WATER_EFFLUENT_MONITORING',    False, 60),   # 放流水 CWMS 22 縣市 wqx_p_*（需 MOENV_API_KEY；滾動視窗 1–2h）；readings 7 天
+    ('CEMS_STACK_MONITORING',        False, 60),   # CEMS 煙道 aqx_p_187 + 燃燒塔 aqx_p_493 1h 值（需 MOENV_API_KEY；上游延遲 4–5h，回看 6h）；readings 7 天
+    ('CWA_UV_DAILY',                 False, 720),  # CWA 每日紫外線最大值 O-A0005-001（前一日值，需 CWA_API_KEY）；730 天
     ('FOOD_PRICES',                  False, 1440), # 農業部四類批發價（蔬果/漁產/毛豬/家禽，無金鑰）；T+1 更新故每日 1 次即可，約 52 次請求/日、~2,000 row/日
     # === 全球氣候（plan-misty-fog 2026-06-28）===
     ('GLOBAL_CLIMATE_USGS_EARTHQUAKE', False, 60),  # USGS hourly feed M≥任意（無認證、GeoJSON），全球地震寫 live.earthquakes_global；台灣周邊 1y M≥4.0 約 172 筆

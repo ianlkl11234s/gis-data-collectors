@@ -67,6 +67,10 @@ from .ship_tdx import ShipTDXCollector
 from .temperature import TemperatureGridCollector
 from .tourist_shuttle import TouristShuttleCollector
 from .tpml_seat import TpmlSeatCollector
+from .nusc_gamma_radiation import NuscGammaRadiationCollector
+from .water_effluent_monitoring import WaterEffluentMonitoringCollector
+from .cems_stack_monitoring import CemsStackMonitoringCollector
+from .cwa_uv_daily import CwaUvDailyCollector
 from .tra_static import TRAStaticCollector
 from .tra_train import TRATrainCollector
 from .vd import VDCollector
@@ -197,6 +201,13 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(ImmigrationApisAirportCollector, "移民署機場入出境 APIS 收集器", "IMMIGRATION_APIS_AIRPORT"),
     CollectorEntry(NpaTrafficAccidentA1Collector, "警政署即時 A1 交通事故收集器", "NPA_TRAFFIC_ACCIDENT_A1"),
     CollectorEntry(TpmlSeatCollector, "北市圖座位即時收集器", "TPML_SEAT"),
+    # === 環境即時測站 wave2（2026-10-02，gis-platform migrations 419–422）===
+    CollectorEntry(NuscGammaRadiationCollector, "核安會全國環境輻射即時收集器", "NUSC_GAMMA_RADIATION"),
+    CollectorEntry(WaterEffluentMonitoringCollector, "放流水連線自動監測收集器", "WATER_EFFLUENT_MONITORING",
+                   ("MOENV_API_KEY",)),
+    CollectorEntry(CemsStackMonitoringCollector, "CEMS 煙道/燃燒塔 1 小時值收集器", "CEMS_STACK_MONITORING",
+                   ("MOENV_API_KEY",)),
+    CollectorEntry(CwaUvDailyCollector, "CWA 每日紫外線指數收集器", "CWA_UV_DAILY", ("CWA_API_KEY",)),
     # === 全球氣候（plan-misty-fog 2026-06-28）===
     CollectorEntry(UsgsEarthquakeCollector, "USGS 全球地震 hourly 收集器", "GLOBAL_CLIMATE_USGS_EARTHQUAKE"),
     CollectorEntry(JmaTyphoonCollector, "JMA RSMC Tokyo 颱風收集器", "GLOBAL_CLIMATE_JMA_TYPHOON"),

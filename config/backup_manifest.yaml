@@ -146,6 +146,13 @@ archive_py_covered:
   - live.internet_health_incidents # detector lifecycle records; provider archives plus observations are recovery evidence
   - live.nuclear_radiation_measurements  # nuclear_radiation, 2026-06-15 起
   - live.nuclear_radiation_stations  # 同上
+  - live.nusc_gamma_measurements    # nusc_gamma_radiation，migration 419，待 Zeabur 啟用
+  - live.nusc_gamma_stations        # 同上
+  - live.water_effluent_readings    # water_effluent_monitoring，migration 420，待 Zeabur 啟用
+  - live.water_effluent_current     # 同上
+  - live.cems_stack_readings        # cems_stack_monitoring，migration 421，待 Zeabur 啟用
+  - live.cems_stack_current         # 同上
+  - live.cwa_uv_daily               # cwa_uv_daily，migration 422，待 Zeabur 啟用
   # Satellite / launch
   - live.satellite_positions       # satellite, 2026-03-28 起
   - live.satellite_tle             # 同 satellite collector

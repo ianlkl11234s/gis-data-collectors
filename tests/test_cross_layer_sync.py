@@ -105,6 +105,12 @@ _REALTIME_TABLES_EXEMPT = {
         "yt_live_current 代監控",
     "live.nuclear_radiation_measurements": # 由 nuclear_radiation_stations（updated_at touch 心跳）代監控
         "nuclear_radiation_stations 代監控",
+    "live.nusc_gamma_measurements":        # 由 nusc_gamma_stations（updated_at touch 心跳）代監控
+        "nusc_gamma_stations 代監控",
+    "live.water_effluent_readings":        # 由 water_effluent_current（updated_at touch 心跳）代監控
+        "water_effluent_current 代監控",
+    "live.cems_stack_readings":            # 由 cems_stack_current（updated_at touch 心跳）代監控；collected_at 無索引
+        "cems_stack_current 代監控",
     "live.flight_trails":                  # partitioned parent 恆空，NEVER 是預期，已刻意移除
         "partitioned parent 恆空，刻意移除",
     # 共機航跡向量化：「共機 0 架次」是合法的 0 形狀，那天這兩張表沒有任何 row —— 拿它們

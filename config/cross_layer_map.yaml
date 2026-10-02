@@ -1021,3 +1021,45 @@ lightning_cwa:
     寫同一張表、靠 source='cwa' 區分。台電源自 2026-07-10 起端點活著但永遠回空檔，
     本源為替代兼交叉驗證。production 實測 2026-08-07 12:52 有寫入。
     ⚠️ 事件驅動：無雷雨時 0 筆屬正常，兩源的新鮮度要一起看而非各自判死。
+
+# ── 環境即時測站 wave2（2026-10-02；gis-platform migrations 419–422 已 apply）──
+# merge 到 main 由 Zeabur git 部署後，需設 *_ENABLED=true + restart 才實際運行
+nusc_gamma_radiation:
+  enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
+  deployment: zeabur
+  expected_interval_min: 15
+  supabase_tables: [live.nusc_gamma_measurements, live.nusc_gamma_stations]
+  s3_prefixes:
+    - {prefix: nusc_gamma_radiation/archives/, expected_daily: false}
+  critical: false
+  notes: 核安會全國環境輻射 63 站（datagov 119233，免金鑰）；與 nuclear_radiation（台電核設施）不同網路，不可距離合併
+
+water_effluent_monitoring:
+  enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
+  deployment: zeabur
+  expected_interval_min: 60
+  supabase_tables: [live.water_effluent_readings, live.water_effluent_current]
+  s3_prefixes:
+    - {prefix: water_effluent_monitoring/archives/, expected_daily: false}
+  critical: false
+  notes: 放流水 CWMS 22 縣市 wqx_p_47..67 + wqx_p_126；臺中 wqx_p_54 上游停更於 2024-12（stale 屬預期）
+
+cems_stack_monitoring:
+  enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
+  deployment: zeabur
+  expected_interval_min: 60
+  supabase_tables: [live.cems_stack_readings, live.cems_stack_current]
+  s3_prefixes:
+    - {prefix: cems_stack_monitoring/archives/, expected_daily: false}
+  critical: false
+  notes: CEMS 煙道 aqx_p_187 + 燃燒塔 aqx_p_493 1h 值；上游延遲 4–5h，observed_at 落後屬預期
+
+cwa_uv_daily:
+  enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
+  deployment: zeabur
+  expected_interval_min: 720
+  supabase_tables: [live.cwa_uv_daily]
+  s3_prefixes:
+    - {prefix: cwa_uv_daily/archives/, expected_daily: false}
+  critical: false
+  notes: CWA O-A0005-001 前一日紫外線最大值（約 30 站）；observed_at=obs_date 00:00，落後 24–48h 屬預期
