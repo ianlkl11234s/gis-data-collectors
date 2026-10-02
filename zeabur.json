@@ -324,6 +324,38 @@
       "description": "北市圖座位收集間隔（分鐘），對應 data.taipei 官方標示 10 分鐘",
       "default": "10"
     },
+    "NUSC_GAMMA_RADIATION_ENABLED": {
+      "description": "核安會全國環境輻射 63 站（datagov 119233，免金鑰；migration 419）",
+      "default": "false"
+    },
+    "NUSC_GAMMA_RADIATION_INTERVAL": {
+      "description": "核安會環境輻射收集間隔（分鐘）；上游 5 分更新",
+      "default": "15"
+    },
+    "WATER_EFFLUENT_MONITORING_ENABLED": {
+      "description": "放流水連線自動監測 22 縣市（需 MOENV_API_KEY；migration 420）",
+      "default": "false"
+    },
+    "WATER_EFFLUENT_MONITORING_INTERVAL": {
+      "description": "放流水收集間隔（分鐘）；上游滾動視窗 1–2 小時",
+      "default": "60"
+    },
+    "CEMS_STACK_MONITORING_ENABLED": {
+      "description": "CEMS 煙道/燃燒塔 1 小時值（需 MOENV_API_KEY；migration 421）",
+      "default": "false"
+    },
+    "CEMS_STACK_MONITORING_INTERVAL": {
+      "description": "CEMS 收集間隔（分鐘）",
+      "default": "60"
+    },
+    "CWA_UV_DAILY_ENABLED": {
+      "description": "CWA 每日紫外線最大值（需 CWA_API_KEY；migration 422）",
+      "default": "false"
+    },
+    "CWA_UV_DAILY_INTERVAL": {
+      "description": "CWA 紫外線收集間隔（分鐘）；上游每日一值",
+      "default": "720"
+    },
     "YOUTUBE_API_KEY": {
       "description": "YouTube Data API v3 key（yt_live_video_resolver 必需，缺了會 silent skip）；GCP 專案需啟用 YouTube Data API v3"
     },

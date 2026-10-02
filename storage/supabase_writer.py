@@ -2000,6 +2000,46 @@ class SupabaseWriter:
             })
         return records
 
+    @staticmethod
+    def _point_wkt(lon, lat):
+        return f'SRID=4326;POINT({lon} {lat})' if (lon is not None and lat is not None) else None
+
+    def _transform_nusc_gamma_radiation(self, result: dict, ts: datetime) -> list[dict]:
+        """核安會環境輻射：補 geom；lon/lat 缺值時 geom=None（不合成）。"""
+        records = []
+        for r in result.get('data', []):
+            records.append({
+                **{k: r.get(k) for k in ('station_id', 'station_name', 'dose_usvh',
+                                         'observed_at', 'lon', 'lat', 'is_stale')},
+                'geom': self._point_wkt(r.get('lon'), r.get('lat')),
+                'collected_at': r.get('collected_at') or ts.isoformat(),
+            })
+        return records
+
+    def _transform_water_effluent_monitoring(self, result: dict, ts: datetime) -> list[dict]:
+        """放流水：collector 已產出 TABLE_MAP 同名欄位（已去重、升冪）。"""
+        cols = TABLE_MAP['water_effluent_monitoring']['columns']
+        return [{c: (r.get(c) if c != 'collected_at' else (r.get(c) or ts.isoformat())) for c in cols}
+                for r in result.get('data', []) if r.get('reading_key') and r.get('observed_at')]
+
+    def _transform_cems_stack_monitoring(self, result: dict, ts: datetime) -> list[dict]:
+        """CEMS：collector 已產出 TABLE_MAP 同名欄位（已去重、升冪）。"""
+        cols = TABLE_MAP['cems_stack_monitoring']['columns']
+        return [{c: (r.get(c) if c != 'collected_at' else (r.get(c) or ts.isoformat())) for c in cols}
+                for r in result.get('data', []) if r.get('reading_key') and r.get('observed_at')]
+
+    def _transform_cwa_uv_daily(self, result: dict, ts: datetime) -> list[dict]:
+        """CWA 紫外線：補 geom；uv_index None（-99）照寫。"""
+        records = []
+        for r in result.get('data', []):
+            records.append({
+                **{k: r.get(k) for k in ('station_id', 'station_name', 'county', 'obs_date',
+                                         'observed_at', 'uv_index', 'uv_raw', 'lon', 'lat')},
+                'geom': self._point_wkt(r.get('lon'), r.get('lat')),
+                'collected_at': r.get('collected_at') or ts.isoformat(),
+            })
+        return records
+
     def _transform_food_prices(self, result: dict, ts: datetime) -> list[dict]:
         """食品價格：collector 已產出與 TABLE_MAP 同名 dict。
         trade_date 為 date 物件、collected_at 為 datetime → 序列化為 ISO 字串。
@@ -2221,6 +2261,10 @@ class SupabaseWriter:
         'global_climate_cams': _transform_global_climate_grids,
         'global_climate_noaa_gfs': _transform_global_climate_grids,
         'nuclear_radiation': _transform_nuclear_radiation,
+        'nusc_gamma_radiation': _transform_nusc_gamma_radiation,
+        'water_effluent_monitoring': _transform_water_effluent_monitoring,
+        'cems_stack_monitoring': _transform_cems_stack_monitoring,
+        'cwa_uv_daily': _transform_cwa_uv_daily,
         'wic_sewer': _transform_wic_sewer,
         'wic_evacuate': _transform_wic_evacuate,
         'wic_pumb': _transform_wic_pumb,
