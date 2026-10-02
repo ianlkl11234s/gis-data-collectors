@@ -10,12 +10,14 @@ import yaml
 import config
 from collectors.ripe_atlas_internet_health import (
     RipeAtlasInternetHealthCollector,
+    _aligned_window,
     _atlas_measurements,
     _normalize_results,
     load_ripe_roster,
 )
 from collectors.registry import get_entry_by_name
 from storage.supabase_tables import TABLE_MAP
+from storage.supabase_writer import internet_health_observation_upsert_sql
 
 
 UTC = timezone.utc
@@ -131,9 +133,10 @@ def test_atlas_collector_isolates_measurement_failures_and_archives_raw(monkeypa
     collector = RipeAtlasInternetHealthCollector.__new__(RipeAtlasInternetHealthCollector)
 
     now = int(datetime.now(UTC).timestamp())
+    last_closed_bucket = now // 300 * 300 - 300
     rows = _fixture()[:2]
     for index, row in enumerate(rows):
-        row["timestamp"] = now - 60 + index
+        row["timestamp"] = last_closed_bucket + 30 + index
 
     def fake_get(measurement, _start, _stop):
         if measurement["measurement_id"] == 1002:
@@ -178,3 +181,77 @@ def test_atlas_optional_key_is_redacted_from_config_errors(monkeypatch, tmp_path
     message = module._safe_error(RuntimeError("failed test-atlas-secret"))
     assert "test-atlas-secret" not in message
     assert "[redacted]" in message
+
+
+def test_aligned_window_excludes_in_progress_bucket():
+    started = datetime(2026, 10, 2, 4, 8, 24, tzinfo=UTC)
+    requested_from, requested_to = _aligned_window(started, 30)
+    assert requested_to == datetime(2026, 10, 2, 4, 5, tzinfo=UTC)
+    assert requested_from == datetime(2026, 10, 2, 3, 35, tzinfo=UTC)
+    assert int(requested_from.timestamp()) % 300 == 0
+    assert int(requested_to.timestamp()) % 300 == 0
+    # exactly on a boundary: the bucket starting now is still in progress
+    boundary = datetime(2026, 10, 2, 4, 10, tzinfo=UTC)
+    assert _aligned_window(boundary, 30)[1] == boundary
+    # an unaligned lookback still floors to a bucket boundary
+    assert _aligned_window(started, 7)[0] == datetime(2026, 10, 2, 3, 55, tzinfo=UTC)
+
+
+def test_normalize_drops_buckets_outside_aligned_window(tmp_path):
+    roster = load_ripe_roster(_approved_roster(tmp_path / "roster.yaml"))
+    measurements = _atlas_measurements(roster)
+    rows = _fixture()  # buckets start at 1788156000 and 1788156300
+    window_start = datetime.fromtimestamp(1788156000, UTC)
+    window_end = datetime.fromtimestamp(1788156300, UTC)
+    edge = dict(rows[0], prb_id=12, timestamp=1788156300)  # stamped exactly at window_end
+    records, _, _, _ = _normalize_results(
+        {1001: [*rows, edge]},
+        measurements,
+        run_id="00000000-0000-0000-0000-000000000102",
+        collected_at="2026-08-31T00:00:00+00:00",
+        window_start=window_start,
+        window_end=window_end,
+    )
+    assert len(records) == 4
+    assert {record["window_start"] for record in records} == {window_start.isoformat()}
+    assert {record["window_end"] for record in records} == {window_end.isoformat()}
+    # a window that starts after the first bucket drops it too
+    records, _, _, _ = _normalize_results(
+        {1001: rows},
+        measurements,
+        run_id="00000000-0000-0000-0000-000000000103",
+        collected_at="2026-08-31T00:00:00+00:00",
+        window_start=window_start.replace(second=1),
+        window_end=datetime.fromtimestamp(1788156600, UTC),
+    )
+    assert {record["window_start"] for record in records} == {window_end.isoformat()}
+
+
+def test_collector_requests_only_closed_buckets(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "RIPE_INTERNET_HEALTH_ROSTER_PATH", str(_approved_roster(tmp_path / "roster.yaml")))
+    collector = RipeAtlasInternetHealthCollector.__new__(RipeAtlasInternetHealthCollector)
+    calls = []
+
+    def fake_get(_measurement, start, stop):
+        calls.append((start, stop))
+        return []
+
+    collector._get_results = fake_get
+    result = collector.collect()
+    run = result["data"][0]
+    start, stop = calls[0]
+    assert int(start.timestamp()) % 300 == 0 and int(stop.timestamp()) % 300 == 0
+    assert stop <= datetime.fromisoformat(run["started_at"])
+    assert run["requested_from"] == start.isoformat()
+    assert run["requested_to"] == stop.isoformat()
+
+
+def test_ripe_atlas_upsert_never_lets_fewer_samples_overwrite():
+    cols = ["source", "signal", "sample_count"]
+    guarded = internet_health_observation_upsert_sql("ripe_atlas_internet_health", cols)
+    assert guarded.rstrip().endswith(
+        "WHERE COALESCE(EXCLUDED.sample_count,0) >= COALESCE(t.sample_count,0)"
+    )
+    assert "INSERT INTO live.internet_health_observations AS t (source,signal,sample_count)" in guarded
+    for other in ("cloudflare_radar", "ioda_internet_health", "ripe_ris_live"):
+        assert " WHERE " not in internet_health_observation_upsert_sql(other, cols)

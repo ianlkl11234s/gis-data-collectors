@@ -47,6 +47,32 @@ def _taipei_today() -> date:
     return datetime.now(timezone(timedelta(hours=8))).date()
 
 
+# Collectors whose re-fetch of the same observation key can only add results
+# (RIPE Atlas buckets rebuilt from a rolling lookback).  A re-write with fewer
+# samples is a partial view and must not replace a fuller earlier write.
+_INTERNET_HEALTH_SAMPLE_GUARDED = frozenset({'ripe_atlas_internet_health'})
+
+
+def internet_health_observation_upsert_sql(collector_name: str, observation_cols: list[str]) -> str:
+    """Build the canonical observations upsert, with a sample-count guard for
+    collectors listed in ``_INTERNET_HEALTH_SAMPLE_GUARDED``."""
+    sql = (
+        f"INSERT INTO live.internet_health_observations AS t ({','.join(observation_cols)}) VALUES %s "
+        "ON CONFLICT (source,entity_type,entity_id,signal,observed_at) DO UPDATE SET "
+        "run_id=EXCLUDED.run_id,evidence_family=EXCLUDED.evidence_family,"
+        "source_observation_id=EXCLUDED.source_observation_id,entity_name=EXCLUDED.entity_name,"
+        "window_start=EXCLUDED.window_start,window_end=EXCLUDED.window_end,value=EXCLUDED.value,"
+        "unit=EXCLUDED.unit,baseline_value=EXCLUDED.baseline_value,change_ratio=EXCLUDED.change_ratio,"
+        "reported_status=EXCLUDED.reported_status,incident_kind=EXCLUDED.incident_kind,"
+        "confidence=EXCLUDED.confidence,sample_count=EXCLUDED.sample_count,"
+        "stale_after_seconds=EXCLUDED.stale_after_seconds,source_updated_at=EXCLUDED.source_updated_at,"
+        "collected_at=EXCLUDED.collected_at,quality_flags=EXCLUDED.quality_flags,metadata=EXCLUDED.metadata"
+    )
+    if collector_name in _INTERNET_HEALTH_SAMPLE_GUARDED:
+        sql += " WHERE COALESCE(EXCLUDED.sample_count,0) >= COALESCE(t.sample_count,0)"
+    return sql
+
+
 class SupabaseWriter:
     """統一的 Supabase 寫入介面（連線池版本）。
 
@@ -2522,16 +2548,7 @@ class SupabaseWriter:
                     ) for row in observations]
                     execute_values(
                         cur,
-                        f"INSERT INTO live.internet_health_observations ({','.join(observation_cols)}) VALUES %s "
-                        "ON CONFLICT (source,entity_type,entity_id,signal,observed_at) DO UPDATE SET "
-                        "run_id=EXCLUDED.run_id,evidence_family=EXCLUDED.evidence_family,"
-                        "source_observation_id=EXCLUDED.source_observation_id,entity_name=EXCLUDED.entity_name,"
-                        "window_start=EXCLUDED.window_start,window_end=EXCLUDED.window_end,value=EXCLUDED.value,"
-                        "unit=EXCLUDED.unit,baseline_value=EXCLUDED.baseline_value,change_ratio=EXCLUDED.change_ratio,"
-                        "reported_status=EXCLUDED.reported_status,incident_kind=EXCLUDED.incident_kind,"
-                        "confidence=EXCLUDED.confidence,sample_count=EXCLUDED.sample_count,"
-                        "stale_after_seconds=EXCLUDED.stale_after_seconds,source_updated_at=EXCLUDED.source_updated_at,"
-                        "collected_at=EXCLUDED.collected_at,quality_flags=EXCLUDED.quality_flags,metadata=EXCLUDED.metadata",
+                        internet_health_observation_upsert_sql(collector_name, observation_cols),
                         values,
                         page_size=1000,
                     )

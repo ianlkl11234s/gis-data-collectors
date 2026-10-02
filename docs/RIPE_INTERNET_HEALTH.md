@@ -61,8 +61,10 @@ silently auto-discovered.
 ## RIPE Atlas polling
 
 - Collector: `collectors/ripe_atlas_internet_health.py`
-- Default cadence: 5 minutes; 30-minute lookback with deterministic result and
-  DB-key dedup.  RIPE Atlas latest results are cached for five minutes.
+- Default cadence: 5 minutes; 30-minute lookback aligned to closed 5-minute
+  buckets, deterministic result dedup, and a DB sample-count guard (fewer
+  samples never overwrite more).  RIPE Atlas latest results are cached for
+  five minutes.  See「資料收集全流程」below (fixed 2026-10-02).
 - Only finite IPv4/IPv6 country aggregates are written to
   `live.internet_health_source_runs` and
   `live.internet_health_observations`.
@@ -74,6 +76,140 @@ silently auto-discovered.
   measurement.
 - 2026-08-31 local official-API smoke first proved parser compatibility; the
   production one-shot and subsequent scheduled run are recorded above.
+
+## 資料收集全流程（RIPE Atlas，2026-10-02 修正後）
+
+> 背景：修正前每桶只剩桶尾約 100 秒的探針（IPv4 29–56／87、IPv6 20–29／41），
+> 造成 IPv6 每 20 分鐘的鋸齒與不可信的即時值。調查見 mini-taiwan-pulse
+> `docs/features/monitor-restyle/internet-health-reading.md` §2。
+
+### 1. 來源
+
+- RIPE NCC 內建 ping 量測 **1001（IPv4）／2001（IPv6）**，目標 K-root
+  （`target_group: k_root_server`），量測輪次 **240 秒**（roster
+  `interval_seconds: 240`）。公開結果，不需 API key。
+- 探針 roster：`config/ripe_internet_health.yaml`，version `2026-08-31.1`，
+  IPv4 87 支、IPv6 41 支（臺灣公開探針快照，只存 probe_id／ASN）。roster
+  變動要走 review／版本號，不自動探索。
+- 每支探針在 240 秒輪次內的相位固定，因此一個 300 秒桶內每支探針出現 1 或 2
+  次；完整桶的「回報探針數」約等於當時實際在線的探針數（2026-10 約 IPv4 79–83、
+  IPv6 39）。
+
+### 2. 排程與部署
+
+- Collector：`collectors/ripe_atlas_internet_health.py`
+  （`RipeAtlasInternetHealthCollector`），由 `CollectorScheduler` 每 5 分鐘觸發
+  （`config.py` `RIPE_ATLAS_INTERNET_HEALTH` 預設 5 分）。
+- 部署：**Zeabur** 長駐容器（非 HiCloud VM）。repo 預設
+  `RIPE_ATLAS_INTERNET_HEALTH_ENABLED=false`，正式環境以 env override 為 `true`。
+- **merge 到 `main` 即觸發 Zeabur 自動部署**（`.claude/principles.md`、README
+  「Push 到 main 自動部署」），所以 collector 修改一 merge 就上線。
+- 原始 API 回應走 BaseCollector 本地＋私有 S3
+  `ripe_atlas_internet_health/archives/`（`config/cross_layer_map.yaml`）。
+
+### 3. 抓取窗與分桶規則
+
+1. `started = now()`；`requested_to = floor(started / 300) × 300`
+   ——也就是**仍在進行中的那一桶的起點**，該桶整個排除。
+2. `requested_from = floor((requested_to − LOOKBACK) / 300) × 300`，
+   `RIPE_ATLAS_LOOKBACK_MINUTES` 預設 30 → 每次重抓最近 6 個已結束的桶。
+3. 以 `start=requested_from, stop=requested_to, probe_ids=<roster>` 呼叫
+   `/measurements/{id}/results/`。
+4. 每筆結果依 `timestamp` 落到 300 秒桶（`_bucket_bounds`），以
+   (msm, probe, timestamp, af, type) 去重；**只輸出完整落在
+   `[requested_from, requested_to)` 的桶**（`_normalize_results` 的
+   window 參數；API `stop` 邊界是否包含不影響結果）。
+5. 每桶每 AF 產 4 個 signal，`observed_at = window_end = 桶結束`：
+
+| signal | value | sample_count |
+|---|---|---|
+| `probe_connectivity_ratio_ipv{4,6}` | 回報探針數 ÷ roster 探針數 | 回報探針數 |
+| `ping_success_ratio_ipv{4,6}` | Σrcvd ÷ Σsent | 回報探針數 |
+| `median_rtt_ms_ipv{4,6}` | 有收到封包探針的 avg 中位數 | RTT 樣本數 |
+| `reachable_asn_ratio_ipv{4,6}` | 成功 ASN 數 ÷ roster ASN 數 | 成功 ASN 數 |
+
+`metadata.expected_probe_count`／`expected_asn_count` 是 roster 的分母
+（87／41、34／22），不是「實際在線數」。
+
+為什麼不再延遲一個 240 秒輪次：`stale_after_seconds = max(900, 240×3) = 900`，
+RPC 以 `source_updated_at + 900s` 判 stale。只排除當前桶時，最新一桶在下一輪寫入
+前最老約 10 分鐘；再延 240 秒會逼近 15 分鐘門檻。遲到上傳的結果改由「30 分鐘
+回看 × 守門」補齊：每一桶會被後續約 6 輪重抓，樣本只增不減。
+
+### 4. 寫入與守門
+
+- 一個 transaction 寫 `live.internet_health_source_runs`（run ledger，
+  `requested_from/to` 為對齊後的值）與 `live.internet_health_observations`
+  （`storage/supabase_writer.py` `internet_health_observation_upsert_sql`）。
+- 衝突鍵 `(source, entity_type, entity_id, signal, observed_at)`。
+  **僅對 `ripe_atlas_internet_health`** 加守門：
+  `DO UPDATE ... WHERE COALESCE(EXCLUDED.sample_count,0) >= COALESCE(t.sample_count,0)`
+  ——同一桶再寫入時，樣本較少的結果不會蓋掉較多的。Cloudflare／IODA／RIS 的
+  `sample_count` 語意不同，維持原本的無條件覆寫。
+- `live.internet_health_current` 由 gis-platform migration 379 的
+  `AFTER INSERT OR UPDATE` trigger 投影（指向最新 `observed_at`；同 observed_at
+  以較新 `collected_at` 為準）。守門擋下的 UPDATE 不觸發投影，current 維持較完整
+  的那筆。**本修正不需要 gis-platform migration。**
+
+### 5. 下游
+
+- gis-platform RPC：`public.get_internet_health_status`（現值，migration
+  379→383→384；384 開放 RIPE 8 個 Atlas signal 公開輸出）、
+  `public.get_internet_health_timeseries`（時序，回傳 `sample_count` 與
+  `metadata`）。
+- mini-taiwan-pulse 前端：`src/data/internetHealthLoader.ts`（24H 5 分鐘原值、
+  7D 30 分鐘、30D 2 小時，比率以 sample_count 加權）與
+  `src/components/intel/monitor/TelecomStatusCard.tsx`（monitor-restyle 分支）：
+  - 完整桶判定：回報探針數（ping_success／probe_connectivity 的 sample_count）
+    ≥ **80% × 預期探針數**；前端預期值寫死 IPv4 79、IPv6 39（實際有回報數，
+    不是 roster 的 87／41），見 `ATLAS_EXPECTED_PROBES`／`isCompleteProbeCount`。
+  - v2 24H：每整點小時只取該小時內完整桶聚合成一點（`hourlyCompleteSeries`）；
+    整小時沒有完整桶畫缺值。
+  - 即時值：現值的探針數達門檻才用，否則改用 24H 內最近一個完整桶，都沒有就留空。
+  - collector 修正後，新資料每桶應都達門檻；前端這層篩選可保留作防呆。
+
+### 6. 已知限制
+
+- **歷史殘缺資料不回補**（使用者 2026-10-02 決定）。修正部署前的桶仍是殘缺
+  值；資料從「部署時間 ＿＿＿＿（UTC，部署後填）往前推 30 分鐘」起的桶才完整，
+  即部署後第一輪 run 的 `requested_from` 之後。
+- 7D／30D 的 Probe 回報率與可達 ASN 在跨過舊資料的期間仍偏低，直到舊桶滑出視窗
+  （7D 約 7 天、30D 約 30 天後）。
+- roster 分母是 2026-08-31 快照；探針自然下線會讓比率慢慢下降，不是網路異常。
+- `RIPE_ATLAS_OVERLAP_MINUTES` 目前只寫進 run metadata，沒有功能作用；
+  `records_written` 記的是送出的 observation 數，被守門擋下的不扣除（會高估）。
+- 守門的 SQL 沒有 PG 層單元測試（只測組出的字串），**部署後第一輪 run 才真正驗證
+  語法**。
+
+### 7. 部署後驗證
+
+```sql
+SET statement_timeout = 15000;
+-- (a) 最近 run 成功、窗口已對齊 300 秒
+SELECT started_at, status, error_code, requested_from, requested_to,
+       extract(epoch FROM requested_to)::int % 300 AS to_mod,
+       records_written
+FROM live.internet_health_source_runs
+WHERE source = 'ripe_atlas'
+ORDER BY started_at DESC LIMIT 3;
+
+-- (b) 每桶回報探針數回到預期附近
+SELECT to_char(observed_at AT TIME ZONE 'Asia/Taipei', 'MM-DD HH24:MI') AS bucket_end,
+       max(sample_count) FILTER (WHERE signal = 'probe_connectivity_ratio_ipv4') AS n4,
+       max((metadata->>'expected_probe_count')::int) FILTER (WHERE signal = 'probe_connectivity_ratio_ipv4') AS exp4,
+       max(sample_count) FILTER (WHERE signal = 'probe_connectivity_ratio_ipv6') AS n6,
+       max((metadata->>'expected_probe_count')::int) FILTER (WHERE signal = 'probe_connectivity_ratio_ipv6') AS exp6,
+       round(max(value) FILTER (WHERE signal = 'ping_success_ratio_ipv6')::numeric, 3) AS ps6
+FROM live.internet_health_observations
+WHERE source = 'ripe_atlas' AND observed_at > now() - interval '2 hours'
+GROUP BY observed_at
+ORDER BY observed_at DESC
+LIMIT 48;
+```
+
+驗收：(a) `status = succeeded`、`to_mod = 0`；(b) 部署後的桶 n4 約 79–83、
+n6 約 39（皆 ≥ 0.8 × 前端預期 79／39；相對 roster 分母 87／41 約 0.9 以上），
+連續桶不再出現 10→17→21→17 的 20 分鐘循環，ps6 穩定在約 0.85–0.90。
 
 ## RIPE RIS Live worker
 
