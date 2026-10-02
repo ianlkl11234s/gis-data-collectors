@@ -115,10 +115,29 @@ def _atlas_measurements(roster: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
-def _bucket_bounds(timestamp: int | float, seconds: int = 300) -> tuple[datetime, datetime]:
+BUCKET_SECONDS = 300
+
+
+def _bucket_bounds(timestamp: int | float, seconds: int = BUCKET_SECONDS) -> tuple[datetime, datetime]:
     start_epoch = int(float(timestamp)) // seconds * seconds
     start = datetime.fromtimestamp(start_epoch, UTC)
     return start, start + timedelta(seconds=seconds)
+
+
+def _aligned_window(
+    started: datetime, lookback_minutes: int, seconds: int = BUCKET_SECONDS
+) -> tuple[datetime, datetime]:
+    """Return a fetch window made only of already-closed 5-minute buckets.
+
+    ``requested_to`` is the start of the bucket that is still in progress, so
+    that bucket is excluded; ``requested_from`` is floored to a bucket
+    boundary.  A window cut in the middle of a bucket would otherwise turn a
+    partial slice of results into a whole-bucket aggregate.
+    """
+    to_epoch = int(started.timestamp()) // seconds * seconds
+    lookback_seconds = max(int(lookback_minutes) * 60, seconds)
+    from_epoch = (to_epoch - lookback_seconds) // seconds * seconds
+    return datetime.fromtimestamp(from_epoch, UTC), datetime.fromtimestamp(to_epoch, UTC)
 
 
 def _normalize_results(
@@ -127,8 +146,16 @@ def _normalize_results(
     *,
     run_id: str,
     collected_at: str,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> tuple[list[dict[str, Any]], int, int, str | None]:
-    """Deduplicate results and build conservative 5-minute AF aggregates."""
+    """Deduplicate results and build conservative 5-minute AF aggregates.
+
+    When a window is given, only buckets fully inside ``[window_start,
+    window_end)`` are emitted; results in edge buckets (e.g. a result stamped
+    exactly at ``window_end``) are dropped instead of becoming a partial
+    bucket.
+    """
     measurement_by_id = {item["measurement_id"]: item for item in measurements}
     probe_asn: dict[tuple[int, int], int | None] = {}
     expected_probes: dict[int, set[int]] = defaultdict(set)
@@ -189,6 +216,10 @@ def _normalize_results(
                 continue
             seen.add(identity)
             start, end = _bucket_bounds(timestamp)
+            if (window_start is not None and start < window_start) or (
+                window_end is not None and end > window_end
+            ):
+                continue
             bucket = buckets.setdefault((address_family, start), {
                 "end": end,
                 "reported_probes": set(),
@@ -329,7 +360,7 @@ class RipeAtlasInternetHealthCollector(BaseCollector):
     def collect(self) -> dict[str, Any]:
         run_id = str(uuid.uuid4())
         started = datetime.now(UTC)
-        requested_from = started - timedelta(minutes=config.RIPE_ATLAS_LOOKBACK_MINUTES)
+        requested_from, requested_to = _aligned_window(started, config.RIPE_ATLAS_LOOKBACK_MINUTES)
         collected_at = started.isoformat()
         try:
             roster = load_ripe_roster()
@@ -338,7 +369,7 @@ class RipeAtlasInternetHealthCollector(BaseCollector):
             run = _source_run(
                 run_id=run_id, source=SOURCE, started_at=collected_at,
                 finished_at=datetime.now(UTC).isoformat(), status="failed",
-                requested_from=requested_from.isoformat(), requested_to=started.isoformat(),
+                requested_from=requested_from.isoformat(), requested_to=requested_to.isoformat(),
                 source_updated_at=None, received=0, written=0, rejected=0,
                 error_code="config_missing", error_message=_safe_error(exc),
                 metadata={"public_visibility": "internal_only"},
@@ -355,7 +386,7 @@ class RipeAtlasInternetHealthCollector(BaseCollector):
         for measurement in measurements:
             measurement_id = measurement["measurement_id"]
             try:
-                rows = self._get_results(measurement, requested_from, started)
+                rows = self._get_results(measurement, requested_from, requested_to)
                 payloads[measurement_id] = rows
                 raw_payload[str(measurement_id)] = rows
                 endpoint_status[str(measurement_id)] = {"status": "succeeded", "records": len(rows)}
@@ -367,7 +398,8 @@ class RipeAtlasInternetHealthCollector(BaseCollector):
                 }
 
         observations, rejected, duplicates, source_updated_at = _normalize_results(
-            payloads, measurements, run_id=run_id, collected_at=collected_at
+            payloads, measurements, run_id=run_id, collected_at=collected_at,
+            window_start=requested_from, window_end=requested_to,
         )
         succeeded = sum(item["status"] == "succeeded" for item in endpoint_status.values())
         failed = len(endpoint_status) - succeeded
@@ -391,7 +423,7 @@ class RipeAtlasInternetHealthCollector(BaseCollector):
         run = _source_run(
             run_id=run_id, source=SOURCE, started_at=collected_at,
             finished_at=datetime.now(UTC).isoformat(), status=status,
-            requested_from=requested_from.isoformat(), requested_to=started.isoformat(),
+            requested_from=requested_from.isoformat(), requested_to=requested_to.isoformat(),
             source_updated_at=source_updated_at, received=received, written=len(observations),
             rejected=rejected, error_code=error_code, error_message=None,
             metadata={
