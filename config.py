@@ -288,7 +288,7 @@ _COLLECTOR_TOGGLES = (
     ('TOURIST_SHUTTLE',              False, 2),  # 台灣好行 A1 全國單一端點
     ('TRA_TRAIN',                    True,  2),
     ('TRA_STATIC',                   True,  1440),
-    ('RAIL_TIMETABLE',               True,  1440),
+    ('RAIL_TIMETABLE',               True,  240),  # Today 班表會日內修訂；每 4 小時刷新並允許 degraded fallback 後重試
     ('SHIP_TDX',                     False, 2),
     ('SHIP_AIS',                     False, 10),  # ⚠️ Taiwan IP required — 跑在 HiCloud VM，Zeabur 端強制關閉，見 docs/EXTERNAL_COLLECTORS.md
     ('AISSTREAM',                    False, 1),   # 常駐 WebSocket；由 main.py 另行啟動，不走 interval scheduler

@@ -1,0 +1,768 @@
+{
+  "query": "with wanted(s,t,c) as (values ('intel','global_event_candidate_observations','available_at'),('intel','global_event_collector_run_receipts','finished_at'),('live','youbike_snapshots','collected_at'),('live','youbike_current','collected_at'),('live','bus_positions','collected_at'),('live','bus_current','collected_at'),('live','bus_intercity_positions','collected_at'),('live','bus_intercity_current','collected_at'),('live','freeway_sections','collected_at'),('live','freeway_sections_current','collected_at'),('live','freeway_vd_traffic','collected_at'),('live','train_positions','collected_at'),('live','ship_positions','collected_at'),('live','ship_current','collected_at'),('reference','marine_observation_stations','last_seen_at'),('live','marine_observation_readings','observed_at'),('live','marine_observation_current','collected_at'),('live','marine_observation_quarantine','collected_at'),('live','aisstream_ingest_runs','started_at'),('live','aisstream_archive_manifests','created_at'),('live','aisstream_position_observations','received_at'),('live','aisstream_vessel_current','updated_at'),('live','aisstream_ingest_health','updated_at'),('live','gfw_vessel_presence_runs','started_at'),('live','gfw_vessel_presence_archive_manifests','uploaded_at'),('live','gfw_vessel_presence_snapshots','received_at'),('live','gfw_vessel_presence_current','updated_at'),('reference','daily_schedules','created_at'),('live','parking_segments_current','collected_at'),('live','flight_positions','collected_at'),('air_tickets','fare_offers','observed_at'),('live','weather_observations','collected_at'),('live','weather_current','observed_at'),('live','temperature_grids','collected_at'),('live','cwa_imagery_frames','observed_at'),('live','earthquake_events','occurred_at'),('live','earthquake_station_obs','collected_at'),('live','tsunami_alerts','collected_at'),('live','earthquake_town_intensity','collected_at'),('live','earthquake_shakemap_grid','collected_at'),('live','earthquake_moment_tensor','collected_at'),('live','disaster_alerts','collected_at'),('live','internet_health_source_runs','finished_at'),('live','internet_health_observations','collected_at'),('live','internet_health_current','observed_at'),('live','internet_health_incidents','last_detected_at'),('live','satellite_positions','collected_at'),('live','satellite_current','collected_at'),('live','satellite_tle','updated_at'),('live','satellite_tle_history','fetched_at'),('live','launches','collected_at'),('live','launch_events','collected_at'),('live','launch_pads','collected_at'),('live','air_quality_observations','collected_at'),('live','air_quality_current','observed_at'),('live','aqi_imagery_frames','observed_at'),('live','micro_sensor_readings','collected_at'),('live','reservoir_status','snapshot_at'),('live','reservoir_daily_ops','observed_at'),('live','river_water_level','observed_at'),('live','rain_gauge_readings','observed_at'),('live','groundwater_level_readings','observed_at'),('live','iot_wra_measurements','observed_at'),('live','uswg_measurements','observed_at'),('public','drought_alert_current','fetched_at'),('live','road_events','collected_at'),('live','road_events_current','collected_at'),('spatial','waste_positions_realtime','observed_at'),('live','er_hospital_status','observed_at'),('live','er_hospital_current','observed_at'),('live','power_system_status','observed_at'),('live','power_generation_unit','observed_at'),('live','power_region_demand','observed_at'),('live','news_events','created_at'),('live','public_health_weekly','collected_at'),('live','road_sections_current','collected_at'),('live','parking_lots_current','collected_at'),('live','tourist_shuttle_current','collected_at'),('live','nuclear_radiation_stations','updated_at'),('live','taipei_sewer_measurements','observed_at'),('live','taipei_evacuate_status','observed_at'),('live','taipei_pumb_status','observed_at'),('live','pla_activity_daily','collected_at'),('live','food_price_daily','collected_at'),('spatial','pla_tracks_runs','run_at'),('live','yt_live_current','updated_at'),('live','precipitation_raster_frames','collected_at'),('live','earthquakes_global','collected_at'),('live','typhoon_positions','collected_at'),('live','global_climate_grids','collected_at'),('live','border_airport_snapshot','collected_at'),('live','lightning_events','collected_at'),('live','market_index_current','updated_at'),('live','prison_population_daily','collected_at'),('live','animal_adoption_snapshot_runs','snapshot_date'),('live','animal_adoption_snapshots','snapshot_date'),('live','animal_adoption_current','updated_at'),('analytics','animal_adoption_daily','snapshot_date'),('live','animal_shelter_outcome_runs','snapshot_date'),('live','animal_shelter_outcomes','snapshot_date'),('live','animal_welfare_point_runs','snapshot_date'),('live','animal_welfare_point_snapshots','snapshot_date'),('live','traffic_accidents_a1','collected_at'),('live','tpml_seat_status','observed_at'),('live','tpml_seat_current','observed_at'),('live','nusc_gamma_stations','updated_at'),('live','water_effluent_current','updated_at'),('live','cems_stack_current','updated_at'),('live','cwa_uv_daily','collected_at')) select w.*,pc.reltuples,exists(select 1 from pg_index i join pg_attribute a on a.attrelid=i.indrelid and a.attname=w.c where i.indrelid=pc.oid and i.indisvalid and i.indkey[0]=a.attnum) as indexed from wanted w left join pg_namespace n on n.nspname=w.s left join pg_class pc on pc.relnamespace=n.oid and pc.relname=w.t limit 120",
+  "rows": [
+    {
+      "s": "air_tickets",
+      "t": "fare_offers",
+      "c": "observed_at",
+      "reltuples": 3718,
+      "indexed": false
+    },
+    {
+      "s": "public",
+      "t": "drought_alert_current",
+      "c": "fetched_at",
+      "reltuples": 2,
+      "indexed": false
+    },
+    {
+      "s": "reference",
+      "t": "daily_schedules",
+      "c": "created_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "reference",
+      "t": "marine_observation_stations",
+      "c": "last_seen_at",
+      "reltuples": 116,
+      "indexed": false
+    },
+    {
+      "s": "spatial",
+      "t": "pla_tracks_runs",
+      "c": "run_at",
+      "reltuples": 164,
+      "indexed": true
+    },
+    {
+      "s": "spatial",
+      "t": "waste_positions_realtime",
+      "c": "observed_at",
+      "reltuples": 748549,
+      "indexed": true
+    },
+    {
+      "s": "analytics",
+      "t": "animal_adoption_daily",
+      "c": "snapshot_date",
+      "reltuples": 8012,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "cwa_uv_daily",
+      "c": "collected_at",
+      "reltuples": 120,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "cems_stack_current",
+      "c": "updated_at",
+      "reltuples": 2565,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "water_effluent_current",
+      "c": "updated_at",
+      "reltuples": 8120,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "nusc_gamma_stations",
+      "c": "updated_at",
+      "reltuples": 63,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "tpml_seat_current",
+      "c": "observed_at",
+      "reltuples": 29,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "tpml_seat_status",
+      "c": "observed_at",
+      "reltuples": 317695,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "traffic_accidents_a1",
+      "c": "collected_at",
+      "reltuples": 1717,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "animal_welfare_point_snapshots",
+      "c": "snapshot_date",
+      "reltuples": 685232,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "animal_welfare_point_runs",
+      "c": "snapshot_date",
+      "reltuples": 272,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "animal_shelter_outcomes",
+      "c": "snapshot_date",
+      "reltuples": 552576,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "animal_shelter_outcome_runs",
+      "c": "snapshot_date",
+      "reltuples": 178,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "animal_adoption_current",
+      "c": "updated_at",
+      "reltuples": 10642,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "animal_adoption_snapshots",
+      "c": "snapshot_date",
+      "reltuples": -1,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "animal_adoption_snapshot_runs",
+      "c": "snapshot_date",
+      "reltuples": -1,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "prison_population_daily",
+      "c": "collected_at",
+      "reltuples": 2501,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "market_index_current",
+      "c": "updated_at",
+      "reltuples": 2,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "lightning_events",
+      "c": "collected_at",
+      "reltuples": 5198,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "border_airport_snapshot",
+      "c": "collected_at",
+      "reltuples": 430026,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "global_climate_grids",
+      "c": "collected_at",
+      "reltuples": 2720,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "typhoon_positions",
+      "c": "collected_at",
+      "reltuples": 40369,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "earthquakes_global",
+      "c": "collected_at",
+      "reltuples": 21859,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "precipitation_raster_frames",
+      "c": "collected_at",
+      "reltuples": 4208,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "yt_live_current",
+      "c": "updated_at",
+      "reltuples": 13,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "food_price_daily",
+      "c": "collected_at",
+      "reltuples": 143798,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "pla_activity_daily",
+      "c": "collected_at",
+      "reltuples": 794,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "taipei_pumb_status",
+      "c": "observed_at",
+      "reltuples": 69745,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "taipei_evacuate_status",
+      "c": "observed_at",
+      "reltuples": 519587,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "taipei_sewer_measurements",
+      "c": "observed_at",
+      "reltuples": 208351,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "nuclear_radiation_stations",
+      "c": "updated_at",
+      "reltuples": 51,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "tourist_shuttle_current",
+      "c": "collected_at",
+      "reltuples": 820,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "parking_lots_current",
+      "c": "collected_at",
+      "reltuples": 3852,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "road_sections_current",
+      "c": "collected_at",
+      "reltuples": 8021,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "public_health_weekly",
+      "c": "collected_at",
+      "reltuples": 15811,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "news_events",
+      "c": "created_at",
+      "reltuples": 177596,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "power_region_demand",
+      "c": "observed_at",
+      "reltuples": 62144,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "power_generation_unit",
+      "c": "observed_at",
+      "reltuples": 3172310,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "power_system_status",
+      "c": "observed_at",
+      "reltuples": 15585,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "er_hospital_current",
+      "c": "observed_at",
+      "reltuples": 60,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "er_hospital_status",
+      "c": "observed_at",
+      "reltuples": 94925,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "road_events_current",
+      "c": "collected_at",
+      "reltuples": 8759,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "road_events",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "uswg_measurements",
+      "c": "observed_at",
+      "reltuples": 4758070,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "iot_wra_measurements",
+      "c": "observed_at",
+      "reltuples": 9125620,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "groundwater_level_readings",
+      "c": "observed_at",
+      "reltuples": 2665920,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "rain_gauge_readings",
+      "c": "observed_at",
+      "reltuples": 5640190,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "river_water_level",
+      "c": "observed_at",
+      "reltuples": 619791,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "reservoir_daily_ops",
+      "c": "observed_at",
+      "reltuples": 6848,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "reservoir_status",
+      "c": "snapshot_at",
+      "reltuples": 57375,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "micro_sensor_readings",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "aqi_imagery_frames",
+      "c": "observed_at",
+      "reltuples": 1720,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "air_quality_current",
+      "c": "observed_at",
+      "reltuples": 84,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "air_quality_observations",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "launch_pads",
+      "c": "collected_at",
+      "reltuples": 240,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "launch_events",
+      "c": "collected_at",
+      "reltuples": 108,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "launches",
+      "c": "collected_at",
+      "reltuples": 1532,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "satellite_tle_history",
+      "c": "fetched_at",
+      "reltuples": 1913760,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "satellite_tle",
+      "c": "updated_at",
+      "reltuples": 69465,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "satellite_current",
+      "c": "collected_at",
+      "reltuples": 18894,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "satellite_positions",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "internet_health_incidents",
+      "c": "last_detected_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "internet_health_current",
+      "c": "observed_at",
+      "reltuples": 23,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "internet_health_observations",
+      "c": "collected_at",
+      "reltuples": 183151,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "internet_health_source_runs",
+      "c": "finished_at",
+      "reltuples": 39791,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "disaster_alerts",
+      "c": "collected_at",
+      "reltuples": 22569,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "earthquake_moment_tensor",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "earthquake_shakemap_grid",
+      "c": "collected_at",
+      "reltuples": 21248,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "earthquake_town_intensity",
+      "c": "collected_at",
+      "reltuples": 5520,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "tsunami_alerts",
+      "c": "collected_at",
+      "reltuples": 80,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "earthquake_station_obs",
+      "c": "collected_at",
+      "reltuples": 2269,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "earthquake_events",
+      "c": "occurred_at",
+      "reltuples": 1527,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "cwa_imagery_frames",
+      "c": "observed_at",
+      "reltuples": 3506,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "temperature_grids",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "weather_current",
+      "c": "observed_at",
+      "reltuples": 877,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "weather_observations",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "flight_positions",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "parking_segments_current",
+      "c": "collected_at",
+      "reltuples": 3696,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "gfw_vessel_presence_current",
+      "c": "updated_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "gfw_vessel_presence_snapshots",
+      "c": "received_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "gfw_vessel_presence_archive_manifests",
+      "c": "uploaded_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "gfw_vessel_presence_runs",
+      "c": "started_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "aisstream_ingest_health",
+      "c": "updated_at",
+      "reltuples": 1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "aisstream_vessel_current",
+      "c": "updated_at",
+      "reltuples": 8725,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "aisstream_position_observations",
+      "c": "received_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "aisstream_archive_manifests",
+      "c": "created_at",
+      "reltuples": 813,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "aisstream_ingest_runs",
+      "c": "started_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "marine_observation_quarantine",
+      "c": "collected_at",
+      "reltuples": 3307,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "marine_observation_current",
+      "c": "collected_at",
+      "reltuples": 424,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "marine_observation_readings",
+      "c": "observed_at",
+      "reltuples": 952889,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "ship_current",
+      "c": "collected_at",
+      "reltuples": 218517,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "ship_positions",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "train_positions",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "freeway_vd_traffic",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "freeway_sections_current",
+      "c": "collected_at",
+      "reltuples": 680,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "freeway_sections",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "bus_intercity_current",
+      "c": "collected_at",
+      "reltuples": 3588,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "bus_intercity_positions",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "bus_current",
+      "c": "collected_at",
+      "reltuples": 12116,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "bus_positions",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": true
+    },
+    {
+      "s": "live",
+      "t": "youbike_current",
+      "c": "collected_at",
+      "reltuples": 9461,
+      "indexed": false
+    },
+    {
+      "s": "live",
+      "t": "youbike_snapshots",
+      "c": "collected_at",
+      "reltuples": -1,
+      "indexed": false
+    },
+    {
+      "s": "intel",
+      "t": "global_event_collector_run_receipts",
+      "c": "finished_at",
+      "reltuples": 620,
+      "indexed": false
+    },
+    {
+      "s": "intel",
+      "t": "global_event_candidate_observations",
+      "c": "available_at",
+      "reltuples": 20988,
+      "indexed": false
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+       TIMESTAMP                                                                               MESSAGE
+-----------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------
+  2026-10-05T04:46:12Z  2026-10-05 12:46:12,931 INFO [bus_intercity] ✓ DB 寫入 1620 筆
+  2026-10-05T04:46:11Z  [bus_intercity] ✓ 已儲存: /data/bus_intercity/2026/10/05/bus_intercity_1246.json
+  2026-10-05T04:46:11Z     ✓ 合計: 1620/1620 台公路客運有 GPS 回報
+  2026-10-05T04:46:11Z  [bus_intercity] 開始收集 (12:46:11)
+  2026-10-05T04:46:11Z
+  2026-10-05T04:45:58Z  2026-10-05 12:45:58,016 INFO [twse_market_index] ✓ DB 寫入 2 筆
+  2026-10-05T04:45:57Z  [twse_market_index] ✓ 已儲存: /data/twse_market_index/2026/10/05/twse_market_index_1245.json
+  2026-10-05T04:45:57Z  [twse_market_index] 開始收集 (12:45:57)
+  2026-10-05T04:45:57Z
+  2026-10-05T04:45:49Z  2026-10-05 12:45:49,418 INFO [er_hospital_realtime] ✓ DB 寫入 59 筆
+  2026-10-05T04:45:48Z  [er_hospital_realtime] ✓ 已儲存: /data/er_hospital_realtime/2026/10/05/er_hospital_realtime_1245.json
+  2026-10-05T04:45:44Z  [er_hospital_realtime] 開始收集 (12:45:44)
+  2026-10-05T04:45:44Z
+  2026-10-05T04:45:13Z  2026-10-05 12:45:13,701 INFO [bus] ✓ DB 寫入 5415 筆
+  2026-10-05T04:45:09Z  2026-10-05 12:45:09,004 INFO [yt_live_video_resolver] ✓ DB 寫入 13 筆
+  2026-10-05T04:45:08Z  [yt_live_video_resolver] ✓ 已儲存: /data/yt_live_video_resolver/2026/10/05/yt_live_video_resolver_1245.json
+  2026-10-05T04:45:08Z  [yt_live_video_resolver] live=10/13 sticky=0 cleared=0
+  2026-10-05T04:45:08Z  [yt_live_video_resolver] quota: videos.list=1 call · search=0 call | 今日 search 12/80（官方硬上限 100 calls/day），units≈261/10000，PT 日 2026-10-04
+  2026-10-05T04:45:08Z  [yt_live_video_resolver] 開始收集 (12:45:08)
+  2026-10-05T04:45:08Z
+  2026-10-05T04:45:08Z  [bus] ✓ 已儲存: /data/bus/2026/10/05/bus_1245.json
+  2026-10-05T04:45:07Z     ✓ 合計: 5415 台公車（22/22 城市成功）
+  2026-10-05T04:45:07Z     LienchiangCounty: 2/2 台有 GPS
+  2026-10-05T04:45:07Z     KinmenCounty: 63/63 台有 GPS
+  2026-10-05T04:45:07Z     PenghuCounty: 19/19 台有 GPS
+  2026-10-05T04:45:06Z     TaitungCounty: 6/6 台有 GPS
+  2026-10-05T04:45:06Z     HualienCounty: 15/15 台有 GPS
+  2026-10-05T04:45:06Z     YilanCounty: 88/88 台有 GPS
+  2026-10-05T04:45:06Z     PingtungCounty: 77/77 台有 GPS
+  2026-10-05T04:45:05Z     ChiayiCounty: 14/14 台有 GPS
+  2026-10-05T04:45:05Z     YunlinCounty: 21/21 台有 GPS
+  2026-10-05T04:45:05Z     NantouCounty: 6/6 台有 GPS
+  2026-10-05T04:45:05Z     ChanghuaCounty: 17/17 台有 GPS
+  2026-10-05T04:45:04Z     MiaoliCounty: 7/7 台有 GPS
+  2026-10-05T04:45:04Z     HsinchuCounty: 45/45 台有 GPS
+  2026-10-05T04:45:04Z     Chiayi: 25/25 台有 GPS
+  2026-10-05T04:45:04Z     Hsinchu: 60/60 台有 GPS
+  2026-10-05T04:45:03Z     Keelung: 93/93 台有 GPS
+  2026-10-05T04:45:03Z     Kaohsiung: 472/472 台有 GPS
+  2026-10-05T04:45:03Z     Tainan: 297/297 台有 GPS
+  2026-10-05T04:45:03Z     Taichung: 795/795 台有 GPS
+  2026-10-05T04:45:02Z     Taoyuan: 517/517 台有 GPS
+  2026-10-05T04:45:02Z     NewTaipei: 1172/1172 台有 GPS
+  2026-10-05T04:45:02Z     Taipei: 1604/1604 台有 GPS
+  2026-10-05T04:45:02Z     平行抓取 22 城市 (workers=5)
+  2026-10-05T04:45:02Z  [bus] 開始收集 (12:45:02)
+  2026-10-05T04:45:02Z
+  2026-10-05T04:45:01Z  2026-10-05 12:45:01,428 INFO [ripe_ris_live] internet health transaction runs=1 observations=6 incidents=0
+  2026-10-05T04:44:58Z  2026-10-05 12:44:58,015 INFO [twse_market_index] ✓ DB 寫入 2 筆
+  2026-10-05T04:44:57Z  [twse_market_index] ✓ 已儲存: /data/twse_market_index/2026/10/05/twse_market_index_1244.json
+  2026-10-05T04:44:57Z  [twse_market_index] 開始收集 (12:44:57)
+  2026-10-05T04:44:57Z
+  2026-10-05T04:44:48Z  2026-10-05 12:44:48,636 INFO [parking_offstreet] ✓ DB 寫入 3587 筆
+  2026-10-05T04:44:46Z  [parking_offstreet] ✓ 已儲存: /data/parking_offstreet/2026/10/05/parking_offstreet_1244.json
+  2026-10-05T04:44:46Z     📊 OffStreet 總計: 3587 場館
+  2026-10-05T04:44:46Z
+  2026-10-05T04:44:46Z     ✓ tourism: 88 場館
+  2026-10-05T04:44:45Z     ✓ freeway_service_area: 17 場館
+  2026-10-05T04:44:45Z     ✓ city/LienchiangCounty: 0 場館
+  2026-10-05T04:44:45Z     ✓ city/KinmenCounty: 4 場館
+  2026-10-05T04:44:45Z     ✓ city/PenghuCounty: 0 場館
+  2026-10-05T04:44:44Z     ✓ city/TaitungCounty: 0 場館
+  2026-10-05T04:44:44Z     ✓ city/HualienCounty: 18 場館
+  2026-10-05T04:44:44Z     ✓ city/YilanCounty: 70 場館
+  2026-10-05T04:44:44Z     ✓ city/NantouCounty: 0 場館
+  2026-10-05T04:44:43Z     ✓ city/ChiayiCounty: 0 場館
+  2026-10-05T04:44:43Z  2026-10-05 12:44:43,745 INFO [ncdr_alerts] ✓ DB 寫入 82 筆
+  2026-10-05T04:44:43Z     ✓ city/Chiayi: 0 場館
+  2026-10-05T04:44:43Z     ✓ city/MiaoliCounty: 0 場館
+  2026-10-05T04:44:43Z     ✓ city/HsinchuCounty: 0 場館
+  2026-10-05T04:44:42Z  [ncdr_alerts] ✓ 已儲存: /data/ncdr_alerts/2026/10/05/ncdr_alerts_1244.json
+  2026-10-05T04:44:42Z     類型分布: {'國家森林遊樂區': 1, '海洋污染': 36, '停水': 79, '高溫': 2, '火災': 1, '降雨': 1, '淹水': 5, '水庫放流': 2, '強風': 1}
+  2026-10-05T04:44:42Z     解析成功 82 筆 (含 polygon: 38)
+  2026-10-05T04:44:42Z     ✓ city/Hsinchu: 0 場館
+  2026-10-05T04:44:42Z     ✓ city/Keelung: 86 場館
+  2026-10-05T04:44:42Z     ✓ city/Kaohsiung: 734 場館
+  2026-10-05T04:44:41Z     ✓ city/Tainan: 77 場館
+  2026-10-05T04:44:41Z     ✓ city/Taichung: 1118 場館
+  2026-10-05T04:44:41Z     ✓ city/Taoyuan: 200 場館
+  2026-10-05T04:44:41Z     ✓ city/NewTaipei: 0 場館
+  2026-10-05T04:44:40Z     ✓ city/Taipei: 1175 場館
+  2026-10-05T04:44:40Z  [parking_offstreet] 開始收集 (12:44:40)
+  2026-10-05T04:44:40Z
+  2026-10-05T04:44:35Z     feed 內 128 筆生效中示警
+  2026-10-05T04:44:35Z     抓取 NCDR feed...
+  2026-10-05T04:44:35Z  [ncdr_alerts] 開始收集 (12:44:35)
+  2026-10-05T04:44:35Z
+  2026-10-05T04:44:32Z  [lightning_cwa] ✓ 已儲存: /data/lightning_cwa/2026/10/05/lightning_cwa_1244.json
+  2026-10-05T04:44:32Z  [lightning_cwa] 開始收集 (12:44:32)
+  2026-10-05T04:44:32Z
+  2026-10-05T04:44:29Z  2026-10-05 12:44:29,987 INFO [tra_train] ✓ DB 寫入 143 筆
+  2026-10-05T04:44:29Z  [tra_train] ✓ 已儲存: /data/tra_train/2026/10/05/tra_train_1244.json
+  2026-10-05T04:44:29Z       - 普快: 1
+  2026-10-05T04:44:29Z       - 太魯閣: 2
+  2026-10-05T04:44:29Z       - 莒光: 3
+  2026-10-05T04:44:29Z       - 普悠瑪: 8
+  2026-10-05T04:44:29Z       - 區間快: 9
+  2026-10-05T04:44:29Z       - 自強: 16
+  2026-10-05T04:44:29Z       - 自強(3000): 24
+  2026-10-05T04:44:29Z       - 區間: 80

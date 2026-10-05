@@ -1,0 +1,16 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/migu/Desktop/資料庫/gen_ai_try/ichef_工作用/GIS/data-collectors/.worktrees/collector-health-20261005
+configfile: pytest.ini
+testpaths: tests
+plugins: anyio-4.13.0
+collected 40 items / 12 deselected / 28 selected
+run-last-failure: rerun previous 28 failures (skipped 40 files)
+
+tests/test_global_events.py .........................                    [ 89%]
+tests/test_rate_limiter.py .                                             [ 92%]
+tests/test_supabase_pool.py .                                            [ 96%]
+tests/test_supabase_writer.py .                                          [100%]
+
+- generated xml file: /Users/migu/Desktop/資料庫/gen_ai_try/ichef_工作用/GIS/data-collectors/.worktrees/collector-health-20261005/docs/investigations/td1-pytest-recheck.xml -
+====================== 28 passed, 12 deselected in 16.59s ======================

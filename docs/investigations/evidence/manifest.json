@@ -1,0 +1,931 @@
+[
+  {
+    "schema": "intel",
+    "table": "global_event_candidate_observations",
+    "time_column": "available_at",
+    "owner_collector": "global_events",
+    "expected_interval_min": 60,
+    "critical": false,
+    "notes": "AI 候選觀測（migration 397）；pending/assessed 皆會寫入"
+  },
+  {
+    "schema": "intel",
+    "table": "global_event_collector_run_receipts",
+    "time_column": "finished_at",
+    "owner_collector": "global_events",
+    "expected_interval_min": 60,
+    "critical": false,
+    "notes": "migration 389 run receipts；停滯時這張表會先變 STALE"
+  },
+  {
+    "schema": "live",
+    "table": "youbike_snapshots",
+    "time_column": "collected_at",
+    "owner_collector": "youbike",
+    "expected_interval_min": 15,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "youbike_current",
+    "time_column": "collected_at",
+    "owner_collector": "youbike",
+    "expected_interval_min": 15,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "bus_positions",
+    "time_column": "collected_at",
+    "owner_collector": "bus",
+    "expected_interval_min": 2,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "bus_current",
+    "time_column": "collected_at",
+    "owner_collector": "bus",
+    "expected_interval_min": 2,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "bus_intercity_positions",
+    "time_column": "collected_at",
+    "owner_collector": "bus_intercity",
+    "expected_interval_min": 2,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "bus_intercity_current",
+    "time_column": "collected_at",
+    "owner_collector": "bus_intercity",
+    "expected_interval_min": 2,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "freeway_sections",
+    "time_column": "collected_at",
+    "owner_collector": "freeway_vd",
+    "expected_interval_min": 10,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "freeway_sections_current",
+    "time_column": "collected_at",
+    "owner_collector": "freeway_vd",
+    "expected_interval_min": 10,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "freeway_vd_traffic",
+    "time_column": "collected_at",
+    "owner_collector": "freeway_vd",
+    "expected_interval_min": 10,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "train_positions",
+    "time_column": "collected_at",
+    "owner_collector": "tra_train",
+    "expected_interval_min": 2,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "ship_positions",
+    "time_column": "collected_at",
+    "owner_collector": "ship_ais",
+    "expected_interval_min": 10,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "ship_current",
+    "time_column": "collected_at",
+    "owner_collector": "ship_ais",
+    "expected_interval_min": 10,
+    "critical": true
+  },
+  {
+    "schema": "reference",
+    "table": "marine_observation_stations",
+    "time_column": "last_seen_at",
+    "owner_collector": "cwa_marine_observation",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "shared station registry; CWA ownership/distribution provenance retained"
+  },
+  {
+    "schema": "live",
+    "table": "marine_observation_readings",
+    "time_column": "observed_at",
+    "owner_collector": "cwa_marine_observation",
+    "expected_interval_min": 15,
+    "critical": false,
+    "notes": "canonical long history; ISOHE writes same table under separate source_network"
+  },
+  {
+    "schema": "live",
+    "table": "marine_observation_current",
+    "time_column": "collected_at",
+    "owner_collector": "cwa_marine_observation",
+    "expected_interval_min": 15,
+    "critical": false,
+    "notes": "serving cache; current update only accepts newer observed_at"
+  },
+  {
+    "schema": "live",
+    "table": "marine_observation_quarantine",
+    "time_column": "collected_at",
+    "owner_collector": "cwa_marine_observation",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "CWA reading IDs absent from metadata roster"
+  },
+  {
+    "schema": "live",
+    "table": "aisstream_ingest_runs",
+    "time_column": "started_at",
+    "owner_collector": "aisstream",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "AISStream run ledger"
+  },
+  {
+    "schema": "live",
+    "table": "aisstream_archive_manifests",
+    "time_column": "created_at",
+    "owner_collector": "aisstream",
+    "expected_interval_min": 60,
+    "critical": false,
+    "notes": "S3 permanent raw archive ledger"
+  },
+  {
+    "schema": "live",
+    "table": "aisstream_position_observations",
+    "time_column": "received_at",
+    "owner_collector": "aisstream",
+    "expected_interval_min": 1,
+    "critical": false,
+    "notes": "AISStream independent provider; raw S3 archive is permanent"
+  },
+  {
+    "schema": "live",
+    "table": "aisstream_vessel_current",
+    "time_column": "updated_at",
+    "owner_collector": "aisstream",
+    "expected_interval_min": 1,
+    "critical": false,
+    "notes": "AISStream current snapshot; sticky static fields and positions"
+  },
+  {
+    "schema": "live",
+    "table": "aisstream_ingest_health",
+    "time_column": "updated_at",
+    "owner_collector": "aisstream",
+    "expected_interval_min": 5,
+    "critical": false,
+    "notes": "AISStream worker health heartbeat"
+  },
+  {
+    "schema": "live",
+    "table": "gfw_vessel_presence_runs",
+    "time_column": "started_at",
+    "owner_collector": "gfw_vessel_presence",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "Legacy GFW daily DB presence ledger; collector intentionally disabled in favor of the unified hourly publisher"
+  },
+  {
+    "schema": "live",
+    "table": "gfw_vessel_presence_archive_manifests",
+    "time_column": "uploaded_at",
+    "owner_collector": "gfw_vessel_presence",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "GFW raw archive ledger; empty until license gate"
+  },
+  {
+    "schema": "live",
+    "table": "gfw_vessel_presence_snapshots",
+    "time_column": "received_at",
+    "owner_collector": "gfw_vessel_presence",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "GFW daily vessel presence snapshots"
+  },
+  {
+    "schema": "live",
+    "table": "gfw_vessel_presence_current",
+    "time_column": "updated_at",
+    "owner_collector": "gfw_vessel_presence",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "GFW latest vessel presence; reconstructible from snapshots"
+  },
+  {
+    "schema": "reference",
+    "table": "daily_schedules",
+    "time_column": "created_at",
+    "owner_collector": "rail_timetable",
+    "expected_interval_min": 1440,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "parking_segments_current",
+    "time_column": "collected_at",
+    "owner_collector": "parking",
+    "expected_interval_min": 15,
+    "critical": false,
+    "notes": "OnStreet 路邊停車；availability 由 current 代監控（測試豁免）"
+  },
+  {
+    "schema": "live",
+    "table": "flight_positions",
+    "time_column": "collected_at",
+    "owner_collector": "flight_fr24",
+    "expected_interval_min": 5,
+    "critical": false,
+    "notes": "多 collector 共用"
+  },
+  {
+    "schema": "air_tickets",
+    "table": "fare_offers",
+    "time_column": "observed_at",
+    "owner_collector": "air_ticket_radar",
+    "expected_interval_min": 2880,
+    "critical": false,
+    "notes": "每 48 小時掃描；private SSOT。未配置 writer 或尚無首筆資料時屬預期，不升事故"
+  },
+  {
+    "schema": "live",
+    "table": "weather_observations",
+    "time_column": "collected_at",
+    "owner_collector": "weather",
+    "expected_interval_min": 60,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "weather_current",
+    "time_column": "observed_at",
+    "owner_collector": "weather",
+    "expected_interval_min": 60,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "temperature_grids",
+    "time_column": "collected_at",
+    "owner_collector": "temperature",
+    "expected_interval_min": 60,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "cwa_imagery_frames",
+    "time_column": "observed_at",
+    "owner_collector": "cwa_satellite",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "earthquake_events",
+    "time_column": "occurred_at",
+    "owner_collector": "earthquake",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "事件驅動可能很久才一次（critical=false 避免無震時誤觸 🔴 嚴重）"
+  },
+  {
+    "schema": "live",
+    "table": "earthquake_station_obs",
+    "time_column": "collected_at",
+    "owner_collector": "earthquake",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "逐測站觀測；只在「新事件」才寫（collector 端查 DB 守門），比照 earthquake_events 放寬"
+  },
+  {
+    "schema": "live",
+    "table": "tsunami_alerts",
+    "time_column": "collected_at",
+    "owner_collector": "earthquake",
+    "expected_interval_min": 43200,
+    "critical": false,
+    "notes": "海嘯報告一年數則；長期無新 row 屬預期，不參與事故判定"
+  },
+  {
+    "schema": "live",
+    "table": "earthquake_town_intensity",
+    "time_column": "collected_at",
+    "owner_collector": "earthquake_town_intensity",
+    "expected_interval_min": 10080,
+    "critical": false,
+    "notes": "368 鄉鎮震度；上游只留最新一次有感地震，無新震即不寫"
+  },
+  {
+    "schema": "live",
+    "table": "earthquake_shakemap_grid",
+    "time_column": "collected_at",
+    "owner_collector": "earthquake_shakemap_grid",
+    "expected_interval_min": 10080,
+    "critical": false,
+    "notes": "NCDR 2.5km 網格 4",
+    "377 格/次；event_time 守門，無新震即不寫": null
+  },
+  {
+    "schema": "live",
+    "table": "earthquake_moment_tensor",
+    "time_column": "collected_at",
+    "owner_collector": "earthquake_moment_tensor",
+    "expected_interval_min": 43200,
+    "critical": false,
+    "notes": "AutoBATS 只對規模較大事件出解；查無屬常態"
+  },
+  {
+    "schema": "live",
+    "table": "disaster_alerts",
+    "time_column": "collected_at",
+    "owner_collector": "ncdr_alerts",
+    "expected_interval_min": 15,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "internet_health_source_runs",
+    "time_column": "finished_at",
+    "owner_collector": "cloudflare_radar",
+    "expected_interval_min": 5,
+    "critical": false,
+    "notes": "Cloudflare/IODA/RIPE Atlas/RIS production 5min 共用 run ledger；RIS 截至 2026-08-31 15:05 UTC 正式 3 runs（partial 1 / succeeded 2）已驗；status/error_code 區分 partial、empty、stale、config/http/parse/stream_gap"
+  },
+  {
+    "schema": "live",
+    "table": "internet_health_observations",
+    "time_column": "collected_at",
+    "owner_collector": "cloudflare_radar",
+    "expected_interval_min": 5,
+    "critical": false,
+    "notes": "canonical evidence history；RIPE 只寫 finite 5min aggregates，RIS gap/partial 保持 NULL/unknown、不補 0；RIS production current 6/6 fresh，public RPC 0"
+  },
+  {
+    "schema": "live",
+    "table": "internet_health_current",
+    "time_column": "observed_at",
+    "owner_collector": "cloudflare_radar",
+    "expected_interval_min": 5,
+    "critical": false,
+    "notes": "DB trigger 維護 latest pointer；conditional upsert 防止舊 observation 倒退，collector 不直寫"
+  },
+  {
+    "schema": "live",
+    "table": "internet_health_incidents",
+    "time_column": "last_detected_at",
+    "owner_collector": "cloudflare_radar",
+    "expected_interval_min": 43200,
+    "critical": false,
+    "notes": "事件驅動可長期無 row；不得作 collector 心跳"
+  },
+  {
+    "schema": "live",
+    "table": "satellite_positions",
+    "time_column": "collected_at",
+    "owner_collector": "satellite",
+    "expected_interval_min": 120,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "satellite_current",
+    "time_column": "collected_at",
+    "owner_collector": "satellite",
+    "expected_interval_min": 120,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "satellite_tle",
+    "time_column": "updated_at",
+    "owner_collector": "satellite",
+    "expected_interval_min": 1440,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "satellite_tle_history",
+    "time_column": "fetched_at",
+    "owner_collector": "satellite",
+    "expected_interval_min": 1440,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "launches",
+    "time_column": "collected_at",
+    "owner_collector": "launch",
+    "expected_interval_min": 15,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "launch_events",
+    "time_column": "collected_at",
+    "owner_collector": "launch",
+    "expected_interval_min": 15,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "launch_pads",
+    "time_column": "collected_at",
+    "owner_collector": "launch",
+    "expected_interval_min": 1440,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "air_quality_observations",
+    "time_column": "collected_at",
+    "owner_collector": "air_quality",
+    "expected_interval_min": 60,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "air_quality_current",
+    "time_column": "observed_at",
+    "owner_collector": "air_quality",
+    "expected_interval_min": 60,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "aqi_imagery_frames",
+    "time_column": "observed_at",
+    "owner_collector": "air_quality_imagery",
+    "expected_interval_min": 60,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "micro_sensor_readings",
+    "time_column": "collected_at",
+    "owner_collector": "air_quality_microsensors",
+    "expected_interval_min": 5,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "reservoir_status",
+    "time_column": "snapshot_at",
+    "owner_collector": "water_reservoir",
+    "expected_interval_min": 60,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "reservoir_daily_ops",
+    "time_column": "observed_at",
+    "owner_collector": "water_reservoir_daily_ops",
+    "expected_interval_min": 1440,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "river_water_level",
+    "time_column": "observed_at",
+    "owner_collector": "river_water_level",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "rain_gauge_readings",
+    "time_column": "observed_at",
+    "owner_collector": "rain_gauge_realtime",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "groundwater_level_readings",
+    "time_column": "observed_at",
+    "owner_collector": "groundwater_level",
+    "expected_interval_min": 60,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "iot_wra_measurements",
+    "time_column": "observed_at",
+    "owner_collector": "iot_wra",
+    "expected_interval_min": 60,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "uswg_measurements",
+    "time_column": "observed_at",
+    "owner_collector": "uswg",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "public",
+    "table": "drought_alert_current",
+    "time_column": "fetched_at",
+    "owner_collector": "wra_drought_alert",
+    "expected_interval_min": 43200,
+    "critical": false,
+    "notes": "事件驅動 hash 去重，上游不定期公告"
+  },
+  {
+    "schema": "live",
+    "table": "road_events",
+    "time_column": "collected_at",
+    "owner_collector": "road_event_live",
+    "expected_interval_min": 5,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "road_events_current",
+    "time_column": "collected_at",
+    "owner_collector": "road_event_live",
+    "expected_interval_min": 5,
+    "critical": false
+  },
+  {
+    "schema": "spatial",
+    "table": "waste_positions_realtime",
+    "time_column": "observed_at",
+    "owner_collector": "waste_positions",
+    "expected_interval_min": 2,
+    "critical": true
+  },
+  {
+    "schema": "live",
+    "table": "er_hospital_status",
+    "time_column": "observed_at",
+    "owner_collector": "er_hospital_realtime",
+    "expected_interval_min": 15,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "er_hospital_current",
+    "time_column": "observed_at",
+    "owner_collector": "er_hospital_realtime",
+    "expected_interval_min": 15,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "power_system_status",
+    "time_column": "observed_at",
+    "owner_collector": "power_taipower",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "power_generation_unit",
+    "time_column": "observed_at",
+    "owner_collector": "power_taipower",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "power_region_demand",
+    "time_column": "observed_at",
+    "owner_collector": "power_taipower",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "news_events",
+    "time_column": "created_at",
+    "owner_collector": "news_events",
+    "expected_interval_min": 20,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "public_health_weekly",
+    "time_column": "collected_at",
+    "owner_collector": "cdc_public_health_weekly",
+    "expected_interval_min": 10080,
+    "critical": false,
+    "notes": "週四 11:00 跑一次"
+  },
+  {
+    "schema": "live",
+    "table": "road_sections_current",
+    "time_column": "collected_at",
+    "owner_collector": "road_congestion",
+    "expected_interval_min": 5,
+    "critical": false,
+    "notes": "road_sections_live MAX 會 timeout，只監控 current"
+  },
+  {
+    "schema": "live",
+    "table": "parking_lots_current",
+    "time_column": "collected_at",
+    "owner_collector": "parking_offstreet",
+    "expected_interval_min": 15,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "tourist_shuttle_current",
+    "time_column": "collected_at",
+    "owner_collector": "tourist_shuttle",
+    "expected_interval_min": 2,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "nuclear_radiation_stations",
+    "time_column": "updated_at",
+    "owner_collector": "nuclear_radiation",
+    "expected_interval_min": 15,
+    "critical": false,
+    "notes": "current 表 updated_at 每輪 touch＝collector 心跳（來源 stale 由 is_stale 欄位表達）"
+  },
+  {
+    "schema": "live",
+    "table": "taipei_sewer_measurements",
+    "time_column": "observed_at",
+    "owner_collector": "wic_sewer",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "taipei_evacuate_status",
+    "time_column": "observed_at",
+    "owner_collector": "wic_evacuate",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "taipei_pumb_status",
+    "time_column": "observed_at",
+    "owner_collector": "wic_pumb",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "pla_activity_daily",
+    "time_column": "collected_at",
+    "owner_collector": "pla_activity_daily",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "每日通報 1 row/day"
+  },
+  {
+    "schema": "live",
+    "table": "food_price_daily",
+    "time_column": "collected_at",
+    "owner_collector": "food_prices",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "農業部四類批發價；T+1 更新故每日 1 次"
+  },
+  {
+    "schema": "spatial",
+    "table": "pla_tracks_runs",
+    "time_column": "run_at",
+    "owner_collector": "pla_tracks_vectorize",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "航跡向量化 ledger；1 row/通報日，這條 pipeline 唯一可靠心跳"
+  },
+  {
+    "schema": "live",
+    "table": "yt_live_current",
+    "time_column": "updated_at",
+    "owner_collector": "yt_live_video_resolver",
+    "expected_interval_min": 5,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "precipitation_raster_frames",
+    "time_column": "collected_at",
+    "owner_collector": "precipitation_raster",
+    "expected_interval_min": 120,
+    "critical": false,
+    "notes": "上游柵格發布常延遲 1-2h，interval 放寬 120"
+  },
+  {
+    "schema": "live",
+    "table": "earthquakes_global",
+    "time_column": "collected_at",
+    "owner_collector": "global_climate_usgs_earthquake",
+    "expected_interval_min": 60,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "typhoon_positions",
+    "time_column": "collected_at",
+    "owner_collector": "global_climate_jma_typhoon",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "多 collector 共用（jma/jtwc）；事件驅動，颱風季外 DEAD 屬預期"
+  },
+  {
+    "schema": "live",
+    "table": "global_climate_grids",
+    "time_column": "collected_at",
+    "owner_collector": "global_climate_cmems",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "多 collector 共用（cmems/cams/noaa_gfs），日級模型"
+  },
+  {
+    "schema": "live",
+    "table": "border_airport_snapshot",
+    "time_column": "collected_at",
+    "owner_collector": "immigration_apis_airport",
+    "expected_interval_min": 60,
+    "critical": false,
+    "notes": "跑在 HiCloud VM"
+  },
+  {
+    "schema": "live",
+    "table": "lightning_events",
+    "time_column": "collected_at",
+    "owner_collector": "lightning_events",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "事件驅動（無落雷即無資料），比照 earthquake_events 放寬"
+  },
+  {
+    "schema": "live",
+    "table": "market_index_current",
+    "time_column": "updated_at",
+    "owner_collector": "twse_market_index",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "僅開盤時段有資料，1440x3＝3 天蓋過週末；連假誤報屬預期"
+  },
+  {
+    "schema": "live",
+    "table": "prison_population_daily",
+    "time_column": "collected_at",
+    "owner_collector": "correctional_daily_snapshot",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "每日 1 row（2026-07-03 啟用）"
+  },
+  {
+    "schema": "live",
+    "table": "animal_adoption_snapshot_runs",
+    "time_column": "snapshot_date",
+    "owner_collector": "animal_adoption",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "完整性 ledger；failed/partial run 不會更新 current/daily"
+  },
+  {
+    "schema": "live",
+    "table": "animal_adoption_snapshots",
+    "time_column": "snapshot_date",
+    "owner_collector": "animal_adoption",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "僅完整成功快照"
+  },
+  {
+    "schema": "live",
+    "table": "animal_adoption_current",
+    "time_column": "updated_at",
+    "owner_collector": "animal_adoption",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "current 由 finalize 更新；missing_once 不是 adopted"
+  },
+  {
+    "schema": "analytics",
+    "table": "animal_adoption_daily",
+    "time_column": "snapshot_date",
+    "owner_collector": "animal_adoption",
+    "expected_interval_min": 1440,
+    "critical": false,
+    "notes": "每日最後完整成功快照聚合"
+  },
+  {
+    "schema": "live",
+    "table": "animal_shelter_outcome_runs",
+    "time_column": "snapshot_date",
+    "owner_collector": "animal_shelter_outcomes",
+    "expected_interval_min": 43200,
+    "critical": false,
+    "notes": "41236/73396 月報共用 run ledger；failed/partial 不會覆寫既有 outcomes"
+  },
+  {
+    "schema": "live",
+    "table": "animal_shelter_outcomes",
+    "time_column": "snapshot_date",
+    "owner_collector": "animal_shelter_outcomes",
+    "expected_interval_min": 43200,
+    "critical": false,
+    "notes": "immutable 月報 source rows；73396 同 grain revision 保留"
+  },
+  {
+    "schema": "live",
+    "table": "animal_welfare_point_runs",
+    "time_column": "snapshot_date",
+    "owner_collector": "animal_veterinary_clinics",
+    "expected_interval_min": 259200,
+    "critical": false,
+    "notes": "8705/97070/134283 共用完整快照 ledger；per-source freshness 見 cross_layer_map"
+  },
+  {
+    "schema": "live",
+    "table": "animal_welfare_point_snapshots",
+    "time_column": "snapshot_date",
+    "owner_collector": "animal_protection_offices",
+    "expected_interval_min": 129600,
+    "critical": false,
+    "notes": "8705/97070/134283 共用據點快照；以 90 日來源作最短 freshness gate"
+  },
+  {
+    "schema": "live",
+    "table": "traffic_accidents_a1",
+    "time_column": "collected_at",
+    "owner_collector": "npa_traffic_accident_a1",
+    "expected_interval_min": 720,
+    "critical": false,
+    "notes": "dedup by hash，僅新事故推進 MAX；久無新事故告警屬預期（2026-07-03 啟用）"
+  },
+  {
+    "schema": "live",
+    "table": "tpml_seat_status",
+    "time_column": "observed_at",
+    "owner_collector": "tpml_seat",
+    "expected_interval_min": 10,
+    "critical": false,
+    "notes": "北市圖座位；閉館時段仍寫入（is_closed=true）"
+  },
+  {
+    "schema": "live",
+    "table": "tpml_seat_current",
+    "time_column": "observed_at",
+    "owner_collector": "tpml_seat",
+    "expected_interval_min": 10,
+    "critical": false
+  },
+  {
+    "schema": "live",
+    "table": "nusc_gamma_stations",
+    "time_column": "updated_at",
+    "owner_collector": "nusc_gamma_radiation",
+    "expected_interval_min": 15,
+    "critical": false,
+    "notes": "current 表 updated_at 每輪 touch＝心跳；來源 stale 看 observed_at"
+  },
+  {
+    "schema": "live",
+    "table": "water_effluent_current",
+    "time_column": "updated_at",
+    "owner_collector": "water_effluent_monitoring",
+    "expected_interval_min": 60,
+    "critical": false,
+    "notes": "updated_at 每輪 touch＝心跳"
+  },
+  {
+    "schema": "live",
+    "table": "cems_stack_current",
+    "time_column": "updated_at",
+    "owner_collector": "cems_stack_monitoring",
+    "expected_interval_min": 60,
+    "critical": false,
+    "notes": "updated_at 每輪 touch＝心跳；observed_at 上游延遲 4–5h"
+  },
+  {
+    "schema": "live",
+    "table": "cwa_uv_daily",
+    "time_column": "collected_at",
+    "owner_collector": "cwa_uv_daily",
+    "expected_interval_min": 720,
+    "critical": false,
+    "notes": "同日重抓 DO UPDATE 會推進 collected_at"
+  }
+]
