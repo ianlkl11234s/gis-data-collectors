@@ -32,7 +32,9 @@ import requests
 import psycopg2
 
 OSRM_URL = "https://osrm-proxy-gis.zeabur.app"
-OSRM_TOKEN = "58e6bb61a676dfc6bb24847467f5f28cbbdbab46ef0546c8a2489feb0dfec784"
+OSRM_TOKEN = os.getenv("OSRM_TOKEN", "").strip()  # 從環境變數讀取，不寫死在程式碼
+if not OSRM_TOKEN:
+    sys.exit("OSRM_TOKEN 未設定：先執行 set -a; source data-collectors/.env; set +a")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
