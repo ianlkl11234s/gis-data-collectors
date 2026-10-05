@@ -183,6 +183,61 @@ def test_write_generic_exception_falls_to_buffer(writer_with_mock_pool, tmp_path
     assert len(files) >= 1
 
 
+MOJIBAKE = 'йҮҚеӨ§зҒ«зҒҪдәӢд»¶йҖҡе ұ'
+
+
+def _ncdr_row(i, headline='正常標題'):
+    return {'identifier': f'TEST-{i}', 'headline': headline, 'description': '說明'}
+
+
+def test_non_allowlisted_collector_with_cyrillic_is_not_checked():
+    from storage.supabase_writer import reject_mojibake_records
+    records = [{'title': 'Землетрясение в Украине'}]
+    assert reject_mojibake_records('global_events', records) is records
+    assert reject_mojibake_records('satellite', [{'name': 'КОСМОС'}]) == [{'name': 'КОСМОС'}]
+
+
+def test_allowlisted_collector_drops_only_bad_rows(caplog):
+    from storage.supabase_writer import reject_mojibake_records
+    records = [_ncdr_row(i) for i in range(10)]
+    records[3] = _ncdr_row(3, MOJIBAKE)
+    out = reject_mojibake_records('ncdr_alerts', records)
+    assert len(out) == 9
+    assert all(r['identifier'] != 'TEST-3' for r in out)
+    assert 'rows=[3]' in caplog.text and 'record[3].headline' in caplog.text
+    assert MOJIBAKE not in caplog.text
+
+
+def test_write_allowlisted_partial_bad_writes_remaining_rows(writer_with_mock_pool):
+    writer, _ = writer_with_mock_pool
+    records = [_ncdr_row(i) for i in range(10)]
+    records[0] = _ncdr_row(0, MOJIBAKE)
+    captured = {}
+    writer._write_to_db = lambda conn, name, recs, ts: captured.setdefault('recs', recs)
+    assert writer.write('ncdr_alerts', {'data': records}, datetime(2026, 10, 5, 12, 0, 0))
+    assert len(captured['recs']) == 9
+    assert all(r['headline'] == '正常標題' for r in captured['recs'])
+
+
+def test_write_allowlisted_all_bad_raises_without_db_or_buffer(writer_with_mock_pool, tmp_path):
+    writer, mock_pool = writer_with_mock_pool
+    from storage.supabase_writer import MojibakeWriteRejected
+    result = {'data': [_ncdr_row(i, MOJIBAKE) for i in range(3)]}
+    with pytest.raises(MojibakeWriteRejected, match='ncdr_alerts.*headline'):
+        writer.write('ncdr_alerts', result, datetime(2026, 10, 5, 12, 0, 0))
+    mock_pool.borrow.assert_not_called()
+    assert not list((tmp_path / 'buffer').glob('*.json'))
+
+
+def test_direct_write_to_db_all_bad_raises_before_cursor(writer_with_mock_pool):
+    writer, _ = writer_with_mock_pool
+    from storage.supabase_writer import MojibakeWriteRejected
+    conn = MagicMock()
+    with pytest.raises(MojibakeWriteRejected, match=r'record\[0\]\.headline'):
+        writer._write_to_db(conn, 'ncdr_alerts', [_ncdr_row(0, MOJIBAKE)], datetime(2026, 10, 5, 12, 0, 0))
+    conn.cursor.assert_not_called()
+
+
 def test_concurrent_writes_dont_block_each_other(writer_with_mock_pool):
     """並發 write 應同時跑 — 沒有共用 RLock 序列化。"""
     writer, mock_pool = writer_with_mock_pool

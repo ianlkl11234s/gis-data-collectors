@@ -13,6 +13,7 @@ fall-back 到 buffer，collector 繼續收。
 
 import json
 import logging
+import re
 import threading
 from contextlib import contextmanager
 from datetime import date, datetime
@@ -35,6 +36,75 @@ from tasks.mini_taipei_publish import (
 logger = logging.getLogger(__name__)
 
 BUFFER_DIR = config.LOCAL_DATA_DIR / 'buffer'
+
+
+# Chinese text decoded through a Cyrillic single-byte code page is a known NCDR
+# failure mode. Writer-level guard, enabled only for allowlisted collectors.
+CYRILLIC_RE = re.compile(r'[\u0400-\u04FF]')
+
+
+class MojibakeWriteRejected(ValueError):
+    """Raised when a storage payload contains known decoding corruption."""
+
+
+def mojibake_text_paths(records: list[dict]) -> list[str]:
+    """Return paths of text values containing Cyrillic code points.
+
+    Paths deliberately identify only fields, never the source text, so the
+    rejection log is useful without duplicating potentially sensitive payloads.
+    """
+    paths: list[str] = []
+
+    def visit(value, path: str) -> None:
+        if isinstance(value, str):
+            if CYRILLIC_RE.search(value):
+                paths.append(path)
+            return
+        if isinstance(value, dict):
+            for key, child in value.items():
+                visit(child, f'{path}.{key}')
+        elif isinstance(value, (list, tuple)):
+            for index, child in enumerate(value):
+                visit(child, f'{path}[{index}]')
+        elif isinstance(value, Json):
+            visit(value.adapted, f'{path}.adapted')
+
+    for record_index, record in enumerate(records):
+        visit(record, f'record[{record_index}]')
+    return paths
+
+
+# 只檢查「文字欄位全為臺灣中文」的 collector。全球來源（global_events、aisstream、
+# usgs_earthquake、satellite 等）合法地含西里爾字母，禁止放進名單。
+MOJIBAKE_GUARD_COLLECTORS = frozenset({
+    # NCDR 災害示警：CAP 全為臺灣政府中文；2022–2026 曾間歇寫入 Cyrillic 亂碼列（BACKLOG GD-2）。
+    'ncdr_alerts',
+})
+
+
+def reject_mojibake_records(collector_name: str, records: list[dict]) -> list[dict]:
+    """剔除含西里爾字母的列並回傳其餘列；僅對名單內 collector 生效。
+
+    只有「至少 1 列且全部都壞」才 raise MojibakeWriteRejected。
+    log 只列 collector、列 index 與欄位路徑，不印原文。
+    """
+    if collector_name not in MOJIBAKE_GUARD_COLLECTORS or not records:
+        return records
+    bad_paths = mojibake_text_paths(records)
+    if not bad_paths:
+        return records
+    bad_indexes = sorted({int(p.split(']', 1)[0][len('record['):]) for p in bad_paths})
+    logger.error(
+        "[%s] 剔除疑似解碼亂碼列：rows=%s fields=%s（含 Cyrillic U+0400-U+04FF）；"
+        "其餘列照常寫入；呼叫端應保留來源證據並重抓。",
+        collector_name, bad_indexes, ', '.join(bad_paths),
+    )
+    if len(bad_indexes) == len(records):
+        raise MojibakeWriteRejected(
+            f"{collector_name} all {len(records)} rows contain Cyrillic text: {', '.join(bad_paths)}"
+        )
+    bad = set(bad_indexes)
+    return [r for i, r in enumerate(records) if i not in bad]
 
 
 def _taipei_today() -> date:
@@ -185,6 +255,7 @@ class SupabaseWriter:
         try:
             # Transform 是純函數，不需要 conn / lock
             records = self._transform(collector_name, result, timestamp)
+            records = reject_mojibake_records(collector_name, records)
             if not records:
                 return True
 
@@ -213,6 +284,11 @@ class SupabaseWriter:
                     f"之前連續失敗: {prev_errors} 次"
                 )
             return True
+
+        except MojibakeWriteRejected:
+            # Encoding corruption is a data-integrity failure, not transient DB
+            # availability. It must not be buffered and callers must see it.
+            raise
 
         except (PoolBorrowTimeout, PoolBreakerOpen) as e:
             # 池滿 / 斷路器 — 都是「DB 暫時不可用」的訊號。不是 bug，不要 Telegram 洗版。
@@ -281,12 +357,17 @@ class SupabaseWriter:
                             continue
 
                         records = self._transform(payload['collector'], payload['result'], ts)
+                        records = reject_mojibake_records(payload['collector'], records)
                         if records:
                             self._write_to_db(conn, payload['collector'], records, ts)
                         f.unlink()
                         success += 1
                         consecutive_failures = 0
                         logger.info(f"Buffer 補寫成功：{f.name}")
+                    except MojibakeWriteRejected:
+                        # Retain the original buffer payload for forensic recovery;
+                        # the explicit raise makes the corruption observable.
+                        raise
                     except Exception as e:
                         consecutive_failures += 1
                         logger.warning(f"Buffer 重試失敗：{f.name}: {e}")
@@ -2303,6 +2384,9 @@ class SupabaseWriter:
     # ============================================================
 
     def _write_to_db(self, conn, collector_name: str, records: list[dict], timestamp: datetime):
+        # Direct callers (including multi-table writers) bypass write(), so this
+        # is the non-bypassable DB boundary as well as the main-path guard.
+        records = reject_mojibake_records(collector_name, records)
         table_config = TABLE_MAP.get(collector_name)
         if not table_config:
             return
