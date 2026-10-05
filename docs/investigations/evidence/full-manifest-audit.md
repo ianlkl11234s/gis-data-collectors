@@ -113,4 +113,3 @@
 |live.water_effluent_current|water_effluent_monitoring|2026-10-05 04:29:53.471489+00|OK|
 |live.cems_stack_current|cems_stack_monitoring|2026-10-05 04:26:04.949744+00|OK|
 |live.cwa_uv_daily|cwa_uv_daily|2026-10-05 03:27:03.327116+00|OK|
-

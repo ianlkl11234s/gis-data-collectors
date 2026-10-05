@@ -74,4 +74,3 @@ live4/02仍有 system=tra、919 trains；6/26查無班表、10/04 tra_daily925 t
 - git diff --check通過。JSON證據保存完整SQL與tool result，所有SQL有LIMIT或有界catalog聚合。公開HTTP只存schema/日期/計數，不存事故個人資料。
 - Zeabur metadata：[zeabur-deployments.json](evidence/zeabur-deployments.json)；本次CLI只取最近約100行：[zeabur-runtime.log](evidence/zeabur-runtime.log)。log不覆蓋日級歷史run；沒有據此猜測過去事故原因。
 - 待使用者拍板：TD-1上線及runtime interval確認；合法空 drought snapshot／清除旧current與每owner告警設計；A1官方新source接入；external owner心跳與retired entries調整；materialization/retention修復；歷史回填。正式DB變更、restart、Zeabur variable、部署與上傳均未執行。
-

@@ -1,0 +1,384 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/migu/Desktop/資料庫/gen_ai_try/ichef_工作用/GIS/data-collectors/.worktrees/collector-health-20261005
+configfile: pytest.ini
+testpaths: tests
+plugins: anyio-4.13.0
+collected 592 items
+
+tests/test_aisstream_worker.py ..........                                [  1%]
+tests/test_animal_adoption.py .....                                      [  2%]
+tests/test_animal_shelter_outcomes.py .........                          [  4%]
+tests/test_animal_welfare_points.py .........                            [  5%]
+tests/test_aqi_imagery_r2.py .........                                   [  7%]
+tests/test_archive_lifecycle.py ..........                               [  8%]
+tests/test_auth.py ............                                          [ 10%]
+tests/test_base_collector.py ............                                [ 12%]
+tests/test_benchmark_news_openrouter.py ............                     [ 14%]
+tests/test_bus_collector.py ..........                                   [ 16%]
+tests/test_cross_layer_sync.py ......                                    [ 17%]
+tests/test_cwa_imagery_r2.py .........                                   [ 19%]
+tests/test_daily_report_disk.py ...........                              [ 20%]
+tests/test_daily_report_retention.py .....                               [ 21%]
+tests/test_diagnose_health_snapshot.py ..                                [ 22%]
+tests/test_gfw_hourly_browser_assets.py ......                           [ 23%]
+tests/test_gfw_hourly_grid_poc.py ......                                 [ 24%]
+tests/test_gfw_hourly_publish.py ....................................... [ 30%]
+.                                                                        [ 30%]
+tests/test_gfw_hourly_release.py .....................                   [ 34%]
+tests/test_gfw_hourly_tracks_poc.py ............                         [ 36%]
+tests/test_gfw_monitoring.py ....                                        [ 37%]
+tests/test_gfw_vessel_presence.py ..........                             [ 38%]
+tests/test_gis_collectors_monitor_policy.py ........                     [ 40%]
+tests/test_global_climate_cmems.py .                                     [ 40%]
+tests/test_global_events.py .............F....................FFFFFFFFFF [ 47%]
+FFFFFFFFF..............F............FF......F.F                          [ 55%]
+tests/test_internet_health.py ...............                            [ 58%]
+tests/test_marine_observation.py ..........                              [ 59%]
+tests/test_ncdr_mojibake_guard.py ...........                            [ 61%]
+tests/test_news_events.py .............................................. [ 69%]
+..................                                                       [ 72%]
+tests/test_notify.py .............................                       [ 77%]
+tests/test_pla_activity_parse.py ...........                             [ 79%]
+tests/test_rate_limiter.py .....F.......                                 [ 81%]
+tests/test_ripe_atlas_internet_health.py ...........                     [ 83%]
+tests/test_ripe_ris_live_worker.py ..........                            [ 85%]
+tests/test_satellite_passes_daily.py ..                                  [ 85%]
+tests/test_scheduler.py ............                                     [ 87%]
+tests/test_statement_timeout_pooler.py ss                                [ 87%]
+tests/test_supabase_pool.py ...........F...                              [ 90%]
+tests/test_supabase_writer.py .....F.......................              [ 95%]
+tests/test_tdx_session.py ...                                            [ 95%]
+tests/test_test_isolation.py ......                                      [ 96%]
+tests/test_tpml_seat.py ..                                               [ 97%]
+tests/test_tra_timetable_raw_stops.py ......                             [ 98%]
+tests/test_vm_buffer.py ...........                                      [100%]
+
+=================================== FAILURES ===================================
+____________ test_official_opencc_s2tw_preserves_canonical_wording _____________
+tests/test_global_events.py:433: in test_official_opencc_s2tw_preserves_canonical_wording
+    converter = OpenCC("s2tw.json")
+                ^^^^^^^^^^^^^^^^^^^
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:55: in __init__
+    self._init_dict()
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:106: in _init_dict
+    with open(config_file) as f:
+         ^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+______ test_translation_404_is_stream_scoped_and_standard_still_advances _______
+tests/test_global_events.py:1043: in test_translation_404_is_stream_scoped_and_standard_still_advances
+    assert "error" not in result
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:06.811897+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 1}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:06)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_translation_404_is_stream0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+__ test_hundred_drop_noise_candidates_are_retained_and_overflow_drains_first ___
+tests/test_global_events.py:1087: in test_hundred_drop_noise_candidates_are_retained_and_overflow_drains_first
+    assert "error" not in first
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:06.976958+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 1}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:06)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_hundred_drop_noise_candid0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+__ test_failed_model_chunk_reuses_prior_complete_output_without_losing_queue ___
+tests/test_global_events.py:1149: in test_failed_model_chunk_reuses_prior_complete_output_without_losing_queue
+    assert "error" not in first
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:07.351955+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 1}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:07)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_failed_model_chunk_reuses0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_ test_candidate_location_requires_selected_evidence_and_literal_source_basis __
+tests/test_global_events.py:1203: in test_candidate_location_requires_selected_evidence_and_literal_source_basis
+    record = result["_candidate_display_records"][0]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_candidate_display_records'
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:07)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_candidate_location_requir0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+______ test_unselected_source_locations_are_explicit_approximate_fallback ______
+tests/test_global_events.py:1252: in test_unselected_source_locations_are_explicit_approximate_fallback
+    record = collector.run()["_candidate_display_records"][0]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_candidate_display_records'
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:08)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_unselected_source_locatio0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_________________ test_missing_source_locations_stay_unlocated _________________
+tests/test_global_events.py:1276: in test_missing_source_locations_stay_unlocated
+    record = collector.run()["_candidate_display_records"][0]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_candidate_display_records'
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:08)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_missing_source_locations_0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_ test_invalid_optional_location_preserves_assessment_not_a_lost_candidate[selection0] _
+tests/test_global_events.py:1328: in test_invalid_optional_location_preserves_assessment_not_a_lost_candidate
+    assert "error" not in result
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:09.499765+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 1}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:09)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_invalid_optional_location0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_ test_invalid_optional_location_preserves_assessment_not_a_lost_candidate[selection1] _
+tests/test_global_events.py:1328: in test_invalid_optional_location_preserves_assessment_not_a_lost_candidate
+    assert "error" not in result
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:09.605165+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 1}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:09)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_invalid_optional_location1/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_ test_invalid_optional_location_preserves_assessment_not_a_lost_candidate[selection2] _
+tests/test_global_events.py:1328: in test_invalid_optional_location_preserves_assessment_not_a_lost_candidate
+    assert "error" not in result
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:10.032048+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 1}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:10)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_invalid_optional_location2/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_ test_invalid_optional_location_preserves_assessment_not_a_lost_candidate[selection3] _
+tests/test_global_events.py:1328: in test_invalid_optional_location_preserves_assessment_not_a_lost_candidate
+    assert "error" not in result
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:10.205099+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 1}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:10)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_invalid_optional_location3/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_________ test_blank_taiwan_impact_only_normalizes_explicit_none[none] _________
+tests/test_global_events.py:1344: in test_blank_taiwan_impact_only_normalizes_explicit_none
+    result = validate_stage1(
+collectors/global_events.py:1150: in validate_stage1
+    converter = OpenCC("s2tw.json")
+                ^^^^^^^^^^^^^^^^^^^
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:55: in __init__
+    self._init_dict()
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:106: in _init_dict
+    with open(config_file) as f:
+         ^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+________ test_blank_taiwan_impact_only_normalizes_explicit_none[direct] ________
+tests/test_global_events.py:1344: in test_blank_taiwan_impact_only_normalizes_explicit_none
+    result = validate_stage1(
+collectors/global_events.py:1150: in validate_stage1
+    converter = OpenCC("s2tw.json")
+                ^^^^^^^^^^^^^^^^^^^
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:55: in __init__
+    self._init_dict()
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:106: in _init_dict
+    with open(config_file) as f:
+         ^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+_______ test_blank_taiwan_impact_only_normalizes_explicit_none[indirect] _______
+tests/test_global_events.py:1344: in test_blank_taiwan_impact_only_normalizes_explicit_none
+    result = validate_stage1(
+collectors/global_events.py:1150: in validate_stage1
+    converter = OpenCC("s2tw.json")
+                ^^^^^^^^^^^^^^^^^^^
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:55: in __init__
+    self._init_dict()
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:106: in _init_dict
+    with open(config_file) as f:
+         ^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+_______ test_blank_taiwan_impact_only_normalizes_explicit_none[unknown] ________
+tests/test_global_events.py:1344: in test_blank_taiwan_impact_only_normalizes_explicit_none
+    result = validate_stage1(
+collectors/global_events.py:1150: in validate_stage1
+    converter = OpenCC("s2tw.json")
+                ^^^^^^^^^^^^^^^^^^^
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:55: in __init__
+    self._init_dict()
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:106: in _init_dict
+    with open(config_file) as f:
+         ^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+___________ test_missing_rank_recovers_only_exact_input_candidate_id ___________
+tests/test_global_events.py:1367: in test_missing_rank_recovers_only_exact_input_candidate_id
+    result = validate_stage1(
+collectors/global_events.py:1150: in validate_stage1
+    converter = OpenCC("s2tw.json")
+                ^^^^^^^^^^^^^^^^^^^
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:55: in __init__
+    self._init_dict()
+/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/opencc.py:106: in _init_dict
+    with open(config_file) as f:
+         ^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+_ test_cached_maintenance_replay_preserves_provider_times_and_source_checkpoint _
+tests/test_global_events.py:1404: in test_cached_maintenance_replay_preserves_provider_times_and_source_checkpoint
+    checkpoint_before = collector.checkpoint_path.read_bytes()
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:777: in read_bytes
+    with self.open(mode='rb', buffering=0) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_cached_maintenance_replay0/global_events/checkpoint.json'
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:14)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_cached_maintenance_replay0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_____ test_db_failure_retries_same_durable_batch_with_new_manifest_marker ______
+tests/test_global_events.py:1479: in test_db_failure_retries_same_durable_batch_with_new_manifest_marker
+    assert "error" not in result
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:15.367541+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 2}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:15)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_db_failure_retries_same_d0/global_events/2026/10/05/global_events_1258.json
+[global_events] ⚠ Supabase 寫入異常: required Supabase write failed
+[global_events] ✗ 錯誤: required Supabase write failed
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+
+[global_events] 開始收集 (12:58:15)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_db_failure_retries_same_d0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_____ test_oversized_assessment_is_pending_while_other_candidate_advances ______
+tests/test_global_events.py:1509: in test_oversized_assessment_is_pending_while_other_candidate_advances
+    assert "error" not in result
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:15.552069+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 1}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:15)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_oversized_assessment_is_p0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+___ test_oversized_source_url_stays_private_and_public_candidate_is_pending ____
+tests/test_global_events.py:1539: in test_oversized_source_url_stays_private_and_public_candidate_is_pending
+    assert "error" not in result
+E   assert 'error' not in {'timestamp': '2026-10-05T12:58:15.872908+08:00', 'error': "stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'", 'error_count': 1}
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:15)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_oversized_source_url_stay0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+__________________ test_run_receipt_carries_collector_version __________________
+tests/test_global_events.py:1964: in test_run_receipt_carries_collector_version
+    batch_receipt, run_receipt = result["_supabase_receipts"]
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_supabase_receipts'
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:16)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_run_receipt_carries_colle0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_______ test_admin1_only_mention_is_downgraded_to_a_batch_country_anchor _______
+tests/test_global_events.py:2056: in test_admin1_only_mention_is_downgraded_to_a_batch_country_anchor
+    for record in collector.run()["_candidate_display_records"]
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_candidate_display_records'
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:17)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_admin1_only_mention_is_do0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+_________ test_admin1_mention_stays_unlocated_without_a_country_anchor _________
+tests/test_global_events.py:2090: in test_admin1_mention_stays_unlocated_without_a_country_anchor
+    record = collector.run()["_candidate_display_records"][0]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_candidate_display_records'
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:17)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_admin1_mention_stays_unlo0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+___________ test_gazetteer_persists_for_the_resume_path_and_expires ____________
+tests/test_global_events.py:2261: in test_gazetteer_persists_for_the_resume_path_and_expires
+    assert result["gazetteer_size"] >= 1
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'gazetteer_size'
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:17)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_gazetteer_persists_for_th0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+______________ test_every_produced_place_satisfies_migration_399 _______________
+tests/test_global_events.py:2399: in test_every_produced_place_satisfies_migration_399
+    records = collector.run()["_candidate_display_records"]
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: '_candidate_display_records'
+----------------------------- Captured stdout call -----------------------------
+
+[global_events] 開始收集 (12:58:17)
+[global_events] ✓ 已儲存: /private/var/folders/xx/31tnjmms1710cszccj_tn28c0000gn/T/pytest-of-migu/pytest-34/test_every_produced_place_sati0/global_events/2026/10/05/global_events_1258.json
+[global_events] ✗ 錯誤: stage1: [Errno 2] No such file or directory: '/private/tmp/collector-health-test-env/lib/python3.14/site-packages/opencc/config/s2tw.json.json'
+❌ Telegram 未設定：TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID 為空（env 沒掛好？）
+____ TestRateLimiterThreadSafety.test_concurrent_burst_does_not_exceed_rate ____
+tests/test_rate_limiter.py:113: in test_concurrent_burst_does_not_exceed_rate
+    assert gap >= min_interval - 0.01, (
+E   AssertionError: 第 12 和 11 次 acquire 間隔 237.1ms，小於 min_interval 250ms
+E   assert 0.2370577499968931 >= (0.25 - 0.01)
+_____________ test_concurrent_borrows_get_independent_connections ______________
+tests/test_supabase_pool.py:295: in test_concurrent_borrows_get_independent_connections
+    assert elapsed < 0.3, f"並發 borrow 跑了 {elapsed}s，太慢"
+E   AssertionError: 並發 borrow 跑了 0.3879078749741893s，太慢
+E   assert 0.3879078749741893 < 0.3
+_________________ test_concurrent_writes_dont_block_each_other _________________
+tests/test_supabase_writer.py:221: in test_concurrent_writes_dont_block_each_other
+    assert elapsed < 0.3, f"並發 write 跑了 {elapsed}s，疑似序列化"
+E   AssertionError: 並發 write 跑了 1.168505167006515s，疑似序列化
+E   assert 1.168505167006515 < 0.3
+- generated xml file: /Users/migu/Desktop/資料庫/gen_ai_try/ichef_工作用/GIS/data-collectors/.worktrees/collector-health-20261005/docs/investigations/td1-pytest-complete.xml -
+=========================== short test summary info ============================
+FAILED tests/test_global_events.py::test_official_opencc_s2tw_preserves_canonical_wording
+FAILED tests/test_global_events.py::test_translation_404_is_stream_scoped_and_standard_still_advances
+FAILED tests/test_global_events.py::test_hundred_drop_noise_candidates_are_retained_and_overflow_drains_first
+FAILED tests/test_global_events.py::test_failed_model_chunk_reuses_prior_complete_output_without_losing_queue
+FAILED tests/test_global_events.py::test_candidate_location_requires_selected_evidence_and_literal_source_basis
+FAILED tests/test_global_events.py::test_unselected_source_locations_are_explicit_approximate_fallback
+FAILED tests/test_global_events.py::test_missing_source_locations_stay_unlocated
+FAILED tests/test_global_events.py::test_invalid_optional_location_preserves_assessment_not_a_lost_candidate[selection0]
+FAILED tests/test_global_events.py::test_invalid_optional_location_preserves_assessment_not_a_lost_candidate[selection1]
+FAILED tests/test_global_events.py::test_invalid_optional_location_preserves_assessment_not_a_lost_candidate[selection2]
+FAILED tests/test_global_events.py::test_invalid_optional_location_preserves_assessment_not_a_lost_candidate[selection3]
+FAILED tests/test_global_events.py::test_blank_taiwan_impact_only_normalizes_explicit_none[none]
+FAILED tests/test_global_events.py::test_blank_taiwan_impact_only_normalizes_explicit_none[direct]
+FAILED tests/test_global_events.py::test_blank_taiwan_impact_only_normalizes_explicit_none[indirect]
+FAILED tests/test_global_events.py::test_blank_taiwan_impact_only_normalizes_explicit_none[unknown]
+FAILED tests/test_global_events.py::test_missing_rank_recovers_only_exact_input_candidate_id
+FAILED tests/test_global_events.py::test_cached_maintenance_replay_preserves_provider_times_and_source_checkpoint
+FAILED tests/test_global_events.py::test_db_failure_retries_same_durable_batch_with_new_manifest_marker
+FAILED tests/test_global_events.py::test_oversized_assessment_is_pending_while_other_candidate_advances
+FAILED tests/test_global_events.py::test_oversized_source_url_stays_private_and_public_candidate_is_pending
+FAILED tests/test_global_events.py::test_run_receipt_carries_collector_version
+FAILED tests/test_global_events.py::test_admin1_only_mention_is_downgraded_to_a_batch_country_anchor
+FAILED tests/test_global_events.py::test_admin1_mention_stays_unlocated_without_a_country_anchor
+FAILED tests/test_global_events.py::test_gazetteer_persists_for_the_resume_path_and_expires
+FAILED tests/test_global_events.py::test_every_produced_place_satisfies_migration_399
+FAILED tests/test_rate_limiter.py::TestRateLimiterThreadSafety::test_concurrent_burst_does_not_exceed_rate
+FAILED tests/test_supabase_pool.py::test_concurrent_borrows_get_independent_connections
+FAILED tests/test_supabase_writer.py::test_concurrent_writes_dont_block_each_other
+============ 28 failed, 562 passed, 2 skipped in 188.00s (0:03:08) =============
