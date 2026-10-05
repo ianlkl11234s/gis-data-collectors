@@ -884,11 +884,25 @@ class SupabaseWriter:
                 )
             except Exception as e:
                 logger.warning(f"[rail_timetable] TRA 轉換失敗，fallback 原始格式: {e}")
+                fallback = {
+                    'metadata': {
+                        'title': f'TRA 每日時刻表 {today}',
+                        'date': today,
+                        'total_trains': tra_data.get('train_count', len(tra_raw)),
+                        'source': 'TDX DailyTrainTimetable v3',
+                        'degraded': True,
+                        'degraded_reason': 'conversion_failed',
+                    },
+                    # 保留 TDX 原始班表，但不命名為 schedules；下游只應把
+                    # 成功轉換後的 schedules 視為 mini-taipei contract。
+                    'raw_schedules': tra_raw,
+                }
                 records.append({
-                    '_system': 'tra',
+                    '_system': 'tra_daily',
                     '_schedule_date': today,
                     '_train_count': tra_data.get('train_count', len(tra_raw)),
-                    '_data': json.dumps(tra_raw, ensure_ascii=False, default=str),
+                    '_data': json.dumps(fallback, ensure_ascii=False, default=str),
+                    '_degraded': True,
                 })
 
         # --- THSR：轉換為 mini-taipei 格式 ---
@@ -3364,11 +3378,21 @@ class SupabaseWriter:
         """寫入每日時刻表到 reference.daily_schedules"""
         with self._txn(conn) as cur:
             for r in records:
+                # 240 分鐘重抓後，一次暫時性的轉換失敗不應覆蓋同日已存在的
+                # 健康班表。degraded row 仍可首次寫入或彼此更新；後續健康
+                # 結果則走原本的 unconditional upsert，能修復 degraded row。
+                degraded_guard = ""
+                if r.get('_degraded'):
+                    degraded_guard = (
+                        " WHERE target.data @> "
+                        "'{\"metadata\":{\"degraded\":true}}'::jsonb"
+                    )
                 cur.execute(
-                    """INSERT INTO reference.daily_schedules (system, schedule_date, train_count, data)
+                    """INSERT INTO reference.daily_schedules AS target (system, schedule_date, train_count, data)
                        VALUES (%s, %s, %s, %s::jsonb)
                        ON CONFLICT (system, schedule_date) DO UPDATE SET
-                       train_count = EXCLUDED.train_count, data = EXCLUDED.data""",
+                       train_count = EXCLUDED.train_count, data = EXCLUDED.data"""
+                    + degraded_guard,
                     (r['_system'], r['_schedule_date'], r['_train_count'], r['_data'])
                 )
         logger.info(f"[rail_timetable] ✓ 時刻表已寫入")

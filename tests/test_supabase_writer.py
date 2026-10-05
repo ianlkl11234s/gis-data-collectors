@@ -337,6 +337,97 @@ def test_do_nothing_upsert_is_targetless(writer_with_mock_pool, monkeypatch):
     assert 'ON CONFLICT (' not in history_sqls[0]
 
 
+def test_rail_timetable_default_interval_is_four_hours():
+    """Today 班表會日內修訂，預設每 4 小時重抓。"""
+    import config
+
+    assert config.RAIL_TIMETABLE_INTERVAL == 240
+
+
+def test_rail_timetable_tra_fallback_keeps_daily_key_and_marks_degraded(
+        writer_with_mock_pool, monkeypatch):
+    """TRA 轉換失敗仍覆寫同一 daily key，並在 JSONB payload 明示降級。"""
+    writer, _mock_pool = writer_with_mock_pool
+    raw = [{"TrainInfo": {"TrainNo": "123"}, "StopTimes": []}]
+
+    monkeypatch.setattr(
+        writer,
+        '_load_od_progress',
+        lambda: (_ for _ in ()).throw(RuntimeError('missing test track cache')),
+    )
+
+    records = writer._transform_rail_timetable(
+        {'data': {'tra': {'train_count': 1, 'data': raw}}},
+        datetime(2026, 10, 5, 8, 0, 0),
+    )
+
+    assert len(records) == 1
+    assert records[0]['_system'] == 'tra_daily'
+    assert records[0]['_schedule_date'] == '2026-10-05'
+    assert records[0]['_train_count'] == 1
+
+    payload = json.loads(records[0]['_data'])
+    assert payload['metadata']['degraded'] is True
+    assert payload['metadata']['degraded_reason'] == 'conversion_failed'
+    assert payload['raw_schedules'] == raw
+    assert 'schedules' not in payload
+    assert records[0]['_degraded'] is True
+
+
+def test_rail_timetable_degraded_write_cannot_replace_healthy_row(
+        writer_with_mock_pool):
+    """degraded upsert 只可更新既有 degraded row，不能蓋掉健康班表。"""
+    writer, _mock_pool = writer_with_mock_pool
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+    conn.cursor.return_value.__exit__.return_value = None
+    payload = json.dumps({
+        'metadata': {'degraded': True},
+        'raw_schedules': [],
+    })
+
+    writer._write_schedules(conn, [{
+        '_system': 'tra_daily',
+        '_schedule_date': '2026-10-05',
+        '_train_count': 0,
+        '_data': payload,
+        '_degraded': True,
+    }])
+
+    schedule_sql = next(
+        call.args[0]
+        for call in cursor.execute.call_args_list
+        if 'INSERT INTO reference.daily_schedules' in call.args[0]
+    )
+    assert "target.data @>" in schedule_sql
+    assert '"degraded":true' in schedule_sql
+
+
+def test_rail_timetable_healthy_write_can_replace_degraded_row(
+        writer_with_mock_pool):
+    """健康結果維持 unconditional upsert，讓下一輪可修復 degraded row。"""
+    writer, _mock_pool = writer_with_mock_pool
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cursor
+    conn.cursor.return_value.__exit__.return_value = None
+
+    writer._write_schedules(conn, [{
+        '_system': 'tra_daily',
+        '_schedule_date': '2026-10-05',
+        '_train_count': 1,
+        '_data': json.dumps({'metadata': {}, 'schedules': [{}]}),
+    }])
+
+    schedule_sql = next(
+        call.args[0]
+        for call in cursor.execute.call_args_list
+        if 'INSERT INTO reference.daily_schedules' in call.args[0]
+    )
+    assert 'target.data @>' not in schedule_sql
+
+
 # ============================================================
 # 心跳併入主寫入連線（成功路徑只 borrow 一次）
 # ============================================================
