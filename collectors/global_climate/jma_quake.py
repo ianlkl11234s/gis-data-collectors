@@ -18,7 +18,9 @@ quake 欄位：cod 為 ISO 6709 '+32.4+130.5-10000/'（深度單位公尺、負�
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -176,6 +178,13 @@ def parse_volcano_warning(items: list, volcanoes: dict[str, dict], collected_at:
     return rows, skipped
 
 
+def record_key(r: dict) -> str:
+    """跨三來源唯一鍵：'{_type}|{PK}'，與 transformer 的 _type 分表與 PK 一致。"""
+    if r.get("_type") == "volcano":
+        return f"volcano|{r.get('volcano_code')}|{r.get('report_time')}"
+    return f"{r.get('_type')}|{r.get('json_id')}"
+
+
 class JmaQuakeCollector(BaseCollector):
     """地震・津波・火山三清單；全部 DO NOTHING，重複抓無副作用。"""
 
@@ -187,6 +196,40 @@ class JmaQuakeCollector(BaseCollector):
         self._session = new_jma_session("jma-quake")
         self._volcanoes: dict[str, dict] = {}
         self._volcanoes_loaded_at: Optional[datetime] = None
+        self.state_path = Path(config.LOCAL_DATA_DIR) / "state" / "jma_quake_seen.json"
+        self._seen: Optional[set[str]] = None
+        self._pending_seen: Optional[set[str]] = None
+
+    # ---- 只送新項目：上游清單每 2 分鐘幾乎不變，整份重存會讓本地與 S3 歸檔膨脹（2026-10-09 實測 14h 203MB）----
+    def require_db_write(self) -> bool:
+        # seen 狀態只在 DB 寫入成功後前進，否則寫入失敗的項目下一輪不會再送
+        return True
+
+    def _load_seen(self) -> set[str]:
+        if self._seen is None:
+            try:
+                self._seen = set(json.loads(self.state_path.read_text()).get("seen", []))
+            except (OSError, ValueError, AttributeError):
+                self._seen = set()
+        return self._seen
+
+    def _save_seen(self, seen: set[str]) -> None:
+        self._seen = seen
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.state_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"seen": sorted(seen)}))
+            tmp.replace(self.state_path)
+        except OSError as e:
+            print(f"[{self.name}] ⚠ state 檔寫入失敗（僅影響重啟後重送一次，DB DO NOTHING 擋重複）: {e}")
+
+    def run(self) -> dict:
+        self._pending_seen = None
+        stats = super().run()
+        if self._pending_seen is not None and not stats.get("error"):
+            self._save_seen(self._pending_seen)
+        self._pending_seen = None
+        return stats
 
     def _volcano_index(self) -> dict[str, dict]:
         now = datetime.now(timezone.utc)
@@ -233,9 +276,28 @@ class JmaQuakeCollector(BaseCollector):
         if len(failures) == 3:
             raise RuntimeError(f"jma_quake: 三來源全部失敗 {failures}")
 
+        # seen 只保留本輪上游清單內的 key（清單本身有上限），失敗的來源沿用舊 key 避免下輪重送
+        seen = self._load_seen()
+        keys = {record_key(r) for r in records}
+        fresh = [r for r in records if record_key(r) not in seen]
+        kept = {k for k in seen if k.split("|", 1)[0] in failures}
+        if not fresh:
+            if not failures:
+                self._pending_seen = keys | kept
+            print(f"[{self.name}] no change（清單 {counts}）")
+            out = {"no_change": True, "counts": counts, "source_failures": failures,
+                   "collected_at": collected_at}
+            if failures:
+                out["_collector_error"] = f"jma_quake: 部分來源失敗 {failures}"
+            return out
+        self._pending_seen = keys | kept
+        records = fresh
+        counts_new = {k: sum(1 for r in fresh if record_key(r).startswith(k + "|")) for k in counts}
+
         result = {
             "data": records,
             "counts": counts,
+            "new_counts": counts_new,
             "volcano_skipped_no_report_time": skipped,
             "source_failures": failures,
             "collected_at": collected_at,
