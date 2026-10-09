@@ -99,6 +99,9 @@ from .global_climate.cmems import CmemsCollector
 from .global_climate.cams import CamsCollector
 from .global_climate.noaa_gfs import NoaaGfsCollector
 from .global_climate.climate_bake import ClimateBakeCollector
+from .global_climate.jma_amedas import JmaAmedasCollector
+from .global_climate.jma_warnings import JmaWarningsCollector
+from .global_climate.jma_quake import JmaQuakeCollector
 
 
 @dataclass(frozen=True)
@@ -217,6 +220,10 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(CamsCollector, "CAMS 大氣化學收集器", "GLOBAL_CLIMATE_CAMS", ("CAMS_API_KEY",)),
     CollectorEntry(NoaaGfsCollector, "NOAA GFS 風場收集器", "GLOBAL_CLIMATE_NOAA_GFS"),
     CollectorEntry(ClimateBakeCollector, "全球氣候烤圖收集器", "GLOBAL_CLIMATE_BAKE"),
+    # === 日本氣象廳 JMA P0（2026-10-09，gis-platform migration 435）===
+    CollectorEntry(JmaAmedasCollector, "JMA AMeDAS 10 分觀測收集器", "JAPAN_JMA_AMEDAS"),
+    CollectorEntry(JmaWarningsCollector, "JMA 警報・注意報收集器", "JAPAN_JMA_WARNINGS"),
+    CollectorEntry(JmaQuakeCollector, "JMA 地震・津波・火山情報收集器", "JAPAN_JMA_QUAKE"),
 )
 
 

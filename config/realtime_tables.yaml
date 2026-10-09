@@ -190,3 +190,11 @@ tables:
   - {schema: live, table: water_effluent_current,      time_column: updated_at,   owner_collector: water_effluent_monitoring, expected_interval_min: 60, critical: false, notes: updated_at 每輪 touch＝心跳}
   - {schema: live, table: cems_stack_current,          time_column: updated_at,   owner_collector: cems_stack_monitoring, expected_interval_min: 60, critical: false, notes: updated_at 每輪 touch＝心跳；observed_at 上游延遲 4–5h}
   - {schema: live, table: cwa_uv_daily,                time_column: collected_at, owner_collector: cwa_uv_daily, expected_interval_min: 720, critical: false, notes: 同日重抓 DO UPDATE 會推進 collected_at}
+
+  # ── 日本氣象廳 JMA P0（2026-10-09；gis-platform migration 435）──
+  - {schema: live, table: jma_amedas_current,          time_column: updated_at,   owner_collector: jma_amedas, expected_interval_min: 10, critical: false, notes: AMeDAS 約 1,286 站；updated_at 每輪 touch＝心跳；來源 stale 看 source_time（>40 分 collector 會 log）}
+  - {schema: live, table: jma_amedas_observations,     time_column: collected_at, owner_collector: jma_amedas, expected_interval_min: 60, critical: false, notes: 只寫整點；保留 90 天}
+  - {schema: live, table: jma_warnings,                time_column: collected_at, owner_collector: jma_warnings, expected_interval_min: 720, critical: false, notes: 事件驅動（map_time 有變才寫整份快照，安靜日可數小時不變）；control_datetime >6h 未變 collector 會 log stale}
+  - {schema: live, table: jma_quake_reports,           time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（DO NOTHING，僅新地震推進 MAX）}
+  - {schema: live, table: jma_tsunami_reports,         time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（無津波情報即無資料），長期 DEAD 屬預期}
+  - {schema: live, table: jma_volcano_warnings,        time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（火山警報異動才有新列），長期 DEAD 屬預期}

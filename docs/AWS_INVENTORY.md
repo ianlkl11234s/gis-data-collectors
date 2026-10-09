@@ -39,6 +39,18 @@ Rule ID: tiered-cold-storage
 
 `flight_fr24/` **不適用此規則**（已手動全部轉 DEEP_ARCHIVE，見下方）。
 
+```
+Rule ID: supabase-snapshots-realtime-tiering（Prefix=supabase-snapshots/realtime/）
+  30 天 → STANDARD_IA、90 天 → GLACIER_IR、180 天 → DEEP_ARCHIVE
+
+Rule ID: archive-deep-270d:{collector}（每個 collector 一條，Prefix={collector}/archives/）
+  270 天後 → DEEP_ARCHIVE（2026-10-09 新增 86 條；ADR-0021，使用者指定 270 天）
+```
+
+- 2026-10-09 起：所有 ArchiveTask 歸檔 `{collector}/archives/` 走 IA 30 → GIR 90 → **DEEP_ARCHIVE 270**。`deploy-assets/` 等非歸檔前綴不受影響（仍是 IA 30 → GIR 90）。
+- **新增 collector 時要補一條 `archive-deep-270d:{name}` 規則**，否則它的歸檔停在 GLACIER_IR。補法：讀出現有設定、append 一條 `{"ID":"archive-deep-270d:{name}","Filter":{"Prefix":"{name}/archives/"},"Status":"Enabled","Transitions":[{"Days":270,"StorageClass":"DEEP_ARCHIVE"}]}`，再整份 `put-bucket-lifecycle-configuration`（這個 API 是整份覆寫，不可只送新規則）。
+- 讀 270 天以前的歸檔（例如 `scripts/backfill_vessel_watch.py`）要先 restore，見下方 Deep Archive 取回指令。
+
 ---
 
 ## 3. 各 Prefix 用途與狀態

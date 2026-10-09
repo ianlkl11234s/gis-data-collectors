@@ -893,4 +893,26 @@ TABLE_MAP = {
         # 不設 upsert_strategy = 走 DO UPDATE（更新 county_name / township_name /
         # metric_value / source_dataset / collected_at，key 欄位不動）
     },
+    # === 日本氣象廳 JMA P0 — gis-platform migration 435 ===
+    'jma_amedas': {
+        # live.jma_amedas_current（PK station_id，upsert）＋ live.jma_amedas_observations
+        # （PK (station_id, observed_at)，只寫整點，DO NOTHING）— 寫入邏輯見 _write_multi_table
+        'is_multi_table': True,
+    },
+    'jma_warnings': {
+        # R8 警報・注意報全國快照；control_datetime = map_time latestControlDatetime
+        # UNIQUE (control_datetime, area_code, kind_code) DO NOTHING
+        'history': 'live.jma_warnings',
+        'columns': [
+            'control_datetime', 'office_code', 'office_name', 'area_code', 'area_name',
+            'area_level', 'kind_code', 'kind_name', 'status', 'report_datetime', 'collected_at',
+        ],
+        'upsert_key': 'control_datetime,area_code,kind_code',
+        'upsert_strategy': 'do_nothing',
+    },
+    'jma_quake': {
+        # live.jma_quake_reports / live.jma_tsunami_reports / live.jma_volcano_warnings
+        # 全部 DO NOTHING — 寫入邏輯見 _write_multi_table
+        'is_multi_table': True,
+    },
 }
