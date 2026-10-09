@@ -337,7 +337,7 @@ def test_quake_transform_and_multi_table_sql(writer, capture):
     assert len(tables["live.jma_quake_reports"][1]) == len(FIXTURE["quake_list"])
 
 
-def test_quake_collect_partial_failure_flags_error(monkeypatch):
+def test_quake_collect_partial_failure_flags_error(monkeypatch, tmp_path):
     def fake_fetch(session, path, **kw):
         if path == jma_quake.URL_TSUNAMI_LIST:
             raise jma_quake.JmaFetchError("boom")
@@ -351,8 +351,60 @@ def test_quake_collect_partial_failure_flags_error(monkeypatch):
     c = jma_quake.JmaQuakeCollector.__new__(jma_quake.JmaQuakeCollector)
     c.name, c._session = "jma_quake", None
     c._volcanoes, c._volcanoes_loaded_at = {}, None
+    c._seen, c._pending_seen = None, None
+    c.state_path = tmp_path / "state" / "jma_quake_seen.json"
     out = c.collect()
     json.dumps(out)
     assert out["counts"]["quake"] == len(FIXTURE["quake_list"])
     assert out["counts"]["tsunami"] == 0
     assert "tsunami" in out["source_failures"] and out["_collector_error"]
+
+
+# ───────────────────────── quake change-only (2026-10-09) ─────────────────────────
+
+def _quake_collector(monkeypatch, tmp_path, quakes):
+    from collectors.global_climate import jma_quake as jq
+
+    def fake_fetch(_session, path):
+        if path == jq.URL_QUAKE_LIST:
+            return quakes
+        if path == jq.URL_TSUNAMI_LIST:
+            return FIXTURE["tsunami_list"]
+        if path == jq.URL_VOLCANO_WARNING:
+            return FIXTURE["volcano_warning"]
+        if path == jq.URL_VOLCANO_LIST:
+            return FIXTURE["volcano_list"]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(jq, "fetch", fake_fetch)
+    c = jq.JmaQuakeCollector.__new__(jq.JmaQuakeCollector)
+    c.name, c._session = "jma_quake", None
+    c._volcanoes, c._volcanoes_loaded_at = {}, None
+    c._seen, c._pending_seen = None, None
+    c.state_path = tmp_path / "state" / "jma_quake_seen.json"
+    return c
+
+
+def test_quake_only_new_items_after_successful_run(monkeypatch, tmp_path):
+    from collectors.base import BaseCollector
+    monkeypatch.setattr(BaseCollector, "run", _fake_base_run())
+    c = _quake_collector(monkeypatch, tmp_path, FIXTURE["quake_list"])
+    first = c.collect()
+    assert first["data"]
+    c._pending_seen = None
+    c.run()
+    again = c.collect()
+    assert "data" not in again and again["no_change"] is True
+    newer = [dict(FIXTURE["quake_list"][0], json="99999999999999_NEW.json")] + FIXTURE["quake_list"]
+    c2 = _quake_collector(monkeypatch, tmp_path, newer)  # 模擬重啟，從 state 檔讀 seen
+    out = c2.collect()
+    assert [r["json_id"] for r in out["data"]] == ["99999999999999_NEW.json"]
+
+
+def test_quake_seen_not_advanced_when_db_write_fails(monkeypatch, tmp_path):
+    from collectors.base import BaseCollector
+    monkeypatch.setattr(BaseCollector, "run", _fake_base_run("required Supabase write failed"))
+    c = _quake_collector(monkeypatch, tmp_path, FIXTURE["quake_list"])
+    c.run()
+    assert not c.state_path.exists()
+    assert c.collect()["data"]

@@ -123,6 +123,7 @@ ARCHIVE_TIME = os.getenv('ARCHIVE_TIME', '03:00')  # 每日歸檔時間 (HH:MM)
 COLLECTOR_RETENTION_OVERRIDES = {
     name: int(os.environ[f'{name.upper()}_ARCHIVE_RETENTION_DAYS'])
     for name in ('iot_wra', 'bus', 'bus_intercity', 'youbike', 'train',
+                 'jma_amedas', 'jma_warnings', 'jma_quake',
                  'ship_ais', 'flight_fr24', 'flight_fr24_zone', 'freeway_vd',
                  'satellite', 'cwa_satellite', 'temperature', 'weather',
                  'air_quality', 'air_quality_microsensors', 'air_quality_imagery',
@@ -137,6 +138,9 @@ COLLECTOR_RETENTION_OVERRIDES = {
 # window even when the deployment dashboard omits an explicit override.
 COLLECTOR_RETENTION_OVERRIDES.setdefault('cwa_marine_observation', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('isohe_port_marine', 3)
+# JMA：本地只需撐到隔天 03:00 歸檔驗證完成；冷資料在 S3（ADR-0021，2026-10-09）
+for _jma_name in ('jma_amedas', 'jma_warnings', 'jma_quake'):
+    COLLECTOR_RETENTION_OVERRIDES.setdefault(_jma_name, 2)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('cloudflare_radar', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('ioda_internet_health', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('ripe_atlas_internet_health', 3)
