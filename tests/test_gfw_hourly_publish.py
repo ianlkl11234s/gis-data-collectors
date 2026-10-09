@@ -837,3 +837,45 @@ def test_failed_spool_preserves_lookalike_file_instead_of_deleting(tmp_path):
     assert result["pruned"] == []
     assert result["warnings"] and "unknown file" in result["warnings"][0]["error"]
     assert lookalike.exists()
+
+
+def test_running_spool_with_held_lease_is_not_scrubbed_or_pruned(tmp_path):
+    import os
+    from tasks import gfw_hourly_publish as module
+
+    now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+    root = tmp_path / "spool"
+    spool = root / "2026-08-01-55555555-5555-5555-5555-555555555555"
+    (spool / "work" / "ais").mkdir(parents=True)
+    (spool / "spool.json").write_text(json.dumps(
+        {"status": "running", "started_at": "2026-08-01T00:00:00+00:00"}))
+    raw = spool / "work" / "ais" / ".r01c02.ais-report.json"
+    raw.write_text("{")
+    old = (now - timedelta(hours=3)).timestamp()
+    os.utime(raw, (old, old))
+
+    fd = module._acquire_lease(spool)
+    try:
+        result = prune_expired_failed_spools(root, now=now, retention_days=7)
+        assert result["pruned"] == [] and raw.exists() and spool.exists()
+    finally:
+        module._release_lease(spool, fd)
+
+    result = prune_expired_failed_spools(root, now=now, retention_days=7)
+    assert not spool.exists()  # 無 lease 的過期 running 視為孤兒
+
+
+def test_scrub_rejects_symlinked_work_ancestor(tmp_path):
+    import os
+    from tasks import gfw_hourly_publish as module
+
+    outside = tmp_path / "outside" / "ais"
+    outside.mkdir(parents=True)
+    victim = outside / ".r01c02.ais-report.json"
+    victim.write_text("{")
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    os.symlink(tmp_path / "outside", run_root / "work")
+
+    removed = module._scrub_raw_reports(run_root, status="failed", now_ts=0.0)
+    assert removed == [] and victim.exists()

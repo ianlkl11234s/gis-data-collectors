@@ -9,9 +9,11 @@ is cut over.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
+import os
 import re
 import sqlite3
 import time
@@ -1355,6 +1357,50 @@ def _validated_failed_spool_paths(run_root: Path) -> tuple[list[Path], list[Path
 _RUNNING_REPORT_GRACE_SECONDS = 600
 
 
+def _lease_path(run_root: Path) -> Path:
+    # 放在 run_root 旁邊（非內部），避免干擾 spool 樹驗證與 rmdir。
+    return run_root.parent / f"{run_root.name}.lease"
+
+
+def _acquire_lease(run_root: Path) -> int:
+    """持有 run 的跨程序 flock lease；回傳 fd，run 結束時須 _release_lease。"""
+    fd = os.open(_lease_path(run_root), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _release_lease(run_root: Path, fd: int) -> None:
+    try:
+        _lease_path(run_root).unlink()
+    except OSError:
+        pass
+    try:
+        os.close(fd)  # 關閉即釋放 flock
+    except OSError:
+        pass
+
+
+def _lease_is_held(run_root: Path) -> bool:
+    """其他（或本）程序仍持有該 run 的 lease 時回 True。無 lease 檔視為孤兒。"""
+    path = _lease_path(run_root)
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        return False
+    finally:
+        os.close(fd)
+
+
 def _scrub_raw_reports(run_root: Path, *, status: str, now_ts: float) -> list[str]:
     """Unlink raw ``.rXXcYY.ais-report.json`` files left by a crashed run.
 
@@ -1365,7 +1411,17 @@ def _scrub_raw_reports(run_root: Path, *, status: str, now_ts: float) -> list[st
     """
     work_dir = run_root / "work" / "ais"
     removed: list[str] = []
-    if work_dir.is_symlink() or not work_dir.is_dir():
+    # 祖先（run_root/work）若是 symlink，iterdir 會跟進到外部目錄；
+    # 逐層檢查並確認 resolve 後仍在 run_root 之內。
+    if run_root.is_symlink() or (run_root / "work").is_symlink() or work_dir.is_symlink():
+        return removed
+    if not work_dir.is_dir():
+        return removed
+    try:
+        work_dir.resolve(strict=True).relative_to(run_root.resolve(strict=True))
+    except (OSError, ValueError):
+        return removed
+    if status == "running" and _lease_is_held(run_root):
         return removed
     for child in work_dir.iterdir():
         if child.is_symlink() or not child.is_file() or not _REPORT_FILE.fullmatch(child.name):
@@ -1405,6 +1461,8 @@ def prune_expired_failed_spools(
                 stamp_key = "started_at"
             else:
                 continue
+            if status == "running" and _lease_is_held(candidate):
+                continue  # 持鎖者仍存活，不 scrub 也不 prune
             _scrub_raw_reports(candidate, status=status, now_ts=now.timestamp())
             stamp = datetime.fromisoformat(str(ledger[stamp_key]).replace("Z", "+00:00"))
             if stamp.tzinfo is None:
@@ -1486,6 +1544,7 @@ class GFWHourlyPublishTask:
             logger.warning("GFW failed-spool cleanup retained an unknown tree: %s", warning)
         run_root = self.settings.spool_root / f"{release_id}-{run_id}"
         run_root.mkdir(parents=True, exist_ok=False)
+        lease_fd = _acquire_lease(run_root)
         _atomic_json(run_root / "spool.json", {
             "run_id": run_id,
             "release_id": release_id,
@@ -1675,6 +1734,8 @@ class GFWHourlyPublishTask:
             else:
                 logger.error("GFW hourly publish failed; spool retained at %s", run_root)
             raise
+        finally:
+            _release_lease(run_root, lease_fd)
 
 
 def run_in_subprocess(*, python: str | None = None) -> dict[str, Any]:
