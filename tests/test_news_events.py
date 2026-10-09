@@ -536,3 +536,21 @@ class TestLlmProviders:
         assert annotations == {0: _annotation()}
         assert usage == {'input': 13, 'output': 5, 'cached': 2}
         assert client.models.generate_content.call_args.kwargs['model'] == 'gemini-regression-model'
+
+
+class TestAnnotationLocationTypes:
+
+    @pytest.mark.parametrize('field,value', [
+        ('county', []), ('county', {}), ('county', 0), ('township', []), ('township', 5),
+    ])
+    def test_non_string_location_rejected(self, field, value):
+        ann = _annotation()
+        ann[field] = value
+        with pytest.raises(NewsAnnotationError):
+            NewsEventsCollector._validate_annotation(ann)
+
+    def test_string_or_none_location_accepted(self):
+        ann = _annotation()
+        ann['county'] = None
+        ann['township'] = ''
+        NewsEventsCollector._validate_annotation(ann)
