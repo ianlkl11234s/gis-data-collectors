@@ -223,19 +223,43 @@ def _warnings_collector(monkeypatch, tmp_path, map_entries):
     monkeypatch.setattr(jma_warnings, "fetch", fake_fetch)
     c = jma_warnings.JmaWarningsCollector.__new__(jma_warnings.JmaWarningsCollector)
     c.name, c._session = "jma_warnings", None
-    c._area, c._area_loaded_at, c._last_control = {}, None, None
+    c._area, c._area_loaded_at, c._last_control, c._pending_control = {}, None, None, None
     c.state_path = tmp_path / "state" / "jma_warnings_state.json"
     return c
 
 
+def _fake_base_run(result_error=None):
+    def run(self):
+        out = self.collect()
+        return {"error": result_error} if result_error else {k: v for k, v in out.items() if k != "data"}
+    return run
+
+
 def test_warnings_collect_no_change_and_survives_restart(monkeypatch, tmp_path):
+    from collectors.base import BaseCollector
+    monkeypatch.setattr(BaseCollector, "run", _fake_base_run())
     c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"])
     first = c.collect()
     assert first["data"] and first["control_datetime"] == CTRL
+    c._pending_control = None
+    c.run()  # 成功的 run 才會前進 state
     second = c.collect()
     assert "data" not in second and second["no_change"] is True
     restarted = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"])
     assert "data" not in restarted.collect()
+
+
+def test_warnings_state_not_advanced_when_db_write_fails(monkeypatch, tmp_path):
+    from collectors.base import BaseCollector
+    monkeypatch.setattr(BaseCollector, "run", _fake_base_run("required Supabase write failed"))
+    c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"])
+    c.run()
+    assert not c.state_path.exists() and c._last_control is None
+    assert c.collect()["data"]  # 下一輪仍會重抓同一快照
+
+
+def test_warnings_require_db_write():
+    assert jma_warnings.JmaWarningsCollector.require_db_write(None) is True
 
 
 def test_warnings_collect_writes_sentinel_when_nothing_active(monkeypatch, tmp_path):

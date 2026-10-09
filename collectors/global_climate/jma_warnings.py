@@ -165,6 +165,19 @@ class JmaWarningsCollector(BaseCollector):
         self._area_loaded_at: Optional[datetime] = None
         self.state_path = Path(config.LOCAL_DATA_DIR) / "state" / "jma_warnings_state.json"
         self._last_control: Optional[str] = None
+        self._pending_control: Optional[str] = None
+
+    def require_db_write(self) -> bool:
+        # 「沒變就跳過」依賴 state；寫入沒成功就不能前進 state，所以 DB 寫入是必要條件
+        return True
+
+    def run(self) -> dict:
+        self._pending_control = None
+        stats = super().run()
+        if self._pending_control and not stats.get("error"):
+            self._save_last_control(self._pending_control)
+        self._pending_control = None
+        return stats
 
     # ---- 跨重啟狀態 ----
     def _load_last_control(self) -> Optional[str]:
@@ -231,7 +244,8 @@ class JmaWarningsCollector(BaseCollector):
         if not rows:
             rows = [sentinel_row(control, collected_at)]
 
-        self._save_last_control(control)
+        # state 只在 DB 寫入成功後才前進（見 run()），避免寫入失敗時整輪被當成「已處理」
+        self._pending_control = control
         return {
             "data": rows,
             "active_count": active,
