@@ -276,3 +276,16 @@ def test_get_status_includes_last_success_at(_mock_notify):
     collector.run()
     status = collector.get_status()
     assert status['last_success_at'] is not None
+
+
+@patch('collectors.base.notify_error')
+@patch('collectors.base.notify_success')
+def test_mojibake_rejection_fails_run_even_without_require_db_write(_ok, _err):
+    from storage.supabase_writer import MojibakeWriteRejected
+    collector = DummyCollector()
+    collector.supabase_writer = MagicMock()
+    collector.supabase_writer.write.side_effect = MojibakeWriteRejected('rejected')
+    stats = collector.run()
+    _ok.assert_not_called()
+    _err.assert_called_once()
+    assert collector.last_success_at is None
