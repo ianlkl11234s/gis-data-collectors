@@ -26,6 +26,8 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
@@ -100,6 +102,13 @@ class NuscGammaRadiationCollector(BaseCollector):
         self._session.headers.update({
             "User-Agent": "Mozilla/5.0 (compatible; GIS-DataCollectors/1.0; nusc-gamma)",
         })
+        # 有限次、僅暫時性錯誤重試（429/5xx/連線逾時）
+        self._session.mount("https://", HTTPAdapter(max_retries=Retry(
+            total=2, connect=2, read=2, backoff_factor=1.0,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset(("GET",)),
+            raise_on_status=False,
+        )))
 
     def require_db_write(self) -> bool:
         return True

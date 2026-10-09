@@ -364,10 +364,17 @@ class SupabaseWriter:
                         success += 1
                         consecutive_failures = 0
                         logger.info(f"Buffer 補寫成功：{f.name}")
-                    except MojibakeWriteRejected:
-                        # Retain the original buffer payload for forensic recovery;
-                        # the explicit raise makes the corruption observable.
-                        raise
+                    except MojibakeWriteRejected as e:
+                        # 壞檔移到 quarantine/ 供事後鑑識，並繼續處理後面的檔案，
+                        # 避免同一壞檔每輪擋住整批、讓其他 buffer 超過保留期被丟棄。
+                        logger.error(f"Buffer 內容被亂碼防護拒絕，隔離 {f.name}: {e}")
+                        try:
+                            qdir = BUFFER_DIR / "quarantine"
+                            qdir.mkdir(parents=True, exist_ok=True)
+                            f.replace(qdir / f.name)
+                        except OSError as move_err:
+                            logger.warning(f"Buffer 隔離失敗 {f.name}: {move_err}")
+                        continue
                     except Exception as e:
                         consecutive_failures += 1
                         logger.warning(f"Buffer 重試失敗：{f.name}: {e}")
@@ -2493,8 +2500,15 @@ class SupabaseWriter:
                     else:
                         key_set = {k.strip() for k in key.split(',')}
                         update_cols = [c for c in columns if c not in key_set]
-                        update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
-                        sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
+                        # keep_on_null：新值為 NULL 時保留既有值（例如 enrichment 失敗）
+                        keep = set(table_config.get('keep_on_null', ()))
+                        hist = table_config['history']
+                        update_set = ','.join(
+                            f'{c}=COALESCE(EXCLUDED.{c},{hist}.{c})' if c in keep
+                            else f'{c}=EXCLUDED.{c}'
+                            for c in update_cols
+                        )
+                        sql = f"INSERT INTO {hist} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
                 else:
                     sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s"
 
@@ -3465,6 +3479,7 @@ class SupabaseWriter:
                 # 240 分鐘重抓後，一次暫時性的轉換失敗不應覆蓋同日已存在的
                 # 健康班表。degraded row 仍可首次寫入或彼此更新；後續健康
                 # 結果則走原本的 unconditional upsert，能修復 degraded row。
+                # created_at 隨成功 upsert 更新，作為日內 freshness 監控的前進時間欄位。
                 degraded_guard = ""
                 if r.get('_degraded'):
                     degraded_guard = (
@@ -3475,7 +3490,8 @@ class SupabaseWriter:
                     """INSERT INTO reference.daily_schedules AS target (system, schedule_date, train_count, data)
                        VALUES (%s, %s, %s, %s::jsonb)
                        ON CONFLICT (system, schedule_date) DO UPDATE SET
-                       train_count = EXCLUDED.train_count, data = EXCLUDED.data"""
+                       train_count = EXCLUDED.train_count, data = EXCLUDED.data,
+                       created_at = NOW()"""
                     + degraded_guard,
                     (r['_system'], r['_schedule_date'], r['_train_count'], r['_data'])
                 )

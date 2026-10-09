@@ -105,7 +105,9 @@ class BaseCollector(ABC):
                             raise RuntimeError("required Supabase write failed")
                     except Exception as sb_err:
                         print(f"[{self.name}] ⚠ Supabase 寫入異常: {sb_err}")
-                        if self.require_db_write():
+                        # 亂碼防護拒絕屬資料完整性失敗，不得被當成成功（寫 0 列）
+                        from storage.supabase_writer import MojibakeWriteRejected
+                        if self.require_db_write() or isinstance(sb_err, MojibakeWriteRejected):
                             raise
                 elif self.require_db_write():
                     raise RuntimeError("required Supabase writer is unavailable")

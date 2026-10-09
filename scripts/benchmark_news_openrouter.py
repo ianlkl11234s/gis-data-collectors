@@ -6,8 +6,9 @@ with ``--db-sample``.  Results default to /tmp so benchmark artifacts are not
 accidentally committed.
 
 ``--max-cost-usd`` is a soft cap: spend is only known after a provider response, so the
-first request (and any single in-flight request) can exceed it. Set ``--max-tokens`` to
-bound the cost of each request.
+first request (and any single in-flight request) can exceed it. ``--max-tokens`` only
+limits *output* tokens; input cost (system prompt, gazetteer, input rows) is not capped,
+so also control input size and choose models by input/output unit price.
 """
 
 from __future__ import annotations
@@ -298,7 +299,7 @@ def run_benchmark(rows: list[dict[str, Any]], models: list[str], gazetteer: Town
     spent = 0.0
     pending = list(models)
     # The budget is a soft cap enforced only between provider responses (the first request
-    # is never bounded by it; use --max-tokens to bound per-request cost). Keep such runs sequential;
+    # is never bounded by it; --max-tokens caps only output-token cost; input size and model pricing also matter). Keep such runs sequential;
     # otherwise concurrent calls could start after the cap has been reached.
     workers = 1 if max_cost_usd >= 0 else max(1, concurrency)
     def evaluate(response: dict[str, Any]) -> dict[str, Any]:
@@ -369,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--max-cost-usd", type=float, default=0.05, help="soft cap checked between requests after each response, so the first request "
-                             "may exceed it (bound per-request cost with --max-tokens); negative disables")
+                             "may exceed it (--max-tokens limits only output-token cost; control input size and model pricing too); negative disables")
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--structured", action="store_true", help="require strict JSON Schema output")

@@ -800,6 +800,8 @@ class NewsEventsCollector(BaseCollector):
             and _ok_level(ann.get('severity'))
             and 'county' in ann
             and 'township' in ann
+            and (ann['county'] is None or isinstance(ann['county'], str))
+            and (ann['township'] is None or isinstance(ann['township'], str))
         )
         if not valid:
             raise NewsAnnotationError(

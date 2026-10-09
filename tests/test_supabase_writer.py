@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -848,3 +848,38 @@ def test_road_congestion_other_tables_unaffected(writer_with_mock_pool, monkeypa
     # 沒有 history_dedup_cols → 不應呼叫 SELECT 撈 prev state（cursor.execute 只有 _txn 的 SET LOCAL 一次）
     select_calls = [c for c in cursor.execute.call_args_list if 'youbike_current' in str(c)]
     assert not select_calls
+
+
+def test_flush_buffer_quarantines_rejected_file_and_continues(writer_with_mock_pool, tmp_path):
+    writer, _ = writer_with_mock_pool
+    buffer_dir = tmp_path / 'buffer'
+    buffer_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).isoformat()
+    for name, collector in (('a_bad.json', 'ncdr_alerts'), ('b_good.json', 'youbike')):
+        (buffer_dir / name).write_text(json.dumps(
+            {'collector': collector, 'timestamp': ts, 'result': {'data': []}}))
+    from storage.supabase_writer import MojibakeWriteRejected
+    writer._transform = lambda c, r, t: [{}]
+    seen = []
+
+    def fake_reject(collector, records):
+        if collector == 'ncdr_alerts':
+            raise MojibakeWriteRejected('bad')
+        return records
+
+    import storage.supabase_writer as sw
+    sw_reject, sw_write = sw.reject_mojibake_records, writer._write_to_db
+    sw.reject_mojibake_records = fake_reject
+    writer._write_to_db = lambda conn, name, recs, t: seen.append(name)
+    try:
+        writer.flush_buffer()
+    finally:
+        sw.reject_mojibake_records = sw_reject
+    assert seen == ['youbike']
+    assert (buffer_dir / 'quarantine' / 'a_bad.json').exists()
+    assert not (buffer_dir / 'b_good.json').exists()
+
+
+def test_cwa_uv_daily_keeps_existing_metadata_on_null():
+    from storage.supabase_tables import TABLE_MAP
+    assert {'station_name', 'county', 'lon', 'lat'} <= set(TABLE_MAP['cwa_uv_daily']['keep_on_null'])

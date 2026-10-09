@@ -210,6 +210,18 @@ def classify_freshness(
 # ────────────────────────────────────────────────────────────────────
 # S3 archive 健康
 # ────────────────────────────────────────────────────────────────────
+def _read_root_manifest_date(s3, key: str) -> str | None:
+    """讀 root manifest 的 release_id（YYYY-MM-DD），失敗回 None（視為無歸檔）。"""
+    try:
+        body = s3.s3.get_object(Bucket=config.S3_BUCKET, Key=key)["Body"].read(10 * 1024 * 1024)
+        release_id = str(json.loads(body).get("release_id", ""))[:10]
+        datetime.strptime(release_id, "%Y-%m-%d")
+        return release_id
+    except Exception as exc:
+        log.warning(f"讀取 root manifest 失敗 {key}: {exc}")
+        return None
+
+
 def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[str, str]:
     """依 cross-layer map 的 bounded prefixes 取每個 collector 最新歸檔日期。
 
@@ -236,6 +248,13 @@ def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[s
                     continue
                 prefix = str(spec.get("prefix", ""))
                 if not prefix:
+                    continue
+                if spec.get("root_manifest"):
+                    # 只認已 cutover 的 root manifest 的 release_id；
+                    # releases/<date>/ 候選物件在 cutover 前不算歸檔。
+                    date_part = _read_root_manifest_date(s3, prefix + str(spec["root_manifest"]))
+                    if date_part and (collector_name not in result or date_part > result[collector_name]):
+                        result[collector_name] = date_part
                     continue
                 for page in paginator.paginate(Bucket=config.S3_BUCKET, Prefix=prefix):
                     for obj in page.get("Contents", []):

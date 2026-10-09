@@ -19,6 +19,7 @@ from datetime import datetime, date
 from typing import Optional
 
 import requests
+from urllib3.util.retry import Retry
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
@@ -100,7 +101,15 @@ class CwaUvDailyCollector(BaseCollector):
         super().__init__()
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; GIS-DataCollectors/1.0; cwa-uv)"})
-        self._session.mount("https://", _CwaTlsAdapter())
+        adapter = _CwaTlsAdapter()
+        # 有限次、僅暫時性錯誤重試（429/5xx/連線逾時）；最終錯誤仍走 _get 的 sanitized 處理
+        adapter.max_retries = Retry(
+            total=2, connect=2, read=2, backoff_factor=1.0,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset(("GET",)),
+            raise_on_status=False,
+        )
+        self._session.mount("https://", adapter)
 
     def require_db_write(self) -> bool:
         return True

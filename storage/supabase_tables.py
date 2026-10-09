@@ -11,6 +11,7 @@ SupabaseWriter class 拆出，讓 writer 專注在寫入邏輯、設定集中管
 - current_columns: current 欄位順序（可選，省略則同 columns）
 - upsert_key: history 表的唯一鍵（ON CONFLICT 使用）
 - upsert_strategy: 'do_nothing' 則 ON CONFLICT DO NOTHING
+- keep_on_null: DO UPDATE 時，列出的欄位新值為 NULL 則保留既有值（COALESCE）
 - current_prune_by: 寫完 current 後刪掉該欄位 < 本批次 ts 的 stale rows
 - is_reference: True 代表 collector 走自訂的 reference 寫入流程（不用此 map）
 - is_multi_table: True 代表 collector 有特殊多表寫入邏輯（由 writer 內 _write_multi_table 處理）
@@ -786,6 +787,8 @@ TABLE_MAP = {
             'uv_index', 'uv_raw', 'lon', 'lat', 'geom', 'collected_at',
         ],
         'upsert_key': 'station_id,obs_date',
+        # meta 取得失敗時這些欄位為 NULL，不得覆蓋既有值
+        'keep_on_null': ['station_name', 'county', 'lon', 'lat', 'geom'],
     },
     'twse_market_index': {
         # TWSE 加權指數 ticker — gis-platform migration 204
