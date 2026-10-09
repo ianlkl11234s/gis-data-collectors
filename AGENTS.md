@@ -11,3 +11,9 @@
 - Collector 不得把 secret、token 或 credential 寫入 log、fixture、artifact 或 commit；外部 API 呼叫必須有合理的 timeout、bounded retry/backoff，並保留失敗與缺資料狀態。
 - Supabase 寫入需檢查 TABLE_MAP、transformer、upsert/current key 與 schema 欄位一致；不得以錯誤 conflict key 靜默覆寫或製造重複資料。
 - 新增或修改 collector 時，檢查 registry、toggle、cross-layer map、realtime tables、retention/backup manifest 與 gis-platform migration 契約是否同步，避免監控或保存鏈斷裂。
+
+### 已決定、不需再提的事項
+
+- 政府來源頁未標示授權的資料照常收集與寫入，下游來源卡標「授權待確認」即可；collector 不需為此另設 HOLD 或停收。
+- Google 定位或 Google Places 推得的座標維持現狀，不要求額外標注或改授權欄。
+- 正本在 gis-agent-system reports/code-review/POLICIES.md。
