@@ -67,7 +67,7 @@ tables:
   # freshness: failed attempts still advance started_at. The monitor uses
   # public.get_gfw_hourly_publish_health() to compare last attempt with the
   # verified is_current release and its UTC latest_complete_date.
-  - {schema: reference, table: daily_schedules,          time_column: created_at,   owner_collector: rail_timetable, expected_interval_min: 1440, critical: false}
+  - {schema: reference, table: daily_schedules,          time_column: created_at,   owner_collector: rail_timetable, expected_interval_min: 240, critical: false}
   - {schema: live, table: parking_segments_current,  time_column: collected_at, owner_collector: parking, expected_interval_min: 15, critical: false, notes: OnStreet 路邊停車；availability 由 current 代監控（測試豁免）}
 
   # ── 航空 ────────────────────────────────

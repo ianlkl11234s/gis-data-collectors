@@ -121,3 +121,23 @@ def test_file_stats_excludes_internal_archive_receipts(monkeypatch, data_dir):
     report = DailyReportTask([])._section_file_stats()
     assert "總計: *1* 個" in report
     assert ".archive-receipts" not in report
+
+
+def test_warning_disk_action_does_not_displace_vm_outage(monkeypatch, data_dir):
+    from tasks import monitoring
+
+    _stub_monitoring(monkeypatch)
+    monkeypatch.setattr(daily_report.shutil, "disk_usage", lambda _: DiskUsage(100, 80, 20))
+    monkeypatch.setattr(monitoring, "load_realtime_tables", lambda: [
+        {"schema": "live", "table": "t", "critical": True, "expected_interval_min": 1}])
+    monkeypatch.setattr(monitoring, "query_realtime_health", lambda *_: [
+        {"schema": "live", "table": "t", "max_time": None}])
+    monkeypatch.setattr(monitoring, "classify_freshness", lambda *_: ("DEAD", 999))
+    monkeypatch.setattr(monitoring, "load_cross_layer_map", lambda: {
+        "c": {"enabled": True, "critical": True, "s3_prefixes": [{"expected_daily": True}]}})
+    monkeypatch.setattr(monitoring, "list_archive_dates_per_collector", lambda: {"c": "2000-01-01"})
+    monkeypatch.setattr(monitoring, "list_vm_health_snapshots", lambda **_: [
+        {"is_lost": True, "host": "vm1", "age_hours": 30}])
+    action = DailyReportTask([])._section_today_action()
+    assert "vm1" in action
+    assert "規劃清理或擴充共享檔案系統" not in action.split("3.")[0]

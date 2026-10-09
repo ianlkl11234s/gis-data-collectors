@@ -1151,10 +1151,6 @@ class DailyReportTask:
         disk_severity, disk_message = self._filesystem_pressure_state()
         if disk_severity == "critical":
             actions.append(f"立即清理或擴充共享檔案系統（{disk_message}）")
-        elif disk_severity == "warning":
-            actions.append(f"規劃清理或擴充共享檔案系統（{disk_message}）")
-        elif disk_severity == "unknown":
-            actions.append(f"檢查共享檔案系統容量監控（{disk_message}）")
 
         # 1. SB DEAD 表（critical 優先）
         rt_tables = monitoring.load_realtime_tables()
@@ -1195,6 +1191,12 @@ class DailyReportTask:
             if entry["is_lost"]:
                 actions.append(f"檢查 HiCloud VM `{entry['host']}` 是否還活著（snapshot {entry['age_hours']:.0f}h 沒更新）")
                 break
+
+        # warning/unknown 的磁碟事項排在 critical 中斷之後，避免擠掉 VM 失聯
+        if disk_severity == "warning":
+            actions.append(f"規劃清理或擴充共享檔案系統（{disk_message}）")
+        elif disk_severity == "unknown":
+            actions.append(f"檢查共享檔案系統容量監控（{disk_message}）")
 
         # 4. 異常持續 > 7 天但未修
         state = monitoring.load_anomaly_state()

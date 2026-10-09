@@ -129,3 +129,32 @@ def test_archive_dates_scan_only_configured_prefixes_and_accept_dated_assets(mon
         "pla": "2026-09-21",
     }
     assert calls == ["demo/archives/", "pla/track_charts/"]
+
+
+def test_archive_dates_gfw_root_manifest_ignores_uncommitted_release_dirs(monkeypatch):
+    import io
+    import json as _json
+
+    class Paginator:
+        def paginate(self, **kwargs):
+            raise AssertionError("root_manifest prefix must not be listed")
+
+    class Client:
+        def get_paginator(self, name):
+            return Paginator()
+
+        def get_object(self, Bucket, Key):
+            assert Key == "gfw/manifest.json"
+            return {"Body": io.BytesIO(_json.dumps({"release_id": "2026-09-20"}).encode())}
+
+    class Storage:
+        def __init__(self):
+            self.s3 = Client()
+
+    import storage.s3
+    monkeypatch.setattr(monitoring.config, "S3_BUCKET", "test")
+    monkeypatch.setattr(storage.s3, "S3Storage", Storage)
+    monkeypatch.setattr(monitoring, "load_cross_layer_map", lambda: {
+        "gfw": {"s3_prefixes": [{"prefix": "gfw/", "expected_daily": True, "root_manifest": "manifest.json"}]},
+    })
+    assert monitoring.list_archive_dates_per_collector() == {"gfw": "2026-09-20"}
