@@ -153,6 +153,12 @@ archive_py_covered:
   - live.cems_stack_readings        # cems_stack_monitoring，migration 421，待 Zeabur 啟用
   - live.cems_stack_current         # 同上
   - live.cwa_uv_daily               # cwa_uv_daily，migration 422，待 Zeabur 啟用
+  - live.jma_amedas_observations   # jma_amedas，migration 435，2026-10-09 起
+  - live.jma_amedas_current        # 同上
+  - live.jma_warnings              # jma_warnings，migration 435，2026-10-09 起
+  - live.jma_quake_reports         # jma_quake，migration 435，2026-10-09 起
+  - live.jma_tsunami_reports       # 同上
+  - live.jma_volcano_warnings      # 同上
   # Satellite / launch
   - live.satellite_positions       # satellite, 2026-03-28 起
   - live.satellite_tle             # 同 satellite collector

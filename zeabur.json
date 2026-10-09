@@ -356,6 +356,30 @@
       "description": "CWA 紫外線收集間隔（分鐘）；上游每日一值",
       "default": "720"
     },
+    "JAPAN_JMA_AMEDAS_ENABLED": {
+      "description": "日本氣象廳 AMeDAS 約 1,286 站 10 分值（免金鑰；migration 435）；多實例只在一個實例設 true",
+      "default": "false"
+    },
+    "JAPAN_JMA_AMEDAS_INTERVAL": {
+      "description": "AMeDAS 收集間隔（分鐘）；上游 10 分更新",
+      "default": "10"
+    },
+    "JAPAN_JMA_WARNINGS_ENABLED": {
+      "description": "日本氣象廳 R8 警報・注意報（map_time 有變才抓；migration 435）",
+      "default": "false"
+    },
+    "JAPAN_JMA_WARNINGS_INTERVAL": {
+      "description": "JMA 警報輪詢間隔（分鐘）",
+      "default": "5"
+    },
+    "JAPAN_JMA_QUAKE_ENABLED": {
+      "description": "日本氣象廳 地震・津波・火山情報（migration 435）",
+      "default": "false"
+    },
+    "JAPAN_JMA_QUAKE_INTERVAL": {
+      "description": "JMA 地震/津波/火山輪詢間隔（分鐘）",
+      "default": "2"
+    },
     "YOUTUBE_API_KEY": {
       "description": "YouTube Data API v3 key（yt_live_video_resolver 必需，缺了會 silent skip）；GCP 專案需啟用 YouTube Data API v3"
     },

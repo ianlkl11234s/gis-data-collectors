@@ -1992,6 +1992,66 @@ class SupabaseWriter:
             raise ValueError('[global_events] _candidate_display_records must be an array')
         return [*records, *({'_type': 'candidate_display', 'candidate': candidate} for candidate in candidates)]
 
+    # ============================================================
+    # 日本氣象廳 JMA P0（gis-platform migration 435）
+    # ============================================================
+    _JMA_AMEDAS_COLS = [
+        'station_id', 'station_name', 'station_name_en', 'lat', 'lon', 'alt_m',
+        'observed_at', 'temp', 'precip10m', 'precip1h', 'precip3h', 'precip24h',
+        'wind', 'wind_dir', 'gust', 'humidity', 'pressure', 'sun1h',
+        'snow', 'snow1h', 'snow6h', 'snow12h', 'snow24h', 'has_snow_gauge',
+        'source_time', 'collected_at',
+    ]
+
+    def _transform_jma_amedas(self, result: dict, ts: datetime) -> list[dict]:
+        """AMeDAS：_type current（每站）＋ observation（只收整點）。缺值保持 None。"""
+        records = []
+        for r in result.get('data', []):
+            kind = r.get('_type')
+            if kind not in ('current', 'observation') or not r.get('station_id') or not r.get('observed_at'):
+                continue
+            if kind == 'observation':
+                try:
+                    obs = datetime.fromisoformat(str(r['observed_at']).replace('Z', '+00:00'))
+                except ValueError:
+                    continue
+                if obs.minute != 0 or obs.second != 0:
+                    continue  # observations 只寫整點
+            rec = {c: r.get(c) for c in self._JMA_AMEDAS_COLS}
+            rec['collected_at'] = rec['collected_at'] or ts.isoformat()
+            rec['_type'] = kind
+            records.append(rec)
+        return records
+
+    def _transform_jma_warnings(self, result: dict, ts: datetime) -> list[dict]:
+        """R8 警報：collector 已產出與 TABLE_MAP 同名 dict（含 '__none__' 哨兵列）。"""
+        cols = TABLE_MAP['jma_warnings']['columns']
+        records = []
+        for r in result.get('data', []):
+            if not r.get('control_datetime') or not r.get('area_code') or not r.get('kind_code'):
+                continue
+            rec = {c: r.get(c) for c in cols}
+            rec['collected_at'] = rec['collected_at'] or ts.isoformat()
+            records.append(rec)
+        return records
+
+    def _transform_jma_quake(self, result: dict, ts: datetime) -> list[dict]:
+        """地震/津波/火山：依 _type 分流；PK 欄缺值的列丟棄（volcano report_time NOT NULL）。"""
+        required = {
+            'quake': ('json_id',),
+            'tsunami': ('json_id',),
+            'volcano': ('volcano_code', 'report_time'),
+        }
+        records = []
+        for r in result.get('data', []):
+            keys = required.get(r.get('_type'))
+            if not keys or any(not r.get(k) for k in keys):
+                continue
+            rec = dict(r)
+            rec['collected_at'] = rec.get('collected_at') or ts.isoformat()
+            records.append(rec)
+        return records
+
     def _transform_global_climate_typhoon_positions(self, result: dict, ts: datetime) -> list[dict]:
         """颱風 time-point decomposed（JMA + JTWC 共用）：補 geom WKT。"""
         records: list[dict] = []
@@ -2377,6 +2437,9 @@ class SupabaseWriter:
         'lightning_cwa': _transform_lightning_events,  # 同一張表，source 由 collector 帶
         'global_climate_usgs_earthquake': _transform_global_climate_usgs_earthquake,
         'global_climate_jma_typhoon': _transform_global_climate_typhoon_positions,
+        'jma_amedas': _transform_jma_amedas,
+        'jma_warnings': _transform_jma_warnings,
+        'jma_quake': _transform_jma_quake,
         'global_climate_jtwc': _transform_global_climate_typhoon_positions,
         'global_climate_cmems': _transform_global_climate_grids,
         'global_climate_cams': _transform_global_climate_grids,
@@ -2551,6 +2614,68 @@ class SupabaseWriter:
 
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """Write collector-specific multi-table contracts atomically."""
+        if collector_name == 'jma_amedas':
+            cols = self._JMA_AMEDAS_COLS
+            current = {r['station_id']: tuple(r.get(c) for c in cols)
+                       for r in records if r.get('_type') == 'current'}
+            observations = {(r['station_id'], r['observed_at']): tuple(r.get(c) for c in cols)
+                            for r in records if r.get('_type') == 'observation'}
+            with self._txn(conn) as cur:
+                if current:
+                    update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in cols if c != 'station_id')
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.jma_amedas_current ({','.join(cols)}) VALUES %s "
+                        f"ON CONFLICT (station_id) DO UPDATE SET {update_set},updated_at=now()",
+                        list(current.values()), page_size=1000,
+                    )
+                if observations:
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.jma_amedas_observations ({','.join(cols)}) VALUES %s "
+                        f"ON CONFLICT DO NOTHING",
+                        list(observations.values()), page_size=1000,
+                    )
+            logger.info(f"[jma_amedas] ✓ current {len(current)} + observations {len(observations)} 筆寫入")
+            return
+        if collector_name == 'jma_quake':
+            quake_cols = [
+                'json_id', 'event_id', 'report_time', 'origin_time', 'title', 'hypocenter_name',
+                'lat', 'lon', 'depth_km', 'magnitude', 'max_intensity', 'intensity_by_pref', 'collected_at',
+            ]
+            tsunami_cols = ['json_id', 'event_id', 'report_time', 'title', 'raw', 'collected_at']
+            volcano_cols = [
+                'volcano_code', 'volcano_name', 'lat', 'lon', 'level_code', 'level_name',
+                'warning_kind', 'report_time', 'raw', 'collected_at',
+            ]
+            jsonb = {'intensity_by_pref', 'raw'}
+
+            def _vals(rows, cols, key_cols):
+                seen = {}
+                for r in rows:
+                    seen[tuple(r.get(k) for k in key_cols)] = tuple(
+                        (Json(r.get(c)) if r.get(c) is not None else None) if c in jsonb else r.get(c)
+                        for c in cols)
+                return list(seen.values())
+
+            groups = [
+                ('live.jma_quake_reports', quake_cols, ('json_id',), 'quake'),
+                ('live.jma_tsunami_reports', tsunami_cols, ('json_id',), 'tsunami'),
+                ('live.jma_volcano_warnings', volcano_cols, ('volcano_code', 'report_time'), 'volcano'),
+            ]
+            written = {}
+            with self._txn(conn) as cur:
+                for table, cols, key_cols, kind in groups:
+                    values = _vals([r for r in records if r.get('_type') == kind], cols, key_cols)
+                    written[kind] = len(values)
+                    if values:
+                        execute_values(
+                            cur,
+                            f"INSERT INTO {table} ({','.join(cols)}) VALUES %s ON CONFLICT DO NOTHING",
+                            values, page_size=500,
+                        )
+            logger.info(f"[jma_quake] ✓ 送出 {written}（DO NOTHING，已存在者略過）")
+            return
         if collector_name == 'global_events':
             batches = [r for r in records if r.get('_type') == 'collector_batch']
             runs = [r for r in records if r.get('_type') == 'collector_run']

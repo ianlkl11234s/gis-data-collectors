@@ -1063,3 +1063,33 @@ cwa_uv_daily:
     - {prefix: cwa_uv_daily/archives/, expected_daily: false}
   critical: false
   notes: CWA O-A0005-001 前一日紫外線最大值（約 30 站）；observed_at=obs_date 00:00，落後 24–48h 屬預期
+
+jma_amedas:
+  enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_AMEDAS_ENABLED=true + restart 生效
+  deployment: zeabur
+  expected_interval_min: 10
+  supabase_tables: [live.jma_amedas_current, live.jma_amedas_observations]
+  s3_prefixes:
+    - {prefix: jma_amedas/archives/, expected_daily: false}
+  critical: false
+  notes: 日本氣象廳 AMeDAS 約 1,286 站 10 分值（bosai 非公式 JSON，PDL1.0）；observations 只寫整點
+
+jma_warnings:
+  enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_WARNINGS_ENABLED=true + restart 生效
+  deployment: zeabur
+  expected_interval_min: 720
+  supabase_tables: [live.jma_warnings]
+  s3_prefixes:
+    - {prefix: jma_warnings/archives/, expected_daily: false}
+  critical: false
+  notes: R8 警報・注意報；事件驅動（map_time 沒變不抓、不寫），全國無有效警報時寫 '__none__' 哨兵列
+
+jma_quake:
+  enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_QUAKE_ENABLED=true + restart 生效
+  deployment: zeabur
+  expected_interval_min: 1440
+  supabase_tables: [live.jma_quake_reports, live.jma_tsunami_reports, live.jma_volcano_warnings]
+  s3_prefixes:
+    - {prefix: jma_quake/archives/, expected_daily: false}
+  critical: false
+  notes: 地震 list＋津波 list＋火山 warning.json；事件驅動（DO NOTHING，僅新情報推進 MAX）

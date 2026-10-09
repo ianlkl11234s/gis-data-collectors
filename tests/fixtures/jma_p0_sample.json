@@ -1,0 +1,2373 @@
+{
+ "_source": "JMA bosai 實打樣本（2026-10-09 裁剪），僅供單元測試",
+ "amedas_latest_time": "2026-10-09T15:40:00+09:00",
+ "amedas_map": {
+  "11001": {
+   "temp": [
+    13.6,
+    0
+   ],
+   "humidity": [
+    62,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    1.0,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    12,
+    0
+   ],
+   "wind": [
+    5.8,
+    0
+   ]
+  },
+  "11016": {
+   "pressure": [
+    1019.7,
+    0
+   ],
+   "normalPressure": [
+    1021.1,
+    0
+   ],
+   "temp": [
+    14.5,
+    0
+   ],
+   "humidity": [
+    55,
+    0
+   ],
+   "visibility": [
+    20000.0,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    1.0,
+    0
+   ],
+   "precipitation10m": [
+    null,
+    5
+   ],
+   "precipitation1h": [
+    null,
+    5
+   ],
+   "precipitation3h": [
+    null,
+    5
+   ],
+   "precipitation24h": [
+    null,
+    5
+   ],
+   "windDirection": [
+    12,
+    0
+   ],
+   "wind": [
+    3.4,
+    0
+   ]
+  },
+  "11046": {
+   "temp": [
+    14.4,
+    0
+   ],
+   "humidity": [
+    53,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    1.0,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    10,
+    0
+   ],
+   "wind": [
+    2.5,
+    0
+   ]
+  },
+  "11061": {
+   "temp": [
+    14.8,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    13,
+    0
+   ],
+   "wind": [
+    3.7,
+    0
+   ]
+  },
+  "11076": {
+   "temp": [
+    15.5,
+    0
+   ],
+   "humidity": [
+    56,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    1.0,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    14,
+    0
+   ],
+   "wind": [
+    3.7,
+    0
+   ]
+  },
+  "11091": {
+   "temp": [
+    15.2,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    11,
+    0
+   ],
+   "wind": [
+    4.3,
+    0
+   ]
+  },
+  "11121": {
+   "temp": [
+    15.9,
+    0
+   ],
+   "humidity": [
+    52,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    1.0,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    12,
+    0
+   ],
+   "wind": [
+    1.2,
+    0
+   ]
+  },
+  "11151": {
+   "temp": [
+    16.0,
+    0
+   ],
+   "humidity": [
+    40,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    1.0,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    10,
+    0
+   ],
+   "wind": [
+    1.4,
+    0
+   ]
+  },
+  "11176": {
+   "temp": [
+    15.7,
+    0
+   ],
+   "humidity": [
+    47,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    1.0,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    12,
+    0
+   ],
+   "wind": [
+    2.1,
+    0
+   ]
+  },
+  "11206": {
+   "temp": [
+    13.9,
+    0
+   ],
+   "humidity": [
+    65,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    1.0,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    4,
+    0
+   ],
+   "wind": [
+    2.5,
+    0
+   ]
+  },
+  "11276": {
+   "temp": [
+    16.7,
+    0
+   ],
+   "humidity": [
+    62,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    1.0,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    0
+   ],
+   "windDirection": [
+    11,
+    0
+   ],
+   "wind": [
+    3.1,
+    0
+   ]
+  },
+  "11291": {
+   "pressure": [
+    1020.3,
+    0
+   ],
+   "normalPressure": [
+    1021.3,
+    0
+   ],
+   "temp": [
+    13.8,
+    0
+   ],
+   "humidity": [
+    57,
+    0
+   ],
+   "visibility": [
+    20000.0,
+    0
+   ],
+   "sun10m": [
+    10,
+    0
+   ],
+   "sun1h": [
+    0.9,
+    0
+   ],
+   "precipitation10m": [
+    0.0,
+    0
+   ],
+   "precipitation1h": [
+    0.0,
+    0
+   ],
+   "precipitation3h": [
+    0.0,
+    0
+   ],
+   "precipitation24h": [
+    0.0,
+    1
+   ],
+   "windDirection": [
+    2,
+    0
+   ],
+   "wind": [
+    1.8,
+    0
+   ]
+  }
+ },
+ "amedastable": {
+  "11001": {
+   "type": "C",
+   "elems": "11112010",
+   "lat": [
+    45,
+    31.2
+   ],
+   "lon": [
+    141,
+    56.1
+   ],
+   "alt": 26,
+   "kjName": "宗谷岬",
+   "knName": "ソウヤミサキ",
+   "enName": "Cape Soya"
+  },
+  "11016": {
+   "type": "A",
+   "elems": "11111111",
+   "lat": [
+    45,
+    24.9
+   ],
+   "lon": [
+    141,
+    40.7
+   ],
+   "alt": 3,
+   "kjName": "稚内",
+   "knName": "ワッカナイ",
+   "enName": "Wakkanai"
+  },
+  "11046": {
+   "type": "C",
+   "elems": "11112010",
+   "lat": [
+    45,
+    18.3
+   ],
+   "lon": [
+    141,
+    2.7
+   ],
+   "alt": 65,
+   "kjName": "礼文",
+   "knName": "レブン",
+   "enName": "Rebun"
+  },
+  "11061": {
+   "type": "C",
+   "elems": "11110100",
+   "lat": [
+    45,
+    24.2
+   ],
+   "lon": [
+    141,
+    48.1
+   ],
+   "alt": 8,
+   "kjName": "声問",
+   "knName": "コエトイ：稚内空港",
+   "enName": "Koetoi"
+  },
+  "11076": {
+   "type": "C",
+   "elems": "11112110",
+   "lat": [
+    45,
+    20.1
+   ],
+   "lon": [
+    142,
+    10.2
+   ],
+   "alt": 13,
+   "kjName": "浜鬼志別",
+   "knName": "ハマオニシベツ",
+   "enName": "Hamaoni-Shibetsu"
+  },
+  "11091": {
+   "type": "C",
+   "elems": "11110000",
+   "lat": [
+    45,
+    14.5
+   ],
+   "lon": [
+    141,
+    11.2
+   ],
+   "alt": 30,
+   "kjName": "本泊",
+   "knName": "モトドマリ：利尻空港",
+   "enName": "Motodomari"
+  },
+  "11121": {
+   "type": "C",
+   "elems": "11112110",
+   "lat": [
+    45,
+    14.9
+   ],
+   "lon": [
+    141,
+    51.1
+   ],
+   "alt": 23,
+   "kjName": "沼川",
+   "knName": "ヌマカワ",
+   "enName": "Numakawa"
+  },
+  "11151": {
+   "type": "C",
+   "elems": "11112010",
+   "lat": [
+    45,
+    10.7
+   ],
+   "lon": [
+    141,
+    8.3
+   ],
+   "alt": 14,
+   "kjName": "沓形",
+   "knName": "クツガタ",
+   "enName": "Kutsugata"
+  },
+  "11176": {
+   "type": "C",
+   "elems": "11112110",
+   "lat": [
+    45,
+    6.1
+   ],
+   "lon": [
+    141,
+    46.8
+   ],
+   "alt": 14,
+   "kjName": "豊富",
+   "knName": "トヨトミ",
+   "enName": "Toyotomi"
+  },
+  "11206": {
+   "type": "C",
+   "elems": "11112010",
+   "lat": [
+    45,
+    7.5
+   ],
+   "lon": [
+    142,
+    21.0
+   ],
+   "alt": 18,
+   "kjName": "浜頓別",
+   "knName": "ハマトンベツ",
+   "enName": "Hamatonbetsu"
+  },
+  "11276": {
+   "type": "C",
+   "elems": "11112110",
+   "lat": [
+    44,
+    57.9
+   ],
+   "lon": [
+    142,
+    16.8
+   ],
+   "alt": 25,
+   "kjName": "中頓別",
+   "knName": "ナカトンベツ",
+   "enName": "Nakatonbetsu"
+  },
+  "11291": {
+   "type": "B",
+   "elems": "11111111",
+   "lat": [
+    44,
+    56.4
+   ],
+   "lon": [
+    142,
+    35.1
+   ],
+   "alt": 7,
+   "kjName": "北見枝幸",
+   "knName": "キタミエサシ",
+   "enName": "Kitami-Esashi"
+  }
+ },
+ "warning_map_time": {
+  "latestControlDatetime": "2026-10-09T06:25:28Z"
+ },
+ "warning_map": [
+  {
+   "controlDatetime": "2026-10-09T00:32:09Z",
+   "reportDatetime": "2026-10-09T09:32:00+09:00",
+   "infoType": "発表",
+   "publishingOffice": "稚内地方気象台",
+   "headlineText": "宗谷地方では、乾燥や霜に対する農作物の管理に注意してください。",
+   "warning": {
+    "class10Items": [
+     {
+      "areaCode": "011000",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続"
+       },
+       {
+        "code": "24",
+        "status": "発表"
+       }
+      ]
+     }
+    ],
+    "class20Items": [
+     {
+      "areaCode": "0121400",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       },
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0151100",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       },
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0151200",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       },
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0151300",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       },
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0151400",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       },
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0151600",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       },
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0151700",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0151800",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0151900",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0152000",
+      "kinds": [
+       {
+        "code": "21",
+        "status": "継続",
+        "properties": [
+         {
+          "type": "乾燥危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         },
+         {
+          "type": "乾燥"
+         }
+        ]
+       },
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "dataTypeCode": "VPWW61"
+  },
+  {
+   "controlDatetime": "2026-10-09T00:33:47Z",
+   "reportDatetime": "2026-10-09T09:33:00+09:00",
+   "infoType": "発表",
+   "publishingOffice": "網走地方気象台",
+   "headlineText": "網走、北見、紋別地方では、霜に対する農作物の管理に注意してください。",
+   "warning": {
+    "class10Items": [
+     {
+      "areaCode": "013010",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表"
+       }
+      ]
+     },
+     {
+      "areaCode": "013020",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表"
+       }
+      ]
+     },
+     {
+      "areaCode": "013030",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表"
+       }
+      ]
+     }
+    ],
+    "class20Items": [
+     {
+      "areaCode": "0120801",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0120802",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0121100",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0121900",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0154300",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0154400",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0154500",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0154600",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0154700",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0154900",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0155000",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0155200",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0155500",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0155900",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0156000",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0156100",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0156200",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0156300",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "areaCode": "0156400",
+      "kinds": [
+       {
+        "code": "24",
+        "status": "発表",
+        "properties": [
+         {
+          "type": "霜危険度",
+          "significancyPart": {
+           "locals": [
+            {
+             "code": "20"
+            }
+           ]
+          }
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "dataTypeCode": "VPWW61"
+  },
+  {
+   "controlDatetime": "2026-09-29T01:10:58Z",
+   "reportDatetime": "2026-09-29T10:10:00+09:00",
+   "infoType": "発表",
+   "publishingOffice": "稚内地方気象台",
+   "headlineText": "注意報を解除します。",
+   "warning": {
+    "class10Items": [
+     {
+      "areaCode": "011000",
+      "kinds": [
+       {
+        "code": "10",
+        "status": "解除"
+       }
+      ]
+     }
+    ],
+    "class20Items": [
+     {
+      "areaCode": "0121400",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151100",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151200",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151300",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151400",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151600",
+      "kinds": [
+       {
+        "code": "10",
+        "status": "解除"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151700",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151800",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151900",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0152000",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     }
+    ]
+   },
+   "dataTypeCode": "VPWW55"
+  },
+  {
+   "controlDatetime": "2026-09-29T01:10:58Z",
+   "reportDatetime": "2026-09-29T10:10:00+09:00",
+   "infoType": "発表",
+   "publishingOffice": "稚内地方気象台",
+   "headlineText": "注意報を解除します。",
+   "warning": {
+    "class10Items": [
+     {
+      "areaCode": "011000",
+      "kinds": [
+       {
+        "code": "29",
+        "status": "解除"
+       }
+      ]
+     }
+    ],
+    "class20Items": [
+     {
+      "areaCode": "0121400",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151100",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151200",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151300",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151400",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151600",
+      "kinds": [
+       {
+        "code": "29",
+        "status": "解除"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151700",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151800",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151900",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0152000",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     }
+    ]
+   },
+   "offices": [
+    {
+     "type": "補足情報担当",
+     "name": "北海道宗谷総合振興局"
+    },
+    {
+     "type": "気象関係",
+     "name": "稚内地方気象台"
+    }
+   ],
+   "dataTypeCode": "VPWW56"
+  },
+  {
+   "controlDatetime": "2026-09-29T01:10:58Z",
+   "reportDatetime": "2026-09-29T10:10:00+09:00",
+   "infoType": "発表",
+   "publishingOffice": "稚内地方気象台",
+   "headlineText": "注意報を解除します。",
+   "warning": {
+    "class10Items": [
+     {
+      "areaCode": "011000",
+      "kinds": [
+       {
+        "code": "10",
+        "status": "解除"
+       }
+      ]
+     }
+    ],
+    "class20Items": [
+     {
+      "areaCode": "0121400",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151100",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151200",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151300",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151400",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151600",
+      "kinds": [
+       {
+        "code": "10",
+        "status": "解除"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151700",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151800",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0151900",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     },
+     {
+      "areaCode": "0152000",
+      "kinds": [
+       {
+        "status": "発表警報・注意報はなし"
+       }
+      ]
+     }
+    ]
+   },
+   "dataTypeCode": "VPWW55"
+  }
+ ],
+ "area": {
+  "offices": {
+   "011000": {
+    "name": "宗谷地方",
+    "enName": "Soya",
+    "officeName": "稚内地方気象台",
+    "parent": "010100",
+    "children": [
+     "011000"
+    ]
+   },
+   "013000": {
+    "name": "網走・北見・紋別地方",
+    "enName": "Abashiri Kitami Mombetsu",
+    "officeName": "網走地方気象台",
+    "parent": "010100",
+    "children": [
+     "013010",
+     "013020",
+     "013030"
+    ]
+   }
+  },
+  "class10s": {
+   "011000": {
+    "name": "宗谷地方",
+    "enName": "Soya Region",
+    "parent": "011000",
+    "children": [
+     "011011",
+     "011012",
+     "011013"
+    ]
+   },
+   "013010": {
+    "name": "網走地方",
+    "enName": "Abashiri Region",
+    "parent": "013000",
+    "children": [
+     "013011",
+     "013012",
+     "013013"
+    ]
+   },
+   "013020": {
+    "name": "北見地方",
+    "enName": "Kitami Region",
+    "parent": "013000",
+    "children": [
+     "013020"
+    ]
+   },
+   "013030": {
+    "name": "紋別地方",
+    "enName": "Mombetsu Region",
+    "parent": "013000",
+    "children": [
+     "013031",
+     "013032"
+    ]
+   }
+  },
+  "class20s": {
+   "0120801": {
+    "name": "北見市北見",
+    "enName": "Kitami, Kitami City",
+    "kana": "きたみしきたみ",
+    "parent": "013020"
+   },
+   "0120802": {
+    "name": "北見市常呂",
+    "enName": "Tokoro, Kitami City",
+    "kana": "きたみしところ",
+    "parent": "013011"
+   },
+   "0121100": {
+    "name": "網走市",
+    "enName": "Abashiri City",
+    "kana": "あばしりし",
+    "parent": "013011"
+   },
+   "0121400": {
+    "name": "稚内市",
+    "enName": "Wakkanai City",
+    "kana": "わっかないし",
+    "parent": "011011"
+   },
+   "0121900": {
+    "name": "紋別市",
+    "enName": "Mombetsu City",
+    "kana": "もんべつし",
+    "parent": "013031"
+   },
+   "0151100": {
+    "name": "猿払村",
+    "enName": "Sarufutsu Village",
+    "kana": "さるふつむら",
+    "parent": "011011"
+   },
+   "0151200": {
+    "name": "浜頓別町",
+    "enName": "Hamatombetsu Town",
+    "kana": "はまとんべつちょう",
+    "parent": "011012"
+   },
+   "0151300": {
+    "name": "中頓別町",
+    "enName": "Nakatombetsu Town",
+    "kana": "なかとんべつちょう",
+    "parent": "011012"
+   },
+   "0151400": {
+    "name": "枝幸町",
+    "enName": "Esashi Town",
+    "kana": "えさしちょう",
+    "parent": "011012"
+   },
+   "0151600": {
+    "name": "豊富町",
+    "enName": "Toyotomi Town",
+    "kana": "とよとみちょう",
+    "parent": "011011"
+   },
+   "0151700": {
+    "name": "礼文町",
+    "enName": "Rebun Town",
+    "kana": "れぶんちょう",
+    "parent": "011013"
+   },
+   "0151800": {
+    "name": "利尻町",
+    "enName": "Rishiri Town",
+    "kana": "りしりちょう",
+    "parent": "011013"
+   },
+   "0151900": {
+    "name": "利尻富士町",
+    "enName": "Rishirifuji Town",
+    "kana": "りしりふじちょう",
+    "parent": "011013"
+   },
+   "0152000": {
+    "name": "幌延町",
+    "enName": "Horonobe Town",
+    "kana": "ほろのべちょう",
+    "parent": "011011"
+   },
+   "0154300": {
+    "name": "美幌町",
+    "enName": "Bihoro Town",
+    "kana": "びほろちょう",
+    "parent": "013013"
+   },
+   "0154400": {
+    "name": "津別町",
+    "enName": "Tsubetsu Town",
+    "kana": "つべつちょう",
+    "parent": "013013"
+   },
+   "0154500": {
+    "name": "斜里町",
+    "enName": "Shari Town",
+    "kana": "しゃりちょう",
+    "parent": "013012"
+   },
+   "0154600": {
+    "name": "清里町",
+    "enName": "Kiyosato Town",
+    "kana": "きよさとちょう",
+    "parent": "013012"
+   },
+   "0154700": {
+    "name": "小清水町",
+    "enName": "Koshimizu Town",
+    "kana": "こしみずちょう",
+    "parent": "013012"
+   },
+   "0154900": {
+    "name": "訓子府町",
+    "enName": "Kunneppu Town",
+    "kana": "くんねっぷちょう",
+    "parent": "013020"
+   },
+   "0155000": {
+    "name": "置戸町",
+    "enName": "Oketo Town",
+    "kana": "おけとちょう",
+    "parent": "013020"
+   },
+   "0155200": {
+    "name": "佐呂間町",
+    "enName": "Saroma Town",
+    "kana": "さろまちょう",
+    "parent": "013011"
+   },
+   "0155500": {
+    "name": "遠軽町",
+    "enName": "Engaru Town",
+    "kana": "えんがるちょう",
+    "parent": "013032"
+   },
+   "0155900": {
+    "name": "湧別町",
+    "enName": "Yubetsu Town",
+    "kana": "ゆうべつちょう",
+    "parent": "013032"
+   },
+   "0156000": {
+    "name": "滝上町",
+    "enName": "Takinoue Town",
+    "kana": "たきのうえちょう",
+    "parent": "013031"
+   },
+   "0156100": {
+    "name": "興部町",
+    "enName": "Okoppe Town",
+    "kana": "おこっぺちょう",
+    "parent": "013031"
+   },
+   "0156200": {
+    "name": "西興部村",
+    "enName": "Nishiokoppe Village",
+    "kana": "にしおこっぺむら",
+    "parent": "013031"
+   },
+   "0156300": {
+    "name": "雄武町",
+    "enName": "Omu Town",
+    "kana": "おうむちょう",
+    "parent": "013031"
+   },
+   "0156400": {
+    "name": "大空町",
+    "enName": "Ozora Town",
+    "kana": "おおぞらちょう",
+    "parent": "013011"
+   }
+  }
+ },
+ "quake_list": [
+  {
+   "ctt": "20261009111509",
+   "eid": "20261009111210",
+   "rdt": "2026-10-09T11:15:00+09:00",
+   "ttl": "震源・震度情報",
+   "ift": "発表",
+   "ser": "1",
+   "at": "2026-10-09T11:12:00+09:00",
+   "anm": "熊本県天草・芦北地方",
+   "acd": "743",
+   "cod": "+32.4+130.5-10000/",
+   "mag": "3.5",
+   "maxi": "2",
+   "int": [
+    {
+     "code": "43",
+     "maxi": "2",
+     "city": [
+      {
+       "code": "4320200",
+       "maxi": "2"
+      },
+      {
+       "code": "4334800",
+       "maxi": "1"
+      },
+      {
+       "code": "4321200",
+       "maxi": "2"
+      },
+      {
+       "code": "4348200",
+       "maxi": "2"
+      },
+      {
+       "code": "4320500",
+       "maxi": "1"
+      },
+      {
+       "code": "4321500",
+       "maxi": "1"
+      },
+      {
+       "code": "4351300",
+       "maxi": "1"
+      }
+     ]
+    },
+    {
+     "code": "42",
+     "maxi": "1",
+     "city": [
+      {
+       "code": "4221300",
+       "maxi": "1"
+      }
+     ]
+    },
+    {
+     "code": "46",
+     "maxi": "1",
+     "city": [
+      {
+       "code": "4640400",
+       "maxi": "1"
+      }
+     ]
+    }
+   ],
+   "json": "20261009111509_20261009111210_VXSE5k_1.json",
+   "en_ttl": "Earthquake and Seismic Intensity Information",
+   "en_anm": "Amakusa and Ashikita Region,  Kumamoto Prefecture"
+  },
+  {
+   "ctt": "20261008071559",
+   "eid": "20261008071415",
+   "rdt": "2026-10-08T07:15:00+09:00",
+   "ttl": "震度速報",
+   "ift": "発表",
+   "ser": 0,
+   "at": "2026-10-08T07:14:00+09:00",
+   "anm": "",
+   "acd": "",
+   "cod": "",
+   "mag": "",
+   "maxi": "3",
+   "int": [
+    {
+     "code": "08",
+     "maxi": "3",
+     "city": []
+    }
+   ],
+   "json": "20261008071559_20261008071415_VXSE51_0.json",
+   "en_ttl": "Seismic Intensity Information",
+   "en_anm": ""
+  },
+  {
+   "ctt": "20261008071638",
+   "eid": "20261008071415",
+   "rdt": "2026-10-08T07:16:00+09:00",
+   "ttl": "震源に関する情報",
+   "ift": "発表",
+   "ser": 0,
+   "at": "2026-10-08T07:14:00+09:00",
+   "anm": "茨城県北部",
+   "acd": "300",
+   "cod": "+36.5+140.6-60000/",
+   "mag": "4.0",
+   "maxi": "",
+   "int": [],
+   "json": "20261008071638_20261008071415_VXSE52_0.json",
+   "en_ttl": "Earthquake Information",
+   "en_anm": "Northern Ibaraki Prefecture"
+  }
+ ],
+ "tsunami_list": [
+  {
+   "ctt": "20260930140817",
+   "eid": "20260930140037",
+   "rdt": "2026-09-30T14:08:00+09:00",
+   "ttl": "津波予報",
+   "ift": "発表",
+   "ser": 0,
+   "at": "2026-09-30T14:00:00+09:00",
+   "anm": "与那国島近海",
+   "acd": "857",
+   "cod": "+23.8+122.9-10000/",
+   "mag": "6.0",
+   "kind": [
+    {
+     "code": "802",
+     "kind": "津波予報（若干の海面変動）"
+    }
+   ],
+   "json": "20260930140817_20260930140037_VTSE41_0.json",
+   "en_ttl": "Tsunami Forecast",
+   "en_anm": "Adjacent Sea of Yonagunijima Island"
+  }
+ ],
+ "volcano_warning": [
+  {
+   "reportDatetime": "2007-12-01T10:01:00+09:00",
+   "eventId": "329",
+   "areas": [
+    "1342100"
+   ],
+   "volcanoInfos": [
+    {
+     "type": "噴火警報・予報（対象火山）",
+     "items": [
+      {
+       "name": "火口周辺危険",
+       "code": "22",
+       "lastCode": "22",
+       "condition": "継続",
+       "areas": [
+        {
+         "name": "硫黄島",
+         "code": "329"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "噴火警報・予報（対象市町村等）",
+     "items": [
+      {
+       "name": "火口周辺警報",
+       "code": "02",
+       "lastCode": "02",
+       "condition": "切替",
+       "areas": [
+        {
+         "name": "東京都小笠原村",
+         "code": "1342100"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "噴火警報・予報（対象市町村の防災対応等）",
+     "items": [
+      {
+       "name": "火口周辺警報：火口周辺警戒",
+       "code": "49",
+       "lastCode": "49",
+       "condition": "継続",
+       "areas": [
+        {
+         "name": "東京都小笠原村",
+         "code": "1342100"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "reportDatetime": "2021-03-08T14:00:00+09:00",
+   "eventId": "508",
+   "areas": [
+    "4630300"
+   ],
+   "volcanoInfos": [
+    {
+     "type": "噴火警報・予報（対象火山）",
+     "items": [
+      {
+       "name": "レベル２（火口周辺規制）",
+       "code": "12",
+       "lastCode": "12",
+       "condition": "継続",
+       "areas": [
+        {
+         "name": "薩摩硫黄島",
+         "code": "508"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "噴火警報・予報（対象市町村等）",
+     "items": [
+      {
+       "name": "火口周辺警報",
+       "code": "02",
+       "lastCode": "02",
+       "condition": "切替",
+       "areas": [
+        {
+         "name": "鹿児島県三島村",
+         "code": "4630300"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "噴火警報・予報（対象市町村の防災対応等）",
+     "items": [
+      {
+       "name": "火口周辺警報：入山規制等",
+       "code": "43",
+       "lastCode": "43",
+       "condition": "継続",
+       "areas": [
+        {
+         "name": "鹿児島県三島村",
+         "code": "4630300"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "volcano_list": [
+  {
+   "code": "329",
+   "latlon": [
+    "24.751",
+    "141.289"
+   ],
+   "name_jp": "硫黄島",
+   "name_en": "Ioto"
+  },
+  {
+   "code": "508",
+   "latlon": [
+    "30.793",
+    "130.305"
+   ],
+   "name_jp": "薩摩硫黄島",
+   "name_en": "Satsuma-Iojima",
+   "levelOperation": true
+  }
+ ]
+}
