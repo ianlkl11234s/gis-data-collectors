@@ -1,0 +1,24 @@
+# JMA 浸水キキクル（浸水害の危険度分布），member=none（確定幀）→ 危險度等級
+# 依據：bosai/risk/images/legend_jp_normal_inund.svg（2026-10-09 取得）。
+# ⚠ 2026-10-09 全日本無危險度著色（z4/z6 全幅皆 334B 透明佔位），PLTE 尚未以實磚驗證：
+#   palette_basis=legend_svg、plte_verified=false、rgb_tolerance=8（雷達 PLTE 與 legend 有 5 的差，見 radar.yaml）。
+#   首次出現著色後以 PLTE 驗證並改版；表外顏色一律計數告警，不歸 0。
+# level 取「警戒レベル相当」數值本身（2–5），0＝今後の情報等に留意（透明）。
+version: jma-risk_inund-2026-10-09-provisional
+product: risk_inund
+source_url: https://www.jma.go.jp/bosai/jmatile/data/risk/{bt}/none/{vt}/surf/inund/{z}/{x}/{y}.png
+effective_from: "2026-10-09"
+palette_basis: legend_svg
+plte_verified: false
+native_zooms: [4, 6, 8, 10]      # zoomUse=even、maxNativeZoom 11（risk.properties.xml）；待實磚驗證
+rgb_tolerance: 8
+levels:
+  - {level: 1, rgb: [255, 255, 255], label: "今後の情報等に留意（白；圖磚通常為透明）"}
+  - {level: 2, rgb: [242, 231, 0],   label: "注意【警戒レベル２相当】"}
+  - {level: 3, rgb: [255, 40, 0],    label: "警戒【警戒レベル３相当】"}
+  - {level: 4, rgb: [170, 0, 170],   label: "危険【警戒レベル４相当】"}
+  - {level: 5, rgb: [12, 0, 12],     label: "災害切迫【警戒レベル５相当】"}
+count_thresholds:
+  - {k: 3, meaning: "警戒以上"}
+  - {k: 4, meaning: "危険以上"}
+  - {k: 5, meaning: "災害切迫"}

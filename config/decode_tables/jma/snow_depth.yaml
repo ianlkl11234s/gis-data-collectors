@@ -1,0 +1,24 @@
+# JMA 解析積雪深（snow snowd，解析值 bt==vt，每 1 小時）→ 積雪深級距
+# 依據：bosai/snow/images/legend_normal_snowd.svg（2026-10-09 取得；7 色、刻度 5/20/50/100/150/200 cm）。
+# ⚠ 2026-10-09 全日本無積雪（z4/z6 全幅 334B 佔位），PLTE 尚未以實磚驗證：plte_verified=false、rgb_tolerance=8。
+#   色票與雷達同系（legend 的黃色 255,245,0，雷達 PLTE 為 250,245,0，tolerance 可涵蓋）。
+version: jma-snow_depth-2026-10-09-provisional
+product: snow_depth
+source_url: https://www.jma.go.jp/bosai/jmatile/data/snow/{bt}/none/{vt}/surf/snowd/{z}/{x}/{y}.png
+effective_from: "2026-10-09"
+palette_basis: legend_svg
+plte_verified: false
+native_zooms: [4, 6, 8, 10]      # zoomUse=even、maxNativeZoom 10（snow.properties.xml）；解析積雪深原生約 5 km，收 z6 即足夠
+rgb_tolerance: 8
+levels:
+  - {level: 1, rgb: [160, 210, 255], label: "<5 cm"}
+  - {level: 2, rgb: [33, 140, 255],  label: "5–20 cm"}
+  - {level: 3, rgb: [0, 65, 255],    label: "20–50 cm"}
+  - {level: 4, rgb: [255, 245, 0],   label: "50–100 cm"}
+  - {level: 5, rgb: [255, 153, 0],   label: "100–150 cm"}
+  - {level: 6, rgb: [255, 40, 0],    label: "150–200 cm"}
+  - {level: 7, rgb: [180, 0, 104],   label: "≥200 cm"}
+count_thresholds:
+  - {k: 1, meaning: "有積雪"}
+  - {k: 3, meaning: "≥20 cm"}
+  - {k: 5, meaning: "≥100 cm"}
