@@ -394,6 +394,13 @@ JAPAN_JMA_RASTER_PRODUCTS = os.getenv(
 JAPAN_JMA_RASTER_MAX_FINE_TILES = int(os.getenv('JAPAN_JMA_RASTER_MAX_FINE_TILES', '15'))
 JAPAN_JMA_RASTER_CONCURRENCY = int(os.getenv('JAPAN_JMA_RASTER_CONCURRENCY', '4'))
 JAPAN_JMA_RASTER_INITIAL_LOOKBACK_MIN = int(os.getenv('JAPAN_JMA_RASTER_INITIAL_LOOKBACK_MIN', '60'))
+# 補抓段（backlog）：即時段只下鑽回波最多的 15 磚，其餘有內容的粗層磚在上游保留期內以低速率補抓細層
+JAPAN_JMA_RASTER_BACKLOG_RPS = float(os.getenv('JAPAN_JMA_RASTER_BACKLOG_RPS', '0.5'))
+JAPAN_JMA_RASTER_BACKLOG_PRODUCTS = os.getenv(
+    'JAPAN_JMA_RASTER_BACKLOG_PRODUCTS', 'radar,rasrf,risk_land,risk_inund,risk_flood')
+JAPAN_JMA_RASTER_BACKLOG_MAX_SECONDS = int(os.getenv('JAPAN_JMA_RASTER_BACKLOG_MAX_SECONDS', '2700'))
+# T2 每小時網格檔的 zip 壓縮：deflate／lzma（皆標準庫；實測見 docs）
+JAPAN_JMA_RASTER_GRID_COMPRESSION = os.getenv('JAPAN_JMA_RASTER_GRID_COMPRESSION', 'deflate')
 
 # Internet health — provider jobs remain independent but write one canonical
 # contract.  Country-level TW is the MVP; ASN coverage is added only after a

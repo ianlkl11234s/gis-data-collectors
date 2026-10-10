@@ -143,28 +143,56 @@ def test_accumulator_idempotent_and_rebuild_after_crash(tmp_path):
     assert json.loads(str(z["meta"]))["x"] == 1
 
 
-def test_stack_npz_and_day_tar_deterministic(tmp_path):
+def test_hour_npz_dedup_zero_and_roundtrip(tmp_path):
     shape = (4, 4)
-    grids = []
-    for i, vt in enumerate(["20261009000000", "20261009000500"]):
-        p = tmp_path / f"{vt}.npz"
-        sp.save_grid(p, np.full(shape, i, np.uint8))
-        grids.append((vt, p))
-    sp.write_stack_npz(tmp_path / "h.npz", grids, shape, {"m": 1})
-    z = np.load(tmp_path / "h.npz")
-    assert z["stack"].shape == (2, 4, 4) and z["stack"][1].max() == 1
-    assert list(z["valid_times"]) == ["20261009000000", "20261009000500"]
+    a = np.zeros(shape, np.uint8); a[1, 1] = 3
+    b = a.copy(); b[2, 2] = MISSING
+    paths = {}
+    for vt, g in (("t1", a), ("t2", a), ("t3", np.zeros(shape, np.uint8)), ("t5", b)):
+        paths[vt] = tmp_path / f"{vt}.npz"; sp.save_grid(paths[vt], g)
+    frames = [("t1", paths["t1"]), ("t2", paths["t2"]), ("t3", paths["t3"]), ("t4", None), ("t5", paths["t5"])]
+    for comp in ("deflate", "lzma"):
+        info = sp.write_hour_npz(tmp_path / f"h_{comp}.npz", frames, shape, {"m": 1}, compression=comp)
+        assert (info["array"], info["same_as_prev"], info["zero"], info["missing"]) == (2, 1, 1, 1)
+        back = dict(sp.load_hour_npz(tmp_path / f"h_{comp}.npz"))
+        assert back["t4"] is None and not back["t3"].any()
+        assert np.array_equal(back["t2"], a) and np.array_equal(back["t5"], b)
 
+
+def test_day_tar_dedup_blank_and_deterministic(tmp_path):
+    blank = png_blank()
+    assert len(blank) != 334 or sp._is_blank_placeholder(blank)
+    blank334 = blank if len(blank) == 334 else None
     ft = tmp_path / "frames"
-    sp.write_frame_tar(ft / "1.tar", [("radar/1/z6/52/22.png", b"abc")], 100)
-    sp.write_frame_tar(ft / "2.tar", [("radar/2/z6/52/22.png", b"de")], 200)
+    content = png_p(np.full((256, 256), 3, np.uint8))
+    m1 = [("radar/1/z6/52/22.png", content), ("radar/1/z6/53/22.png", content)]
+    m2 = [("radar/2/z6/52/22.png", content), ("risk_flood/2/z6/52/22.pbf", b"")]
+    if blank334:
+        m2.append(("radar/2/z6/54/22.png", blank334))
+    sp.write_frame_tar(ft / "1.tar", m1, 100)
+    sp.write_frame_tar(ft / "2.tar", m2, 200)
     a = sp.pack_day_tar(tmp_path / "a.tar", [ft / "2.tar", ft / "1.tar"], {"product": "radar"}, 5)
     b = sp.pack_day_tar(tmp_path / "b.tar", [ft / "1.tar", ft / "2.tar"], {"product": "radar"}, 5)
-    assert a["sha256"] == b["sha256"] and a["files"] == 2, "重打包必須 bytes 相同（重試靠 sha 判已上傳）"
+    assert a["sha256"] == b["sha256"], "重打包必須 bytes 相同（重試靠 sha 判已上傳）"
+    assert a["unique_blobs"] == 1 and a["empty"] == 1 and a["bytes_blobs"] == len(content)
+    assert a["bytes_before"] == 3 * len(content) + (334 if blank334 else 0)
     with tarfile.open(tmp_path / "a.tar") as tf:
         names = tf.getnames()
         man = json.loads(tf.extractfile("manifest.json").read())
-    assert names[-1] == "manifest.json" and man["files"][0]["sha256"]
+    assert names[-1] == "manifest.json" and len(names) == 2
+    h = man["tiles"]["radar/1/z6/53/22.png"]
+    assert man["tiles"]["radar/2/z6/52/22.png"] == h and f"blobs/{h}.png" in names
+    assert man["tiles"]["risk_flood/2/z6/52/22.pbf"] == "empty"
+    if blank334:
+        assert man["tiles"]["radar/2/z6/54/22.png"] == "blank"
+
+
+def test_jma_blank_placeholder_detection():
+    im = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    bio = io.BytesIO(); im.save(bio, format="PNG")
+    data = bio.getvalue()
+    assert sp._is_blank_placeholder(data) == (len(data) == 334)
+    assert not sp._is_blank_placeholder(b"x" * 334)
 
 
 # ───────────────────────── collector 端到端（假 HTTP／假 S3）─────────────────────────
@@ -202,6 +230,8 @@ def make_collector(tmp_path, products, s3, get, lookback_min=180):
     c.initial_lookback = timedelta(minutes=lookback_min)
     c._session = None
     c._get = get
+    c.backlog_products = {"radar", "rasrf", "risk_land", "risk_inund", "risk_flood"}
+    c._window, c._epoch = {}, {}
     return c
 
 
@@ -307,6 +337,7 @@ def test_radar_descends_top15_within_budget(tmp_path, monkeypatch):
     ds = c._day_state(jr.PRODUCTS["radar"], "20261009")
     fr = ds["frames"][latest]
     assert len(fr["fine_tiles"]) == 15 and len(fr["fine_skipped"]) == 33 and fr["zoom_raw"] == 8
+    assert len(fr["fine_pending"]) == 33 and not fr["settled"], "其餘有回波的磚進補抓段，幀尚未定案"
     g = sp.load_grid(c.day_dir(jr.PRODUCTS["radar"], "20261009") / "grids" / f"{latest}.npz")
     assert g.shape == (3072, 4096) and g.max() == 3
     assert st["pending_frames"][latest]["tiles_requested"] == 288
@@ -368,3 +399,40 @@ def test_writer_frames_status_guard_and_daily_upsert(monkeypatch):
     assert set(sqls) == {"live.weather_raster_frames", "live.weather_raster_daily"}
     assert "WHERE CASE live.weather_raster_frames.status" in sqls["live.weather_raster_frames"]
     assert "ON CONFLICT (source, product, obs_date) DO UPDATE" in sqls["live.weather_raster_daily"]
+
+
+def test_radar_backlog_fills_fine_tiles_and_settles(tmp_path, monkeypatch):
+    latest = "20261009000000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
+                        lambda s, path, **k: [{"basetime": latest, "validtime": latest}])
+    monkeypatch.setattr(jr.config, "JAPAN_JMA_RASTER_BACKLOG_RPS", 1e6)
+    idx = np.zeros((256, 256), np.uint8); idx[:4, :] = 4
+    rich = png_p(idx)
+    c = make_collector(tmp_path, ["radar"], None, lambda url: (200, rich), lookback_min=0)
+    now = datetime(2026, 10, 9, 0, 5, tzinfo=timezone.utc)
+    res = c.collect_product(jr.PRODUCTS["radar"], now, 1, backlog_seconds=60)
+    assert res["backlog"]["tiles_done"] == 33 and res["backlog"]["requests"] == 33 * 16
+    fr = c._day_state(jr.PRODUCTS["radar"], "20261009")["frames"][latest]
+    assert fr["settled"] and fr["fine_pending"] == [] and len(fr["fine_backlog_done"]) == 33
+    assert fr["tiles_requested"] == 48 + 48 * 16
+    with tarfile.open(c.day_dir(jr.PRODUCTS["radar"], "20261009") / "frames" / f"{latest}.tar") as tf:
+        assert sum(1 for n in tf.getnames() if "/z8/" in n) == 48 * 16
+    acc = c._acc(jr.PRODUCTS["radar"], "20261009")
+    assert acc.applied == {latest}, "定案後才累加 T1"
+
+
+def test_backlog_expired_tiles_marked_unfetched(tmp_path, monkeypatch):
+    latest = "20261009000000"
+    tt = {"v": latest}
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
+                        lambda s, path, **k: [{"basetime": tt["v"], "validtime": tt["v"]}])
+    monkeypatch.setattr(jr.config, "JAPAN_JMA_RASTER_BACKLOG_RPS", 0)
+    idx = np.zeros((256, 256), np.uint8); idx[:4, :] = 4
+    rich = png_p(idx)
+    c = make_collector(tmp_path, ["radar"], None, lambda url: (200, rich), lookback_min=0)
+    c.collect_product(jr.PRODUCTS["radar"], datetime(2026, 10, 9, 0, 5, tzinfo=timezone.utc), 1)
+    tt["v"] = "20261010010000"  # 25 小時後：超出 24h 保留期
+    c2 = make_collector(tmp_path, ["radar"], None, lambda url: (404, b""), lookback_min=0)
+    c2.collect_product(jr.PRODUCTS["radar"], datetime(2026, 10, 10, 1, 5, tzinfo=timezone.utc), 1)
+    fr = c2._day_state(jr.PRODUCTS["radar"], "20261009")["frames"][latest]
+    assert fr["settled"] and len(fr["fine_unfetched"]) == 33 and fr["fine_pending"] == []

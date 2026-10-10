@@ -2729,7 +2729,7 @@ class SupabaseWriter:
                         cur,
                         f"INSERT INTO live.weather_raster_frames ({','.join(fcols)}) VALUES %s "
                         f"ON CONFLICT (source, product, valid_time) DO UPDATE SET {upd},collected_at=now() "
-                        f"WHERE {rank.format(t='live.weather_raster_frames')} < {rank.format(t='EXCLUDED')}",
+                        f"WHERE {rank.format(t='live.weather_raster_frames')} <= {rank.format(t='EXCLUDED')}",
                         list(frames.values()), page_size=500,
                     )
                 if daily:

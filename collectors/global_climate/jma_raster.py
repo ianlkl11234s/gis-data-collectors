@@ -157,7 +157,7 @@ def is_blank_bytes(data: bytes, fmt: str) -> bool:
 class JmaRasterCollector(BaseCollector):
     name = "jma_raster"
     interval_minutes = config.JAPAN_JMA_RASTER_INTERVAL
-    COLLECT_TIMEOUT = 1800
+    COLLECT_TIMEOUT = 3600  # 含補抓段（預設 45 分）
     GC_THRESHOLD_SEC = 30
 
     def __init__(self):
@@ -175,6 +175,9 @@ class JmaRasterCollector(BaseCollector):
         self.max_fine_tiles = config.JAPAN_JMA_RASTER_MAX_FINE_TILES
         self.concurrency = max(1, min(4, config.JAPAN_JMA_RASTER_CONCURRENCY))
         self.initial_lookback = timedelta(minutes=config.JAPAN_JMA_RASTER_INITIAL_LOOKBACK_MIN)
+        self.backlog_products = {n.strip() for n in config.JAPAN_JMA_RASTER_BACKLOG_PRODUCTS.split(",") if n.strip()}
+        self._window: dict[str, datetime] = {}
+        self._epoch: dict[str, datetime] = {}
 
     # ───────── BaseCollector hooks ─────────
     def require_db_write(self) -> bool:
@@ -271,7 +274,6 @@ class JmaRasterCollector(BaseCollector):
                 coarse[k] = res
         req = len(keys)
         members: list[tuple[str, bytes]] = []
-        files_http: dict[str, int] = {}
         mtime = int(parse_vt(vt).timestamp())
         ext = product.fmt
 
@@ -303,23 +305,17 @@ class JmaRasterCollector(BaseCollector):
             cand.sort(key=lambda t: (-t[0], t[1]))
             fine_parents = [k for _, k in cand[: self.max_fine_tiles]]
             skipped_parents = [k for _, k in cand[self.max_fine_tiles:]]
+            skipped_echo = cand[self.max_fine_tiles:]
         else:
-            skipped_parents = []
+            skipped_parents, skipped_echo = [], []
 
-        fine: dict[tuple[int, int], tuple[int, bytes]] = {}
-        if fine_parents:
-            f = 2 ** (product.fine_zoom - zc)
-            fkeys = [(px * f + i, py * f + j) for (px, py) in fine_parents for j in range(f) for i in range(f)]
-            zf = product.fine_zoom
-            with ThreadPoolExecutor(self.concurrency) as ex:
-                for k, res in zip(fkeys, ex.map(lambda k: self._get(self._url(product, vt, zf, *k)), fkeys)):
-                    fine[k] = res
-            req += len(fkeys)
-            for (x, y), (s, b) in fine.items():
-                if s == 200:
-                    members.append((member(zf, x, y), b))
-                else:
-                    failed.append(f"z{zf}/{x}/{y}:{s}")
+        fine = self._fetch_fine(product, vt, fine_parents) if fine_parents else {}
+        req += len(fine)
+        for (x, y), (s_, b) in fine.items():
+            if s_ == 200:
+                members.append((member(product.fine_zoom, x, y), b))
+            else:
+                failed.append(f"z{product.fine_zoom}/{x}/{y}:{s_}")
 
         raw_bytes = sum(len(b) for _, b in members)
         nonempty = sum(1 for k in keys if coarse[k][0] == 200 and not is_blank_bytes(coarse[k][1], product.fmt))
@@ -333,28 +329,18 @@ class JmaRasterCollector(BaseCollector):
             gz = product.grid_zoom
             gx0, gy0, gnx, gny = canvas(gz)
             grid = np.zeros((gny * 256, gnx * 256), np.uint8)
-            cpx = 256 * 2 ** (gz - zc)  # 粗層一磚在網格上的像素邊長
             for (x, y) in keys:
-                r0, c0 = (y - canvas(zc)[1]) * cpx, (x - canvas(zc)[0]) * cpx
                 if (x, y) in fine_parents:
-                    f = 2 ** (product.fine_zoom - zc)
-                    k = 2 ** (product.fine_zoom - gz)
-                    sub = 256 // k
-                    for j in range(f):
-                        for i in range(f):
-                            s, b = fine[(x * f + i, y * f + j)]
-                            td = decode_tile(b, table) if s == 200 else missing_tile()
-                            unknown += td.unknown_pixels
-                            for c, n in td.unknown_colors.items():
-                                unknown_colors[c] = unknown_colors.get(c, 0) + n
-                            grid[r0 + j * sub:r0 + (j + 1) * sub, c0 + i * sub:c0 + (i + 1) * sub] = pool_max(td.levels, k)
+                    u, cols = self._apply_fine(grid, product, (x, y), fine, table)
                 else:
+                    r0, c0, cpx = self._parent_rc(product, (x, y))
                     td = dec[(x, y)]
-                    unknown += td.unknown_pixels
-                    for c, n in td.unknown_colors.items():
-                        unknown_colors[c] = unknown_colors.get(c, 0) + n
-                    lv = td.levels if gz == zc else upsample(td.levels, 2 ** (gz - zc))
-                    grid[r0:r0 + cpx, c0:c0 + cpx] = lv
+                    u, cols = td.unknown_pixels, td.unknown_colors
+                    grid[r0:r0 + cpx, c0:c0 + cpx] = (td.levels if gz == zc
+                                                      else upsample(td.levels, 2 ** (gz - zc)))
+                unknown += u
+                for c, n in cols.items():
+                    unknown_colors[c] = unknown_colors.get(c, 0) + n
             grid_path = dd / "grids" / f"{vt}.npz"
             sp.save_grid(grid_path, grid)
             nonzero = int(np.count_nonzero((grid > 0) & (grid < MISSING)))
@@ -377,11 +363,169 @@ class JmaRasterCollector(BaseCollector):
             "unknown_colors": unknown_colors,
             "fine_tiles": [f"z{zc}/{x}/{y}" for x, y in fine_parents],
             "fine_skipped": [f"z{zc}/{x}/{y}" for x, y in skipped_parents],
+            # 補抓段（backlog）待抓清單：[tile, 回波量]；保留期內低速補抓 z8，過期未抓的移到 fine_unfetched
+            "fine_pending": ([[f"z{zc}/{x}/{y}", e] for e, (x, y) in skipped_echo]
+                             if product.name in self.backlog_products else []),
+            "fine_backlog_done": [],
+            "fine_unfetched": ([] if product.name in self.backlog_products
+                               else [f"z{zc}/{x}/{y}" for x, y in skipped_parents]),
+            "settled": False,
             "failed_tiles": failed,
             "grid": bool(grid_path),
             "decode_table_version": table.version if table else None,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    def _parent_rc(self, product: Product, parent: tuple[int, int]) -> tuple[int, int, int]:
+        zc, gz = product.coarse_zoom, product.grid_zoom
+        cpx = 256 * 2 ** (gz - zc)  # 粗層一磚在網格上的像素邊長
+        cx0, cy0, _, _ = canvas(zc)
+        return (parent[1] - cy0) * cpx, (parent[0] - cx0) * cpx, cpx
+
+    def _fine_keys(self, product: Product, parent: tuple[int, int]) -> list[tuple[int, int]]:
+        f = 2 ** (product.fine_zoom - product.coarse_zoom)
+        px, py = parent
+        return [(px * f + i, py * f + j) for j in range(f) for i in range(f)]
+
+    def _fetch_fine(self, product: Product, vt: str, parents: list[tuple[int, int]]) -> dict:
+        fkeys = [k for p in parents for k in self._fine_keys(product, p)]
+        zf = product.fine_zoom
+        out = {}
+        with ThreadPoolExecutor(self.concurrency) as ex:
+            for k, res in zip(fkeys, ex.map(lambda k: self._get(self._url(product, vt, zf, *k)), fkeys)):
+                out[k] = res
+        return out
+
+    def _apply_fine(self, grid: np.ndarray, product: Product, parent: tuple[int, int], fine: dict,
+                    table: DecodeTable) -> tuple[int, dict]:
+        """把 parent 的細層子磚解碼、池化寫進網格對應區塊；回傳表外顏色統計。"""
+        r0, c0, _ = self._parent_rc(product, parent)
+        f = 2 ** (product.fine_zoom - product.coarse_zoom)
+        k = 2 ** (product.fine_zoom - product.grid_zoom)
+        sub = 256 // k
+        unknown, cols = 0, {}
+        for idx, key in enumerate(self._fine_keys(product, parent)):
+            j, i = divmod(idx, f)
+            s_, b = fine[key]
+            td = decode_tile(b, table) if s_ == 200 else missing_tile()
+            unknown += td.unknown_pixels
+            for c, n in td.unknown_colors.items():
+                cols[c] = cols.get(c, 0) + n
+            grid[r0 + j * sub:r0 + (j + 1) * sub, c0 + i * sub:c0 + (i + 1) * sub] = pool_max(td.levels, k)
+        return unknown, cols
+
+    # ───────── 補抓段（backlog）：其餘有內容的粗層磚，保留期內低速補抓細層 ─────────
+    def run_backlog(self, deadline: float) -> dict:
+        stats = {"tiles_done": 0, "requests": 0, "frames_touched": 0, "pending_tiles": 0}
+        rps = config.JAPAN_JMA_RASTER_BACKLOG_RPS
+        if rps <= 0:
+            return stats
+        items = []
+        for product in self.products:
+            if product.name not in self.backlog_products or product.fine_zoom is None:
+                continue
+            ws = self._window.get(product.name)
+            base = self.spool_root / product.name
+            if ws is None or not base.exists():
+                continue
+            for dd in sorted(p for p in base.iterdir() if p.is_dir() and p.name.isdigit()):
+                ds = self._day_state(product, dd.name)
+                for vt, fr in ds["frames"].items():
+                    if fr.get("fine_pending") and not fr.get("settled") and parse_vt(vt) >= ws:
+                        items.append((sum(e for _, e in fr["fine_pending"]), product, dd.name, vt))
+                        stats["pending_tiles"] += len(fr["fine_pending"])
+        items.sort(key=lambda t: (-t[0], t[3]))
+        gap = 1.0 / rps
+        next_t = time.monotonic()
+        for _, product, day, vt in items:
+            ds = self._day_state(product, day)
+            fr = ds["frames"][vt]
+            table = self.table(product) if product.decodes else None
+            dd = self.day_dir(product, day)
+            grid_path = dd / "grids" / f"{vt}.npz"
+            grid = sp.load_grid(grid_path) if table is not None else None
+            touched = False
+            for tile, echo in sorted(fr["fine_pending"], key=lambda t: -t[1]):
+                n_req = 2 ** (2 * (product.fine_zoom - product.coarse_zoom))
+                if time.monotonic() + n_req * gap > deadline:
+                    break
+                _, x, y = tile.split("/")
+                parent = (int(x), int(y))
+                fine = {}
+                for key in self._fine_keys(product, parent):
+                    delay = next_t - time.monotonic()
+                    if delay > 0:
+                        time.sleep(delay)
+                    next_t = max(next_t, time.monotonic()) + gap
+                    fine[key] = self._get(self._url(product, vt, product.fine_zoom, *key))
+                stats["requests"] += len(fine)
+                new_members = []
+                for (fx, fy), (s_, b) in fine.items():
+                    if s_ == 200:
+                        new_members.append((f"{product.name}/{vt}/z{product.fine_zoom}/{fx}/{fy}.{product.fmt}", b))
+                    else:
+                        fr["failed_tiles"].append(f"z{product.fine_zoom}/{fx}/{fy}:{s_}")
+                        fr["status"] = "partial"
+                ftar = dd / "frames" / f"{vt}.tar"
+                import tarfile
+                with tarfile.open(ftar) as tf:
+                    old = [(m.name, tf.extractfile(m).read()) for m in tf.getmembers() if m.isfile()]
+                sp.write_frame_tar(ftar, old + new_members, int(parse_vt(vt).timestamp()))
+                fr["raw_bytes"] = (fr.get("raw_bytes") or 0) + sum(len(b) for _, b in new_members)
+                fr["tiles_requested"] = (fr.get("tiles_requested") or 0) + len(fine)
+                if grid is not None:
+                    u, cols = self._apply_fine(grid, product, parent, fine, table)
+                    fr["unknown_color_pixels"] = (fr.get("unknown_color_pixels") or 0) + u
+                    for c, n in cols.items():
+                        fr["unknown_colors"][c] = fr["unknown_colors"].get(c, 0) + n
+                fr["fine_pending"] = [t for t in fr["fine_pending"] if t[0] != tile]
+                fr["fine_backlog_done"].append(tile)
+                fr["zoom_raw"] = product.fine_zoom
+                stats["tiles_done"] += 1
+                touched = True
+                if grid is not None:
+                    sp.save_grid(grid_path, grid)
+                    fr["nonzero_pixels"] = int(np.count_nonzero((grid > 0) & (grid < MISSING)))
+                self._save_day(product, day, ds)
+            if touched:
+                stats["frames_touched"] += 1
+            del grid
+            if time.monotonic() >= deadline:
+                break
+        return stats
+
+    def settle(self, product: Product, st: dict) -> int:
+        """幀定案：補抓清單清空，或已超出上游保留期（剩下的記 fine_unfetched）。定案後才累加 T1、送最終 DB 列。"""
+        ws = self._window.get(product.name)
+        base = self.spool_root / product.name
+        n = 0
+        if ws is None or not base.exists():
+            return n
+        for dd in sorted(p for p in base.iterdir() if p.is_dir() and p.name.isdigit()):
+            ds = self._day_state(product, dd.name)
+            changed = False
+            for vt in sorted(ds["frames"]):
+                fr = ds["frames"][vt]
+                if fr["status"] == "missing" or fr.get("settled"):
+                    continue
+                if fr.get("fine_pending") and parse_vt(vt) >= ws:
+                    continue
+                fr["fine_unfetched"] = fr.get("fine_unfetched", []) + [t for t, _ in fr.get("fine_pending", [])]
+                fr["fine_pending"] = []
+                fr["settled"] = True
+                if fr.get("grid"):
+                    acc = self._acc(product, dd.name)
+                    if acc.needs_rebuild():
+                        acc.rebuild({v: p for v, p in self._grids(product, dd.name, ds).items()
+                                     if ds["frames"][v].get("settled")})
+                    else:
+                        acc.apply(vt, sp.load_grid(dd / "grids" / f"{vt}.npz"))
+                st["pending_frames"][vt] = self.frame_row(product, vt, fr)
+                changed = True
+                n += 1
+            if changed:
+                self._save_day(product, dd.name, ds)
+        return n
 
     # ───────── DB rows ─────────
     @staticmethod
@@ -397,7 +541,7 @@ class JmaRasterCollector(BaseCollector):
         }
 
     # ───────── 一個產品一輪 ─────────
-    def collect_product(self, product: Product, now: datetime, budget_frames: int) -> dict:
+    def fetch_product(self, product: Product, now: datetime, budget_frames: int) -> dict:
         st = self._load_state(product.name)
         from collectors.global_climate.jma_common import fetch
         items = fetch(self._session, product.target_times)
@@ -445,22 +589,32 @@ class JmaRasterCollector(BaseCollector):
                 continue
             requests += fr["tiles_requested"]
             ds["frames"][vt] = fr
-            if fr.get("grid"):
-                acc = self._acc(product, day)
-                if acc.needs_rebuild():
-                    acc.rebuild(self._grids(product, day, ds))
-                else:
-                    acc.apply(vt, sp.load_grid(self.day_dir(product, day) / "grids" / f"{vt}.npz"))
             self._save_day(product, day, ds)
             st["pending_frames"][vt] = self.frame_row(product, vt, fr)
             fetched += 1
 
-        # 3) 小時收尾（T2）與日結（T1＋T3）
-        closures = self.close_ready(product, st, epoch, window_start, now)
+        self._window[product.name] = window_start
+        self._epoch[product.name] = epoch
         self._save_state(product.name, st)
         return {"latest": latest, "fetched": fetched, "unavailable": unavailable,
-                "missing_finalized": missing_new, "requests": requests,
-                **closures}
+                "missing_finalized": missing_new, "requests": requests}
+
+    def finish_product(self, product: Product, now: datetime) -> dict:
+        """定案幀（累加 T1）→ 小時收尾（T2）→ 日結（T1＋T3）。"""
+        st = self._load_state(product.name)
+        settled = self.settle(product, st)
+        closures = self.close_ready(product, st, self._epoch[product.name], self._window[product.name], now)
+        self._save_state(product.name, st)
+        return {"settled": settled, **closures}
+
+    def collect_product(self, product: Product, now: datetime, budget_frames: int,
+                        backlog_seconds: float = 0) -> dict:
+        """單一產品完整一輪（測試與手動用）：抓取 → 補抓段 → 定案／收尾。"""
+        out = self.fetch_product(product, now, budget_frames)
+        if backlog_seconds:
+            out["backlog"] = self.run_backlog(time.monotonic() + backlog_seconds)
+        out.update(self.finish_product(product, now))
+        return out
 
     def _acc(self, product: Product, day: str) -> sp.DayAccumulator:
         x0, y0, nx, ny = canvas(product.grid_zoom)
@@ -487,7 +641,9 @@ class JmaRasterCollector(BaseCollector):
             ds = self._day_state(product, day)
             d0 = datetime.strptime(day, "%Y%m%d").replace(tzinfo=JST)
             exp = expected_vts(product, max(d0, epoch), d0 + timedelta(days=1) - timedelta(seconds=1))
-            final = lambda vt: vt in ds["frames"]  # noqa: E731
+            def final(vt, ds=ds):
+                fr = ds["frames"].get(vt)
+                return fr is not None and (fr["status"] == "missing" or bool(fr.get("settled")))
             # 小時（JST）
             if product.decodes and self.s3() is not None:
                 hours: dict[str, list[str]] = {}
@@ -514,8 +670,8 @@ class JmaRasterCollector(BaseCollector):
 
     def close_hour(self, product: Product, day: str, hh: str, vts: list[str], ds: dict) -> bool:
         dd = self.day_dir(product, day)
-        grids = [(vt, dd / "grids" / f"{vt}.npz") for vt in vts if ds["frames"][vt].get("grid")]
-        if not grids:
+        frames = [(vt, dd / "grids" / f"{vt}.npz" if ds["frames"][vt].get("grid") else None) for vt in vts]
+        if not any(p for _, p in frames):
             ds["hours"][hh] = {"key": None, "bytes": 0, "frames": 0}
             return True
         x0, y0, nx, ny = canvas(product.grid_zoom)
@@ -524,12 +680,15 @@ class JmaRasterCollector(BaseCollector):
                 "decode_table_version": self.table(product).version, "georef": self._georef(product),
                 "levels": {str(k): v for k, v in self.table(product).labels.items()},
                 "nodata": {"0": "無", "255": "缺測"}, "license": "気象庁ホームページ（PDL1.0）を加工"}
-        size = sp.write_stack_npz(local, grids, (ny * 256, nx * 256), meta)
+        info = sp.write_hour_npz(local, frames, (ny * 256, nx * 256), meta,
+                                 compression=config.JAPAN_JMA_RASTER_GRID_COMPRESSION)
+        size = info["bytes"]
         key = f"weather-grid/{SOURCE}/{product.name}/{day}/{hh}.npz"
         sha = sp.sha256_file(local)
         if not self._put_verified(local, key, sha, "STANDARD"):
             return False
-        ds["hours"][hh] = {"key": key, "bytes": size, "frames": len(grids), "sha256": sha}
+        ds["hours"][hh] = {"key": key, "bytes": size, "sha256": sha,
+                           **{k: info[k] for k in ("array", "zero", "same_as_prev", "missing", "raw_bytes")}}
         local.unlink(missing_ok=True)
         return True
 
@@ -607,10 +766,14 @@ class JmaRasterCollector(BaseCollector):
             key = f"weather-raw/{SOURCE}/{product.name}/{day[:4]}/{day[4:6]}/{day}.tar"
             if not self._put_verified(local, key, info["sha256"], "DEEP_ARCHIVE"):
                 raise RuntimeError("T3 上傳／驗證失敗")
+            print(f"[{self.name}] {product.name} {day} T3 去重：{info['tiles']} 磚 {info['bytes_before']:,}B → "
+                  f"{info['unique_blobs']} blob {info['bytes_blobs']:,}B（blank {info['blank']}、empty {info['empty']}）")
             row.update(raw_key=key, raw_bytes=info["bytes"], raw_sha256=info["sha256"], status="verified",
                        uploaded_at=datetime.now(timezone.utc).isoformat())
             sp.write_json_atomic(self.spool_root / "_receipts" / product.name / f"{day}.json",
-                                 {**row, "files": info["files"], "hours": ds["hours"], "t1": ds["t1"]})
+                                 {**row, "files": info["files"], "dedup": {k: info[k] for k in (
+                                     "tiles", "blank", "empty", "unique_blobs", "bytes_before", "bytes_blobs")},
+                                  "hours": ds["hours"], "t1": ds["t1"]})
             shutil.rmtree(dd)
             st["closed_days"].append(day)
             st["pending_daily"][day] = row
@@ -626,13 +789,27 @@ class JmaRasterCollector(BaseCollector):
         per: dict[str, dict] = {}
         failures: dict[str, str] = {}
         self._requests = 0
+        t0 = time.monotonic()
         for product in self.products:
             budget = 2 * max(1, self.interval_minutes // product.cadence_min) + 2
             try:
-                per[product.name] = self.collect_product(product, now, budget)
+                per[product.name] = self.fetch_product(product, now, budget)
             except Exception as e:  # noqa: BLE001
                 failures[product.name] = str(e)
                 print(f"[{self.name}] ✗ {product.name}: {e}")
+        backlog = {}
+        try:
+            backlog = self.run_backlog(t0 + config.JAPAN_JMA_RASTER_BACKLOG_MAX_SECONDS)
+        except Exception as e:  # noqa: BLE001
+            print(f"[{self.name}] ✗ backlog: {e}")
+        for product in self.products:
+            if product.name in failures or product.name not in self._window:
+                continue
+            try:
+                per[product.name].update(self.finish_product(product, now))
+            except Exception as e:  # noqa: BLE001
+                failures[product.name] = str(e)
+                print(f"[{self.name}] ✗ {product.name} 收尾: {e}")
         rows: list[dict] = []
         commit: dict[str, dict] = {}
         for product in self.products:
@@ -643,7 +820,7 @@ class JmaRasterCollector(BaseCollector):
         self._pending_commit = commit
         result = {"data": rows, "products": per, "source_failures": failures,
                   "requests": sum(v.get("requests", 0) for v in per.values()),
-                  "http_attempts": self._requests, "peak_rss_mb": sp.peak_rss_mb()}
+                  "http_attempts": self._requests, "backlog": backlog, "peak_rss_mb": sp.peak_rss_mb()}
         if self.products and len(failures) == len(self.products):
             raise RuntimeError(f"jma_raster: 全部產品失敗 {failures}")
         if failures:

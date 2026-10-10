@@ -203,53 +203,133 @@ class DayAccumulator:
         return path.stat().st_size
 
 
-# ───────────────────────── T2：每小時 stack ─────────────────────────
+# ───────────────────────── T2：每小時網格（每幀保留、去重）─────────────────────────
 
-def write_stack_npz(path: Path, grids: list[tuple[str, Path]], shape: tuple[int, int], meta: dict) -> int:
-    """逐幀串流寫進 zip 內的 stack.npy（n,H,W），記憶體只放一幀。"""
+ZIP_METHODS = {"deflate": zipfile.ZIP_DEFLATED, "lzma": zipfile.ZIP_LZMA, "bzip2": zipfile.ZIP_BZIP2}
+
+
+def write_hour_npz(path: Path, frames: list[tuple[str, Optional[Path]]], shape: tuple[int, int],
+                   meta: dict, compression: str = "deflate") -> dict:
+    """一小時一檔、每幀都留（永久層，不可只留彙總）。
+
+    frames：[(vt, grid_path 或 None＝缺幀)]，依時間排序。檔內去重：
+      kind=zero          全零幀，不存陣列
+      kind=same_as_prev  與前一個有效幀完全相同，記引用
+      kind=missing       缺幀
+      kind=array         存 f{vt}.npy（uint8 H×W；0=無、255=缺測）
+    讀取用 load_hour_npz()。np.load 也可直接讀各 f{vt} 陣列與 index。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
-        with zf.open("stack.npy", "w", force_zip64=True) as f:
-            np.lib.format.write_array_header_1_0(
-                f, {"descr": "|u1", "fortran_order": False, "shape": (len(grids), *shape)})
-            for _vt, p in grids:
-                g = load_grid(p)
-                if g.shape != shape:
-                    raise ValueError(f"grid shape {g.shape} != {shape}")
-                f.write(np.ascontiguousarray(g, np.uint8).tobytes())
-        with zf.open("valid_times.npy", "w") as f:
-            np.lib.format.write_array(f, np.array([vt for vt, _ in grids]))
-        with zf.open("meta.npy", "w") as f:
-            np.lib.format.write_array(f, np.array(json.dumps(meta, ensure_ascii=False, sort_keys=True)))
+    index: list[dict] = []
+    prev: Optional[np.ndarray] = None
+    prev_vt: Optional[str] = None
+    stats = {"array": 0, "zero": 0, "same_as_prev": 0, "missing": 0, "raw_bytes": 0}
+    with zipfile.ZipFile(tmp, "w", ZIP_METHODS[compression], allowZip64=True) as zf:
+        for vt, gp in frames:
+            if gp is None:
+                index.append({"vt": vt, "kind": "missing"}); stats["missing"] += 1
+                continue
+            g = load_grid(gp)
+            if g.shape != shape:
+                raise ValueError(f"grid shape {g.shape} != {shape}")
+            if not g.any():
+                index.append({"vt": vt, "kind": "zero"}); stats["zero"] += 1
+            elif prev is not None and np.array_equal(g, prev):
+                index.append({"vt": vt, "kind": "same_as_prev", "ref": prev_vt}); stats["same_as_prev"] += 1
+            else:
+                with zf.open(f"f{vt}.npy", "w", force_zip64=True) as f:
+                    np.lib.format.write_array(f, np.ascontiguousarray(g, np.uint8))
+                index.append({"vt": vt, "kind": "array"}); stats["array"] += 1
+                stats["raw_bytes"] += g.nbytes
+            if g.any():
+                prev, prev_vt = g, vt
+        meta = dict(meta, shape=list(shape), dtype="uint8", compression=compression)
+        for name, obj in (("index.npy", index), ("meta.npy", meta)):
+            with zf.open(name, "w") as f:
+                np.lib.format.write_array(f, np.array(json.dumps(obj, ensure_ascii=False, sort_keys=True)))
     tmp.replace(path)
-    return path.stat().st_size
+    return {**stats, "bytes": path.stat().st_size}
 
 
-# ───────────────────────── T3：每日原始 tar ─────────────────────────
+def load_hour_npz(path) -> list[tuple[str, Optional[np.ndarray]]]:
+    """還原 write_hour_npz：回 [(vt, grid 或 None＝缺幀)]。"""
+    with np.load(path) as z:
+        index = json.loads(str(z["index"]))
+        meta = json.loads(str(z["meta"]))
+        shape = tuple(meta["shape"])
+        out, cache = [], {}
+        for e in index:
+            k = e["kind"]
+            if k == "missing":
+                out.append((e["vt"], None)); continue
+            if k == "zero":
+                g = np.zeros(shape, np.uint8)
+            elif k == "same_as_prev":
+                g = cache[e["ref"]]
+            else:
+                g = z[f"f{e['vt']}"]
+            cache[e["vt"]] = g
+            out.append((e["vt"], g))
+    return out
+
+
+# ───────────────────────── T3：每日原始 tar（磚級去重）─────────────────────────
+
+def _is_blank_placeholder(data: bytes) -> bool:
+    """JMA 334 byte 透明 RGBA 佔位磚（或任何全透明 PNG）。"""
+    if len(data) != 334:
+        return False
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(data))
+        return im.mode == "RGBA" and im.getextrema()[3][1] == 0
+    except Exception:  # noqa: BLE001
+        return False
+
 
 def pack_day_tar(out_path: Path, frame_tars: Iterable[Path], manifest: dict, mtime: int) -> dict:
-    """把各幀 tar 的成員依序併成一個不壓縮 tar，最後放 manifest.json；回傳 {sha256, bytes, files}。
+    """各幀 tar 的磚依 sha256 去重成 blobs/{sha}.{ext}；334B 空白佔位與 0 byte pbf 只記在 manifest。
 
-    manifest['files'] 由本函式填入（每檔 name/sha256/bytes），內容決定性。
+    manifest.json（最後一個成員）新增：
+      tiles: {成員原名 '{product}/{vt}/z{z}/{x}/{y}.{ext}': sha256 | 'blank' | 'empty'}
+      blobs: {sha256: bytes}
+      dedup: {tiles, blank, empty, unique_blobs, bytes_before, bytes_blobs}
+    還原第 n 張磚：tiles[名] → blobs/{sha}.{ext}；blank＝JMA 334B 透明佔位（blank_sha256 記其內容雜湊）。
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.name + ".tmp")
-    files: list[dict] = []
+    tiles: dict[str, str] = {}
+    blobs: dict[str, int] = {}
+    blank_shas: set[str] = set()
+    st = {"tiles": 0, "blank": 0, "empty": 0, "unique_blobs": 0, "bytes_before": 0, "bytes_blobs": 0}
     with tarfile.open(tmp, "w", format=tarfile.PAX_FORMAT) as out:
         for ft in sorted(frame_tars):
             with tarfile.open(ft, "r") as src:
-                for m in src.getmembers():
-                    if not m.isfile():
-                        continue
+                for m in sorted((m for m in src.getmembers() if m.isfile()), key=lambda m: m.name):
                     data = src.extractfile(m).read()
-                    out.addfile(_tarinfo(m.name, len(data), m.mtime), io.BytesIO(data))
-                    files.append({"name": m.name, "sha256": sha256_bytes(data), "bytes": len(data)})
-        manifest = dict(manifest, files=files)
+                    st["tiles"] += 1
+                    st["bytes_before"] += len(data)
+                    if len(data) == 0:
+                        tiles[m.name] = "empty"; st["empty"] += 1
+                        continue
+                    h = sha256_bytes(data)
+                    if h in blank_shas or _is_blank_placeholder(data):
+                        blank_shas.add(h)
+                        tiles[m.name] = "blank"; st["blank"] += 1
+                        continue
+                    tiles[m.name] = h
+                    if h not in blobs:
+                        ext = m.name.rsplit(".", 1)[-1]
+                        out.addfile(_tarinfo(f"blobs/{h}.{ext}", len(data), mtime), io.BytesIO(data))
+                        blobs[h] = len(data)
+                        st["unique_blobs"] += 1
+                        st["bytes_blobs"] += len(data)
+        manifest = dict(manifest, tiles=tiles, blobs=blobs, dedup=st, blank_sha256=sorted(blank_shas))
         body = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=1).encode("utf-8")
         out.addfile(_tarinfo("manifest.json", len(body), mtime), io.BytesIO(body))
     tmp.replace(out_path)
-    return {"sha256": sha256_file(out_path), "bytes": out_path.stat().st_size, "files": len(files)}
+    return {"sha256": sha256_file(out_path), "bytes": out_path.stat().st_size, "files": len(tiles), **st}
 
 
 def peak_rss_mb() -> Optional[float]:
