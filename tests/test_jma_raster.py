@@ -400,6 +400,7 @@ def test_writer_frames_status_guard_and_daily_upsert(monkeypatch):
     assert set(sqls) == {"live.weather_raster_frames", "live.weather_raster_daily"}
     assert "WHERE CASE live.weather_raster_frames.status" in sqls["live.weather_raster_frames"]
     assert "ON CONFLICT (source, product, obs_date) DO UPDATE" in sqls["live.weather_raster_daily"]
+    assert sqls["live.weather_raster_daily"].rstrip().endswith("updated_at=now()")
 
 
 def test_radar_backlog_fills_fine_tiles_and_settles(tmp_path, monkeypatch):

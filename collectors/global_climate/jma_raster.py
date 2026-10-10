@@ -12,7 +12,7 @@
 分層（契約 jma_raster_contract.md）：
   spool  {LOCAL_DATA_DIR}/weather_raw/jma/{product}/{YYYYMMDD JST}/  上傳驗證成功即刪
   T3 冷  S3 weather-raw/jma/{product}/{YYYY}/{MM}/{YYYYMMDD}.tar   DEEP_ARCHIVE，永久
-  T2 溫  S3 weather-grid/jma/{product}/{YYYYMMDD}/{HH}.npz          STANDARD，90 天（lifecycle）
+  T2 溫  S3 weather-grid/jma/{product}/{YYYYMMDD}/{HH}.npz          每幀網格每小時一檔，永久（lifecycle 90 天轉 GLACIER_IR）
   T1 熱  S3 weather-daily/jma/{product}/{YYYY}/{YYYYMMDD}.npz       STANDARD，永久
 
 中斷補抓：每輪對每產品列出「上游保留期內、首跑 epoch 之後」所有 validtime，oldest-first 補抓

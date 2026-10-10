@@ -2737,7 +2737,7 @@ class SupabaseWriter:
                     execute_values(
                         cur,
                         f"INSERT INTO live.weather_raster_daily ({','.join(dcols)}) VALUES %s "
-                        f"ON CONFLICT (source, product, obs_date) DO UPDATE SET {upd}",
+                        f"ON CONFLICT (source, product, obs_date) DO UPDATE SET {upd},updated_at=now()",
                         list(daily.values()), page_size=500,
                     )
             logger.info(f"[jma_raster] ✓ frames {len(frames)} + daily {len(daily)} 筆寫入")
