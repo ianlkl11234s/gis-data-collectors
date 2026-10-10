@@ -159,6 +159,8 @@ archive_py_covered:
   - live.jma_quake_reports         # jma_quake，migration 435，2026-10-09 起
   - live.jma_tsunami_reports       # 同上
   - live.jma_volcano_warnings      # 同上
+  - live.weather_raster_frames     # jma_raster，migration 437；另有 T3 manifest.json 可重建
+  - live.weather_raster_daily      # 同上；另有 spool/_receipts 與 S3 head 可重建
   # Satellite / launch
   - live.satellite_positions       # satellite, 2026-03-28 起
   - live.satellite_tle             # 同 satellite collector

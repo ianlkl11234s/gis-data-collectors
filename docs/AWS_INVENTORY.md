@@ -115,6 +115,9 @@ Rule ID: archive-deep-270d:{collector}（每個 collector 一條，Prefix={colle
 | `pulse-db/` | 應用端 | 0.29 GB |
 | `mini-taipei/` | 應用端（mini taipei publish task） | 0.05 GB |
 | `rail-data/` | 應用端 rail 相關 | 0.05 GB |
+| `weather-raw/` | **ADR-0021 T3 冷層**（collector `jma_raster`，待上線）：`weather-raw/{source}/{product}/{YYYY}/{MM}/{YYYYMMDD}.tar`，每產品每日 1 個不壓縮 tar（磚級 sha256 去重＋manifest.json），上傳時直接 **DEEP_ARCHIVE**、永久；`_smoke/` 只放測試物件，驗證後即刪 | 0（2026-10-10） |
+| `weather-grid/` | **ADR-0021 T2**：`weather-grid/{source}/{product}/{YYYYMMDD}/{HH}.npz`，每幀解碼網格每小時一檔，**永久**；lifecycle 待加「90 天轉 GLACIER_IR」（不可設到期刪除） | 0 |
+| `weather-daily/` | **ADR-0021 T1**：`weather-daily/{source}/{product}/{YYYY}/{YYYYMMDD}.npz` 每日彙總（衍生物，可由 T2 重算），STANDARD 永久 | 0 |
 | `_external_vm_health/` | **監控**：HiCloud VM + 本機 Mac 每日推 health snapshot JSON。被 `tasks/daily_report.py` 撈來顯示「VM 健康」段。**勿手動改 / 勿加 lifecycle** | < 0.01 GB |
 
 ---

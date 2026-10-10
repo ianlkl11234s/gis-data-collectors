@@ -198,3 +198,5 @@ tables:
   - {schema: live, table: jma_quake_reports,           time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（DO NOTHING，僅新地震推進 MAX）}
   - {schema: live, table: jma_tsunami_reports,         time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（無津波情報即無資料），長期 DEAD 屬預期}
   - {schema: live, table: jma_volcano_warnings,        time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（火山警報異動才有新列），長期 DEAD 屬預期}
+  - {schema: live, table: weather_raster_frames,       time_column: collected_at, owner_collector: jma_raster, expected_interval_min: 120, critical: false, notes: 網格圖磚每幀狀態（每輪 60 分寫入；status 只升不降）；保留 400 天}
+  - {schema: live, table: weather_raster_daily,        time_column: uploaded_at,  owner_collector: jma_raster, expected_interval_min: 2880, critical: false, notes: 每產品每 JST 日一列（D+1 01:00 後日結；缺幀日等上游保留期到期才結）；永久}

@@ -1,0 +1,25 @@
+# JMA 解析雨量（rasrf，30 分解析值，member=none）→ 1 小時雨量級距
+# 依據：2026-10-09 實測圖磚 PNG PLTE（4-bit palette，10 entries；idx0/1 tRNS alpha=0），
+#       與 bosai/kaikotan/images/legend_jp_normal_rasrf.svg 的 8 色及刻度 1/5/10/20/30/50/80 mm（１時間降水量）對照；PLTE 與雷達相同。
+#       注意 idx6 PLTE 是 (250,245,0)，legend SVG 是 (255,245,0)：以 PLTE 為準。
+version: jma-rasrf-2026-10-09
+product: rasrf
+source_url: https://www.jma.go.jp/bosai/jmatile/data/rasrf/{bt}/none/{vt}/surf/rasrf/{z}/{x}/{y}.png
+effective_from: "2026-10-09"
+palette_basis: plte
+plte_verified: true
+native_zooms: [4, 6, 8, 10]      # zoomUse=even、maxNativeZoom 10（nowc.properties.xml）；奇數層回 334B 佔位
+rgb_tolerance: 0
+levels:                          # level 0 = 透明（無回波）；255 = 缺測（程式保留，不在表內）
+  - {level: 1, rgb: [242, 242, 255], palette_index: 2, label: "<1 mm"}
+  - {level: 2, rgb: [160, 210, 255], palette_index: 3, label: "1–5 mm"}
+  - {level: 3, rgb: [33, 140, 255],  palette_index: 4, label: "5–10 mm"}
+  - {level: 4, rgb: [0, 65, 255],    palette_index: 5, label: "10–20 mm"}
+  - {level: 5, rgb: [250, 245, 0],   palette_index: 6, label: "20–30 mm"}
+  - {level: 6, rgb: [255, 153, 0],   palette_index: 7, label: "30–50 mm"}
+  - {level: 7, rgb: [255, 40, 0],    palette_index: 8, label: "50–80 mm"}
+  - {level: 8, rgb: [180, 0, 104],   palette_index: 9, label: "≥80 mm"}
+count_thresholds:                # 每日彙總 count_ge_{k}
+  - {k: 1, meaning: "有雨量"}
+  - {k: 2, meaning: "≥1 mm"}
+  - {k: 4, meaning: "≥10 mm"}

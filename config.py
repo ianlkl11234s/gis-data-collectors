@@ -123,7 +123,7 @@ ARCHIVE_TIME = os.getenv('ARCHIVE_TIME', '03:00')  # 每日歸檔時間 (HH:MM)
 COLLECTOR_RETENTION_OVERRIDES = {
     name: int(os.environ[f'{name.upper()}_ARCHIVE_RETENTION_DAYS'])
     for name in ('iot_wra', 'bus', 'bus_intercity', 'youbike', 'train',
-                 'jma_amedas', 'jma_warnings', 'jma_quake',
+                 'jma_amedas', 'jma_warnings', 'jma_quake', 'jma_raster',
                  'ship_ais', 'flight_fr24', 'flight_fr24_zone', 'freeway_vd',
                  'satellite', 'cwa_satellite', 'temperature', 'weather',
                  'air_quality', 'air_quality_microsensors', 'air_quality_imagery',
@@ -139,7 +139,7 @@ COLLECTOR_RETENTION_OVERRIDES = {
 COLLECTOR_RETENTION_OVERRIDES.setdefault('cwa_marine_observation', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('isohe_port_marine', 3)
 # JMA：本地只需撐到隔天 03:00 歸檔驗證完成；冷資料在 S3（ADR-0021，2026-10-09）
-for _jma_name in ('jma_amedas', 'jma_warnings', 'jma_quake'):
+for _jma_name in ('jma_amedas', 'jma_warnings', 'jma_quake', 'jma_raster'):
     COLLECTOR_RETENTION_OVERRIDES.setdefault(_jma_name, 2)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('cloudflare_radar', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('ioda_internet_health', 3)
@@ -380,11 +380,27 @@ _COLLECTOR_TOGGLES = (
     ('JAPAN_JMA_AMEDAS',             False, 10),   # AMeDAS 約 1,286 站 10 分值（免金鑰）；current 全量 upsert、observations 只寫整點（90 天）
     ('JAPAN_JMA_WARNINGS',           False, 5),    # R8 警報・注意報 map_time 有變才抓 map.json（禁用舊 warning/data/warning/）；30 天
     ('JAPAN_JMA_QUAKE',              False, 2),    # 地震 list + 津波 list + 火山 warning.json（DO NOTHING，永久）
+    ('JAPAN_JMA_RASTER',             False, 60),   # 網格圖磚 G 型（雷達/解析雨量/キキクル/積雪/ひまわり）；spool→S3 T1–T3（migration 437；ADR-0021）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
     globals()[f'{_prefix}_ENABLED'] = _env_bool(f'{_prefix}_ENABLED', _en_default)
     globals()[f'{_prefix}_INTERVAL'] = int(os.getenv(f'{_prefix}_INTERVAL', str(_intv_default)))
+
+# JMA 網格圖磚（jma_raster）：產品清單、z8 下鑽磚數上限（ADR 請求預算：48＋15×16＝288 req/幀）、並發、首跑回看
+JAPAN_JMA_RASTER_PRODUCTS = os.getenv(
+    'JAPAN_JMA_RASTER_PRODUCTS',
+    'radar,rasrf,risk_land,risk_inund,risk_flood,snow_depth,himawari_b13')
+JAPAN_JMA_RASTER_MAX_FINE_TILES = int(os.getenv('JAPAN_JMA_RASTER_MAX_FINE_TILES', '15'))
+JAPAN_JMA_RASTER_CONCURRENCY = int(os.getenv('JAPAN_JMA_RASTER_CONCURRENCY', '4'))
+JAPAN_JMA_RASTER_INITIAL_LOOKBACK_MIN = int(os.getenv('JAPAN_JMA_RASTER_INITIAL_LOOKBACK_MIN', '60'))
+# 補抓段（backlog）：即時段只下鑽回波最多的 15 磚，其餘有內容的粗層磚在上游保留期內以低速率補抓細層
+JAPAN_JMA_RASTER_BACKLOG_RPS = float(os.getenv('JAPAN_JMA_RASTER_BACKLOG_RPS', '0.5'))
+JAPAN_JMA_RASTER_BACKLOG_PRODUCTS = os.getenv(
+    'JAPAN_JMA_RASTER_BACKLOG_PRODUCTS', 'radar,rasrf,risk_land,risk_inund,risk_flood')
+JAPAN_JMA_RASTER_BACKLOG_MAX_SECONDS = int(os.getenv('JAPAN_JMA_RASTER_BACKLOG_MAX_SECONDS', '2700'))
+# T2 每小時網格檔的 zip 壓縮：deflate／lzma（皆標準庫；實測見 docs）
+JAPAN_JMA_RASTER_GRID_COMPRESSION = os.getenv('JAPAN_JMA_RASTER_GRID_COMPRESSION', 'deflate')
 
 # Internet health — provider jobs remain independent but write one canonical
 # contract.  Country-level TW is the MVP; ASN coverage is added only after a

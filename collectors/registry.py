@@ -102,6 +102,7 @@ from .global_climate.climate_bake import ClimateBakeCollector
 from .global_climate.jma_amedas import JmaAmedasCollector
 from .global_climate.jma_warnings import JmaWarningsCollector
 from .global_climate.jma_quake import JmaQuakeCollector
+from .global_climate.jma_raster import JmaRasterCollector
 
 
 @dataclass(frozen=True)
@@ -224,6 +225,9 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(JmaAmedasCollector, "JMA AMeDAS 10 分觀測收集器", "JAPAN_JMA_AMEDAS"),
     CollectorEntry(JmaWarningsCollector, "JMA 警報・注意報收集器", "JAPAN_JMA_WARNINGS"),
     CollectorEntry(JmaQuakeCollector, "JMA 地震・津波・火山情報收集器", "JAPAN_JMA_QUAKE"),
+    # migration 437；S3 為 T1–T3 必要（沒 S3 只會累積 spool、無法日結）
+    CollectorEntry(JmaRasterCollector, "JMA 網格圖磚收集器（雷達/解析雨量/キキクル/積雪/ひまわり）", "JAPAN_JMA_RASTER",
+                   ("S3_BUCKET",)),
 )
 
 
