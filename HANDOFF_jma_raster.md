@@ -1,4 +1,19 @@
-# HANDOFF：jma_raster（2026-10-09 WIP）
+# HANDOFF：jma_raster（2026-10-10 更新）
+
+## 2026-10-10 進度
+- 主 agent 拍板：rasrf/キキクル只收 none、flood 只冷存 pbf、himawari z5、雷達每幀 ≤288（48＋前 15 磚 z8）、暫定色票表外顏色計數告警。
+- 使用者追加：T3 磚級去重（blank 只記 manifest）、T2 每幀網格永久（每小時一檔、檔內 zero/same_as_prev 去重；lifecycle 90 天轉 GLACIER_IR）、
+  z8 補抓段 backlog（JAPAN_JMA_RASTER_BACKLOG_RPS 預設 0.5，依回波量排序，過期未抓記 fine_unfetched）、T1 只是衍生物。
+- 已完成：collector `collectors/global_climate/jma_raster.py`、`collectors/weather_raster/{decode,spool}.py`、s3.py 加 upload_path/head/delete、
+  12 步註冊、tests/test_jma_raster.py（20 個，全套 650 綠）。gis-platform mig 437 已寫並 BEGIN…ROLLBACK 預演通過（未 apply）、兩份清冊已更新。
+- S3 smoke：`weather-raw/_smoke/jma_raster_smoke_20261010T062206.tar` 已上傳 DEEP_ARCHIVE、head 驗證（大小、sha256、StorageClass）、**已刪除**；bucket 無 versioning，無殘留。
+- 本機實打腳本：scratchpad/jr_scripts/live_run.py、measure_store.py（輸出 scratchpad/jr_live/）。
+- 本機實打（2026-10-10 15:20 JST，小雨日）：radar 13 幀每幀 256 req（13/48 z6 有回波，全下鑽，backlog 0）、約 33–43 s/幀；
+  T3 去重 13 幀 1.76MB→blob 0.98MB、tar 1.14MB；T2 deflate 515KB/13 幀（lzma 329KB 但峰值 RSS +90MB）；T1 333KB/日。
+  峰值 RSS：抓取 85MB、收尾（T2 deflate＋累加器 chunk memmap＋T3）126MB（macOS ru_maxrss）。
+  backlog 實打：max_fine_tiles=5 時 0.5 rps 64 秒補 2 磚（32 req）。
+- 狀態：功能完成，待主 agent 驗收（apply 437、S3 lifecycle weather-grid/ 90 天轉 GLACIER_IR、Zeabur env）。
+
 
 契約：scratchpad/jma_raster_contract.md；ADR-0021；analytics docs/api-platforms/jma/gotchas.md。
 探測腳本：scratchpad/jr_scripts/（probe_zoom.py、scan.py）；JMA 前端設定 XML：scratchpad/jr_probe/*.properties.xml。

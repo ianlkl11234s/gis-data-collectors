@@ -144,23 +144,32 @@ class DayAccumulator:
     def needs_rebuild(self) -> bool:
         return self.marker.exists()
 
+    def _chunk(self, name: str, dtype, plane: int, r0: int, rows: int, mode: str) -> np.memmap:
+        """只映射一段列（offset 映射），讓常駐記憶體只有一個 chunk 的大小。"""
+        h, w = self.shape
+        item = np.dtype(dtype).itemsize
+        return np.memmap(self.dir / name, dtype, mode, offset=(plane * h + r0) * w * item, shape=(rows, w))
+
     def apply(self, vt: str, grid: np.ndarray) -> bool:
         if vt in self.applied:
             return False
         self._ensure()
         self.marker.write_text(vt)
-        count, mx, miss = self._open("r+")
-        for r0 in range(0, self.shape[0], CHUNK_ROWS):
-            g = grid[r0:r0 + CHUNK_ROWS]
+        h = self.shape[0]
+        for r0 in range(0, h, CHUNK_ROWS):
+            rows = min(CHUNK_ROWS, h - r0)
+            g = grid[r0:r0 + rows]
             valid = g != MISSING
             for i, k in enumerate(self.thresholds):
-                count[i, r0:r0 + CHUNK_ROWS] += ((g >= k) & valid).astype(np.uint16)
-            np.maximum(mx[r0:r0 + CHUNK_ROWS], np.where(valid, g, 0).astype(np.uint8),
-                       out=mx[r0:r0 + CHUNK_ROWS])
-            miss[r0:r0 + CHUNK_ROWS] += (~valid).astype(np.uint16)
-        for arr in (count, mx, miss):
-            arr.flush()
-        del count, mx, miss
+                c = self._chunk("count.u16", np.uint16, i, r0, rows, "r+")
+                c += ((g >= k) & valid).astype(np.uint16)
+                c.flush(); del c
+            mx = self._chunk("max.u8", np.uint8, 0, r0, rows, "r+")
+            np.maximum(mx, np.where(valid, g, 0).astype(np.uint8), out=mx)
+            mx.flush(); del mx
+            ms = self._chunk("missing.u16", np.uint16, 0, r0, rows, "r+")
+            ms += (~valid).astype(np.uint16)
+            ms.flush(); del ms
         self.applied.add(vt)
         write_json_atomic(self.applied_path, sorted(self.applied))
         self.marker.unlink(missing_ok=True)
@@ -177,28 +186,41 @@ class DayAccumulator:
             self.apply(vt, load_grid(grids[vt]))
 
     def write_summary(self, path: Path, *, valid_frames: int, meta: dict) -> int:
-        """T1：count_ge_{k}（uint16）、max_level（uint8，從未有效＝255）、missing_count、valid_frames。"""
+        """T1：count_ge_{k}（uint16）、max_level（uint8，從未有效＝255）、missing_count、valid_frames。
+        逐 chunk 串流寫進 zip，不整份載入。"""
         self._ensure()
-        count, mx, miss = self._open("r")
+        h, w = self.shape
         tmp = path.with_name(path.name + ".tmp")
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        def stream(zf, name, dtype, plane, fix=None):
+            with zf.open(name, "w", force_zip64=True) as f:
+                np.lib.format.write_array_header_1_0(
+                    f, {"descr": np.dtype(dtype).str, "fortran_order": False, "shape": self.shape})
+                for r0 in range(0, h, CHUNK_ROWS):
+                    rows = min(CHUNK_ROWS, h - r0)
+                    a = np.array(self._chunk(name_map[name], dtype, plane, r0, rows, "r"))
+                    if fix is not None:
+                        a = fix(a, r0, rows)
+                    f.write(a.tobytes())
+
+        name_map = {f"count_ge_{k}.npy": "count.u16" for k in self.thresholds}
+        name_map.update({"max_level.npy": "max.u8", "missing_count.npy": "missing.u16"})
+
+        def fix_max(a, r0, rows):
+            miss = np.array(self._chunk("missing.u16", np.uint16, 0, r0, rows, "r"))
+            a[miss >= valid_frames] = MISSING
+            return a
+
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
             for i, k in enumerate(self.thresholds):
-                with zf.open(f"count_ge_{k}.npy", "w", force_zip64=True) as f:
-                    np.lib.format.write_array(f, count[i])
-            with zf.open("max_level.npy", "w", force_zip64=True) as f:
-                np.lib.format.write_array_header_1_0(f, {"descr": "|u1", "fortran_order": False, "shape": self.shape})
-                for r0 in range(0, self.shape[0], CHUNK_ROWS):
-                    m = np.array(mx[r0:r0 + CHUNK_ROWS])
-                    m[np.asarray(miss[r0:r0 + CHUNK_ROWS]) >= valid_frames] = MISSING
-                    f.write(m.tobytes())
-            with zf.open("missing_count.npy", "w", force_zip64=True) as f:
-                np.lib.format.write_array(f, miss)
+                stream(zf, f"count_ge_{k}.npy", np.uint16, i)
+            stream(zf, "max_level.npy", np.uint8, 0, fix_max)
+            stream(zf, "missing_count.npy", np.uint16, 0)
             with zf.open("valid_frames.npy", "w") as f:
                 np.lib.format.write_array(f, np.array(valid_frames, np.uint16))
             with zf.open("meta.npy", "w") as f:
                 np.lib.format.write_array(f, np.array(json.dumps(meta, ensure_ascii=False, sort_keys=True)))
-        del count, mx, miss
         tmp.replace(path)
         return path.stat().st_size
 
@@ -289,47 +311,76 @@ def _is_blank_placeholder(data: bytes) -> bool:
 
 
 def pack_day_tar(out_path: Path, frame_tars: Iterable[Path], manifest: dict, mtime: int) -> dict:
-    """各幀 tar 的磚依 sha256 去重成 blobs/{sha}.{ext}；334B 空白佔位與 0 byte pbf 只記在 manifest。
+    """各幀 tar 的磚依 sha256 去重，唯一內容依序串接成單一成員 blobs.pack（不壓縮）；
+    334B 空白佔位與 0 byte pbf 只記在 manifest。tar 成員：blobs.pack、manifest.json。
 
-    manifest.json（最後一個成員）新增：
-      tiles: {成員原名 '{product}/{vt}/z{z}/{x}/{y}.{ext}': sha256 | 'blank' | 'empty'}
-      blobs: {sha256: bytes}
+    為什麼不用每個 blob 一個 tar 成員：JMA 磚平均 <1 KB，tar 每成員 512B header＋補齊 512，
+    實測 radar 一小時 0.98 MB blob 會變 2.05 MB；串成一個 pack 只多一個 header。
+
+    manifest.json（緊湊 JSON）新增：
+      tiles: {vt: {'z{z}/{x}/{y}.{ext}': blob 序號 | -1（blank）| -2（empty）}}
+      blobs: [[sha256, offset, length], ...]（offset 為 blobs.pack 內位置）
       dedup: {tiles, blank, empty, unique_blobs, bytes_before, bytes_blobs}
-    還原第 n 張磚：tiles[名] → blobs/{sha}.{ext}；blank＝JMA 334B 透明佔位（blank_sha256 記其內容雜湊）。
+    還原：tiles[vt][磚] → blobs[i] → blobs.pack[offset:offset+length]；blank＝JMA 334B 透明佔位（內容雜湊見 blank_sha256）。
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.name + ".tmp")
-    tiles: dict[str, str] = {}
-    blobs: dict[str, int] = {}
+    pack = out_path.with_name(out_path.name + ".blobs.tmp")
+    tiles: dict[str, dict[str, int]] = {}
+    blobs: list[list] = []
+    blob_idx: dict[str, int] = {}
     blank_shas: set[str] = set()
     st = {"tiles": 0, "blank": 0, "empty": 0, "unique_blobs": 0, "bytes_before": 0, "bytes_blobs": 0}
-    with tarfile.open(tmp, "w", format=tarfile.PAX_FORMAT) as out:
+    with pack.open("wb") as pf:
         for ft in sorted(frame_tars):
             with tarfile.open(ft, "r") as src:
                 for m in sorted((m for m in src.getmembers() if m.isfile()), key=lambda m: m.name):
                     data = src.extractfile(m).read()
                     st["tiles"] += 1
                     st["bytes_before"] += len(data)
+                    _prod, vt, rest = m.name.split("/", 2)
+                    slot = tiles.setdefault(vt, {})
                     if len(data) == 0:
-                        tiles[m.name] = "empty"; st["empty"] += 1
+                        slot[rest] = -2; st["empty"] += 1
                         continue
                     h = sha256_bytes(data)
                     if h in blank_shas or _is_blank_placeholder(data):
                         blank_shas.add(h)
-                        tiles[m.name] = "blank"; st["blank"] += 1
+                        slot[rest] = -1; st["blank"] += 1
                         continue
-                    tiles[m.name] = h
-                    if h not in blobs:
-                        ext = m.name.rsplit(".", 1)[-1]
-                        out.addfile(_tarinfo(f"blobs/{h}.{ext}", len(data), mtime), io.BytesIO(data))
-                        blobs[h] = len(data)
+                    if h not in blob_idx:
+                        blob_idx[h] = len(blobs)
+                        blobs.append([h, st["bytes_blobs"], len(data)])
+                        pf.write(data)
                         st["unique_blobs"] += 1
                         st["bytes_blobs"] += len(data)
-        manifest = dict(manifest, tiles=tiles, blobs=blobs, dedup=st, blank_sha256=sorted(blank_shas))
-        body = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=1).encode("utf-8")
+                    slot[rest] = blob_idx[h]
+    with tarfile.open(tmp, "w", format=tarfile.PAX_FORMAT) as out:
+        with pack.open("rb") as pf:
+            out.addfile(_tarinfo("blobs.pack", st["bytes_blobs"], mtime), pf)
+        manifest = dict(manifest, tiles=tiles, blobs=blobs, dedup=st, blank_sha256=sorted(blank_shas),
+                        layout="blobs.pack + manifest.json（tiles[vt][z/x/y.ext]→blobs[i]=[sha256,offset,length]；-1 blank、-2 empty）")
+        body = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         out.addfile(_tarinfo("manifest.json", len(body), mtime), io.BytesIO(body))
+    pack.unlink(missing_ok=True)
     tmp.replace(out_path)
-    return {"sha256": sha256_file(out_path), "bytes": out_path.stat().st_size, "files": len(tiles), **st}
+    return {"sha256": sha256_file(out_path), "bytes": out_path.stat().st_size, "files": st["tiles"], **st}
+
+
+def read_tile_from_day_tar(tar_path: Path, name: str) -> Optional[bytes]:
+    """依 manifest 取回單張磚原始 bytes；blank/empty 回 b''（blank 的原始內容見 blank_sha256）。"""
+    with tarfile.open(tar_path) as tf:
+        man = json.loads(tf.extractfile("manifest.json").read())
+        _prod, vt, rest = name.split("/", 2)
+        ref = man["tiles"].get(vt, {}).get(rest)
+        if ref is None:
+            return None
+        if ref < 0:
+            return b""
+        _sha, off, n = man["blobs"][ref]
+        f = tf.extractfile("blobs.pack")
+        f.seek(off)
+        return f.read(n)
 
 
 def peak_rss_mb() -> Optional[float]:

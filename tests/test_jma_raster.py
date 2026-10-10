@@ -179,12 +179,13 @@ def test_day_tar_dedup_blank_and_deterministic(tmp_path):
     with tarfile.open(tmp_path / "a.tar") as tf:
         names = tf.getnames()
         man = json.loads(tf.extractfile("manifest.json").read())
-    assert names[-1] == "manifest.json" and len(names) == 2
-    h = man["tiles"]["radar/1/z6/53/22.png"]
-    assert man["tiles"]["radar/2/z6/52/22.png"] == h and f"blobs/{h}.png" in names
-    assert man["tiles"]["risk_flood/2/z6/52/22.pbf"] == "empty"
+    assert names == ["blobs.pack", "manifest.json"]
+    h = man["tiles"]["1"]["z6/53/22.png"]
+    assert man["tiles"]["2"]["z6/52/22.png"] == h == 0 and man["blobs"][0][1:] == [0, len(content)]
+    assert sp.read_tile_from_day_tar(tmp_path / "a.tar", "radar/2/z6/52/22.png") == content
+    assert man["tiles"]["2"]["z6/52/22.pbf"] == -2
     if blank334:
-        assert man["tiles"]["radar/2/z6/54/22.png"] == "blank"
+        assert man["tiles"]["2"]["z6/54/22.png"] == -1
 
 
 def test_jma_blank_placeholder_detection():
