@@ -2059,6 +2059,30 @@ class SupabaseWriter:
             records.append(rec)
         return records
 
+    _JMA_RASTER_FRAME_COLS = [
+        'source', 'product', 'valid_time', 'base_time', 'zoom_raw', 'tiles_requested',
+        'tiles_nonempty', 'raw_bytes', 'nonzero_pixels', 'unknown_color_pixels', 'status',
+    ]
+    _JMA_RASTER_DAILY_COLS = [
+        'source', 'product', 'obs_date', 'frames_expected', 'frames_ok', 'raw_key', 'raw_bytes',
+        'raw_sha256', 'raw_storage_class', 'grid_objects', 'grid_bytes', 'summary_key',
+        'decode_table_version', 'status', 'uploaded_at',
+    ]
+
+    def _transform_jma_raster(self, result: dict, ts: datetime) -> list[dict]:
+        """網格圖磚狀態列：frame／daily 依 _type 分流；PK 欄缺值丟棄。"""
+        required = {
+            'frame': ('source', 'product', 'valid_time', 'status'),
+            'daily': ('source', 'product', 'obs_date', 'status'),
+        }
+        records = []
+        for r in result.get('data', []):
+            keys = required.get(r.get('_type'))
+            if not keys or any(not r.get(k) for k in keys):
+                continue
+            records.append(dict(r))
+        return records
+
     def _transform_global_climate_typhoon_positions(self, result: dict, ts: datetime) -> list[dict]:
         """颱風 time-point decomposed（JMA + JTWC 共用）：補 geom WKT。"""
         records: list[dict] = []
@@ -2447,6 +2471,7 @@ class SupabaseWriter:
         'jma_amedas': _transform_jma_amedas,
         'jma_warnings': _transform_jma_warnings,
         'jma_quake': _transform_jma_quake,
+        'jma_raster': _transform_jma_raster,
         'global_climate_jtwc': _transform_global_climate_typhoon_positions,
         'global_climate_cmems': _transform_global_climate_grids,
         'global_climate_cams': _transform_global_climate_grids,
@@ -2689,6 +2714,33 @@ class SupabaseWriter:
                             values, page_size=500,
                         )
             logger.info(f"[jma_quake] ✓ 送出 {written}（DO NOTHING，已存在者略過）")
+            return
+        if collector_name == 'jma_raster':
+            fcols, dcols = self._JMA_RASTER_FRAME_COLS, self._JMA_RASTER_DAILY_COLS
+            frames = {(r['source'], r['product'], r['valid_time']): tuple(r.get(c) for c in fcols)
+                      for r in records if r.get('_type') == 'frame'}
+            daily = {(r['source'], r['product'], r['obs_date']): tuple(r.get(c) for c in dcols)
+                     for r in records if r.get('_type') == 'daily'}
+            rank = "CASE {t}.status WHEN 'missing' THEN 0 WHEN 'partial' THEN 1 WHEN 'ok' THEN 2 ELSE -1 END"
+            with self._txn(conn) as cur:
+                if frames:
+                    upd = ','.join(f'{c}=EXCLUDED.{c}' for c in fcols[3:])
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.weather_raster_frames ({','.join(fcols)}) VALUES %s "
+                        f"ON CONFLICT (source, product, valid_time) DO UPDATE SET {upd},collected_at=now() "
+                        f"WHERE {rank.format(t='live.weather_raster_frames')} < {rank.format(t='EXCLUDED')}",
+                        list(frames.values()), page_size=500,
+                    )
+                if daily:
+                    upd = ','.join(f'{c}=EXCLUDED.{c}' for c in dcols[3:])
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.weather_raster_daily ({','.join(dcols)}) VALUES %s "
+                        f"ON CONFLICT (source, product, obs_date) DO UPDATE SET {upd}",
+                        list(daily.values()), page_size=500,
+                    )
+            logger.info(f"[jma_raster] ✓ frames {len(frames)} + daily {len(daily)} 筆寫入")
             return
         if collector_name == 'global_events':
             batches = [r for r in records if r.get('_type') == 'collector_batch']

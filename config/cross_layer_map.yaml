@@ -1093,3 +1093,20 @@ jma_quake:
     - {prefix: jma_quake/archives/, expected_daily: false}
   critical: false
   notes: 地震 list＋津波 list＋火山 warning.json；事件驅動（DO NOTHING，僅新情報推進 MAX）
+
+
+jma_raster:
+  enabled: false  # 新 collector；migration 437 apply、S3 lifecycle（weather-grid/ 90 天）後設 Zeabur env JAPAN_JMA_RASTER_ENABLED=true + restart
+  deployment: zeabur
+  expected_interval_min: 60
+  supabase_tables: [live.weather_raster_frames, live.weather_raster_daily]
+  s3_prefixes:
+    - {prefix: jma_raster/archives/, expected_daily: false}
+    - {prefix: weather-raw/jma/, expected_daily: true}
+    - {prefix: weather-daily/jma/, expected_daily: true}
+    - {prefix: weather-grid/jma/, expected_daily: true}
+  critical: false
+  notes: >-
+    ADR-0021 G 型網格圖磚（radar/rasrf/risk_land/risk_inund/risk_flood(pbf 只冷存)/snow_depth/himawari_b13）；
+    每輪 oldest-first 補抓上游保留期內缺幀；請求預算：radar/rasrf/risk 每幀 ≤288（z6 48 + 前 15 磚下鑽 z8×16），
+    snow 48、himawari 12；並發 ≤4。日結 JST D+1 01:00 後：T1 weather-daily、T3 weather-raw（DEEP_ARCHIVE），T2 weather-grid 每小時

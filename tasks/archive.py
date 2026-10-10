@@ -26,7 +26,7 @@ import config
 class ArchiveTask:
     """歸檔任務管理器"""
 
-    INTERNAL_DATA_DIRS = {'.archive-receipts'}
+    INTERNAL_DATA_DIRS = {'.archive-receipts', 'weather_raw'}  # weather_raw：jma_raster 自管 spool/T3
 
     def __init__(self):
         self.s3 = None

@@ -132,6 +132,51 @@ class S3Storage:
             print(f"   ✗ 上傳快照失敗 {s3_key}: {e}")
             return False
 
+    def upload_path(self, local_path: Path, s3_key: str, *, storage_class: str = 'STANDARD',
+                    metadata: dict | None = None,
+                    content_type: str = 'application/octet-stream') -> bool:
+        """串流上傳本地檔（multipart，低並發控記憶體），可指定 StorageClass 與自訂 metadata。
+
+        weather_raster 用：日 tar 可達上百 MB，不可整包讀進記憶體（upload_snapshot 收 bytes）。
+        """
+        from boto3.s3.transfer import TransferConfig
+        extra = {'StorageClass': storage_class, 'ContentType': content_type}
+        if metadata:
+            extra['Metadata'] = {str(k): str(v) for k, v in metadata.items()}
+        try:
+            self.s3.upload_file(
+                str(local_path), self.bucket, s3_key, ExtraArgs=extra,
+                Config=TransferConfig(max_concurrency=2, multipart_chunksize=16 * 1024 * 1024),
+            )
+            return True
+        except Exception as e:
+            print(f"   ✗ 上傳失敗 {s3_key}: {e}")
+            return False
+
+    def head(self, s3_key: str) -> dict | None:
+        """head_object 摘要；不存在回 None，其他錯誤往上丟（呼叫端當作未驗證）。"""
+        try:
+            h = self.s3.head_object(Bucket=self.bucket, Key=s3_key)
+        except self.ClientError as exc:
+            if str(exc.response.get('Error', {}).get('Code', '')) in {'404', 'NoSuchKey', 'NotFound'}:
+                return None
+            raise
+        return {
+            'ContentLength': h.get('ContentLength'),
+            'Metadata': h.get('Metadata') or {},
+            # head 對 STANDARD 物件不回 StorageClass
+            'StorageClass': h.get('StorageClass') or 'STANDARD',
+            'ETag': h.get('ETag'),
+        }
+
+    def delete(self, s3_key: str) -> bool:
+        try:
+            self.s3.delete_object(Bucket=self.bucket, Key=s3_key)
+            return True
+        except Exception as e:
+            print(f"   ✗ 刪除失敗 {s3_key}: {e}")
+            return False
+
     def upload_archive(self, local_path: Path, s3_key: str) -> bool:
         """上傳 tar.gz 歸檔到 S3
 
