@@ -215,6 +215,7 @@ class JmaRasterCollector(BaseCollector):
     def _load_state(self, pname: str) -> dict:
         st = sp.read_json(self._state_path(pname), None) or {}
         st.setdefault("epoch", None)
+        st.setdefault("finalized_until", None)  # 此時刻之前的 validtime 已定案（抓到或 missing），不再回頭掃
         st.setdefault("closed_days", [])
         st.setdefault("pending_frames", {})
         st.setdefault("pending_daily", {})
@@ -541,6 +542,10 @@ class JmaRasterCollector(BaseCollector):
         }
 
     # ───────── 一個產品一輪 ─────────
+    def _day_closed(self, product: Product, day: str, closed: set) -> bool:
+        """日結過的日期（state 只留最近 10 天；更舊的看 _receipts）不可再回頭寫 missing／重開 spool。"""
+        return day in closed or (self.spool_root / "_receipts" / product.name / f"{day}.json").exists()
+
     def fetch_product(self, product: Product, now: datetime, budget_frames: int) -> dict:
         st = self._load_state(product.name)
         from collectors.global_climate.jma_common import fetch
@@ -555,12 +560,13 @@ class JmaRasterCollector(BaseCollector):
         window_start = max(epoch, latest_t - product.retention + RETENTION_MARGIN)
         closed = set(st["closed_days"])
 
-        # 1) 超出保留期仍沒抓到 → missing 定案
+        # 1) 超出保留期仍沒抓到 → missing 定案（從上次定案到的位置往後掃，不從 epoch 重掃全史）
         missing_new = 0
-        if window_start > epoch:
-            for vt in expected_vts(product, epoch, window_start - timedelta(seconds=1)):
+        scan_from = max(epoch, parse_vt(st["finalized_until"])) if st["finalized_until"] else epoch
+        if window_start > scan_from:
+            for vt in expected_vts(product, scan_from, window_start - timedelta(seconds=1)):
                 day = jst_date(vt)
-                if day in closed:
+                if self._day_closed(product, day, closed):
                     continue
                 ds = self._day_state(product, day)
                 if vt in ds["frames"]:
@@ -569,13 +575,14 @@ class JmaRasterCollector(BaseCollector):
                 self._save_day(product, day, ds)
                 st["pending_frames"][vt] = self.frame_row(product, vt, {"status": "missing"})
                 missing_new += 1
+            st["finalized_until"] = fmt_vt(window_start)
 
         # 2) 保留期內補抓（oldest-first、每輪上限）
         fetched = unavailable = requests = 0
         day_cache: dict[str, dict] = {}
         for vt in expected_vts(product, window_start, latest_t):
             day = jst_date(vt)
-            if day in closed:
+            if self._day_closed(product, day, closed):
                 continue
             ds = day_cache.setdefault(day, self._day_state(product, day))
             if vt in ds["frames"]:

@@ -438,3 +438,22 @@ def test_backlog_expired_tiles_marked_unfetched(tmp_path, monkeypatch):
     c2.collect_product(jr.PRODUCTS["radar"], datetime(2026, 10, 10, 1, 5, tzinfo=timezone.utc), 1)
     fr = c2._day_state(jr.PRODUCTS["radar"], "20261009")["frames"][latest]
     assert fr["settled"] and len(fr["fine_unfetched"]) == 33 and fr["fine_pending"] == []
+
+
+def test_missing_scan_does_not_reopen_closed_days(tmp_path, monkeypatch):
+    """closed_days 只留最近 10 天：更舊的日期靠 finalized_until／_receipts 擋，不可重寫 missing、重開 spool。"""
+    latest = "20261009160000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch", lambda s, path, **k: snow_tt(latest))
+    c = make_collector(tmp_path, ["snow_depth"], FakeS3(), lambda url: (200, png_blank()))
+    now = datetime(2026, 10, 9, 16, 5, tzinfo=timezone.utc)
+    assert c.collect_product(jr.PRODUCTS["snow_depth"], now, 10)["days_closed"] == ["20261009"]
+    st = c._load_state("snow_depth")
+    st["closed_days"], st["pending_frames"], st["finalized_until"] = [], {}, None  # 模擬被擠出最近 10 天
+    c._save_state("snow_depth", st)
+    later = "20261011020000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch", lambda s, path, **k: snow_tt(later))
+    c.collect_product(jr.PRODUCTS["snow_depth"], datetime(2026, 10, 11, 2, 5, tzinfo=timezone.utc), 0)
+    st = c._load_state("snow_depth")
+    assert not any(jr.jst_date(v) == "20261009" for v in st["pending_frames"])
+    assert not (c.spool_root / "snow_depth" / "20261009").exists()
+    assert st["finalized_until"]
