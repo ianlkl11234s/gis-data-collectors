@@ -9,6 +9,9 @@ effective_from: "2026-10-09"
 palette_basis: legend_svg
 plte_verified: false
 native_zooms: [4, 6, 8, 10]      # zoomUse=even、maxNativeZoom 10（snow.properties.xml）；解析積雪深原生約 5 km，收 z6 即足夠
+# 粗圖探測（JAPAN_JMA_RASTER_COARSE_PROBE，第二批 2026-10-11）：z4 回 200（10 月無積雪，只見 334B 佔位；季內再以 shadow 驗證）
+#   SSOT 是 collectors/global_climate/jma_raster.py Product.probe_zoom；本欄僅記錄。
+coarse_probe_zoom: 4
 rgb_tolerance: 8
 levels:
   - {level: 1, rgb: [160, 210, 255], label: "<5 cm"}

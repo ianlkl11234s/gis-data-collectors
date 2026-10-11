@@ -15,11 +15,15 @@
 整點保證：若某輪 latest_time 不是整點（例如排程漂移跳過 :00），會補抓最近整點那一份 map，
   避免 observations 漏小時（同一 process 內每個整點只補一次；DB 端 DO NOTHING 兜底重複）。
 新鮮度：latest_time 落後現在 > 40 分 → print stale 警告（result['stale']=True）。
+每日 Parquet（第二批 2026-10-11）：每輪結尾檢查可日結的 JST 日（D+1 01:00 後、無 receipt），每輪最多 1 天，
+  組 Parquet 上傳 S3 weather-obs/jma/amedas/YYYY/MM/YYYYMMDD.parquet（見 jma_amedas_daily.py）。
+  JAPAN_JMA_AMEDAS_DAILY_PARQUET=false 可關。失敗 → result['_collector_error']（通知），下輪重試。
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import config
@@ -33,6 +37,7 @@ URL_MAP = "amedas/data/map/{stamp}.json"
 URL_TABLE = "amedas/const/amedastable.json"
 
 STALE_MINUTES = 40
+JST = timezone(timedelta(hours=9))
 TABLE_REFRESH = timedelta(hours=24)
 
 # JSON 鍵 → 表欄位
@@ -140,6 +145,7 @@ class JmaAmedasCollector(BaseCollector):
 
     name = "jma_amedas"
     interval_minutes = config.JAPAN_JMA_AMEDAS_INTERVAL
+    COLLECT_TIMEOUT = 600  # 每日 Parquet 若需整天向上游補抓（144 請求）實測約 212 秒；平常走本機檔只需數秒
 
     def __init__(self):
         super().__init__()
@@ -147,6 +153,9 @@ class JmaAmedasCollector(BaseCollector):
         self._stations: dict[str, dict] = {}
         self._stations_loaded_at: Optional[datetime] = None
         self._hours_done: set[str] = set()
+        self._s3 = None
+        self.parquet_dir = Path(config.LOCAL_DATA_DIR) / "state" / "jma_amedas_parquet"
+        self.local_base = Path(config.LOCAL_DATA_DIR) / "jma_amedas"
 
     def _station_index(self) -> dict[str, dict]:
         now = datetime.now(timezone.utc)
@@ -205,7 +214,7 @@ class JmaAmedasCollector(BaseCollector):
         if stale:
             print(f"[{self.name}] ⚠ stale: latest_time={source_time} 已落後 {lag:.0f} 分（>{STALE_MINUTES}）")
 
-        return {
+        out = {
             "data": records,
             "station_count": len(rows),
             "hourly_count": hourly_count,
@@ -214,6 +223,67 @@ class JmaAmedasCollector(BaseCollector):
             "stale": stale,
             "collected_at": collected_at,
         }
+        try:
+            daily = self.close_daily(datetime.now(timezone.utc))
+            if daily:
+                out["daily_parquet"] = daily
+        except Exception as e:  # noqa: BLE001 — 本輪資料照寫，日結下輪重試；但要讓告警看得到
+            print(f"[{self.name}] ✗ 每日 Parquet 失敗（下輪重試）: {e}")
+            out["daily_parquet_error"] = str(e)
+            out["_collector_error"] = f"jma_amedas daily parquet: {e}"
+        return out
+
+    # ───────── 每日 Parquet（JST 日結）─────────
+    def _s3_client(self):
+        if self._s3 is None and config.S3_BUCKET:
+            from storage.s3 import S3Storage
+            self._s3 = S3Storage()
+        return self._s3
+
+    def _fetch_slot(self, t: datetime) -> list[dict]:
+        """上游補抓單一 10 分鐘時刻（JST aware）→ current 列。"""
+        data = fetch(self._session, URL_MAP.format(stamp=_stamp(t.astimezone(JST))))
+        iso = t.astimezone(JST).isoformat()
+        return parse_amedas_map(data, self._station_index(), observed_at=iso, source_time=iso,
+                                collected_at=datetime.now(TAIPEI_TZ).isoformat())
+
+    def close_daily(self, now: datetime, max_days: int = 1) -> Optional[dict]:
+        """日結可結的 JST 日（每輪最多 max_days 天）。回本輪摘要；沒事做回 None。失敗丟例外。"""
+        if not config.JAPAN_JMA_AMEDAS_DAILY_PARQUET:
+            return None
+        from collectors.global_climate import jma_amedas_daily as dly
+        from collectors.weather_raster.spool import read_json, sha256_file, write_json_atomic
+        from storage.s3 import put_verified
+        first_path = self.parquet_dir / "_first_day.json"
+        first = (read_json(first_path, None) or {}).get("first_day")
+        if not first:
+            first = now.astimezone(JST).strftime("%Y%m%d")
+            write_json_atomic(first_path, {"first_day": first})
+        todo = [d for d in dly.closable_days(now, first) if not (self.parquet_dir / f"{d}.json").exists()]
+        if not todo:
+            return None
+        s3 = self._s3_client()
+        if s3 is None:
+            print(f"[{self.name}] ⚠ S3 未設定，每日 Parquet 無法上傳（待日結 {todo}）")
+            return {"pending": todo, "skipped": "no_s3"}
+        done = []
+        for day in todo[:max_days]:
+            local = self.parquet_dir / f"{day}.parquet"
+            info = dly.build_day_parquet(day, local, local_base=self.local_base, fetch_slot=self._fetch_slot)
+            sha = sha256_file(local)
+            key = dly.s3_key(day)
+            if not put_verified(s3, local, key, sha, "STANDARD", "application/vnd.apache.parquet"):
+                raise RuntimeError(f"{key} 上傳／驗證失敗")
+            receipt = {"day": day, "key": key, "sha256": sha, "storage_class": "STANDARD",
+                       "verified_at": datetime.now(timezone.utc).isoformat(), **info}
+            write_json_atomic(self.parquet_dir / f"{day}.json", receipt)
+            local.unlink(missing_ok=True)
+            print(f"[{self.name}] ✓ 每日 Parquet {day}: {info['rows']:,} 列 {info['stations']} 站 "
+                  f"本機 {info['slots_local']}/144 補抓 {info['slots_filled']} 缺 {info['slots_missing']} "
+                  f"{info['bytes']:,}B → s3://{key}")
+            done.append({k: receipt[k] for k in ("day", "rows", "slots_local", "slots_filled",
+                                                 "slots_missing", "bytes")})
+        return {"closed": done, "pending": todo[max_days:]}
 
 
 if __name__ == "__main__":
@@ -221,6 +291,7 @@ if __name__ == "__main__":
     c.name = "jma_amedas"
     c._session = new_jma_session("jma-amedas-test")
     c._stations, c._stations_loaded_at, c._hours_done = {}, None, set()
+    c._s3, c.parquet_dir, c.local_base = None, Path("/nonexistent"), Path("/nonexistent")
     out = c.collect()
     print({k: v for k, v in out.items() if k != "data"})
     print(out["data"][0])

@@ -217,7 +217,7 @@ class FakeS3:
         return True
 
 
-def make_collector(tmp_path, products, s3, get, lookback_min=180):
+def make_collector(tmp_path, products, s3, get, lookback_min=180, probe_mode="off"):
     c = jr.JmaRasterCollector.__new__(jr.JmaRasterCollector)
     c.name = "jma_raster"
     c.interval_minutes = 60
@@ -233,6 +233,7 @@ def make_collector(tmp_path, products, s3, get, lookback_min=180):
     c._get = get
     c.backlog_products = {"radar", "rasrf", "risk_land", "risk_inund", "risk_flood"}
     c._window, c._epoch = {}, {}
+    c.probe_mode = probe_mode
     return c
 
 
@@ -438,3 +439,157 @@ def test_backlog_expired_tiles_marked_unfetched(tmp_path, monkeypatch):
     c2.collect_product(jr.PRODUCTS["radar"], datetime(2026, 10, 10, 1, 5, tzinfo=timezone.utc), 1)
     fr = c2._day_state(jr.PRODUCTS["radar"], "20261009")["frames"][latest]
     assert fr["settled"] and len(fr["fine_unfetched"]) == 33 and fr["fine_pending"] == []
+
+
+# ───────────────────────── 第二批（2026-10-11）：取樣間隔／季節／粗圖探測 ─────────────────────────
+
+def test_canvas_z4_covers_whole_z6_canvas_and_probe_children_clipped():
+    assert jr.canvas(4) == (13, 5, 2, 2), "z6 y22..27 → z4 y5..6（舊版 floor 只算到 y5）"
+    assert jr.canvas(5) == (26, 11, 4, 3)
+    c = make_collector(Path("/nonexistent"), ["radar"], None, None)
+    radar = jr.PRODUCTS["radar"]
+    kids = {q: c.probe_children(radar, q) for q in [(13, 5), (14, 5), (13, 6), (14, 6)]}
+    assert [len(kids[q]) for q in sorted(kids)] == [8, 16, 8, 16]
+    allk = [k for v in kids.values() for k in v]
+    assert len(allk) == len(set(allk)) == 48
+
+
+def test_cadence_override_keeps_only_00_and_30():
+    prods = jr.configure_products("risk_land=30,risk_inund=30,risk_flood=30,radar=7", "")
+    assert prods["risk_land"].cadence_min == 30 and prods["risk_flood"].cadence_min == 30
+    assert prods["radar"].cadence_min == 5, "非原生倍數的設定忽略"
+    assert jr.PRODUCTS["risk_land"].cadence_min == 10, "不改模組常數"
+    t0 = datetime(2026, 10, 9, 0, 0, tzinfo=timezone.utc)
+    vts = jr.expected_vts(prods["risk_land"], t0, t0 + timedelta(hours=2))
+    assert vts == ["20261009000000", "20261009003000", "20261009010000", "20261009013000", "20261009020000"]
+
+
+def test_season_months_parsing_and_filter():
+    prods = jr.configure_products("risk_land=30", "snow_depth=11,12,1,2,3,4")
+    snow = prods["snow_depth"]
+    assert snow.season_months == frozenset({11, 12, 1, 2, 3, 4})
+    assert prods["risk_land"].cadence_min == 30 and prods["risk_land"].season_months is None
+    oct_ = datetime(2026, 10, 9, 0, 0, tzinfo=timezone.utc)
+    assert jr.expected_vts(snow, oct_, oct_ + timedelta(hours=6)) == []
+    # 季節以 JST 月份判斷：10/31 15:00 UTC = 11/1 00:00 JST
+    edge = datetime(2026, 10, 31, 14, 0, tzinfo=timezone.utc)
+    assert jr.expected_vts(snow, edge, edge + timedelta(hours=2)) == ["20261031150000", "20261031160000"]
+    assert jr.configure_products("", "snow_depth=13")["snow_depth"].season_months is None, "非法月份忽略"
+
+
+def test_off_season_no_fetch_no_frames_and_no_missing(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("季外不該打 targetTimes")
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch", boom)
+    snow = jr.configure_products("", "snow_depth=11,12,1,2,3,4")["snow_depth"]
+    c = make_collector(tmp_path, [], FakeS3(), lambda url: (_ for _ in ()).throw(AssertionError(url)))
+    c.products = [snow]
+    now = datetime(2026, 7, 1, 0, 5, tzinfo=timezone.utc)
+    res = c.collect_product(snow, now, 10)
+    assert res["off_season"] and res["fetched"] == 0 and res["missing_finalized"] == 0
+    res2 = c.collect_product(snow, now + timedelta(days=3), 10)
+    assert res2["missing_finalized"] == 0 and c._load_state("snow_depth")["pending_frames"] == {}
+    assert not (c.spool_root / "snow_depth").exists() or not any((c.spool_root / "snow_depth").iterdir())
+
+
+def test_missing_scan_does_not_reopen_closed_days(tmp_path, monkeypatch):
+    """closed_days 只留最近 10 天：更舊的日期靠 finalized_until／_receipts 擋，不可重寫 missing、重開 spool。"""
+    latest = "20261009160000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch", lambda s, path, **k: snow_tt(latest))
+    c = make_collector(tmp_path, ["snow_depth"], FakeS3(), lambda url: (200, png_blank()))
+    now = datetime(2026, 10, 9, 16, 5, tzinfo=timezone.utc)
+    assert c.collect_product(jr.PRODUCTS["snow_depth"], now, 10)["days_closed"] == ["20261009"]
+    st = c._load_state("snow_depth")
+    st["closed_days"], st["pending_frames"], st["finalized_until"] = [], {}, None  # 模擬被擠出最近 10 天
+    c._save_state("snow_depth", st)
+    later = "20261011020000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch", lambda s, path, **k: snow_tt(later))
+    c.collect_product(jr.PRODUCTS["snow_depth"], datetime(2026, 10, 11, 2, 5, tzinfo=timezone.utc), 0)
+    st = c._load_state("snow_depth")
+    assert not any(jr.jst_date(v) == "20261009" for v in st["pending_frames"])
+    assert not (c.spool_root / "snow_depth" / "20261009").exists()
+    assert st["finalized_until"]
+
+
+def _probe_get(z4_rich: set, z6_rich: set, calls: list, rich: bytes):
+    def get(url):
+        calls.append(url)
+        parts = url.rsplit("/", 3)
+        z, x, y = int(parts[1]), int(parts[2]), int(parts[3].split(".")[0])
+        if z == 4:
+            return 200, (rich if (x, y) in z4_rich else png_blank())
+        if z == 6:
+            return 200, (rich if (x, y) in z6_rich else png_blank())
+        return 200, (rich if (x // 4, y // 4) in z6_rich else png_blank())
+    return get
+
+
+def test_coarse_probe_shadow_fetches_all_and_counts_misses(tmp_path, monkeypatch):
+    latest = "20261009000000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
+                        lambda s, path, **k: [{"basetime": latest, "validtime": latest}])
+    idx = np.zeros((256, 256), np.uint8); idx[:2, :] = 4
+    rich = png_p(idx)
+    calls = []
+    # z4 只有 (14,6) 有內容；z6 (52,22) 落在 z4 (13,5) → z4 全空但 z6 非空 = 1 miss
+    get = _probe_get({(14, 6)}, {(52, 22), (58, 26)}, calls, rich)
+    c = make_collector(tmp_path, ["radar"], None, get, lookback_min=0, probe_mode="shadow")
+    res = c.collect_product(jr.PRODUCTS["radar"], datetime(2026, 10, 9, 0, 5, tzinfo=timezone.utc), 1)
+    fr = c._day_state(jr.PRODUCTS["radar"], "20261009")["frames"][latest]
+    assert fr["probe_mode"] == "shadow" and fr["probe_misses"] == 1
+    assert sorted(fr["probe_blank"]) == ["z4/13/5", "z4/13/6", "z4/14/5"]
+    assert fr["inferred_blank_tiles"] == []
+    assert res["requests"] == 4 + 48 + 2 * 16, "shadow：z4 4 磚＋z6 全幅＋有內容的 2 磚下鑽"
+    row = c._load_state("radar")["pending_frames"][latest]
+    assert row["probe_mode"] == "shadow" and row["probe_misses"] == 1 and row["tiles_inferred_blank"] == 0
+    with tarfile.open(c.day_dir(jr.PRODUCTS["radar"], "20261009") / "frames" / f"{latest}.tar") as tf:
+        assert sum(1 for n in tf.getnames() if "/z4/" in n) == 4, "探測磚也進 T3 原始檔"
+
+
+def test_coarse_probe_on_skips_blank_regions_and_records_inferred(tmp_path, monkeypatch):
+    latest = "20261009000000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
+                        lambda s, path, **k: [{"basetime": latest, "validtime": latest}])
+    idx = np.zeros((256, 256), np.uint8); idx[:2, :] = 4
+    rich = png_p(idx)
+    calls = []
+    get = _probe_get({(14, 6)}, {(58, 26)}, calls, rich)
+    c = make_collector(tmp_path, ["radar"], None, get, lookback_min=0, probe_mode="on")
+    res = c.collect_product(jr.PRODUCTS["radar"], datetime(2026, 10, 9, 0, 5, tzinfo=timezone.utc), 1)
+    fr = c._day_state(jr.PRODUCTS["radar"], "20261009")["frames"][latest]
+    z6_calls = [u for u in calls if "/hrpns/6/" in u]
+    assert len(z6_calls) == 16 and all(int(u.rsplit("/", 2)[1]) // 4 == 14 for u in z6_calls)
+    assert len(fr["inferred_blank_tiles"]) == 32 and fr["probe_misses"] is None
+    assert res["requests"] == 4 + 16 + 16
+    g = sp.load_grid(c.day_dir(jr.PRODUCTS["radar"], "20261009") / "grids" / f"{latest}.npz")
+    assert g.max() == 3 and np.count_nonzero(g == MISSING) == 0, "推定為空＝0，不是缺測"
+    row = c._load_state("radar")["pending_frames"][latest]
+    assert row["tiles_inferred_blank"] == 32 and row["status"] == "ok"
+    # T3 manifest 的 frames 由 frame dict 組成（除 grid 外全帶）→ inferred_blank_tiles 進 manifest
+    assert {"z6/52/22", "z6/55/27"} <= set(fr["inferred_blank_tiles"])
+    assert fr["tiles_nonempty"] == 1, "on 模式只計實際抓到的磚"
+
+
+def test_coarse_probe_z4_404_means_frame_absent(tmp_path, monkeypatch):
+    latest = "20261009000000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
+                        lambda s, path, **k: [{"basetime": latest, "validtime": latest}])
+    calls = []
+
+    def get(url):
+        calls.append(url)
+        return (404, b"") if "/hrpns/4/" in url else (200, png_blank())
+    c = make_collector(tmp_path, ["radar"], None, get, lookback_min=0, probe_mode="shadow")
+    res = c.collect_product(jr.PRODUCTS["radar"], datetime(2026, 10, 9, 0, 5, tzinfo=timezone.utc), 1)
+    assert res["fetched"] == 0 and res["unavailable"] == 1 and len(calls) == 1
+
+
+def test_himawari_never_probes(tmp_path, monkeypatch):
+    latest = "20261009000000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
+                        lambda s, path, **k: [{"basetime": latest, "validtime": latest}])
+    calls = []
+    c = make_collector(tmp_path, ["himawari_b13"], None,
+                       lambda url: (calls.append(url) or (200, b"\xff\xd8jpg")), lookback_min=0, probe_mode="on")
+    c.collect_product(jr.PRODUCTS["himawari_b13"], datetime(2026, 10, 9, 0, 5, tzinfo=timezone.utc), 1)
+    assert len(calls) == 12 and all("/5/" in u for u in calls)

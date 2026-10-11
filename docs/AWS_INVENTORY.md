@@ -118,6 +118,7 @@ Rule ID: archive-deep-270d:{collector}（每個 collector 一條，Prefix={colle
 | `weather-raw/` | **ADR-0021 T3 冷層**（collector `jma_raster`，待上線）：`weather-raw/{source}/{product}/{YYYY}/{MM}/{YYYYMMDD}.tar`，每產品每日 1 個不壓縮 tar（磚級 sha256 去重＋manifest.json），上傳時直接 **DEEP_ARCHIVE**、永久；`_smoke/` 只放測試物件，驗證後即刪 | 0（2026-10-10） |
 | `weather-grid/` | **ADR-0021 T2**：`weather-grid/{source}/{product}/{YYYYMMDD}/{HH}.npz`，每幀解碼網格每小時一檔，**永久**；lifecycle 待加「90 天轉 GLACIER_IR」（不可設到期刪除） | 0 |
 | `weather-daily/` | **ADR-0021 T1**：`weather-daily/{source}/{product}/{YYYY}/{YYYYMMDD}.npz` 每日彙總（衍生物，可由 T2 重算），STANDARD 永久 | 0 |
+| `weather-obs/` | **ADR-0021 S 型冷層**（collector `jma_amedas`，第二批 2026-10-11）：`weather-obs/jma/amedas/{YYYY}/{MM}/{YYYYMMDD}.parquet`，每 JST 日一份每站×10 分 Parquet（zstd，約 2.3 MB／18.5 萬列），STANDARD 上傳、走全桶 lifecycle 轉 IA／GIR，**永久**（不可設到期刪除）；head 驗大小＋sha256，本機 receipt 防重傳 | 0（2026-10-11） |
 | `_external_vm_health/` | **監控**：HiCloud VM + 本機 Mac 每日推 health snapshot JSON。被 `tasks/daily_report.py` 撈來顯示「VM 健康」段。**勿手動改 / 勿加 lifecycle** | < 0.01 GB |
 
 ---

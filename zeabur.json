@@ -365,7 +365,7 @@
       "default": "10"
     },
     "JAPAN_JMA_WARNINGS_ENABLED": {
-      "description": "日本氣象廳 R8 警報・注意報（map_time 有變才抓；migration 435）",
+      "description": "日本氣象廳 R8 警報・注意報（map_time 有變才抓；只記變動 start/status_change/end → live.jma_warning_events，migration 438）",
       "default": "false"
     },
     "JAPAN_JMA_WARNINGS_INTERVAL": {
@@ -395,6 +395,22 @@
     "JAPAN_JMA_RASTER_MAX_FINE_TILES": {
       "description": "每幀 z6→z8 下鑽磚數上限（每磚 16 子磚；15 ⇒ 每幀 ≤288 請求）",
       "default": "15"
+    },
+    "JAPAN_JMA_RASTER_CADENCE": {
+      "description": "每產品取樣間隔（分鐘，須為上游原生間隔倍數）；預設キキクル每 30 分一幀（只收 :00/:30）",
+      "default": "risk_land=30,risk_inund=30,risk_flood=30"
+    },
+    "JAPAN_JMA_RASTER_SEASON": {
+      "description": "季節開關（JST 月份；季外不抓、不產 frames 列、不算缺幀）",
+      "default": "snow_depth=11,12,1,2,3,4"
+    },
+    "JAPAN_JMA_RASTER_COARSE_PROBE": {
+      "description": "粗圖探測 off|shadow|on：每幀先抓 z4；shadow 照舊全抓並記 miss（frames.probe_misses），on 跳過 z4 全空區的 z6/z8（manifest 記推定為空）",
+      "default": "shadow"
+    },
+    "JAPAN_JMA_AMEDAS_DAILY_PARQUET": {
+      "description": "AMeDAS 每 JST 日結（D+1 01:00 後）組每站×10 分 Parquet 上傳 S3 weather-obs/jma/amedas/YYYY/MM/YYYYMMDD.parquet（需 S3）",
+      "default": "true"
     },
     "YOUTUBE_API_KEY": {
       "description": "YouTube Data API v3 key（yt_live_video_resolver 必需，缺了會 silent skip）；GCP 專案需啟用 YouTube Data API v3"

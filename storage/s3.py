@@ -551,3 +551,25 @@ class S3Storage:
             return []
 
         return self.list_files(prefix)
+
+
+def put_verified(s3, local_path: Path, s3_key: str, sha256: str, storage_class: str,
+                 content_type: str = 'application/octet-stream') -> bool:
+    """冪等上傳＋驗證（jma_raster T1–T3、AMeDAS 每日 Parquet 共用）。
+
+    head 已存在且 ContentLength／metadata sha256／StorageClass 皆相符 → 跳過（防重傳）；
+    否則 upload_path 後再 head 驗證一次。s3 只需提供 head()／upload_path()（測試可用假物件）。
+    head 的例外往上丟，由呼叫端當作未驗證。
+    """
+    size = Path(local_path).stat().st_size
+
+    def good(h):
+        return (h is not None and h['ContentLength'] == size and h['Metadata'].get('sha256') == sha256
+                and h['StorageClass'] == storage_class)
+
+    if good(s3.head(s3_key)):
+        return True
+    if not s3.upload_path(local_path, s3_key, storage_class=storage_class,
+                          metadata={'sha256': sha256, 'bytes': size}, content_type=content_type):
+        return False
+    return good(s3.head(s3_key))
