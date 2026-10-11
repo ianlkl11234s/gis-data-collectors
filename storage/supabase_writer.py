@@ -293,7 +293,7 @@ class SupabaseWriter:
         except (PoolBorrowTimeout, PoolBreakerOpen) as e:
             # 池滿 / 斷路器 — 都是「DB 暫時不可用」的訊號。不是 bug，不要 Telegram 洗版。
             logger.warning(f"[{collector_name}] DB 暫時不可用，暫存 buffer: {e}")
-            if collector_name != 'gfw_vessel_presence' or config.GFW_RAW_ARCHIVE_ENABLED:
+            if self._should_buffer(collector_name):
                 self._write_to_buffer(collector_name, result, timestamp)
             self._report_heartbeat(collector_name, False, 0, str(e))
             self._record_db_error(collector_name, e)
@@ -301,11 +301,21 @@ class SupabaseWriter:
 
         except Exception as e:
             logger.warning(f"[{collector_name}] DB 寫入失敗，暫存 buffer: {e}")
-            if collector_name != 'gfw_vessel_presence' or config.GFW_RAW_ARCHIVE_ENABLED:
+            if self._should_buffer(collector_name):
                 self._write_to_buffer(collector_name, result, timestamp)
             self._report_heartbeat(collector_name, False, 0, str(e))
             self._record_db_error(collector_name, e)
             return False
+
+    # 寫入失敗時「不進 buffer」的 collector：靠自身 state 不前進來重試，buffer 補寫反而會重複。
+    # jma_warnings（438 起只記變動）：下一輪會用新 control_datetime 重新差分，buffer 再補寫舊一輪
+    # → 同一變動兩筆（UNIQUE 含 control_datetime 擋不住）。
+    NO_BUFFER_COLLECTORS = frozenset({'jma_warnings'})
+
+    def _should_buffer(self, collector_name: str) -> bool:
+        if collector_name in self.NO_BUFFER_COLLECTORS:
+            return False
+        return collector_name != 'gfw_vessel_presence' or config.GFW_RAW_ARCHIVE_ENABLED
 
     def _record_db_error(self, collector_name: str, err: Exception) -> None:
         """累計連續錯誤，到達閾值才發 Telegram（避免洗版）。"""
@@ -2031,11 +2041,14 @@ class SupabaseWriter:
         return records
 
     def _transform_jma_warnings(self, result: dict, ts: datetime) -> list[dict]:
-        """R8 警報：collector 已產出與 TABLE_MAP 同名 dict（含 '__none__' 哨兵列）。"""
+        """R8 警報變動事件（migration 438）：collector 已產出與 TABLE_MAP 同名 dict。
+        沒有 change_type 的列（438 前的快照列、舊 buffer）一律丟棄。"""
         cols = TABLE_MAP['jma_warnings']['columns']
         records = []
         for r in result.get('data', []):
             if not r.get('control_datetime') or not r.get('area_code') or not r.get('kind_code'):
+                continue
+            if r.get('change_type') not in ('start', 'status_change', 'end'):
                 continue
             rec = {c: r.get(c) for c in cols}
             rec['collected_at'] = rec['collected_at'] or ts.isoformat()
@@ -2062,6 +2075,8 @@ class SupabaseWriter:
     _JMA_RASTER_FRAME_COLS = [
         'source', 'product', 'valid_time', 'base_time', 'zoom_raw', 'tiles_requested',
         'tiles_nonempty', 'raw_bytes', 'nonzero_pixels', 'unknown_color_pixels', 'status',
+        # migration 438：粗圖探測（shadow 的 miss 計數、on 的推定為空磚數）
+        'probe_mode', 'probe_misses', 'tiles_inferred_blank',
     ]
     _JMA_RASTER_DAILY_COLS = [
         'source', 'product', 'obs_date', 'frames_expected', 'frames_ok', 'raw_key', 'raw_bytes',

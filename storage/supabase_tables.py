@@ -900,14 +900,16 @@ TABLE_MAP = {
         'is_multi_table': True,
     },
     'jma_warnings': {
-        # R8 警報・注意報全國快照；control_datetime = map_time latestControlDatetime
-        # UNIQUE (control_datetime, area_code, kind_code) DO NOTHING
-        'history': 'live.jma_warnings',
+        # R8 警報・注意報「只記變動」（migration 438，2026-10-11 起）：start／status_change／end
+        # UNIQUE (control_datetime, area_code, kind_code, change_type) DO NOTHING；永久保留
+        # 舊 live.jma_warnings（每輪全量快照）停寫，保留讓 7 天資料自然清空
+        'history': 'live.jma_warning_events',
         'columns': [
             'control_datetime', 'office_code', 'office_name', 'area_code', 'area_name',
             'area_level', 'kind_code', 'kind_name', 'status', 'report_datetime', 'collected_at',
+            'change_type',
         ],
-        'upsert_key': 'control_datetime,area_code,kind_code',
+        'upsert_key': 'control_datetime,area_code,kind_code,change_type',
         'upsert_strategy': 'do_nothing',
     },
     'jma_quake': {

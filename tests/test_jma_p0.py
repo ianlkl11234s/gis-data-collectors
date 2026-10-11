@@ -19,7 +19,7 @@ from collectors.global_climate.jma_quake import (
     build_volcano_index, parse_cod, parse_quake_list, parse_tsunami_list, parse_volcano_warning,
 )
 from collectors.global_climate.jma_warnings import (
-    KIND_NAMES, SENTINEL_CODE, parse_warning_map, sentinel_row,
+    KIND_NAMES, active_from_rows, diff_active, parse_warning_map,
 )
 from storage.supabase_tables import TABLE_MAP
 from storage.supabase_writer import SupabaseWriter
@@ -130,7 +130,7 @@ def test_amedas_multi_table_sql(writer, capture):
     assert len(obs_vals) == len(obs)
 
 
-def test_amedas_collect_backfills_missing_hour(monkeypatch):
+def test_amedas_collect_backfills_missing_hour(monkeypatch, tmp_path):
     calls = []
 
     def fake_fetch(session, path, as_text=False, **kw):
@@ -145,7 +145,9 @@ def test_amedas_collect_backfills_missing_hour(monkeypatch):
     c = jma_amedas.JmaAmedasCollector.__new__(jma_amedas.JmaAmedasCollector)
     c.name, c._session = "jma_amedas", None
     c._stations, c._stations_loaded_at, c._hours_done = {}, None, set()
+    c._s3, c.parquet_dir, c.local_base = None, tmp_path / "pq", tmp_path / "jma_amedas"
     out = c.collect()
+    assert "_collector_error" not in out, out.get("daily_parquet_error")
     json.dumps(out)
     n = len(FIXTURE["amedas_map"])
     assert out["station_count"] == n and out["hourly_count"] == n
@@ -199,21 +201,100 @@ def test_warning_dedup_keeps_latest_report():
     assert rows[0]["report_datetime"] == "2026-10-09T12:00:00+09:00"
 
 
-def test_warning_all_cleared_yields_no_rows_and_sentinel_shape():
-    cleared = [e for e in FIXTURE["warning_map"]
-               if not any(k.get("status") in ("発表", "継続")
-                          for items in e["warning"].values() for it in items for k in it["kinds"])]
-    rows, _ = parse_warning_map(cleared, FIXTURE["area"], control_datetime=CTRL, collected_at=COLLECTED)
+def _cleared_fixture():
+    return [e for e in FIXTURE["warning_map"]
+            if not any(k.get("status") in ("発表", "継続")
+                       for items in e["warning"].values() for it in items for k in it["kinds"])]
+
+
+def test_warning_all_cleared_yields_no_rows():
+    rows, _ = parse_warning_map(_cleared_fixture(), FIXTURE["area"], control_datetime=CTRL, collected_at=COLLECTED)
     assert rows == []
-    s = sentinel_row(CTRL, COLLECTED)
-    assert s["area_code"] == SENTINEL_CODE and s["kind_code"] == SENTINEL_CODE and s["status"] == "none"
-    assert s["control_datetime"] == CTRL
 
 
-def _warnings_collector(monkeypatch, tmp_path, map_entries):
+def _row(area, kind, status, report="2026-10-09T09:00:00+09:00", ctrl=CTRL):
+    return {"control_datetime": ctrl, "office_code": "016000", "office_name": "札幌管区気象台",
+            "area_code": area, "area_name": f"name{area}", "area_level": "class20", "kind_code": kind,
+            "kind_name": KIND_NAMES.get(kind), "status": status, "report_datetime": report,
+            "collected_at": COLLECTED}
+
+
+def test_diff_start_status_change_end_and_unchanged():
+    prev = active_from_rows([_row("A", "15", "発表"), _row("B", "10", "発表"), _row("C", "21", "継続")])
+    cur = [_row("A", "15", "発表", report="2026-10-09T12:00:00+09:00"),  # 同 status → 不是事件
+           _row("B", "10", "継続"),                                       # status 改變
+           _row("D", "03", "発表")]                                       # 新出現
+    released = {("C", "21"): {"status": "解除", "report_datetime": "2026-10-09T13:00:00+09:00"}}
+    ev = diff_active(prev, cur, released, control_datetime="2026-10-09T05:00:00+00:00", collected_at=COLLECTED)
+    got = {(e["area_code"], e["kind_code"]): (e["change_type"], e["status"]) for e in ev}
+    assert got == {("B", "10"): ("status_change", "継続"), ("D", "03"): ("start", "発表"),
+                   ("C", "21"): ("end", "解除")}
+    end = next(e for e in ev if e["change_type"] == "end")
+    assert end["area_name"] == "nameC" and end["kind_name"] == KIND_NAMES["21"], "end 沿用上一輪描述欄"
+    assert end["report_datetime"] == "2026-10-09T13:00:00+09:00"
+    assert all(e["control_datetime"] == "2026-10-09T05:00:00+00:00" for e in ev)
+    assert set(ev[0]) == set(TABLE_MAP["jma_warnings"]["columns"])
+
+
+def test_diff_end_without_release_entry_falls_back_and_keeps_raw_status():
+    prev = active_from_rows([_row("A", "15", "発表"), _row("B", "10", "発表")])
+    released = {("B", "10"): {"status": "発表警報・注意報はなし", "report_datetime": None}}
+    ev = diff_active(prev, [], released, control_datetime=CTRL, collected_at=COLLECTED)
+    assert {(e["area_code"], e["status"]) for e in ev} == {("A", "解除"), ("B", "発表警報・注意報はなし")}
+    assert all(e["change_type"] == "end" for e in ev)
+
+
+def test_parse_collects_released_status_for_end_events():
+    released: dict = {}
+    rows, _ = parse_warning_map(FIXTURE["warning_map"], FIXTURE["area"], control_datetime=CTRL,
+                                collected_at=COLLECTED, released=released)
+    assert released and all(v["status"] in ("解除", "発表警報・注意報はなし") for v in released.values())
+
+
+class _FakeWriter:
+    """with_conn() → conn.cursor() → execute/description/fetchall（只回 public.jma_warnings_current）。"""
+
+    def __init__(self, rows=None, fail=False):
+        self.rows, self.fail, self.sql = rows or [], fail, []
+
+    def with_conn(self, timeout=None):
+        writer = self
+
+        class _Cur:
+            description = [(c,) for c in ("area_code", "kind_code", "status", "office_code", "office_name",
+                                          "area_name", "area_level", "kind_name", "report_datetime")]
+
+            def execute(self, sql):
+                if writer.fail:
+                    raise RuntimeError("db down")
+                writer.sql.append(sql)
+
+            def fetchall(self):
+                return [tuple(r.get(c[0]) for c in self.description) for r in writer.rows]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        class _Conn:
+            def cursor(self):
+                return _Cur()
+
+        class _Ctx:
+            def __enter__(self):
+                return _Conn()
+
+            def __exit__(self, *a):
+                return False
+        return _Ctx()
+
+
+def _warnings_collector(monkeypatch, tmp_path, map_entries, writer=None, control="2026-10-09T06:25:28Z"):
     def fake_fetch(session, path, as_text=False, **kw):
         if path == jma_warnings.URL_MAP_TIME:
-            return {"latestControlDatetime": "2026-10-09T06:25:28Z"}
+            return {"latestControlDatetime": control}
         if path == jma_warnings.URL_AREA:
             return FIXTURE["area"]
         if path == jma_warnings.URL_MAP:
@@ -223,7 +304,8 @@ def _warnings_collector(monkeypatch, tmp_path, map_entries):
     monkeypatch.setattr(jma_warnings, "fetch", fake_fetch)
     c = jma_warnings.JmaWarningsCollector.__new__(jma_warnings.JmaWarningsCollector)
     c.name, c._session = "jma_warnings", None
-    c._area, c._area_loaded_at, c._last_control, c._pending_control = {}, None, None, None
+    c._area, c._area_loaded_at, c._state, c._pending_state = {}, None, None, None
+    c.supabase_writer = writer
     c.state_path = tmp_path / "state" / "jma_warnings_state.json"
     return c
 
@@ -235,52 +317,107 @@ def _fake_base_run(result_error=None):
     return run
 
 
-def test_warnings_collect_no_change_and_survives_restart(monkeypatch, tmp_path):
+def test_warnings_state_loss_rebuilds_from_db_not_mass_start(monkeypatch, tmp_path):
+    rows, _ = parse_warning_map(FIXTURE["warning_map"], FIXTURE["area"], control_datetime=CTRL,
+                                collected_at=COLLECTED)
+    db_rows = [dict(r) for r in rows]
+    db_rows[0]["status"] = "発表" if db_rows[0]["status"] != "発表" else "継続"  # 一筆 status 不同
+    gone = _row("9999999", "15", "発表")                                         # DB 有、快照沒有 → end
+    writer = _FakeWriter(db_rows + [gone])
+    c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"], writer)
+    out = c.collect()
+    assert out["state_rebuilt"] and out["prev_active_count"] == len(rows) + 1
+    assert out["event_counts"] == {"start": 0, "status_change": 1, "end": 1}, "不可把全部當 start 重灌"
+    assert writer.sql and "public.jma_warnings_current" in writer.sql[0]
+    assert "raw_payload" in out and len(out["raw_payload"]["active_rows"]) == len(rows)
+
+
+def test_warnings_state_loss_and_db_unavailable_fails_round(monkeypatch, tmp_path):
+    c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"], _FakeWriter(fail=True))
+    with pytest.raises(RuntimeError):
+        c.collect()
+    c2 = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"], None)
+    with pytest.raises(RuntimeError):
+        c2.collect()
+
+
+def test_warnings_old_state_format_is_treated_as_loss(monkeypatch, tmp_path):
+    c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"], _FakeWriter([]))
+    c.state_path.parent.mkdir(parents=True)
+    c.state_path.write_text(json.dumps({"last_control_datetime": CTRL}))  # 438 前的舊格式
+    out = c.collect()
+    assert out["state_rebuilt"] and out["event_counts"]["start"] == out["active_count"]
+
+
+def test_warnings_no_change_and_survives_restart(monkeypatch, tmp_path):
     from collectors.base import BaseCollector
     monkeypatch.setattr(BaseCollector, "run", _fake_base_run())
-    c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"])
+    c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"], _FakeWriter([]))
     first = c.collect()
     assert first["data"] and first["control_datetime"] == CTRL
-    c._pending_control = None
     c.run()  # 成功的 run 才會前進 state
     second = c.collect()
     assert "data" not in second and second["no_change"] is True
-    restarted = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"])
-    assert "data" not in restarted.collect()
+    restarted = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"], None)
+    assert "data" not in restarted.collect(), "重啟後讀 state 檔，不需 DB"
+
+
+def test_warnings_second_round_only_changes(monkeypatch, tmp_path):
+    from collectors.base import BaseCollector
+    monkeypatch.setattr(BaseCollector, "run", _fake_base_run())
+    c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"], _FakeWriter([]))
+    c.run()
+    # 下一輪：control 變了、快照內容相同 → 0 事件，但 state 仍前進
+    c2 = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"], None, control="2026-10-09T06:35:00Z")
+    out = c2.collect()
+    assert out["data"] == [] and out["event_counts"] == {"start": 0, "status_change": 0, "end": 0}
+    c2.run()
+    assert json.loads(c2.state_path.read_text())["last_control_datetime"] == "2026-10-09T06:35:00+00:00"
+    # 再下一輪：全部解除 → 全部 end
+    c3 = _warnings_collector(monkeypatch, tmp_path, _cleared_fixture(), None, control="2026-10-09T07:00:00Z")
+    out3 = c3.collect()
+    assert out3["event_counts"]["end"] == out["active_count"] and out3["active_count"] == 0
 
 
 def test_warnings_state_not_advanced_when_db_write_fails(monkeypatch, tmp_path):
     from collectors.base import BaseCollector
     monkeypatch.setattr(BaseCollector, "run", _fake_base_run("required Supabase write failed"))
-    c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"])
+    c = _warnings_collector(monkeypatch, tmp_path, FIXTURE["warning_map"], _FakeWriter([]))
     c.run()
-    assert not c.state_path.exists() and c._last_control is None
-    assert c.collect()["data"]  # 下一輪仍會重抓同一快照
+    assert not c.state_path.exists()
+    assert c.collect()["data"]  # 下一輪仍會重抓同一快照並重新差分
 
 
 def test_warnings_require_db_write():
     assert jma_warnings.JmaWarningsCollector.require_db_write(None) is True
 
 
-def test_warnings_collect_writes_sentinel_when_nothing_active(monkeypatch, tmp_path):
-    c = _warnings_collector(monkeypatch, tmp_path, [])
-    out = c.collect()
-    assert out["active_count"] == 0
-    assert [r["area_code"] for r in out["data"]] == [SENTINEL_CODE]
-
-
 def test_warnings_transform_and_do_nothing_sql(writer, capture):
     conn, captured = capture
+    prev = active_from_rows([_row("X", "15", "発表")])
     rows, _ = parse_warning_map(FIXTURE["warning_map"], FIXTURE["area"],
                                 control_datetime=CTRL, collected_at=COLLECTED)
-    rows.append(sentinel_row(CTRL, COLLECTED))
-    recs = writer._transform_jma_warnings({"data": rows}, TS)
-    assert len(recs) == len(rows)
+    events = diff_active(prev, rows, {}, control_datetime=CTRL, collected_at=COLLECTED)
+    legacy = dict(rows[0])  # 438 前的快照列（無 change_type）→ 丟棄
+    recs = writer._transform_jma_warnings({"data": events + [legacy]}, TS)
+    assert len(recs) == len(events)
     assert set(recs[0]) == set(TABLE_MAP["jma_warnings"]["columns"])
     writer._write_to_db(conn, "jma_warnings", recs, TS)
     sql, vals = captured[0]
-    assert "INSERT INTO live.jma_warnings" in sql and "ON CONFLICT DO NOTHING" in sql
-    assert len(vals) == len(rows)
+    assert "INSERT INTO live.jma_warning_events" in sql and "ON CONFLICT DO NOTHING" in sql
+    assert len(vals) == len(events)
+
+
+def test_warnings_db_failure_is_not_buffered(writer, monkeypatch):
+    buffered = []
+    monkeypatch.setattr(writer, "_write_to_buffer", lambda *a: buffered.append(a[0]), raising=False)
+    monkeypatch.setattr(writer, "_report_heartbeat", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(writer, "_record_db_error", lambda *a, **k: None, raising=False)
+    writer._pool.borrow.side_effect = RuntimeError("db down")
+    ev = diff_active({}, [_row("A", "15", "発表")], {}, control_datetime=CTRL, collected_at=COLLECTED)
+    assert writer.write("jma_warnings", {"data": ev}, TS) is False
+    assert buffered == [], "jma_warnings 失敗不進 buffer（state 不前進即是重試）"
+    assert writer._should_buffer("jma_amedas") is True
 
 
 # ───────────────────────── quake / tsunami / volcano ─────────────────────────

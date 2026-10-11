@@ -17,6 +17,73 @@
 
 契約：scratchpad/jma_raster_contract.md；ADR-0021；analytics docs/api-platforms/jma/gotchas.md。
 探測腳本：scratchpad/jr_scripts/（probe_zoom.py、scan.py）；JMA 前端設定 XML：scratchpad/jr_probe/*.properties.xml。
+（註：上述 scratchpad 已於 2026-10-11 電腦休眠後被清空，live_run.py 等腳本不在了。）
+
+## 第二批調整（2026-10-11）
+
+使用者拍板五項；gis-platform migration 438（分支 feat/jma-warning-events，已 BEGIN…ROLLBACK 預演，**未 apply**）。
+
+### 1. キキクル每 30 分一幀
+- `JAPAN_JMA_RASTER_CADENCE`（預設 `risk_land=30,risk_inund=30,risk_flood=30`），格點從 2000-01-01 UTC 起算 → 只收 :00／:30。
+  必須是原生間隔（PRODUCTS.cadence_min）的倍數，否則忽略。上游留 5.5h、每小時一輪，最多 11 幀可補。
+- 變更間隔當日已抓的非格點幀：close_day 一併打包進 T3（manifest `off_cadence_frames`），不隨 spool 刪掉；frames_ok 只計格點幀。
+
+### 2. 積雪只收 11–4 月（JST）
+- `JAPAN_JMA_RASTER_SEASON`（預設 `snow_depth=11,12,1,2,3,4`）。季外 validtime 在 expected_vts 裡就不存在：不抓、不產 frames 列、不算 missing。
+- 保留期內完全沒有季內時刻時不打 targetTimes；但仍設定視窗，讓 4/30 這種最後一天照常在 5/1 01:00 JST 日結。
+
+### 3. 粗圖探測（coarse probe）
+- `JAPAN_JMA_RASTER_COARSE_PROBE=off|shadow|on`，預設 shadow。z4 畫布＝x13..14、y5..6（2×2）；**修正 canvas(z<6)**：舊版 floor 只算到 y5，z4 少一排。
+  z4 (13,5)/(14,5) 各對應 8 個畫布內 z6，(13,6)/(14,6) 各 16 個。
+- 實測（2026-10-11 06:00–06:55 JST）：radar 6 幀、rasrf 2 幀 z4 有內容，4 象限與 z6 一致，miss 0；risk_land／risk_inund／snow_depth z4 回 200，
+  但當天全國無著色（只見 334B 佔位），**z4 會不會畫出小範圍著色未驗證**；risk_flood z4 pbf 200／0B（與 z6 同）。himawari 原生只到 z5，不適用。
+  SSOT：`Product.probe_zoom`（decode table 的 `coarse_probe_zoom` 只是紀錄）。
+- shadow：多 4 請求／幀，照舊全抓 z6；`probe_misses`＝z4 全空但子 z6 非空的磚數（log ⚠）。on：z4 全空的區不抓 z6／z8，
+  網格填 0（與 334B 佔位同語意），frame／manifest 記 `inferred_blank_tiles`（推定為空），`tiles_inferred_blank` 進 DB；z4 第一磚 404＝上游無此幀。
+  探測磚也進 T3 tar（z4/…）。DB：frames 加 probe_mode／probe_misses／tiles_inferred_blank（mig 438）。
+- 建議：shadow 跑過一段有キキクル著色／降雪的日子、`sum(probe_misses)=0` 再切 on。
+
+### 每日請求數估計（不含 backlog 補抓、targetTimes）
+| 產品 | 第一批 | 第二批 shadow | 第二批 on（估） |
+|---|---|---|---|
+| radar（288 幀；小雨日每幀 256） | 73,728 | 74,880 | 小雨日約 72,600；全乾日 1,152 |
+| rasrf（48 幀） | 約 12,300 | 約 12,500 | 約 12,100 |
+| risk_land＋inund＋flood | 144×48×3＝20,736 | 48×52×3＝7,488 | 無著色日 48×4×3＝576 |
+| snow_depth | 24×48＝1,152 | 季外 0（季內 24×52＝1,248） | 季外 0 |
+| himawari_b13 | 288 | 288 | 288 |
+| 合計（10 月小雨日） | 約 108,000 | 約 95,000（−12%） | 約 86,000；全乾日約 14,000 |
+
+### 4. 警報只記變動（collector jma_warnings）
+- 每輪（map_time 有變）比對 state 的有效集合：新出現 start、消失 end（status 取同快照解除原文，否則「解除」，描述欄沿用上一輪）、status 改變 status_change。
+  寫 `live.jma_warning_events`（UNIQUE 含 change_type，DO NOTHING，永久）；停寫 live.jma_warnings、不再有哨兵列。
+- state `state/jma_warnings_state.json`＝{last_control_datetime, active}；只在 DB 寫入成功後前進。state 遺失或舊格式 → 用 writer 連線池唯讀查
+  `public.jma_warnings_current` 重建；查不到就整輪失敗（絕不全部當 start）。438 前後該 view 欄位相同，同一句跨切換可用。
+- **jma_warnings 寫入失敗不進 writer buffer**（`SupabaseWriter.NO_BUFFER_COLLECTORS`）：否則下一輪用新 control_datetime 重新差分＋buffer 補寫舊輪 → 同一變動兩筆。
+- 整份有效快照放 `result['raw_payload']`：只進本地 JSON → 每日 archives（S3），不進 DB／通知。
+- mig 438 由 live.jma_warnings 全部快照逐輪差分回填；預演：舊 view 694＝新 view 694、集合差 0、欄位差 0；130 輪→5,708 事件（start 2,869／status_change 664／end 2,175），
+  平均每輪 44 列（舊做法每輪 694–1,002 列）。
+- 已知語意差異：view 的 control_datetime／collected_at 變成「該列最後一次變動」；同 status 只換 report_datetime（継続再發）不算事件 → view 中 87 列 report_datetime 比舊 view 舊
+  （回填期間共 622 次這種更新，約事件量 11%）。要保留可加第四種 change_type，待使用者決定。
+
+### 5. AMeDAS 每日 Parquet（collector jma_amedas）
+- 每輪結尾 `close_daily`：JST 日 D 在 D+1 01:00 後、無 receipt 就日結（每輪最多 1 天；只結 `_first_day` 之後的日子，不回補上線前）。
+  讀本機 `jma_amedas/YYYY/MM/DD/*.json`（**台北日期目錄**：JST 日 D＝台北 D-1 與 D 兩個目錄）的 current 列，以 observed_at 過濾、(station, observed_at) 去重；
+  缺的 10 分鐘時刻向上游 map/{stamp}.json 補抓（實測上游可回溯約 7 天），所以本機 2 天保留／台北 03:00 刪檔的 3 小時窗口錯過也不會漏。
+- 逐小時寫 row group（zstd），上傳 `weather-obs/jma/amedas/YYYY/MM/YYYYMMDD.parquet` STANDARD，`storage.s3.put_verified`（head 大小＋sha256，已存在相符就跳過；raster 也改用同一個）。
+  receipt `state/jma_amedas_parquet/{day}.json`；失敗 → `_collector_error`（告警）、下輪重試；`JAPAN_JMA_AMEDAS_DAILY_PARQUET=false` 可關。
+- 實測 2026-10-11（全部從上游補抓）：185,184 列、1,286 站、144/144 時刻、**2.31 MB**、212 秒（144 次上游請求；正常走本機檔不需要）、峰值 RSS 149 MB（macOS，含直譯器與 pyarrow）。
+- pyarrow 早已在 requirements（>=14，export_daily_trails 用），image 不增加 → 選 (a) Parquet。
+
+### 順手修的既有 bug（jma_raster）
+- missing 定案原本每輪從 epoch 掃到 window_start，closed_days 又只留 10 天 → 上線約 11 天後會把已日結的舊日期重寫 missing、重建 spool，
+  再日結時以空 tar **覆蓋 S3 上的 T3**。改為 state `finalized_until` 只往後掃，並以 `_receipts/{product}/{day}.json` 擋已日結日。
+
+### 上線順序（主 agent）
+1. apply mig 438（回填＋view 切換）。2. merge／部署 data-collectors（新 jma_warnings 首輪從 view 重建 state）。3. restart。
+   反過來（先部署）會讓 jma_warnings 每輪寫入失敗（表不存在）但 state 不前進、不重複，apply 後自動恢復。
+4. env 皆有預設，不必設；要關 Parquet 設 `JAPAN_JMA_AMEDAS_DAILY_PARQUET=false`；確認 shadow 無 miss 後再設 `JAPAN_JMA_RASTER_COARSE_PROBE=on`。
+5. S3 `weather-obs/` 沿用全桶 lifecycle（IA／GIR），不可加到期刪除。
+
 
 ## 已完成
 - 兩個 worktree：data-collectors `.worktrees/jma-raster`（feat/jma-raster）、gis-platform `.worktrees/jma-raster`（feat/jma-raster-tables，尚無改動；437 是下一號，已掃遠端分支與 worktree 確認最大 436）。

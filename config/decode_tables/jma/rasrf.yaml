@@ -9,6 +9,9 @@ effective_from: "2026-10-09"
 palette_basis: plte
 plte_verified: true
 native_zooms: [4, 6, 8, 10]      # zoomUse=even、maxNativeZoom 10（nowc.properties.xml）；奇數層回 334B 佔位
+# 粗圖探測（JAPAN_JMA_RASTER_COARSE_PROBE，第二批 2026-10-11）：z4 實測有內容（2026-10-11 2 幀 miss 0）
+#   SSOT 是 collectors/global_climate/jma_raster.py Product.probe_zoom；本欄僅記錄。
+coarse_probe_zoom: 4
 rgb_tolerance: 0
 levels:                          # level 0 = 透明（無回波）；255 = 缺測（程式保留，不在表內）
   - {level: 1, rgb: [242, 242, 255], palette_index: 2, label: "<1 mm"}

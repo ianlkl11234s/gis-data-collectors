@@ -155,7 +155,8 @@ archive_py_covered:
   - live.cwa_uv_daily               # cwa_uv_daily，migration 422，待 Zeabur 啟用
   - live.jma_amedas_observations   # jma_amedas，migration 435，2026-10-09 起
   - live.jma_amedas_current        # 同上
-  - live.jma_warnings              # jma_warnings，migration 435，2026-10-09 起
+  - live.jma_warnings              # jma_warnings，migration 435，2026-10-09 起；438 起停寫（7 天自然清空，另案刪表）
+  - live.jma_warning_events        # jma_warnings 只記變動，migration 438，永久
   - live.jma_quake_reports         # jma_quake，migration 435，2026-10-09 起
   - live.jma_tsunami_reports       # 同上
   - live.jma_volcano_warnings      # 同上

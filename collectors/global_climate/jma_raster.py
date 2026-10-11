@@ -18,10 +18,19 @@
 中斷補抓：每輪對每產品列出「上游保留期內、首跑 epoch 之後」所有 validtime，oldest-first 補抓
   spool 沒有的幀（每輪有上限）；超出保留期仍沒抓到才定案 missing。
 DB：frame／daily 列先存 product state 的 pending，DB 寫入成功（require_db_write）才清掉（照 jma_quake）。
+
+第二批（2026-10-11，gis-platform migration 438）：
+  取樣間隔  JAPAN_JMA_RASTER_CADENCE（預設 risk_land/inund/flood=30 → 只收 :00/:30）
+  季節開關  JAPAN_JMA_RASTER_SEASON（預設 snow_depth=11..4 月，JST）；季外 validtime 不存在：不抓、無 frames 列、不算缺幀
+  粗圖探測  JAPAN_JMA_RASTER_COARSE_PROBE=off|shadow|on（預設 shadow）：每幀先抓 z4（日本畫布 2×2 磚）。
+            shadow 照舊全抓 z6，記錄「z4 全空但子 z6 非空」的磚數（probe_misses）；
+            on 跳過 z4 全空區的 z6（與 z8），manifest 記 inferred_blank_tiles＝推定為空（不是抓到為空）。
+            適用產品見 Product.probe_zoom（himawari 原生只到 z5，不適用）。
 """
 
 from __future__ import annotations
 
+import dataclasses
 import shutil
 import threading
 import time
@@ -37,7 +46,7 @@ import config
 from collectors.base import BaseCollector
 from collectors.global_climate.jma_common import JMA_BOSAI_BASE, new_jma_session
 from collectors.weather_raster.decode import (
-    BLANK_PLACEHOLDER_BYTES, MISSING, DecodeTable, decode_tile, missing_tile, pool_max, upsample,
+    BLANK_PLACEHOLDER_BYTES, MISSING, DecodeTable, blank_tile, decode_tile, missing_tile, pool_max, upsample,
 )
 from collectors.weather_raster import spool as sp
 
@@ -60,6 +69,8 @@ class Product:
     grid_zoom: Optional[int] = None    # None = 不解碼（只留原始）
     fmt: str = "png"                   # png / pbf / jpg
     analysis_filter: str = "bt_eq_vt"  # targetTimes 過濾方式
+    probe_zoom: Optional[int] = None   # 粗圖探測層級（None＝不適用）；2026-10-11 實測 z4 皆 200（見 JMA_RASTER_NOTES）
+    season_months: Optional[frozenset] = None  # JST 月份；None＝全年
 
     @property
     def decodes(self) -> bool:
@@ -68,39 +79,99 @@ class Product:
 
 PRODUCTS: dict[str, Product] = {p.name: p for p in (
     Product("radar", "jmatile/data/nowc/{bt}/none/{vt}/surf/hrpns/{z}/{x}/{y}.png",
-            "jmatile/data/nowc/targetTimes_N1.json", 5, timedelta(hours=24), 6, 8, 7),
+            "jmatile/data/nowc/targetTimes_N1.json", 5, timedelta(hours=24), 6, 8, 7, probe_zoom=4),
     Product("rasrf", "jmatile/data/rasrf/{bt}/none/{vt}/surf/rasrf/{z}/{x}/{y}.png",
             "jmatile/data/rasrf/targetTimes.json", 30, timedelta(hours=12), 6, 8, 7,
-            analysis_filter="rasrf_none"),
+            analysis_filter="rasrf_none", probe_zoom=4),
     Product("risk_land", "jmatile/data/risk/{bt}/none/{vt}/surf/land/{z}/{x}/{y}.png",
             "jmatile/data/risk/targetTimes.json", 10, timedelta(hours=5, minutes=30), 6, 8, 7,
-            analysis_filter="member_none"),
+            analysis_filter="member_none", probe_zoom=4),
     Product("risk_inund", "jmatile/data/risk/{bt}/none/{vt}/surf/inund/{z}/{x}/{y}.png",
             "jmatile/data/risk/targetTimes.json", 10, timedelta(hours=5, minutes=30), 6, 8, 7,
-            analysis_filter="member_none"),
+            analysis_filter="member_none", probe_zoom=4),
     Product("risk_flood", "jmatile/data/risk/{bt}/none/{vt}/surf/flood/{z}/{x}/{y}.pbf",
             "jmatile/data/risk/targetTimes.json", 10, timedelta(hours=5, minutes=30), 6, 8, None,
-            fmt="pbf", analysis_filter="member_none"),
+            fmt="pbf", analysis_filter="member_none", probe_zoom=4),
     Product("snow_depth", "jmatile/data/snow/{bt}/none/{vt}/surf/snowd/{z}/{x}/{y}.png",
             "jmatile/data/snow/targetTimes.json", 60, timedelta(hours=24), 6, None, 6,
-            analysis_filter="snowd"),
+            analysis_filter="snowd", probe_zoom=4),
     Product("himawari_b13", "himawari/data/satimg/{bt}/fd/{vt}/B13/TBB/{z}/{x}/{y}.jpg",
             "himawari/data/satimg/targetTimes_fd.json", 60, timedelta(hours=119), 5, None, None,
             fmt="jpg"),
 )}
 
-# 日本畫布：z6 x=52..59、y=22..27（＝z5 x26..29、y11..13）
+# 日本畫布：z6 x=52..59、y=22..27（＝z5 x26..29、y11..13；z4 x13..14、y5..6）
 CANVAS_Z6 = (52, 22, 8, 6)
+PROBE_MODES = ("off", "shadow", "on")
 
 
 def canvas(z: int) -> tuple[int, int, int, int]:
-    """(x0, y0, nx, ny) at zoom z。"""
+    """(x0, y0, nx, ny) at zoom z。z<6 取覆蓋 z6 畫布的所有磚（含部分覆蓋：z4 y=6 只蓋到 z6 y24..27）。"""
     x0, y0, nx, ny = CANVAS_Z6
     if z >= 6:
         f = 2 ** (z - 6)
         return x0 * f, y0 * f, nx * f, ny * f
     d = 2 ** (6 - z)
-    return x0 // d, y0 // d, nx // d, ny // d
+    x1, y1 = (x0 + nx - 1) // d, (y0 + ny - 1) // d
+    return x0 // d, y0 // d, x1 - x0 // d + 1, y1 - y0 // d + 1
+
+
+def parse_product_map(spec: str, conv) -> dict:
+    """'a=30,b=1 2 3' 類設定 → {name: conv(value)}；格式錯的項目略過並 print。"""
+    out = {}
+    for part in _split_items(spec):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        try:
+            out[k.strip()] = conv(v.strip())
+        except ValueError:
+            print(f"[jma_raster] ⚠ 設定項目格式錯誤，略過：{part!r}")
+    return out
+
+
+def _split_items(spec: str) -> list[str]:
+    """'risk_land=30,risk_inund=30,snow_depth=11,12,1' → 依「下一個 name=」切開（月份清單本身含逗號）。"""
+    items, cur = [], ""
+    for tok in (spec or "").split(","):
+        if "=" in tok:
+            if cur:
+                items.append(cur)
+            cur = tok
+        elif cur:
+            cur += "," + tok
+    if cur:
+        items.append(cur)
+    return items
+
+
+def _months(v: str) -> frozenset:
+    ms = frozenset(int(m) for m in v.replace(" ", ",").split(",") if m.strip())
+    if not ms or not all(1 <= m <= 12 for m in ms):
+        raise ValueError(v)
+    return ms
+
+
+def configure_products(cadence_spec: str, season_spec: str) -> dict[str, Product]:
+    """套用每產品取樣間隔與季節月份到 PRODUCTS（回傳新 dict，不改模組常數）。
+
+    取樣間隔必須是上游原生間隔（PRODUCTS 的 cadence_min）的整數倍，否則忽略。
+    """
+    out = dict(PRODUCTS)
+    for name, minutes in parse_product_map(cadence_spec, int).items():
+        base = PRODUCTS.get(name)
+        if base is None or minutes <= 0 or minutes % base.cadence_min:
+            print(f"[jma_raster] ⚠ 取樣間隔 {name}={minutes} 無效（須為原生 {base.cadence_min if base else '?'} 分的倍數），略過")
+            continue
+        out[name] = dataclasses.replace(out[name], cadence_min=minutes)
+    for name, months in parse_product_map(season_spec, _months).items():
+        if name in out:
+            out[name] = dataclasses.replace(out[name], season_months=months)
+    return out
+
+
+def in_season(product: Product, t: datetime) -> bool:
+    return product.season_months is None or t.astimezone(JST).month in product.season_months
 
 
 def parse_vt(vt: str) -> datetime:
@@ -136,14 +207,18 @@ def latest_analysis(product: Product, items: list) -> Optional[str]:
 
 
 def expected_vts(product: Product, start: datetime, end: datetime) -> list[str]:
-    """[start, end] 之間落在 cadence 格點上的 validtime（UTC 字串，舊→新）。"""
+    """[start, end] 之間落在 cadence 格點上、且在季節月份內的 validtime（UTC 字串，舊→新）。
+
+    格點以 2000-01-01 00:00 UTC 起算，30 分間隔即 :00／:30。季外的 validtime 視為不存在（不抓、不算缺幀）。
+    """
     step = timedelta(minutes=product.cadence_min)
     epoch0 = datetime(2000, 1, 1, tzinfo=timezone.utc)
     k = -(-(start - epoch0) // step)  # ceil
     t = epoch0 + k * step
     out = []
     while t <= end:
-        out.append(fmt_vt(t))
+        if in_season(product, t):
+            out.append(fmt_vt(t))
         t += step
     return out
 
@@ -171,7 +246,13 @@ class JmaRasterCollector(BaseCollector):
         self.spool_root = Path(config.LOCAL_DATA_DIR) / "weather_raw" / SOURCE
         self.state_dir = Path(config.LOCAL_DATA_DIR) / "state" / "jma_raster"
         names = [n.strip() for n in config.JAPAN_JMA_RASTER_PRODUCTS.split(",") if n.strip()]
-        self.products = [PRODUCTS[n] for n in names if n in PRODUCTS]
+        configured = configure_products(config.JAPAN_JMA_RASTER_CADENCE, config.JAPAN_JMA_RASTER_SEASON)
+        self.products = [configured[n] for n in names if n in configured]
+        mode = config.JAPAN_JMA_RASTER_COARSE_PROBE
+        if mode not in PROBE_MODES:
+            print(f"[jma_raster] ⚠ JAPAN_JMA_RASTER_COARSE_PROBE={mode!r} 無效，改用 shadow")
+            mode = "shadow"
+        self.probe_mode = mode
         self.max_fine_tiles = config.JAPAN_JMA_RASTER_MAX_FINE_TILES
         self.concurrency = max(1, min(4, config.JAPAN_JMA_RASTER_CONCURRENCY))
         self.initial_lookback = timedelta(minutes=config.JAPAN_JMA_RASTER_INITIAL_LOOKBACK_MIN)
@@ -261,19 +342,63 @@ class JmaRasterCollector(BaseCollector):
     def _url(self, product: Product, vt: str, z: int, x: int, y: int) -> str:
         return f"{JMA_BOSAI_BASE}/" + product.url.format(bt=vt, vt=vt, z=z, x=x, y=y)
 
+    def _tile_blank(self, product: Product, body: bytes) -> bool:
+        """200 回來的磚是否「空」：可解碼產品看解碼結果（P-mode 全 index≤1 也算空），其他看 bytes。"""
+        if product.decodes:
+            return decode_tile(body, self.table(product)).is_blank
+        return is_blank_bytes(body, product.fmt)
+
+    def probe_children(self, product: Product, quad: tuple[int, int]) -> list[tuple[int, int]]:
+        """探測磚（probe_zoom）對應、落在畫布內的粗層（coarse_zoom）子磚。"""
+        f = 2 ** (product.coarse_zoom - product.probe_zoom)
+        x0, y0, nx, ny = canvas(product.coarse_zoom)
+        qx, qy = quad
+        return [(x, y) for y in range(qy * f, qy * f + f) for x in range(qx * f, qx * f + f)
+                if x0 <= x < x0 + nx and y0 <= y < y0 + ny]
+
+    def _probe(self, product: Product, vt: str) -> Optional[dict]:
+        """抓探測層全畫布。回 {quad: (status, body)}；第一磚 404（上游無此幀）回 None。"""
+        zp = product.probe_zoom
+        x0, y0, nx, ny = canvas(zp)
+        qkeys = [(x, y) for y in range(y0, y0 + ny) for x in range(x0, x0 + nx)]
+        first = self._get(self._url(product, vt, zp, *qkeys[0]))
+        if first[0] == 404:
+            return None
+        out = {qkeys[0]: first}
+        with ThreadPoolExecutor(self.concurrency) as ex:
+            for k, res in zip(qkeys[1:], ex.map(lambda k: self._get(self._url(product, vt, zp, *k)), qkeys[1:])):
+                out[k] = res
+        return out
+
     def fetch_frame(self, product: Product, vt: str) -> Optional[dict]:
         """抓並解碼一幀，寫 spool。上游無此幀（探測磚 404）回 None。"""
         zc = product.coarse_zoom
         x0, y0, nx, ny = canvas(zc)
         keys = [(x, y) for y in range(y0, y0 + ny) for x in range(x0, x0 + nx)]
-        status, body = self._get(self._url(product, vt, zc, *keys[0]))
-        if status == 404:
-            return None
-        coarse = {keys[0]: (status, body)}
+        mode = self.probe_mode if product.probe_zoom is not None else "off"
+        probe: dict = {}
+        blank_quads: list[tuple[int, int]] = []
+        inferred: set[tuple[int, int]] = set()
+        if mode != "off":
+            probe = self._probe(product, vt)
+            if probe is None:
+                return None
+            # 只有「200 且空」才算全空；探測失敗（非 200）的區不推定
+            blank_quads = sorted(q for q, (s_, b) in probe.items() if s_ == 200 and self._tile_blank(product, b))
+            if mode == "on":
+                inferred = {k for q in blank_quads for k in self.probe_children(product, q)}
+        fetch_keys = [k for k in keys if k not in inferred]
+        coarse: dict = {}
+        if fetch_keys and mode == "off":
+            status, body = self._get(self._url(product, vt, zc, *fetch_keys[0]))
+            if status == 404:
+                return None
+            coarse[fetch_keys[0]] = (status, body)
+        rest = [k for k in fetch_keys if k not in coarse]
         with ThreadPoolExecutor(self.concurrency) as ex:
-            for k, res in zip(keys[1:], ex.map(lambda k: self._get(self._url(product, vt, zc, *k)), keys[1:])):
+            for k, res in zip(rest, ex.map(lambda k: self._get(self._url(product, vt, zc, *k)), rest)):
                 coarse[k] = res
-        req = len(keys)
+        req = len(probe) + len(fetch_keys)
         members: list[tuple[str, bytes]] = []
         mtime = int(parse_vt(vt).timestamp())
         ext = product.fmt
@@ -282,6 +407,12 @@ class JmaRasterCollector(BaseCollector):
             return f"{product.name}/{vt}/z{z}/{x}/{y}.{ext}"
 
         failed: list[str] = []
+        zp = product.probe_zoom
+        for (x, y), (s, b) in sorted(probe.items()):
+            if s == 200:
+                members.append((member(zp, x, y), b))
+            else:
+                failed.append(f"z{zp}/{x}/{y}:{s}")
         for (x, y), (s, b) in coarse.items():
             if s == 200:
                 members.append((member(zc, x, y), b))
@@ -293,15 +424,33 @@ class JmaRasterCollector(BaseCollector):
         if table is not None:
             for k, (s, b) in coarse.items():
                 dec[k] = decode_tile(b, table) if s == 200 else missing_tile()
+            for k in inferred:
+                dec[k] = blank_tile()  # 推定為空＝0（與 334B 佔位相同語意），manifest 另記 inferred_blank_tiles
+
+        def coarse_blank(k) -> bool:
+            if k in inferred:
+                return True
+            s_, b = coarse[k]
+            if s_ != 200:
+                return False
+            return dec[k].is_blank if table is not None else is_blank_bytes(b, product.fmt)
+
+        # shadow：z4 全空的區，子 z6 實際非空的磚數（＝on 模式會漏掉的磚）
+        probe_misses = None
+        if mode == "shadow":
+            probe_misses = sum(1 for q in blank_quads for k in self.probe_children(product, q)
+                               if coarse[k][0] == 200 and not coarse_blank(k))
+            if probe_misses:
+                print(f"[{self.name}] ⚠ coarse probe miss：{product.name} {vt} z{zp} 全空但 {probe_misses} 磚 z{zc} 非空")
 
         # 下鑽：只對「有內容」的粗層磚，依內容量排序取前 max_fine_tiles
         fine_parents: list[tuple[int, int]] = []
         if product.fine_zoom is not None:
             if table is not None:
-                cand = [(dec[k].nonzero + dec[k].unknown_pixels, k) for k in keys
+                cand = [(dec[k].nonzero + dec[k].unknown_pixels, k) for k in fetch_keys
                         if coarse[k][0] == 200 and not dec[k].is_blank]
             else:
-                cand = [(len(coarse[k][1]), k) for k in keys
+                cand = [(len(coarse[k][1]), k) for k in fetch_keys
                         if coarse[k][0] == 200 and not is_blank_bytes(coarse[k][1], product.fmt)]
             cand.sort(key=lambda t: (-t[0], t[1]))
             fine_parents = [k for _, k in cand[: self.max_fine_tiles]]
@@ -319,7 +468,7 @@ class JmaRasterCollector(BaseCollector):
                 failed.append(f"z{product.fine_zoom}/{x}/{y}:{s_}")
 
         raw_bytes = sum(len(b) for _, b in members)
-        nonempty = sum(1 for k in keys if coarse[k][0] == 200 and not is_blank_bytes(coarse[k][1], product.fmt))
+        nonempty = sum(1 for k in fetch_keys if coarse[k][0] == 200 and not is_blank_bytes(coarse[k][1], product.fmt))
         nonzero = unknown = 0
         unknown_colors: dict[str, int] = {}
         grid_path = None
@@ -372,6 +521,12 @@ class JmaRasterCollector(BaseCollector):
                                else [f"z{zc}/{x}/{y}" for x, y in skipped_parents]),
             "settled": False,
             "failed_tiles": failed,
+            # 粗圖探測（第二批）：probe_misses 只在 shadow 有值；inferred_blank_tiles＝on 模式推定為空、未抓的 z6
+            "probe_mode": mode,
+            "probe_zoom": zp if mode != "off" else None,
+            "probe_blank": [f"z{zp}/{x}/{y}" for x, y in blank_quads],
+            "probe_misses": probe_misses,
+            "inferred_blank_tiles": [f"z{zc}/{x}/{y}" for x, y in sorted(inferred)],
             "grid": bool(grid_path),
             "decode_table_version": table.version if table else None,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -539,6 +694,9 @@ class JmaRasterCollector(BaseCollector):
             "tiles_nonempty": fr.get("tiles_nonempty"), "raw_bytes": fr.get("raw_bytes"),
             "nonzero_pixels": fr.get("nonzero_pixels"), "unknown_color_pixels": fr.get("unknown_color_pixels"),
             "status": fr["status"],
+            "probe_mode": fr.get("probe_mode"), "probe_misses": fr.get("probe_misses"),
+            "tiles_inferred_blank": (len(fr["inferred_blank_tiles"]) if fr.get("inferred_blank_tiles") is not None
+                                     else None),
         }
 
     # ───────── 一個產品一輪 ─────────
@@ -548,12 +706,18 @@ class JmaRasterCollector(BaseCollector):
 
     def fetch_product(self, product: Product, now: datetime, budget_frames: int) -> dict:
         st = self._load_state(product.name)
-        from collectors.global_climate.jma_common import fetch
-        items = fetch(self._session, product.target_times)
-        latest = latest_analysis(product, items)
-        if latest is None:
-            raise RuntimeError(f"{product.name}: targetTimes 沒有解析時刻")
-        latest_t = parse_vt(latest)
+        off_season = (product.season_months is not None
+                      and not expected_vts(product, now - product.retention, now))
+        if off_season:
+            # 季外：保留期內沒有任何季內 validtime → 不打 targetTimes、不抓；仍設定視窗讓收尾（日結）照常進行
+            latest, latest_t = None, now
+        else:
+            from collectors.global_climate.jma_common import fetch
+            items = fetch(self._session, product.target_times)
+            latest = latest_analysis(product, items)
+            if latest is None:
+                raise RuntimeError(f"{product.name}: targetTimes 沒有解析時刻")
+            latest_t = parse_vt(latest)
         if st["epoch"] is None:
             st["epoch"] = fmt_vt(latest_t - self.initial_lookback)
         epoch = parse_vt(st["epoch"])
@@ -580,7 +744,7 @@ class JmaRasterCollector(BaseCollector):
         # 2) 保留期內補抓（oldest-first、每輪上限）
         fetched = unavailable = requests = 0
         day_cache: dict[str, dict] = {}
-        for vt in expected_vts(product, window_start, latest_t):
+        for vt in ([] if off_season else expected_vts(product, window_start, latest_t)):
             day = jst_date(vt)
             if self._day_closed(product, day, closed):
                 continue
@@ -604,7 +768,8 @@ class JmaRasterCollector(BaseCollector):
         self._epoch[product.name] = epoch
         self._save_state(product.name, st)
         return {"latest": latest, "fetched": fetched, "unavailable": unavailable,
-                "missing_finalized": missing_new, "requests": requests}
+                "missing_finalized": missing_new, "requests": requests, "off_season": off_season,
+                "cadence_min": product.cadence_min}
 
     def finish_product(self, product: Product, now: datetime) -> dict:
         """定案幀（累加 T1）→ 小時收尾（T2）→ 日結（T1＋T3）。"""
@@ -700,21 +865,11 @@ class JmaRasterCollector(BaseCollector):
         return True
 
     def _put_verified(self, local: Path, key: str, sha: str, storage_class: str) -> bool:
-        """head 已存在且 sha 相符 → 跳過；否則上傳後 head 驗 ContentLength＋sha＋StorageClass。"""
-        s3 = self.s3()
-        size = local.stat().st_size
-
-        def good(h):
-            return (h is not None and h["ContentLength"] == size and h["Metadata"].get("sha256") == sha
-                    and h["StorageClass"] == storage_class)
+        """head 已存在且 sha 相符 → 跳過；否則上傳後 head 驗 ContentLength＋sha＋StorageClass（storage.s3.put_verified）。"""
+        from storage.s3 import put_verified
         try:
-            if good(s3.head(key)):
-                return True
-            if not s3.upload_path(local, key, storage_class=storage_class,
-                                  metadata={"sha256": sha, "bytes": size},
-                                  content_type="application/x-tar" if key.endswith(".tar") else "application/octet-stream"):
-                return False
-            return good(s3.head(key))
+            return put_verified(self.s3(), local, key, sha, storage_class,
+                                content_type="application/x-tar" if key.endswith(".tar") else "application/octet-stream")
         except Exception as e:  # noqa: BLE001
             print(f"[{self.name}] ✗ S3 {key}: {e}")
             return False
@@ -723,6 +878,9 @@ class JmaRasterCollector(BaseCollector):
         dd = self.day_dir(product, day)
         frames = ds["frames"]
         ok_vts = sorted(v for v in exp if frames[v]["status"] in ("ok", "partial"))
+        # 取樣間隔變更當日可能有不在新格點上的已抓幀：一併打包進 T3，不可隨 spool 刪掉
+        extra_vts = sorted(v for v, fr in frames.items()
+                           if v not in exp and fr.get("status") in ("ok", "partial"))
         table = self.table(product) if product.decodes else None
         row = {"_type": "daily", "source": SOURCE, "product": product.name,
                "obs_date": f"{day[:4]}-{day[4:6]}-{day[6:]}", "frames_expected": len(exp),
@@ -764,11 +922,12 @@ class JmaRasterCollector(BaseCollector):
                 "canvas_coarse": canvas(product.coarse_zoom),
                 "decode_table_version": table.version if table else None,
                 "frames": [{"valid_time": vt, **{k: v for k, v in frames[vt].items() if k != "grid"}}
-                           for vt in exp],
+                           for vt in sorted(set(exp) | set(extra_vts))],
+                "off_cadence_frames": extra_vts,
                 "missing": [vt for vt in exp if frames[vt]["status"] == "missing"],
                 "license": "気象庁ホームページ（PDL1.0）",
             }
-            tars = [dd / "frames" / f"{vt}.tar" for vt in ok_vts]
+            tars = [dd / "frames" / f"{vt}.tar" for vt in sorted(ok_vts + extra_vts)]
             info = sp.pack_day_tar(local, tars, manifest, int(datetime.strptime(day, "%Y%m%d").timestamp()))
             key = f"weather-raw/{SOURCE}/{product.name}/{day[:4]}/{day[4:6]}/{day}.tar"
             if not self._put_verified(local, key, info["sha256"], "DEEP_ARCHIVE"):

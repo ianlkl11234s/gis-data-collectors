@@ -1071,18 +1071,19 @@ jma_amedas:
   supabase_tables: [live.jma_amedas_current, live.jma_amedas_observations]
   s3_prefixes:
     - {prefix: jma_amedas/archives/, expected_daily: false}
+    - {prefix: weather-obs/jma/amedas/, expected_daily: true}
   critical: false
-  notes: 日本氣象廳 AMeDAS 約 1,286 站 10 分值（bosai 非公式 JSON，PDL1.0）；observations 只寫整點
+  notes: 日本氣象廳 AMeDAS 約 1,286 站 10 分值（bosai 非公式 JSON，PDL1.0）；observations 只寫整點；每 JST 日結一份每站×10 分 Parquet（weather-obs/jma/amedas/，約 2.3 MB/日）
 
 jma_warnings:
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_WARNINGS_ENABLED=true + restart 生效
   deployment: zeabur
   expected_interval_min: 720
-  supabase_tables: [live.jma_warnings]
+  supabase_tables: [live.jma_warning_events]
   s3_prefixes:
     - {prefix: jma_warnings/archives/, expected_daily: false}
   critical: false
-  notes: R8 警報・注意報；事件驅動（map_time 沒變不抓、不寫），全國無有效警報時寫 '__none__' 哨兵列
+  notes: R8 警報・注意報；438 起只記變動（start/status_change/end）→ live.jma_warning_events（永久）；整份有效快照只進本地 JSON raw_payload → 每日 archives；舊 live.jma_warnings 停寫
 
 jma_quake:
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_QUAKE_ENABLED=true + restart 生效

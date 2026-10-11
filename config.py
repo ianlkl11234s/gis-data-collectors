@@ -388,6 +388,8 @@ for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
     globals()[f'{_prefix}_INTERVAL'] = int(os.getenv(f'{_prefix}_INTERVAL', str(_intv_default)))
 
 # JMA 網格圖磚（jma_raster）：產品清單、z8 下鑽磚數上限（ADR 請求預算：48＋15×16＝288 req/幀）、並發、首跑回看
+# JMA AMeDAS 每日 Parquet（JST 日結後上傳 S3 weather-obs/jma/amedas/，第二批 2026-10-11）
+JAPAN_JMA_AMEDAS_DAILY_PARQUET = _env_bool('JAPAN_JMA_AMEDAS_DAILY_PARQUET', True)
 JAPAN_JMA_RASTER_PRODUCTS = os.getenv(
     'JAPAN_JMA_RASTER_PRODUCTS',
     'radar,rasrf,risk_land,risk_inund,risk_flood,snow_depth,himawari_b13')
@@ -401,6 +403,14 @@ JAPAN_JMA_RASTER_BACKLOG_PRODUCTS = os.getenv(
 JAPAN_JMA_RASTER_BACKLOG_MAX_SECONDS = int(os.getenv('JAPAN_JMA_RASTER_BACKLOG_MAX_SECONDS', '2700'))
 # T2 每小時網格檔的 zip 壓縮：deflate／lzma（皆標準庫；實測見 docs）
 JAPAN_JMA_RASTER_GRID_COMPRESSION = os.getenv('JAPAN_JMA_RASTER_GRID_COMPRESSION', 'deflate')
+# 第二批（2026-10-11）：每產品取樣間隔（分鐘，須為上游原生間隔的整數倍；只收 validtime 落在格點上的幀）
+#   キキクル原生 10 分、上游留 5.5h → 每 30 分一幀（:00／:30），每小時一輪足夠
+JAPAN_JMA_RASTER_CADENCE = os.getenv(
+    'JAPAN_JMA_RASTER_CADENCE', 'risk_land=30,risk_inund=30,risk_flood=30')
+# 季節開關（JST 月份；季外不抓、不產生 frames 列、不算缺幀）
+JAPAN_JMA_RASTER_SEASON = os.getenv('JAPAN_JMA_RASTER_SEASON', 'snow_depth=11,12,1,2,3,4')
+# 先看粗圖（z4）再抓細圖：off／shadow（照舊全抓 z6，記 z4 全空但 z6 非空的 miss）／on（z4 全空區跳過 z6、z8）
+JAPAN_JMA_RASTER_COARSE_PROBE = os.getenv('JAPAN_JMA_RASTER_COARSE_PROBE', 'shadow').strip().lower()
 
 # Internet health — provider jobs remain independent but write one canonical
 # contract.  Country-level TW is the MVP; ASN coverage is added only after a
