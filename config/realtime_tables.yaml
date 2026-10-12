@@ -204,3 +204,8 @@ tables:
   - {schema: live, table: jma_rainy_season,            time_column: first_seen_at, owner_collector: jma_seasonal, expected_interval_min: 1440, critical: false, notes: 梅雨速報（5–8 月發表時才有新列）}
   - {schema: live, table: weather_raster_frames,       time_column: collected_at, owner_collector: jma_raster, expected_interval_min: 120, critical: false, notes: 網格圖磚每幀狀態（每輪 60 分寫入；status 只升不降）；保留 400 天}
   - {schema: live, table: weather_raster_daily,        time_column: uploaded_at,  owner_collector: jma_raster, expected_interval_min: 2880, critical: false, notes: 每產品每 JST 日一列（D+1 01:00 後日結；缺幀日等上游保留期到期才結）；永久}
+  # ── JMA 預報／環境省 WBGT（2026-10-12；gis-platform migration 440；落雷寫既有 lightning_events）──
+  - {schema: live, table: jma_forecasts,               time_column: collected_at, owner_collector: jma_forecast, expected_interval_min: 720, critical: false, notes: 府縣預報每次發表保留（短期 05/11/17、週間 11/17）；保留 90 天}
+  - {schema: live, table: jma_forecast_probabilities,  time_column: collected_at, owner_collector: jma_forecast, expected_interval_min: 1440, critical: false, notes: 早期注意 r8（levels 空字串＝未達中，不是缺值）；保留 30 天}
+  - {schema: live, table: env_jp_wbgt_observations,    time_column: collected_at, owner_collector: env_jp_wbgt, expected_interval_min: 120, critical: false, notes: 841 站逐時 WBGT；服務期約 4/22–10/21，季外 DEAD 屬預期；保留 30 天}
+  - {schema: live, table: env_jp_wbgt_forecasts,       time_column: collected_at, owner_collector: env_jp_wbgt, expected_interval_min: 1440, critical: false, notes: 每期一站一列（3 小時格陣列）；季外 DEAD 屬預期；保留 30 天}

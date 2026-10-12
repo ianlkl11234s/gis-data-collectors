@@ -1121,3 +1121,33 @@ jma_raster:
     ADR-0021 G 型網格圖磚（radar/rasrf/risk_land/risk_inund/risk_flood(pbf 只冷存)/snow_depth/himawari_b13）；
     每輪 oldest-first 補抓上游保留期內缺幀；請求預算：radar/rasrf/risk 每幀 ≤288（z6 48 + 前 15 磚下鑽 z8×16），
     snow 48、himawari 12；並發 ≤4。日結 JST D+1 01:00 後：T1 weather-daily、T3 weather-raw（DEEP_ARCHIVE），T2 weather-grid 每小時
+
+jma_lightning:
+  enabled: false  # 新 collector；migration 440 apply 後設 Zeabur env JAPAN_JMA_LIGHTNING_ENABLED=true + restart
+  deployment: zeabur
+  expected_interval_min: 1440
+  supabase_tables: [live.lightning_events]
+  s3_prefixes:
+    - {prefix: jma_lightning/archives/, expected_daily: false}
+  critical: false
+  notes: JMA 雷ナウキャスト LIDEN 5 分幀 → live.lightning_events source='jma'（與台電／CWA 同表，source_type 存上游 type 原值）；自產 5 分格點補抓 48h 內缺幀；事件驅動，無雷擊即無新列
+
+jma_forecast:
+  enabled: false  # 新 collector；migration 440 apply 後設 Zeabur env JAPAN_JMA_FORECAST_ENABLED=true + restart
+  deployment: zeabur
+  expected_interval_min: 720
+  supabase_tables: [live.jma_forecasts, live.jma_forecast_probabilities]
+  s3_prefixes:
+    - {prefix: jma_forecast/archives/, expected_daily: false}
+  critical: false
+  notes: 府縣天氣預報 56 office 全區域（短期 05/11/17、週間 11/17）＋早期注意 r8；map.json 偵測 reportDatetime 有變才抓 office JSON；每次發表保留（DO NOTHING）；raw office JSON 進本地 raw_payload → archives
+
+env_jp_wbgt:
+  enabled: false  # 新 collector；migration 440 apply 後設 Zeabur env JAPAN_ENV_WBGT_ENABLED=true + restart；季節月份外不發請求
+  deployment: zeabur
+  expected_interval_min: 120
+  supabase_tables: [live.env_jp_wbgt_observations, live.env_jp_wbgt_forecasts]
+  s3_prefixes:
+    - {prefix: env_jp_wbgt/archives/, expected_daily: false}
+  critical: false
+  notes: 環境省 WBGT 841 站（站號＝AMeDAS）實況逐時（列 hash 變動才寫、可回溯修正 DO UPDATE）＋預報每期保留；服務期約 4/22–10/21，季外 DEAD 屬預期；出典：環境省（電子情報提供サービス，非 PDL1.0）
