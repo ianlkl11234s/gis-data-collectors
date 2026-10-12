@@ -659,13 +659,16 @@ class JmaOceanEnvCollector(BaseCollector):
         out = {"issued": False, "images": 0, "new_blobs": 0, "dedup_refs": 0, "requests": 0, "failed": 0,
                "days_closed": [], "days_failed": []}
         r0 = self._requests
-        status, body, headers = self._get(KOSA_LIST)
-        if status != 200:
-            raise RuntimeError(f"kosa list HTTP {status}")
-        list_sha = sp.sha256_bytes(body)
-        if list_sha != st["last_list_sha"]:
-            out.update(self.fetch_kosa_issue(body, headers, now, st))
-            st["last_list_sha"] = list_sha
+        if self.in_season("kosa_fcst", now.astimezone(JST).strftime("%Y%m%d")):  # 季外只做日結，不打上游
+            status, body, headers = self._get(KOSA_LIST)
+            if status != 200:
+                raise RuntimeError(f"kosa list HTTP {status}")
+            list_sha = sp.sha256_bytes(body)
+            if list_sha != st["last_list_sha"]:
+                out.update(self.fetch_kosa_issue(body, headers, now, st))
+                st["last_list_sha"] = list_sha
+        else:
+            out["off_season"] = True
         # 日結：發布日（JST）D 在 D+1 01:00 後
         base = self.spool_root / "kosa_fcst"
         if base.exists() and self.s3() is not None:

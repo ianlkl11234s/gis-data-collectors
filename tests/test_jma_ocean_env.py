@@ -211,6 +211,14 @@ def test_sea_ice_season_switch_no_requests_off_season(tmp_path):
     assert {u[-12:-4] for u in calls} == {"20261201"}, "11/29、11/30 季外；12/1 起才抓（今天 12/2 不打）"
 
 
+def test_kosa_off_season_no_requests(tmp_path):
+    calls = []
+    c = make_collector(tmp_path, ["kosa_fcst"], FakeS3(), lambda url: calls.append(url) or (200, b"", {}),
+                       seasons={"kosa_fcst": frozenset({2, 3, 4, 5})})
+    out = c.collect_kosa(datetime(2026, 10, 12, 3, tzinfo=timezone.utc))
+    assert calls == [] and out.get("off_season") is True
+
+
 def test_season_spec_parsing_reuses_raster_parser():
     seasons = oe.parse_product_map("sea_ice=12,1,2,3,4,5,uv_anal=4,5,6", oe._months)
     assert seasons["sea_ice"] == frozenset({12, 1, 2, 3, 4, 5}) and seasons["uv_anal"] == frozenset({4, 5, 6})
