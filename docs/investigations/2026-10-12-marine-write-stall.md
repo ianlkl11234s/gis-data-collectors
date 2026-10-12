@@ -52,3 +52,15 @@
 - Zeabur `_txn` 原本就會 `SET LOCAL statement_timeout = SUPABASE_STATEMENT_TIMEOUT_MS`（預設 30 秒），但事件中有 2 小時的交易與 4 小時的鎖等待，表示正式環境的 env 可能覆寫成 0 或很大的值；請主 agent 查 Zeabur `SUPABASE_STATEMENT_TIMEOUT_MS`。海象路徑現在固定 120 秒、lock 10 秒，不受它影響。
 - 比最新觀測晚 3 小時以上的上游修正不再寫入 DB（raw archive 仍有）。
 - 啟動時 scheduler 仍會立即跑一次（可能落在 :14／:15），之後才對齊固定分鐘。
+
+## 上線紀錄（2026-10-12，台灣時間）
+- 16:22 VM `210.61.15.74`：先備份 crontab 到 `/root/crontab.bak.20261012`，把 isohe collect 排程註解為 `# PAUSED …`（保留每日 archive）；kill 兩個卡住的 collect 程序（已跑 3 天 14 小時、1 天 12 小時）。
+- 16:4x gis-platform mig 441 apply（VM 與 Zeabur marine 都暫停時），剩 4 個索引（pkey、station_metric_time、time、valid_time）；cron `refresh-marine-observation-hourly` 改為 `40 * * * *`。gis-platform #149。
+- 16:5x data-collectors #138（`da2bf2d`）Zeabur 自動部署。
+- 16:51 VM：備份舊 `isohe_port_marine_collect.py` 為 `.bak.20261012`，scp 新版 `isohe_port_marine_collect.py`、`marine_write.py`、`setup_cron.sh`；手動跑一輪 12 秒，`readings_sent=1501/27072`；`setup_cron.sh` 恢復排程（`8-59/10`，`timeout -k 30 540`）。
+- 16:5x Zeabur `CWA_MARINE_OBSERVATION_ENABLED=true` 並重啟。
+- 18:4x 檢查：資料庫 active 查詢 0、鎖等待 0；VM 每輪約 3 秒、`readings_sent` 約 1,300–1,400／27,072。
+
+## 待辦
+- 離峰 `REINDEX CONCURRENTLY` 剩餘索引、`VACUUM ANALYZE analytics.marine_observation_hourly`。
+- 觀察一週：readings `n_tup_upd` 每小時增量應接近 0；全庫 DataFileRead 是否回落，再決定是否升級 Supabase compute（目前 SMALL）。
