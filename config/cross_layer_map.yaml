@@ -1107,7 +1107,7 @@ jma_seasonal:
   notes: 生物季節 HTML（楓銀杏/櫻）＋XML VGSK55／山頂初冠雪（44 山）／梅雨速報；只記變動（DO NOTHING，永久）；季節性，長期無新列屬預期；原文只在有新列時進本地 JSON raw_payload
 
 jma_raster:
-  enabled: false  # 新 collector；migration 437 apply、S3 lifecycle（weather-grid/ 90 天）後設 Zeabur env JAPAN_JMA_RASTER_ENABLED=true + restart
+  enabled: true  # 2026-10-10 上線（Zeabur JAPAN_JMA_RASTER_ENABLED=true）；T2 weather-grid/ 永久（依全桶規則轉 IA/GIR）
   deployment: zeabur
   expected_interval_min: 60
   supabase_tables: [live.weather_raster_frames, live.weather_raster_daily]
