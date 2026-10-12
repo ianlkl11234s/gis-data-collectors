@@ -31,6 +31,7 @@ class _CwaTlsAdapter(HTTPAdapter):
 class CwaMarineObservationCollector(BaseCollector):
     name = "cwa_marine_observation"
     interval_minutes = config.CWA_MARINE_OBSERVATION_INTERVAL
+    fixed_minutes = config.CWA_MARINE_OBSERVATION_MINUTES
 
     def __init__(self):
         super().__init__()

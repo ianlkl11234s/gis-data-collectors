@@ -75,6 +75,26 @@ def _init_collector_from_entry(entry, first: bool) -> "BaseCollector | None":
         return None
 
 
+def _schedule_collector(collector, sched) -> None:
+    """註冊 collector 的週期觸發。
+
+    預設 every(interval) + 一次性 jitter；collector 有 fixed_minutes 時改成每小時
+    固定分鐘觸發（例如海象避開 DB cron 的 :14/:15/:40，見
+    docs/investigations/2026-10-12-marine-write-stall.md）。
+    """
+    fixed = tuple(getattr(collector, 'fixed_minutes', ()) or ())
+    if fixed:
+        for minute in fixed:
+            schedule.every().hour.at(f":{int(minute):02d}").do(sched.submit, collector)
+        print(f"   ⏱ [{collector.name}] 固定分鐘 {','.join(f':{int(m):02d}' for m in fixed)}")
+        return
+    job = schedule.every(collector.interval_minutes).minutes.do(sched.submit, collector)
+    offset_sec = random.uniform(0, min(collector.interval_minutes * 60, 300))
+    job.next_run += timedelta(seconds=offset_sec)
+    print(f"   ⏱ [{collector.name}] 排程 jitter +{offset_sec:.0f}s"
+          f"（首次觸發 {job.next_run.strftime('%H:%M:%S')}）")
+
+
 def run_collectors():
     """依 COLLECTOR_REGISTRY 初始化所有 collector，並交給 CollectorScheduler 排程"""
     collectors = []
@@ -114,11 +134,7 @@ def run_collectors():
     # collector 全撞同一 tick 的連線尖峰；schedule 之後以實際執行時間推下一輪，
     # offset 自然保留，interval 語義不變。
     for collector in collectors:
-        job = schedule.every(collector.interval_minutes).minutes.do(sched.submit, collector)
-        offset_sec = random.uniform(0, min(collector.interval_minutes * 60, 300))
-        job.next_run += timedelta(seconds=offset_sec)
-        print(f"   ⏱ [{collector.name}] 排程 jitter +{offset_sec:.0f}s"
-              f"（首次觸發 {job.next_run.strftime('%H:%M:%S')}）")
+        _schedule_collector(collector, sched)
 
     # 顯示下次執行時間
     next_run = schedule.next_run()

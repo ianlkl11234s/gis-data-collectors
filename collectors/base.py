@@ -42,6 +42,8 @@ class BaseCollector(ABC):
     # 子類別必須覆寫
     name: str = "base"
     interval_minutes: int = 60
+    # 非空時改用固定分鐘觸發（每小時 :MM），不套 jitter；用來避開 DB cron 尖峰。
+    fixed_minutes: tuple[int, ...] = ()
 
     # 預期執行時間上限（秒），超過由 scheduler 層記 warning
     # 子類別可依實際情況調整（例如 foursquare_poi、satellite 可設更長）

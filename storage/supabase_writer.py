@@ -26,6 +26,7 @@ from psycopg2.extras import Json, execute_values
 import config
 from storage.db import SupabaseConnectionPool, PoolBorrowTimeout, PoolBreakerOpen
 from storage.supabase_tables import TABLE_MAP
+from storage import marine_write
 from utils.notify import send_telegram, _escape_md, _instance_tag
 from tasks.mini_taipei_publish import (
     build_track_index,
@@ -2743,6 +2744,69 @@ class SupabaseWriter:
         record_count = len(records)
         logger.info(f"[{collector_name}] ✓ DB 寫入 {record_count} 筆")
 
+    def _write_marine(self, conn, collector_name: str, records: list[dict]) -> None:
+        """Marine canonical tables; contract in collectors/marine_write.py.
+
+        Stations: own short transaction, only when roster content changed (or
+        every STATION_REFRESH so last_seen_at advances). Readings/current: one
+        transaction with explicit statement/lock timeouts, only rows near the
+        DB's latest valid observation, conditional upserts (no rewrite when
+        unchanged, no older-collection overwrite).
+        """
+        stations = [r for r in records if r.get('_type') == 'station']
+        readings = [r for r in records if r.get('_type') == 'reading']
+        quarantines = [r for r in records if r.get('_type') == 'quarantine']
+        state = self.__dict__.setdefault('_marine_station_state', {})
+        stations_written = 0
+        if stations:
+            roster_hash = marine_write.station_roster_hash(stations)
+            last_hash, last_written = state.get(collector_name, (None, None))
+            now = datetime.now()
+            if marine_write.station_write_due(roster_hash, last_hash, last_written, now):
+                values = [tuple(Json(row.get(c) or []) if c in ('aliases', 'observed_elements')
+                                else Json(row.get(c) or {}) if c == 'provenance'
+                                else marine_write.point_wkt(row) if c == 'geom' else row.get(c)
+                                for c in marine_write.STATION_COLS) for row in stations]
+                with self._txn(conn) as cur:
+                    for stmt in marine_write.timeout_statements():
+                        cur.execute(stmt)
+                    execute_values(cur, marine_write.stations_upsert_sql(), values,
+                                   template=marine_write.stations_template(), page_size=500)
+                state[collector_name] = (roster_hash, now)
+                stations_written = len(stations)
+        sent = 0
+        if readings or quarantines:
+            with self._txn(conn) as cur:
+                for stmt in marine_write.timeout_statements():
+                    cur.execute(stmt)
+                if readings:
+                    uids = sorted({r['station_uid'] for r in readings})
+                    cur.execute(marine_write.CUTOFF_SQL, (uids,))
+                    latest = {(uid, metric, depth): observed for uid, metric, depth, observed in cur.fetchall()}
+                    recent = marine_write.filter_recent_readings(
+                        readings, latest, config.MARINE_WRITE_LOOKBACK_HOURS)
+                    sent = len(recent)
+                    if recent:
+                        values = [tuple(Json(row.get(c) or {}) if c == 'quality_flags'
+                                        else marine_write.point_wkt(row) if c == 'geom_at_observation'
+                                        else row.get(c) for c in marine_write.READING_COLS) for row in recent]
+                        execute_values(cur, marine_write.readings_upsert_sql(), values,
+                                       template=marine_write.readings_template(), page_size=1000)
+                        current_values = [tuple(Json(row.get(c) or {}) if c == 'quality_flags'
+                                                else marine_write.point_wkt(row) if c == 'geom_at_observation'
+                                                else row.get(c) for c in marine_write.CURRENT_COLS)
+                                          for row in marine_write.latest_current_rows(recent)]
+                        if current_values:
+                            execute_values(cur, marine_write.current_upsert_sql(), current_values,
+                                           template=marine_write.current_template(), page_size=1000)
+                if quarantines:
+                    cols = ['source_network', 'source_station_id', 'reason', 'row_count', 'collected_at']
+                    execute_values(cur, f"INSERT INTO live.marine_observation_quarantine ({','.join(cols)}) VALUES %s "
+                                       "ON CONFLICT (source_network,source_station_id,reason,collected_at) DO NOTHING",
+                                       [tuple(r.get(c) for c in cols) for r in quarantines])
+        logger.info(f"[{collector_name}] marine write stations={stations_written}/{len(stations)} "
+                    f"readings_sent={sent}/{len(readings)} quarantine={len(quarantines)}")
+
     def _write_multi_table(self, conn, collector_name: str, records: list[dict]):
         """Write collector-specific multi-table contracts atomically."""
         if collector_name == 'jma_amedas':
@@ -3030,74 +3094,7 @@ class SupabaseWriter:
             )
             return
         if collector_name in ('cwa_marine_observation', 'isohe_port_marine'):
-            stations = [r for r in records if r.get('_type') == 'station']
-            readings = [r for r in records if r.get('_type') == 'reading']
-            quarantines = [r for r in records if r.get('_type') == 'quarantine']
-            with self._txn(conn) as cur:
-                if stations:
-                    cols = ['station_uid', 'source_network', 'source_station_id', 'origin_org', 'distribution_org',
-                            'station_type', 'name_zh', 'aliases', 'longitude', 'latitude', 'geom',
-                            'observed_elements', 'source_status', 'source_url', 'license', 'provenance',
-                            'first_seen_at', 'last_seen_at']
-                    values = []
-                    for row in stations:
-                        lon, lat = row.get('longitude'), row.get('latitude')
-                        geom = f'POINT({lon} {lat})' if lon is not None and lat is not None else None
-                        values.append(tuple(Json(row.get(c) or []) if c in ('aliases', 'observed_elements')
-                                            else Json(row.get(c) or {}) if c == 'provenance'
-                                            else geom if c == 'geom' else row.get(c) for c in cols))
-                    template = '(' + ','.join(['%s'] * 10 + ['ST_GeomFromText(%s,4326)'] + ['%s'] * 7) + ')'
-                    updates = ','.join(f'{c}=EXCLUDED.{c}' for c in cols if c != 'station_uid')
-                    execute_values(cur, f"INSERT INTO reference.marine_observation_stations ({','.join(cols)}) VALUES %s "
-                                       f"ON CONFLICT (station_uid) DO UPDATE SET {updates}", values, template=template, page_size=500)
-                if readings:
-                    cols = ['station_uid', 'source_network', 'source_station_id', 'observed_at', 'metric_code', 'depth_key',
-                            'value_raw', 'value_numeric', 'unit_source', 'unit_canonical', 'vertical_datum',
-                            'is_missing', 'is_valid', 'missing_reason', 'source_status', 'quality_flags',
-                            'payload_sha256', 'collected_at', 'geom_at_observation']
-                    values = []
-                    for row in readings:
-                        lon, lat = row.get('longitude'), row.get('latitude')
-                        geom = f'POINT({lon} {lat})' if lon is not None and lat is not None else None
-                        values.append(tuple(Json(row.get(c) or {}) if c == 'quality_flags' else geom if c == 'geom_at_observation' else row.get(c) for c in cols))
-                    template = '(' + ','.join(['%s'] * 18 + ['ST_GeomFromText(%s,4326)']) + ')'
-                    execute_values(cur, f"INSERT INTO live.marine_observation_readings ({','.join(cols)}) VALUES %s "
-                                       "ON CONFLICT (station_uid,observed_at,metric_code,depth_key) DO UPDATE SET "
-                                       "value_raw=EXCLUDED.value_raw,value_numeric=EXCLUDED.value_numeric,unit_source=EXCLUDED.unit_source,"
-                                       "unit_canonical=EXCLUDED.unit_canonical,vertical_datum=EXCLUDED.vertical_datum,"
-                                       "is_missing=EXCLUDED.is_missing,is_valid=EXCLUDED.is_valid,missing_reason=EXCLUDED.missing_reason,"
-                                       "source_status=EXCLUDED.source_status,quality_flags=EXCLUDED.quality_flags,"
-                                       "payload_sha256=EXCLUDED.payload_sha256,collected_at=EXCLUDED.collected_at,geom_at_observation=EXCLUDED.geom_at_observation",
-                                       values, template=template, page_size=1000)
-                    current_cols = [
-                        'station_uid', 'metric_code', 'depth_key', 'observed_at', 'value_raw', 'value_numeric',
-                        'unit_source', 'unit_canonical', 'vertical_datum', 'is_missing', 'is_valid', 'source_status',
-                        'quality_flags', 'payload_sha256', 'collected_at', 'geom_at_observation',
-                    ]
-                    latest = {}
-                    for row in (r for r in readings if r.get('is_valid') and not r.get('is_missing') and r.get('value_numeric') is not None):
-                        key = (row['station_uid'], row['metric_code'], row['depth_key'])
-                        previous = latest.get(key)
-                        if previous is None or str(row['observed_at']) >= str(previous['observed_at']):
-                            latest[key] = row
-                    current_values = []
-                    for row in latest.values():
-                        lon, lat = row.get('longitude'), row.get('latitude')
-                        geom = f'POINT({lon} {lat})' if lon is not None and lat is not None else None
-                        current_values.append(tuple(Json(row.get(c) or {}) if c == 'quality_flags' else geom if c == 'geom_at_observation' else row.get(c) for c in current_cols))
-                    if current_values:
-                        template = '(' + ','.join(['%s'] * (len(current_cols) - 1) + ['ST_GeomFromText(%s,4326)']) + ')'
-                        updates = ','.join(f'{c}=EXCLUDED.{c}' for c in current_cols if c not in ('station_uid', 'metric_code', 'depth_key'))
-                        execute_values(cur, f"INSERT INTO live.marine_observation_current ({','.join(current_cols)}) VALUES %s "
-                                           f"ON CONFLICT (station_uid,metric_code,depth_key) DO UPDATE SET {updates} "
-                                           "WHERE live.marine_observation_current.observed_at <= EXCLUDED.observed_at",
-                                           current_values, template=template, page_size=1000)
-                if quarantines:
-                    cols = ['source_network', 'source_station_id', 'reason', 'row_count', 'collected_at']
-                    execute_values(cur, f"INSERT INTO live.marine_observation_quarantine ({','.join(cols)}) VALUES %s "
-                                       "ON CONFLICT (source_network,source_station_id,reason,collected_at) DO NOTHING",
-                                       [tuple(r.get(c) for c in cols) for r in quarantines])
-            logger.info(f"[{collector_name}] marine transaction stations={len(stations)} readings={len(readings)} quarantine={len(quarantines)}")
+            self._write_marine(conn, collector_name, records)
             return
         if collector_name == 'gfw_vessel_presence':
             runs = [r for r in records if r.get('_type') == 'run']
