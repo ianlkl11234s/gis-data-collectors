@@ -310,7 +310,8 @@ class SupabaseWriter:
     # 寫入失敗時「不進 buffer」的 collector：靠自身 state 不前進來重試，buffer 補寫反而會重複。
     # jma_warnings（438 起只記變動）：下一輪會用新 control_datetime 重新差分，buffer 再補寫舊一輪
     # → 同一變動兩筆（UNIQUE 含 control_datetime 擋不住）。
-    NO_BUFFER_COLLECTORS = frozenset({'jma_warnings'})
+    # env_jp_wbgt（440）：obs 是 DO UPDATE（上游回溯修正）；失敗批進 buffer 晚於新值 replay 會把修正值蓋回舊值。
+    NO_BUFFER_COLLECTORS = frozenset({'jma_warnings', 'env_jp_wbgt'})
 
     def _should_buffer(self, collector_name: str) -> bool:
         if collector_name in self.NO_BUFFER_COLLECTORS:

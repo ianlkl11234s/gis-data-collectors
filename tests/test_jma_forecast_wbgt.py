@@ -305,3 +305,19 @@ def test_registered_default_disabled(prefix):
     from collectors.registry import COLLECTOR_REGISTRY
     assert any(e.config_prefix == prefix for e in COLLECTOR_REGISTRY)
     assert {p: en for p, en, _ in config._COLLECTOR_TOGGLES}[prefix] is False
+
+
+def test_wbgt_db_failure_is_not_buffered(monkeypatch):
+    w = SupabaseWriter.__new__(SupabaseWriter)
+    w._pool = MagicMock()
+    w._pool.borrow.side_effect = RuntimeError("db down")
+    w._err_lock = MagicMock()
+    w._db_consecutive_errors = {}
+    buffered = []
+    monkeypatch.setattr(w, "_write_to_buffer", lambda *a: buffered.append(a[0]), raising=False)
+    monkeypatch.setattr(w, "_report_heartbeat", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(w, "_record_db_error", lambda *a, **k: None, raising=False)
+    data = [{"_type": "obs", "station_id": "11001", "observed_at": "2026-10-02T00:00:00+09:00",
+             "wbgt": 10.4, "collected_at": COLLECTED}]
+    assert w.write("env_jp_wbgt", {"data": data}, TS) is False
+    assert buffered == [], "env_jp_wbgt 失敗不進 buffer：舊值 replay 會蓋掉回溯修正值"

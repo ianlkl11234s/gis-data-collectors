@@ -28,6 +28,7 @@
 - 去重：上游 `id` 是幀內序號、不是雷擊 ID。`dedup_hash = md5(毫秒 UTC ISO|lon|lat|source_type)`，
   `event_id` 取 hash 前 15 hex（同 lightning_cwa）；UNIQUE (source, dedup_hash)／(source, event_id) DO NOTHING。
 - 無電流強度（`intensity_ka` NULL）；座標 3 位小數。
+- 已知小風險：targetTimes 失敗時以 now−10 分推估最新幀，若該幀其實還沒產生，404 三輪後會被記成上游缺幀而不再抓。
 - `analytics.refresh_lightning_daily_summary` 依 source 分組、ST_Within 台灣縣市 → jma 列會聚成 `county=NULL, source='jma'`。
 
 ## C5 jma_forecast
@@ -57,7 +58,8 @@
 - 2026 服務期 4/22（4 月第 4 個週三）～10/21；`JAPAN_ENV_WBGT_SEASON_MONTHS`（預設 4–10，JST）以外不發請求；季內 404 不算錯。
 - 「東祖谷」10/22 前用「京上」站號 71191 提供（官方說明）。841 站多數是實況推定值，實測只有 47 站。
 - 只記變動：HTTP 帶 If-None-Match／If-Modified-Since（304 直接跳過）；state 記每個月檔每時刻列的 md5，列變了才送該列非空格；
-  官方曾公告實況誤算出並回溯修正，所以 obs 表 `ON CONFLICT DO UPDATE … WHERE wbgt IS DISTINCT FROM`。月初兩天也看上月檔。
+  官方曾公告實況誤算出並回溯修正，所以 obs 表 `ON CONFLICT DO UPDATE … WHERE wbgt IS DISTINCT FROM`；
+  DB 寫入失敗**不進 buffer**（`NO_BUFFER_COLLECTORS`），避免舊值晚於修正值 replay 把它蓋回去，靠 state 不前進重送。月初兩天也看上月檔。
   首跑每月只送最近 `JAPAN_ENV_WBGT_INITIAL_LOOKBACK_DAYS`（7）天。預報以作成時刻判斷新一期。
 - 缺測：空格不寫列（不當 0）；預報陣列內空白為 NULL 元素。
 
@@ -86,7 +88,7 @@
 
 - migration 本體 4 秒；以實際 writer SQL 寫入 55 筆 jma 落雷（source_type 0/1/4 → strike_type 1/1/0）、
   1,479 預報＋1,069 早期注意、841 WBGT 預報＋3,000 實況；同批重送無新增（DO NOTHING／DISTINCT FROM）。
-- 4 表 RLS 開；`SET ROLE anon` 讀 4 個 public view 正常（WBGT view 841 站全有座標）；cron 4 支、retention_policies 4 列。
+- 4 表 RLS 開、anon／authenticated 只有 SELECT grant，view REVOKE ALL 後只 GRANT SELECT；`SET ROLE anon` 讀 4 個 public view 正常（WBGT view 841 站全有座標）；cron 4 支、retention_policies 4 列。
 - `metadata.check_retention_coverage()` 與 apply 前相同（3 筆既有項，無新增）。曾試在 440 補登記 `lightning_events`，
   反而觸發「no active pg_cron cleanup job references this table」（既有 cron 呼叫專用函式），已移除，另案處理。
 - ⚠ migration 對 `live.lightning_events` 做 ADD COLUMN（ACCESS EXCLUSIVE，瞬間）；apply 時不要在同一 transaction 做慢操作。
