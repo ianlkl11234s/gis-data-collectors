@@ -1096,6 +1096,16 @@ jma_quake:
   notes: 地震 list＋津波 list＋火山 warning.json；事件驅動（DO NOTHING，僅新情報推進 MAX）
 
 
+jma_seasonal:
+  enabled: false  # 新 collector；migration 439 apply＋S3 lifecycle（jma_seasonal/archives/）後設 Zeabur env JAPAN_JMA_SEASONAL_ENABLED=true + restart
+  deployment: zeabur
+  expected_interval_min: 1440
+  supabase_tables: [live.jma_phenology_observations, live.jma_snowcap, live.jma_snowcap_status, live.jma_rainy_season]
+  s3_prefixes:
+    - {prefix: jma_seasonal/archives/, expected_daily: false}
+  critical: false
+  notes: 生物季節 HTML（楓銀杏/櫻）＋XML VGSK55／山頂初冠雪（44 山）／梅雨速報；只記變動（DO NOTHING，永久）；季節性，長期無新列屬預期；原文只在有新列時進本地 JSON raw_payload
+
 jma_raster:
   enabled: false  # 新 collector；migration 437 apply、S3 lifecycle（weather-grid/ 90 天）後設 Zeabur env JAPAN_JMA_RASTER_ENABLED=true + restart
   deployment: zeabur
