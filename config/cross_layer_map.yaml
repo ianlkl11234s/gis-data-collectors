@@ -1122,6 +1122,24 @@ jma_raster:
     每輪 oldest-first 補抓上游保留期內缺幀；請求預算：radar/rasrf/risk 每幀 ≤288（z6 48 + 前 15 磚下鑽 z8×16），
     snow 48、himawari 12；並發 ≤4。日結 JST D+1 01:00 後：T1 weather-daily、T3 weather-raw（DEEP_ARCHIVE），T2 weather-grid 每小時
 
+jma_ocean_env:
+  enabled: false  # 新 collector；不需 migration（沿用 437/438）；S3 加 jma_ocean_env/archives/ 270 天 DA 規則後設 Zeabur env JAPAN_JMA_OCEAN_ENV_ENABLED=true + restart
+  deployment: zeabur
+  expected_interval_min: 60
+  supabase_tables: [live.weather_raster_frames, live.weather_raster_daily]
+  s3_prefixes:
+    - {prefix: jma_ocean_env/archives/, expected_daily: false}
+    - {prefix: weather-raw/jma/sst_him/, expected_daily: true}
+    - {prefix: weather-grid/jma/sst_him/, expected_daily: true}
+    - {prefix: weather-raw/jma/uv_anal/, expected_daily: true}
+    - {prefix: weather-daily/jma/uv_anal/, expected_daily: true}
+    - {prefix: weather-raw/jma/kosa_fcst/, expected_daily: true}
+  critical: false
+  notes: >-
+    C8 海洋・環境網格（docs/JMA_OCEAN_ENV.md）：sst_him（0.1° 日檔）、sst_mgd（0.25° 全球日檔）、sea_ice（12–5 月）、
+    uv_anal（z5 6 磚×13 幀/日，06–18 JST，上游留約 36h）、kosa_fcst（每日 1 次發布 32 張預測圖，sha256 去重，只冷存不解碼）。
+    T3 weather-raw DEEP_ARCHIVE、T2 weather-grid/jma/{product}/{YYYY}/{YYYYMMDD}.npz、T1 只有 uv_anal；DB 只放狀態（source='jma'）
+
 jma_lightning:
   enabled: false  # 新 collector；migration 440 apply 後設 Zeabur env JAPAN_JMA_LIGHTNING_ENABLED=true + restart
   deployment: zeabur

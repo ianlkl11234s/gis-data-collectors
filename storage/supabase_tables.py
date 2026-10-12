@@ -927,6 +927,11 @@ TABLE_MAP = {
         # live.weather_raster_daily（PK source,product,obs_date；upsert）— migration 437
         'is_multi_table': True,
     },
+    'jma_ocean_env': {
+        # 與 jma_raster 同表、同寫法：live.weather_raster_frames／weather_raster_daily（source='jma'，
+        # product=sst_him/sst_mgd/sea_ice/uv_anal/kosa_fcst）— 沿用 migration 437/438，不需新 migration
+        'is_multi_table': True,
+    },
     'jma_forecast': {
         # live.jma_forecasts（PK report_datetime,area_code,target_date,series）
         # live.jma_forecast_probabilities（PK report_datetime,area_code,series,prob_type）

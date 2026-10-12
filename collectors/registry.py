@@ -107,6 +107,7 @@ from .global_climate.jma_raster import JmaRasterCollector
 from .global_climate.jma_lightning import JmaLightningCollector
 from .global_climate.jma_forecast import JmaForecastCollector
 from .global_climate.env_jp_wbgt import EnvJpWbgtCollector
+from .global_climate.jma_ocean_env import JmaOceanEnvCollector
 
 
 @dataclass(frozen=True)
@@ -238,6 +239,9 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(JmaLightningCollector, "JMA 雷ナウキャスト LIDEN 落雷收集器", "JAPAN_JMA_LIGHTNING"),
     CollectorEntry(JmaForecastCollector, "JMA 府縣天氣預報＋早期注意收集器", "JAPAN_JMA_FORECAST"),
     CollectorEntry(EnvJpWbgtCollector, "環境省 熱中症 WBGT 實況／預報收集器", "JAPAN_ENV_WBGT"),
+    # === JMA 海洋・環境網格 C8（2026-10-12；沿用 migration 437/438 的 live.weather_raster_*）===
+    CollectorEntry(JmaOceanEnvCollector, "JMA 海洋・環境網格收集器（海溫/海冰/UV/黃砂）", "JAPAN_JMA_OCEAN_ENV",
+                   ("S3_BUCKET",)),
 )
 
 

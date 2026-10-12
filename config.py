@@ -123,7 +123,7 @@ ARCHIVE_TIME = os.getenv('ARCHIVE_TIME', '03:00')  # 每日歸檔時間 (HH:MM)
 COLLECTOR_RETENTION_OVERRIDES = {
     name: int(os.environ[f'{name.upper()}_ARCHIVE_RETENTION_DAYS'])
     for name in ('iot_wra', 'bus', 'bus_intercity', 'youbike', 'train',
-                 'jma_amedas', 'jma_warnings', 'jma_quake', 'jma_raster', 'jma_seasonal',
+                 'jma_amedas', 'jma_warnings', 'jma_quake', 'jma_raster', 'jma_seasonal', 'jma_ocean_env',
                  'ship_ais', 'flight_fr24', 'flight_fr24_zone', 'freeway_vd',
                  'satellite', 'cwa_satellite', 'temperature', 'weather',
                  'air_quality', 'air_quality_microsensors', 'air_quality_imagery',
@@ -139,7 +139,7 @@ COLLECTOR_RETENTION_OVERRIDES = {
 COLLECTOR_RETENTION_OVERRIDES.setdefault('cwa_marine_observation', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('isohe_port_marine', 3)
 # JMA：本地只需撐到隔天 03:00 歸檔驗證完成；冷資料在 S3（ADR-0021，2026-10-09）
-for _jma_name in ('jma_amedas', 'jma_warnings', 'jma_quake', 'jma_raster', 'jma_seasonal'):
+for _jma_name in ('jma_amedas', 'jma_warnings', 'jma_quake', 'jma_raster', 'jma_seasonal', 'jma_ocean_env'):
     COLLECTOR_RETENTION_OVERRIDES.setdefault(_jma_name, 2)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('cloudflare_radar', 3)
 COLLECTOR_RETENTION_OVERRIDES.setdefault('ioda_internet_health', 3)
@@ -394,6 +394,8 @@ _COLLECTOR_TOGGLES = (
     ('JAPAN_JMA_LIGHTNING',          False, 5),    # LIDEN 5 分幀 → live.lightning_events source='jma'；自產格點補抓缺幀（上游留約 4–5 天）
     ('JAPAN_JMA_FORECAST',           False, 360),  # map.json 比對各 office 短期／週間 reportDatetime，有變才抓 {office}.json＋早期注意 r8
     ('JAPAN_ENV_WBGT',               False, 60),   # 環境省 WBGT 實況月檔＋預報 yohou_all（季節月份外不抓）
+    # === JMA 海洋・環境網格 C8（2026-10-12；不需新 migration，沿用 437/438 狀態表）===
+    ('JAPAN_JMA_OCEAN_ENV',          False, 60),   # 海溫 him/mgd、海冰（12–5 月）、UV 解析圖磚、黃砂預測圖 → S3 T3(DA)／T2／T1＋live.weather_raster_*
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
@@ -424,6 +426,14 @@ JAPAN_JMA_RASTER_CADENCE = os.getenv(
 JAPAN_JMA_RASTER_SEASON = os.getenv('JAPAN_JMA_RASTER_SEASON', 'snow_depth=11,12,1,2,3,4')
 # 先看粗圖（z4）再抓細圖：off／shadow（照舊全抓 z6，記 z4 全空但 z6 非空的 miss）／on（z4 全空區跳過 z6、z8）
 JAPAN_JMA_RASTER_COARSE_PROBE = os.getenv('JAPAN_JMA_RASTER_COARSE_PROBE', 'shadow').strip().lower()
+
+# JMA 海洋・環境網格（jma_ocean_env，C8）：產品清單、季節月份（JST）、首跑回看天數（上游有完整歷史，加大即回補）、
+#   日檔產品逾幾天仍 404 定案 missing、每輪每產品最多處理幾個日檔（控記憶體與時間）
+JAPAN_JMA_OCEAN_ENV_PRODUCTS = os.getenv('JAPAN_JMA_OCEAN_ENV_PRODUCTS', 'sst_him,sst_mgd,sea_ice,uv_anal,kosa_fcst')
+JAPAN_JMA_OCEAN_ENV_SEASON = os.getenv('JAPAN_JMA_OCEAN_ENV_SEASON', 'sea_ice=12,1,2,3,4,5')
+JAPAN_JMA_OCEAN_ENV_INITIAL_LOOKBACK_DAYS = int(os.getenv('JAPAN_JMA_OCEAN_ENV_INITIAL_LOOKBACK_DAYS', '3'))
+JAPAN_JMA_OCEAN_ENV_MISSING_AFTER_DAYS = int(os.getenv('JAPAN_JMA_OCEAN_ENV_MISSING_AFTER_DAYS', '7'))
+JAPAN_JMA_OCEAN_ENV_MAX_DAYS_PER_RUN = int(os.getenv('JAPAN_JMA_OCEAN_ENV_MAX_DAYS_PER_RUN', '4'))
 
 # JMA 落雷（jma_lightning）：補抓視窗（小時，須小於上游約 4–5 天保留期）、每輪最多幾幀、剛出爐幾分鐘內的幀下輪再抓一次
 JAPAN_JMA_LIGHTNING_BACKFILL_HOURS = int(os.getenv('JAPAN_JMA_LIGHTNING_BACKFILL_HOURS', '48'))

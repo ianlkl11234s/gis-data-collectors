@@ -2561,6 +2561,7 @@ class SupabaseWriter:
         'jma_warnings': _transform_jma_warnings,
         'jma_quake': _transform_jma_quake,
         'jma_raster': _transform_jma_raster,
+        'jma_ocean_env': _transform_jma_raster,  # 同表同格式（C8）
         'jma_seasonal': _transform_jma_seasonal,
         'jma_lightning': _transform_jma_lightning,
         'jma_forecast': _transform_jma_forecast,
@@ -2885,7 +2886,7 @@ class SupabaseWriter:
                         )
             logger.info(f"[jma_seasonal] ✓ 送出 {written}（DO NOTHING，已存在者略過）")
             return
-        if collector_name == 'jma_raster':
+        if collector_name in ('jma_raster', 'jma_ocean_env'):
             fcols, dcols = self._JMA_RASTER_FRAME_COLS, self._JMA_RASTER_DAILY_COLS
             frames = {(r['source'], r['product'], r['valid_time']): tuple(r.get(c) for c in fcols)
                       for r in records if r.get('_type') == 'frame'}
@@ -2910,7 +2911,7 @@ class SupabaseWriter:
                         f"ON CONFLICT (source, product, obs_date) DO UPDATE SET {upd},updated_at=now()",
                         list(daily.values()), page_size=500,
                     )
-            logger.info(f"[jma_raster] ✓ frames {len(frames)} + daily {len(daily)} 筆寫入")
+            logger.info(f"[{collector_name}] ✓ frames {len(frames)} + daily {len(daily)} 筆寫入")
             return
         if collector_name == 'jma_forecast':
             from collectors.global_climate.jma_forecast import FORECAST_COLS, PROB_COLS
