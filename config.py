@@ -203,6 +203,13 @@ SUPABASE_BUFFER_MAX_FILES = int(os.getenv('SUPABASE_BUFFER_MAX_FILES', '500'))
 # 寫入韌性：避免 DB hang 時整條寫入鏈卡死（單連線 + 單 RLock）
 SUPABASE_CONNECT_TIMEOUT = int(os.getenv('SUPABASE_CONNECT_TIMEOUT', '10'))        # 建線 timeout（秒）
 SUPABASE_STATEMENT_TIMEOUT_MS = int(os.getenv('SUPABASE_STATEMENT_TIMEOUT_MS', '30000'))  # 單筆語句 timeout（毫秒）
+# marine canonical write: only rows within N hours of the latest valid DB observation per station/metric are sent
+# (docs/investigations/2026-10-12-marine-write-stall.md). Corrections older than this window stay only in the raw archive.
+MARINE_WRITE_LOOKBACK_HOURS = float(os.getenv('MARINE_WRITE_LOOKBACK_HOURS', '3'))
+# CWA 海象固定觸發分鐘（避開 DB cron :14 ship trails／:15 temperature／:40 marine hourly）
+CWA_MARINE_OBSERVATION_MINUTES = tuple(
+    int(m) for m in os.getenv('CWA_MARINE_OBSERVATION_MINUTES', '7,22,37,52').split(',') if m.strip()
+)
 # 連線池：取代舊「一條 conn + RLock」設計，避免單條連線 wedge 連鎖卡住所有 collector
 SUPABASE_POOL_MIN = int(os.getenv('SUPABASE_POOL_MIN', '2'))                       # pool 最小連線數
 # 預設 15；主站（Zeabur data-collectors-gomn）env 覆寫為 30。2026-07-05：db.py borrow()
