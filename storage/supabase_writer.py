@@ -310,7 +310,8 @@ class SupabaseWriter:
     # 寫入失敗時「不進 buffer」的 collector：靠自身 state 不前進來重試，buffer 補寫反而會重複。
     # jma_warnings（438 起只記變動）：下一輪會用新 control_datetime 重新差分，buffer 再補寫舊一輪
     # → 同一變動兩筆（UNIQUE 含 control_datetime 擋不住）。
-    NO_BUFFER_COLLECTORS = frozenset({'jma_warnings'})
+    # env_jp_wbgt（440）：obs 是 DO UPDATE（上游回溯修正）；失敗批進 buffer 晚於新值 replay 會把修正值蓋回舊值。
+    NO_BUFFER_COLLECTORS = frozenset({'jma_warnings', 'env_jp_wbgt'})
 
     def _should_buffer(self, collector_name: str) -> bool:
         if collector_name in self.NO_BUFFER_COLLECTORS:
@@ -2134,6 +2135,42 @@ class SupabaseWriter:
             records.append(dict(r))
         return records
 
+    def _transform_jma_lightning(self, result: dict, ts: datetime) -> list[dict]:
+        """JMA LIDEN 落雷：共用 lightning_events 轉換（補 geom），再帶上 source_type 原值（migration 440）。"""
+        records = self._transform_lightning_events(result, ts)
+        src = [r for r in result.get('data', []) if r.get('lon') is not None and r.get('lat') is not None]
+        for rec, r in zip(records, src):
+            rec['source'] = 'jma'
+            rec['source_type'] = r.get('source_type')
+        return records
+
+    def _transform_jma_forecast(self, result: dict, ts: datetime) -> list[dict]:
+        """府縣預報／早期注意：依 _type 分流；PK 欄缺值丟棄。"""
+        required = {
+            'forecast': ('report_datetime', 'series', 'area_code', 'target_date', 'office_code'),
+            'probability': ('report_datetime', 'series', 'area_code', 'prob_type'),
+        }
+        records = []
+        for r in result.get('data', []):
+            keys = required.get(r.get('_type'))
+            if not keys or any(not r.get(k) for k in keys):
+                continue
+            rec = dict(r)
+            rec['collected_at'] = rec.get('collected_at') or ts.isoformat()
+            records.append(rec)
+        return records
+
+    def _transform_env_jp_wbgt(self, result: dict, ts: datetime) -> list[dict]:
+        """WBGT：obs 值必須非 NULL（缺測不寫列）；forecast 需 issued_at。"""
+        records = []
+        for r in result.get('data', []):
+            t = r.get('_type')
+            if t == 'obs' and r.get('station_id') and r.get('observed_at') and r.get('wbgt') is not None:
+                records.append(dict(r))
+            elif t == 'forecast' and r.get('station_id') and r.get('issued_at'):
+                records.append(dict(r))
+        return records
+
     def _transform_global_climate_typhoon_positions(self, result: dict, ts: datetime) -> list[dict]:
         """颱風 time-point decomposed（JMA + JTWC 共用）：補 geom WKT。"""
         records: list[dict] = []
@@ -2524,6 +2561,9 @@ class SupabaseWriter:
         'jma_quake': _transform_jma_quake,
         'jma_raster': _transform_jma_raster,
         'jma_seasonal': _transform_jma_seasonal,
+        'jma_lightning': _transform_jma_lightning,
+        'jma_forecast': _transform_jma_forecast,
+        'env_jp_wbgt': _transform_env_jp_wbgt,
         'global_climate_jtwc': _transform_global_climate_typhoon_positions,
         'global_climate_cmems': _transform_global_climate_grids,
         'global_climate_cams': _transform_global_climate_grids,
@@ -2807,6 +2847,58 @@ class SupabaseWriter:
                         list(daily.values()), page_size=500,
                     )
             logger.info(f"[jma_raster] ✓ frames {len(frames)} + daily {len(daily)} 筆寫入")
+            return
+        if collector_name == 'jma_forecast':
+            from collectors.global_climate.jma_forecast import FORECAST_COLS, PROB_COLS
+            fc = {(r['report_datetime'], r['area_code'], r['target_date'], r['series']):
+                  tuple(Json(r.get(c)) if c == 'pops_6h' and r.get(c) is not None else r.get(c)
+                        for c in FORECAST_COLS)
+                  for r in records if r.get('_type') == 'forecast'}
+            pr = {(r['report_datetime'], r['area_code'], r['series'], r['prob_type']):
+                  tuple(r.get(c) for c in PROB_COLS)
+                  for r in records if r.get('_type') == 'probability'}
+            ptmpl = '(' + ','.join('%s::timestamptz[]' if c == 'time_defines' else '%s' for c in PROB_COLS) + ')'
+            with self._txn(conn) as cur:
+                if fc:
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.jma_forecasts ({','.join(FORECAST_COLS)}) VALUES %s ON CONFLICT DO NOTHING",
+                        list(fc.values()), page_size=1000,
+                    )
+                if pr:
+                    execute_values(
+                        cur,
+                        f"INSERT INTO live.jma_forecast_probabilities ({','.join(PROB_COLS)}) VALUES %s "
+                        f"ON CONFLICT DO NOTHING",
+                        list(pr.values()), template=ptmpl, page_size=1000,
+                    )
+            logger.info(f"[jma_forecast] ✓ forecasts {len(fc)} + probabilities {len(pr)} 筆送出（DO NOTHING）")
+            return
+        if collector_name == 'env_jp_wbgt':
+            ocols = ['station_id', 'observed_at', 'wbgt', 'collected_at']
+            fcols = ['station_id', 'issued_at', 'target_times', 'wbgt', 'collected_at']
+            obs = {(r['station_id'], r['observed_at']): tuple(r.get(c) for c in ocols)
+                   for r in records if r.get('_type') == 'obs'}
+            fc = {(r['station_id'], r['issued_at']): tuple(r.get(c) for c in fcols)
+                  for r in records if r.get('_type') == 'forecast'}
+            with self._txn(conn) as cur:
+                if obs:
+                    execute_values(
+                        cur,
+                        "INSERT INTO live.env_jp_wbgt_observations (station_id, observed_at, wbgt, collected_at) "
+                        "VALUES %s ON CONFLICT (station_id, observed_at) DO UPDATE SET "
+                        "wbgt=EXCLUDED.wbgt, collected_at=EXCLUDED.collected_at, updated_at=now() "
+                        "WHERE live.env_jp_wbgt_observations.wbgt IS DISTINCT FROM EXCLUDED.wbgt",
+                        list(obs.values()), page_size=2000,
+                    )
+                if fc:
+                    execute_values(
+                        cur,
+                        "INSERT INTO live.env_jp_wbgt_forecasts (station_id, issued_at, target_times, wbgt, collected_at) "
+                        "VALUES %s ON CONFLICT DO NOTHING",
+                        list(fc.values()), template='(%s,%s,%s::timestamptz[],%s::real[],%s)', page_size=1000,
+                    )
+            logger.info(f"[env_jp_wbgt] ✓ observations {len(obs)} + forecasts {len(fc)} 筆送出")
             return
         if collector_name == 'global_events':
             batches = [r for r in records if r.get('_type') == 'collector_batch']

@@ -166,6 +166,10 @@ archive_py_covered:
   - live.jma_snowcap               # 同上
   - live.jma_snowcap_status        # 同上
   - live.jma_rainy_season          # 同上
+  - live.jma_forecasts             # jma_forecast，migration 440，待 Zeabur 啟用
+  - live.jma_forecast_probabilities  # 同上
+  - live.env_jp_wbgt_observations  # env_jp_wbgt，migration 440，待 Zeabur 啟用
+  - live.env_jp_wbgt_forecasts     # 同上
   # Satellite / launch
   - live.satellite_positions       # satellite, 2026-03-28 起
   - live.satellite_tle             # 同 satellite collector

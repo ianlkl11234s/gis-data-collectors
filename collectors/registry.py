@@ -104,6 +104,9 @@ from .global_climate.jma_warnings import JmaWarningsCollector
 from .global_climate.jma_quake import JmaQuakeCollector
 from .global_climate.jma_seasonal import JmaSeasonalCollector
 from .global_climate.jma_raster import JmaRasterCollector
+from .global_climate.jma_lightning import JmaLightningCollector
+from .global_climate.jma_forecast import JmaForecastCollector
+from .global_climate.env_jp_wbgt import EnvJpWbgtCollector
 
 
 @dataclass(frozen=True)
@@ -231,6 +234,10 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
                    ("S3_BUCKET",)),
     # migration 439；生物季節／初冠雪／梅雨速報，只記變動
     CollectorEntry(JmaSeasonalCollector, "JMA 季節觀測收集器（生物季節／初冠雪／梅雨）", "JAPAN_JMA_SEASONAL"),
+    # === JMA 落雷（2026-10-12，gis-platform migration 440）===
+    CollectorEntry(JmaLightningCollector, "JMA 雷ナウキャスト LIDEN 落雷收集器", "JAPAN_JMA_LIGHTNING"),
+    CollectorEntry(JmaForecastCollector, "JMA 府縣天氣預報＋早期注意收集器", "JAPAN_JMA_FORECAST"),
+    CollectorEntry(EnvJpWbgtCollector, "環境省 熱中症 WBGT 實況／預報收集器", "JAPAN_ENV_WBGT"),
 )
 
 

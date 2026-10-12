@@ -382,6 +382,11 @@ _COLLECTOR_TOGGLES = (
     ('JAPAN_JMA_QUAKE',              False, 2),    # 地震 list + 津波 list + 火山 warning.json（DO NOTHING，永久）
     ('JAPAN_JMA_RASTER',             False, 60),
     ('JAPAN_JMA_SEASONAL',           False, 360),  # 季節觀測：生物季節 HTML＋XML VGSK55／山頂初冠雪／梅雨速報；只記變動、永久（migration 439）   # 網格圖磚 G 型（雷達/解析雨量/キキクル/積雪/ひまわり）；spool→S3 T1–T3（migration 437；ADR-0021）
+    ('JAPAN_JMA_RASTER',             False, 60),   # 網格圖磚 G 型（雷達/解析雨量/キキクル/積雪/ひまわり）；spool→S3 T1–T3（migration 437；ADR-0021）
+    # === JMA 落雷／預報＋環境省 WBGT（2026-10-12；gis-platform migration 440）===
+    ('JAPAN_JMA_LIGHTNING',          False, 5),    # LIDEN 5 分幀 → live.lightning_events source='jma'；自產格點補抓缺幀（上游留約 4–5 天）
+    ('JAPAN_JMA_FORECAST',           False, 360),  # map.json 比對各 office 短期／週間 reportDatetime，有變才抓 {office}.json＋早期注意 r8
+    ('JAPAN_ENV_WBGT',               False, 60),   # 環境省 WBGT 實況月檔＋預報 yohou_all（季節月份外不抓）
 )
 
 for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
@@ -412,6 +417,14 @@ JAPAN_JMA_RASTER_CADENCE = os.getenv(
 JAPAN_JMA_RASTER_SEASON = os.getenv('JAPAN_JMA_RASTER_SEASON', 'snow_depth=11,12,1,2,3,4')
 # 先看粗圖（z4）再抓細圖：off／shadow（照舊全抓 z6，記 z4 全空但 z6 非空的 miss）／on（z4 全空區跳過 z6、z8）
 JAPAN_JMA_RASTER_COARSE_PROBE = os.getenv('JAPAN_JMA_RASTER_COARSE_PROBE', 'shadow').strip().lower()
+
+# JMA 落雷（jma_lightning）：補抓視窗（小時，須小於上游約 4–5 天保留期）、每輪最多幾幀、剛出爐幾分鐘內的幀下輪再抓一次
+JAPAN_JMA_LIGHTNING_BACKFILL_HOURS = int(os.getenv('JAPAN_JMA_LIGHTNING_BACKFILL_HOURS', '48'))
+JAPAN_JMA_LIGHTNING_MAX_FRAMES = int(os.getenv('JAPAN_JMA_LIGHTNING_MAX_FRAMES', '36'))
+JAPAN_JMA_LIGHTNING_SETTLE_MINUTES = int(os.getenv('JAPAN_JMA_LIGHTNING_SETTLE_MINUTES', '10'))
+# 環境省 WBGT（env_jp_wbgt）：收集月份（JST；服務期約 4 月第 4 個週三～10 月 21 日）、首跑回看天數
+JAPAN_ENV_WBGT_SEASON_MONTHS = os.getenv('JAPAN_ENV_WBGT_SEASON_MONTHS', '4,5,6,7,8,9,10')
+JAPAN_ENV_WBGT_INITIAL_LOOKBACK_DAYS = int(os.getenv('JAPAN_ENV_WBGT_INITIAL_LOOKBACK_DAYS', '7'))
 
 # Internet health — provider jobs remain independent but write one canonical
 # contract.  Country-level TW is the MVP; ASN coverage is added only after a
