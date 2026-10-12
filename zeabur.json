@@ -408,6 +408,26 @@
       "description": "粗圖探測 off|shadow|on：每幀先抓 z4；shadow 照舊全抓並記 miss（frames.probe_misses），on 跳過 z4 全空區的 z6/z8（manifest 記推定為空）",
       "default": "shadow"
     },
+    "JAPAN_JMA_OCEAN_ENV_ENABLED": {
+      "description": "JMA 海洋・環境網格 C8（海溫 him/mgd、海冰、UV 解析圖磚、黃砂預測圖；沿用 migration 437/438；需 S3）；多實例只在一個實例設 true",
+      "default": "false"
+    },
+    "JAPAN_JMA_OCEAN_ENV_INTERVAL": {
+      "description": "JMA 海洋・環境網格輪詢間隔（分鐘）；UV 上游只留約 36h，不可大於 360",
+      "default": "60"
+    },
+    "JAPAN_JMA_OCEAN_ENV_PRODUCTS": {
+      "description": "逗號分隔產品清單",
+      "default": "sst_him,sst_mgd,sea_ice,uv_anal,kosa_fcst"
+    },
+    "JAPAN_JMA_OCEAN_ENV_INITIAL_LOOKBACK_DAYS": {
+      "description": "日檔產品（海溫/海冰）首跑回看天數；上游有完整歷史，加大即逐輪回補（每輪每產品最多 JAPAN_JMA_OCEAN_ENV_MAX_DAYS_PER_RUN 個）",
+      "default": "3"
+    },
+    "JAPAN_JMA_OCEAN_ENV_SEASON": {
+      "description": "季節開關（JST 月份；季外不打上游、不算缺）；例：只收春季黃砂加 kosa_fcst=2,3,4,5",
+      "default": "sea_ice=12,1,2,3,4,5"
+    },
     "JAPAN_JMA_AMEDAS_DAILY_PARQUET": {
       "description": "AMeDAS 每 JST 日結（D+1 01:00 後）組每站×10 分 Parquet 上傳 S3 weather-obs/jma/amedas/YYYY/MM/YYYYMMDD.parquet（需 S3）",
       "default": "true"
