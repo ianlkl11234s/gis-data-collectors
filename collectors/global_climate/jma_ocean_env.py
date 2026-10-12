@@ -350,7 +350,7 @@ class JmaOceanEnvCollector(BaseCollector):
             st["epoch"] = (today - timedelta(days=self.lookback_days)).strftime("%Y%m%d")
         start = datetime.strptime(st["finalized_until"] or st["epoch"], "%Y%m%d").date()
         out, d = [], start
-        while d <= today:
+        while d < today:  # D 的檔約 D+1 10:00 JST 才出爐，當天不打（省 24 次 404／日）
             ds = d.strftime("%Y%m%d")
             if self.in_season(product, ds) and not self.receipt_path(product, ds).exists():
                 out.append(ds)
