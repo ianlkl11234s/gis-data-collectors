@@ -917,6 +917,11 @@ TABLE_MAP = {
         # 全部 DO NOTHING — 寫入邏輯見 _write_multi_table
         'is_multi_table': True,
     },
+    'jma_seasonal': {
+        # migration 439：live.jma_phenology_observations / jma_snowcap / jma_snowcap_status / jma_rainy_season
+        # 全部 DO NOTHING（只記變動）— 寫入邏輯見 _write_multi_table
+        'is_multi_table': True,
+    },
     'jma_raster': {
         # live.weather_raster_frames（PK source,product,valid_time；status 只升不降 upsert）
         # live.weather_raster_daily（PK source,product,obs_date；upsert）— migration 437

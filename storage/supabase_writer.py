@@ -2072,6 +2072,42 @@ class SupabaseWriter:
             records.append(rec)
         return records
 
+    _JMA_SEASONAL_TABLES = {
+        # _type → (table, columns, 必填欄)；唯一鍵見 migration 439，一律 ON CONFLICT DO NOTHING
+        'phenology': ('live.jma_phenology_observations', [
+            'station_no', 'station_name', 'lat', 'lon', 'phenomenon_code', 'phenomenon_name',
+            'season_year', 'obs_date', 'diff_normal_days', 'diff_last_year_days', 'normal_date',
+            'normal_mmdd', 'alt_species', 'rm_code', 'site_status', 'remark', 'info_type',
+            'source', 'source_ref', 'source_time', 'collected_at',
+        ], ('station_name', 'phenomenon_code', 'season_year', 'obs_date', 'source')),
+        'snowcap': ('live.jma_snowcap', [
+            'mountain_code', 'mountain_name', 'observatory', 'season_year', 'first_snowcap_date',
+            'judgement_method', 'source', 'source_time', 'collected_at',
+        ], ('mountain_code', 'season_year', 'judgement_method', 'first_snowcap_date')),
+        'snow_status': ('live.jma_snowcap_status', [
+            'mountain_code', 'mountain_name', 'observatory', 'season_year', 'source_time',
+            'status_text', 'status_class', 'judgement_method', 'collected_at',
+        ], ('mountain_code', 'source_time')),
+        'rainy': ('live.jma_rainy_season', [
+            'region', 'year', 'event', 'period_text', 'period_date', 'class_text',
+            'diff_normal_text', 'diff_normal_days', 'diff_last_year_text', 'diff_last_year_days',
+            'normal_text', 'normal_date', 'last_year_period_text', 'last_year_class_text',
+            'status', 'page_updated', 'source_ref', 'source_time', 'collected_at',
+        ], ('region', 'year', 'event')),
+    }
+
+    def _transform_jma_seasonal(self, result: dict, ts: datetime) -> list[dict]:
+        """季節觀測四表：依 _type 分流；必填欄缺值的列丟棄（不補值）。"""
+        records = []
+        for r in result.get('data', []):
+            spec = self._JMA_SEASONAL_TABLES.get(r.get('_type'))
+            if not spec or any(r.get(k) in (None, '') for k in spec[2]):
+                continue
+            rec = dict(r)
+            rec['collected_at'] = rec.get('collected_at') or ts.isoformat()
+            records.append(rec)
+        return records
+
     _JMA_RASTER_FRAME_COLS = [
         'source', 'product', 'valid_time', 'base_time', 'zoom_raw', 'tiles_requested',
         'tiles_nonempty', 'raw_bytes', 'nonzero_pixels', 'unknown_color_pixels', 'status',
@@ -2487,6 +2523,7 @@ class SupabaseWriter:
         'jma_warnings': _transform_jma_warnings,
         'jma_quake': _transform_jma_quake,
         'jma_raster': _transform_jma_raster,
+        'jma_seasonal': _transform_jma_seasonal,
         'global_climate_jtwc': _transform_global_climate_typhoon_positions,
         'global_climate_cmems': _transform_global_climate_grids,
         'global_climate_cams': _transform_global_climate_grids,
@@ -2729,6 +2766,20 @@ class SupabaseWriter:
                             values, page_size=500,
                         )
             logger.info(f"[jma_quake] ✓ 送出 {written}（DO NOTHING，已存在者略過）")
+            return
+        if collector_name == 'jma_seasonal':
+            written = {}
+            with self._txn(conn) as cur:
+                for kind, (table, cols, _req) in self._JMA_SEASONAL_TABLES.items():
+                    values = [tuple(r.get(c) for c in cols) for r in records if r.get('_type') == kind]
+                    written[kind] = len(values)
+                    if values:
+                        execute_values(
+                            cur,
+                            f"INSERT INTO {table} ({','.join(cols)}) VALUES %s ON CONFLICT DO NOTHING",
+                            values, page_size=500,
+                        )
+            logger.info(f"[jma_seasonal] ✓ 送出 {written}（DO NOTHING，已存在者略過）")
             return
         if collector_name == 'jma_raster':
             fcols, dcols = self._JMA_RASTER_FRAME_COLS, self._JMA_RASTER_DAILY_COLS
