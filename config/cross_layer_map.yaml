@@ -1097,7 +1097,7 @@ jma_quake:
 
 
 jma_seasonal:
-  enabled: false  # 新 collector；migration 439 apply＋S3 lifecycle（jma_seasonal/archives/）後設 Zeabur env JAPAN_JMA_SEASONAL_ENABLED=true + restart
+  enabled: true  # 2026-10-12 Zeabur env JAPAN_JMA_SEASONAL_ENABLED=true 已啟用
   deployment: zeabur
   expected_interval_min: 1440
   supabase_tables: [live.jma_phenology_observations, live.jma_snowcap, live.jma_snowcap_status, live.jma_rainy_season]
