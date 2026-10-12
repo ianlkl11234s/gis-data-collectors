@@ -244,3 +244,10 @@ A 類 HOT 如預期沒改善（3.8%→4.5%）**但 dead tuple 為 0** —— 證
   `count`/`GROUP BY` 照樣全掃。**縮 heap 才是兩個都修**。實測證明這個判斷正確（壓實後直接縮 23 倍）。
 - **VACUUM FULL 比預期便宜太多**：原本規劃「挑離峰、鎖表數十秒」，實測三張表全部秒級完成（最大那張 3.95 秒）。
   下次遇到同類膨脹不需要為了排時段而拖延。
+
+## 2026-10-12 第二輪
+
+- 10-06～10-12 又重啟 5 次。改用 `pg_stat_io` 量測後發現：讀取約 392 GB/天，其中 autovacuum 佔 58%；9 月用的 `pg_stat_statements` 口徑看不到 autovacuum，前端 anon 讀取只有約 0.7 GB/天。
+- 主要來源是 ship／bus trails 每 30 分鐘「整天刪掉重建」，再加上它引發的 autovacuum。gis-platform mig 442／443 改成增量 refresh（水位＋晚到批偵測，夜間全量保留）；每次耗時從約 243 秒／122 秒降到約 3 秒。
+- 同輪還做了 mig 444（刪 9 顆重複或沒人用的索引）、mig 445（youbike 暫存檔外溢、temperature 改寫）。marine 寫入卡死另案處理（mig 441）。
+- 完整紀錄、量測查詢與待追蹤：gis-platform `docs/research/2026-10-12-disk-io-round2.md`
