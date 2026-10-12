@@ -2134,6 +2134,15 @@ class SupabaseWriter:
             records.append(dict(r))
         return records
 
+    def _transform_jma_lightning(self, result: dict, ts: datetime) -> list[dict]:
+        """JMA LIDEN 落雷：共用 lightning_events 轉換（補 geom），再帶上 source_type 原值（migration 440）。"""
+        records = self._transform_lightning_events(result, ts)
+        src = [r for r in result.get('data', []) if r.get('lon') is not None and r.get('lat') is not None]
+        for rec, r in zip(records, src):
+            rec['source'] = 'jma'
+            rec['source_type'] = r.get('source_type')
+        return records
+
     def _transform_global_climate_typhoon_positions(self, result: dict, ts: datetime) -> list[dict]:
         """颱風 time-point decomposed（JMA + JTWC 共用）：補 geom WKT。"""
         records: list[dict] = []
@@ -2524,6 +2533,7 @@ class SupabaseWriter:
         'jma_quake': _transform_jma_quake,
         'jma_raster': _transform_jma_raster,
         'jma_seasonal': _transform_jma_seasonal,
+        'jma_lightning': _transform_jma_lightning,
         'global_climate_jtwc': _transform_global_climate_typhoon_positions,
         'global_climate_cmems': _transform_global_climate_grids,
         'global_climate_cams': _transform_global_climate_grids,

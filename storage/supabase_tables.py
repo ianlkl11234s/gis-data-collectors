@@ -927,4 +927,17 @@ TABLE_MAP = {
         # live.weather_raster_daily（PK source,product,obs_date；upsert）— migration 437
         'is_multi_table': True,
     },
+    'jma_lightning': {
+        # JMA LIDEN 落雷 → 與台電／氣象署同表 live.lightning_events，source='jma'
+        # source_type＝上游 properties.type 原值（4=対地雷、0=雲放電；migration 440 新增欄）
+        # strike_type 沿用表語意 0=雲對地／1=雲中（4→0、0→1、未知→NULL）
+        'history': 'live.lightning_events',
+        'columns': [
+            'event_id', 'strike_time', 'lon', 'lat',
+            'intensity_ka', 'strike_type', 'dedup_hash', 'source',
+            'geom', 'observed_at', 'collected_at', 'source_type',
+        ],
+        'upsert_key': 'source,event_id',
+        'upsert_strategy': 'do_nothing',
+    },
 }
