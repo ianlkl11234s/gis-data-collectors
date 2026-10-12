@@ -387,7 +387,6 @@ _COLLECTOR_TOGGLES = (
     ('JAPAN_JMA_AMEDAS',             False, 10),   # AMeDAS 約 1,286 站 10 分值（免金鑰）；current 全量 upsert、observations 只寫整點（90 天）
     ('JAPAN_JMA_WARNINGS',           False, 5),    # R8 警報・注意報 map_time 有變才抓 map.json（禁用舊 warning/data/warning/）；30 天
     ('JAPAN_JMA_QUAKE',              False, 2),    # 地震 list + 津波 list + 火山 warning.json（DO NOTHING，永久）
-    ('JAPAN_JMA_RASTER',             False, 60),
     ('JAPAN_JMA_SEASONAL',           False, 360),  # 季節觀測：生物季節 HTML＋XML VGSK55／山頂初冠雪／梅雨速報；只記變動、永久（migration 439）   # 網格圖磚 G 型（雷達/解析雨量/キキクル/積雪/ひまわり）；spool→S3 T1–T3（migration 437；ADR-0021）
     ('JAPAN_JMA_RASTER',             False, 60),   # 網格圖磚 G 型（雷達/解析雨量/キキクル/積雪/ひまわり）；spool→S3 T1–T3（migration 437；ADR-0021）
     # === JMA 落雷／預報＋環境省 WBGT（2026-10-12；gis-platform migration 440）===
