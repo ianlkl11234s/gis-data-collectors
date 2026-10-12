@@ -30,6 +30,8 @@
   解析格約 0.25°（z5 約 5 px／格，z6 約 10 px），收 z5 不失值；每日 78 磚。
 - **UV 解碼表** `config/decode_tables/jma/uv_anal.yaml`：PLTE idx1–14 ＝ UVI 0…13+（凡例 `uvimg/uvi_colorbox.png` 逐格取色比對），idx0 透明＝範圍外。
   **編碼 level＝UVI＋1**，0＝範圍外（不是 UVI 0），255＝缺測／表外顏色（計數並 log 告警）。本機實打 21 幀表外顏色 0。
+- **黃砂時刻是 JST**：檔名 `202610130300` 的圖上燒著「2026年10月13日 03時（予測）」；頁面 JS 也以瀏覽器本地時間比對。
+  同檔名每日覆寫（Last-Modified 每天 21:00 UTC 更新），所以每次發布都要整批抓、以 sha256 判斷是否真的變了。
 - **黃砂不解碼的原因**：凡例只有「濃↔薄」連續漸層、沒有數值刻度；圖疊在地形陰影底圖（含河川、經緯線、文字）上，16-bit RGBA。
   能做的只有「有無黃砂」的粗遮罩，沒有物理量，誤判風險高 → 只冷存原圖，manifest 記 `decoded=false` 與原因。需要時可從 T3 重算。
 
@@ -45,7 +47,8 @@
 海冰 `0/2/3/4/5` 原級、`254` 陸地（原 9）、`255` 無解析／雲（原 7）或無法解析；UV 見上。
 
 DB（只放狀態）：frames 每日檔 1 列（valid_time＝該日 00:00 JST）、UV 每幀 1 列、黃砂每次發布 1 列（valid_time＝清單 Last-Modified）；
-daily 每產品每日 1 列（raw_key／sha256／grid_bytes／summary_key）。缺檔：日檔產品 404 超過 `MISSING_AFTER_DAYS`（預設 7）天記 missing；
+daily 每產品每日 1 列（raw_key／sha256／grid_bytes／summary_key）。缺檔：日檔產品 404 超過 `MISSING_AFTER_DAYS`（預設 7）天記 frames `missing` 列，**不寫 daily 列**（daily 的 CHECK 沒有 missing；
+看板以「frames missing＋無 daily」判讀；jma_raster 失敗日則寫 daily `failed`）；
 UV 超出上游保留期（34h）記 missing，該日其他幀照常日結。
 
 ## 收集邏輯
@@ -53,6 +56,8 @@ UV 超出上游保留期（34h）記 missing，該日其他幀照常日結。
 - 日檔產品：從 `finalized_until`（首跑＝今天−`INITIAL_LOOKBACK_DAYS`）掃到昨天（JST），季外日子不打、不算缺；每輪每產品最多 `MAX_DAYS_PER_RUN`（4）個 200。
   成功一個就地完成 T3→T2→receipt（`weather_raw/jma/_receipts/{p}/{day}.json`）→刪 spool；上傳失敗不寫 receipt，下輪重試。
   上游有完整歷史：把 `JAPAN_JMA_OCEAN_ENV_INITIAL_LOOKBACK_DAYS` 設大（首跑前）即可逐輪回補（每小時 4 天／產品）。
+- UV：保留期 34h 是由兩個探針推得的保守下界（37.75h 前的幀仍 200、49.75h 前 404），確切刪除時刻未驗證；
+  服務中斷超過 34h 時，前一日早段的幀可能在上游仍在時就被記 missing。範圍磚 6 個由 10-12 單一時刻判定，collector 不偵測新磚出現。
 - UV：保留期內所有 06–18 JST 正時，沒抓過就抓；抓到即解碼、寫幀 tar、網格、累加器；該日所有幀定案即日結（T2＋T1＋T3）。
 - 黃砂：每輪抓清單（1 請求），內容 sha256 有變才抓清單上全部圖；JST 發布日 D 在 D+1 01:00 後日結。跨日 sha256 索引留 10 天。
 - DB 列先放 state 的 pending，`require_db_write` 成功才清（照 jma_raster）。

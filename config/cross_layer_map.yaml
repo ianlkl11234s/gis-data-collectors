@@ -1131,7 +1131,12 @@ jma_ocean_env:
     - {prefix: jma_ocean_env/archives/, expected_daily: false}
     - {prefix: weather-raw/jma/sst_him/, expected_daily: true}
     - {prefix: weather-grid/jma/sst_him/, expected_daily: true}
+    - {prefix: weather-raw/jma/sst_mgd/, expected_daily: true}
+    - {prefix: weather-grid/jma/sst_mgd/, expected_daily: true}
+    - {prefix: weather-raw/jma/sea_ice/, expected_daily: false}   # 只有 12–5 月
+    - {prefix: weather-grid/jma/sea_ice/, expected_daily: false}
     - {prefix: weather-raw/jma/uv_anal/, expected_daily: true}
+    - {prefix: weather-grid/jma/uv_anal/, expected_daily: true}
     - {prefix: weather-daily/jma/uv_anal/, expected_daily: true}
     - {prefix: weather-raw/jma/kosa_fcst/, expected_daily: true}
   critical: false
