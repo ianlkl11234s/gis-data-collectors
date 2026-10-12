@@ -49,6 +49,7 @@ Rule ID: archive-deep-270d:{collector}（每個 collector 一條，Prefix={colle
 
 - 2026-10-09 起：所有 ArchiveTask 歸檔 `{collector}/archives/` 走 IA 30 → GIR 90 → **DEEP_ARCHIVE 270**。`deploy-assets/` 等非歸檔前綴不受影響（仍是 IA 30 → GIR 90）。
 - **新增 collector 時要補一條 `archive-deep-270d:{name}` 規則**，否則它的歸檔停在 GLACIER_IR。補法：讀出現有設定、append 一條 `{"ID":"archive-deep-270d:{name}","Filter":{"Prefix":"{name}/archives/"},"Status":"Enabled","Transitions":[{"Days":270,"StorageClass":"DEEP_ARCHIVE"}]}`，再整份 `put-bucket-lifecycle-configuration`（這個 API 是整份覆寫，不可只送新規則）。
+- 2026-10-12：規則共 93 條（新增 jma_raster、jma_seasonal、jma_lightning、jma_forecast、env_jp_wbgt 的 archives/）。改規則前的設定備份：10-09 的原始備份放在 session 暫存區，已遺失；10-12 的備份同樣只在暫存區。以本節文字為規則全貌的權威紀錄。
 - 讀 270 天以前的歸檔（例如 `scripts/backfill_vessel_watch.py`）要先 restore，見下方 Deep Archive 取回指令。
 
 ---
