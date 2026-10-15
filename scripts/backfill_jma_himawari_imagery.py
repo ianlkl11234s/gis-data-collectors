@@ -12,6 +12,7 @@ collector close_hour 相同（spool.write_hour_npz＋jma_raster.mosaic_t2_meta�
   R2／DB  frames 列 image_key 已填 且 published_at 在 89 天內 且 R2 HEAD 存在 → 跳過；否則重發並更新 published_at。
           DB 沒有對應 frames 列 → 照樣上 R2／T2，UPDATE 0 列，計 no_row（不補建列）。
   T2      S3 weather-grid/jma/himawari_b13/{YYYYMMDD JST}/{HH}.npz 已存在就不寫（collector 上線後的小時由 collector 自己寫）。
+不重試：任一磚暫時性失敗（非 200／timeout）該整點記 incomplete 跳過；incomplete > 0 時重跑即可補（冪等）。
 速率：每請求間隔 ≥ 1/--rps 秒（--rps 上限 1.0）。5 天約 118 幀×12 磚 ≈ 1,416 請求 ≈ 24 分鐘。
 
 用法：
