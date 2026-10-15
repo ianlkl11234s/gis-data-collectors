@@ -402,7 +402,7 @@
     },
     "JAPAN_JMA_RASTER_SEASON": {
       "description": "季節開關（JST 月份；季外不抓、不產 frames 列、不算缺幀）",
-      "default": "snow_depth=11,12,1,2,3,4"
+      "default": "snow_depth=10,11,12,1,2,3,4,5"
     },
     "JAPAN_JMA_RASTER_COARSE_PROBE": {
       "description": "粗圖探測 off|shadow|on：每幀先抓 z4；shadow 照舊全抓並記 miss（frames.probe_misses），on 跳過 z4 全空區的 z6/z8（manifest 記推定為空）",

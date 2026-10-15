@@ -422,7 +422,7 @@ JAPAN_JMA_RASTER_GRID_COMPRESSION = os.getenv('JAPAN_JMA_RASTER_GRID_COMPRESSION
 JAPAN_JMA_RASTER_CADENCE = os.getenv(
     'JAPAN_JMA_RASTER_CADENCE', 'risk_land=30,risk_inund=30,risk_flood=30')
 # 季節開關（JST 月份；季外不抓、不產生 frames 列、不算缺幀）
-JAPAN_JMA_RASTER_SEASON = os.getenv('JAPAN_JMA_RASTER_SEASON', 'snow_depth=11,12,1,2,3,4')
+JAPAN_JMA_RASTER_SEASON = os.getenv('JAPAN_JMA_RASTER_SEASON', 'snow_depth=10,11,12,1,2,3,4,5')
 # 先看粗圖（z4）再抓細圖：off／shadow（照舊全抓 z6，記 z4 全空但 z6 非空的 miss）／on（z4 全空區跳過 z6、z8）
 JAPAN_JMA_RASTER_COARSE_PROBE = os.getenv('JAPAN_JMA_RASTER_COARSE_PROBE', 'shadow').strip().lower()
 

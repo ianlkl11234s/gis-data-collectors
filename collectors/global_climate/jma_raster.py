@@ -21,7 +21,7 @@ DB：frame／daily 列先存 product state 的 pending，DB 寫入成功（requi
 
 第二批（2026-10-11，gis-platform migration 438）：
   取樣間隔  JAPAN_JMA_RASTER_CADENCE（預設 risk_land/inund/flood=30 → 只收 :00/:30）
-  季節開關  JAPAN_JMA_RASTER_SEASON（預設 snow_depth=11..4 月，JST）；季外 validtime 不存在：不抓、無 frames 列、不算缺幀
+  季節開關  JAPAN_JMA_RASTER_SEASON（預設 snow_depth=10..5 月，JST）；季外 validtime 不存在：不抓、無 frames 列、不算缺幀
   粗圖探測  JAPAN_JMA_RASTER_COARSE_PROBE=off|shadow|on（預設 shadow）：每幀先抓 z4（日本畫布 2×2 磚）。
             shadow 照舊全抓 z6，記錄「z4 全空但子 z6 非空」的磚數（probe_misses）；
             on 跳過 z4 全空區的 z6（與 z8），manifest 記 inferred_blank_tiles＝推定為空（不是抓到為空）。
