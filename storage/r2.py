@@ -63,6 +63,17 @@ class R2Storage:
             CacheControl=cache_control,
         )
 
+    def head(self, key: str):
+        """物件存在回 {'ContentLength', 'LastModified'}；不存在回 None；其他錯誤 raise。"""
+        from botocore.exceptions import ClientError
+        try:
+            r = self.s3.head_object(Bucket=self.bucket, Key=key)
+        except ClientError as e:
+            if e.response.get('Error', {}).get('Code') in ('404', 'NoSuchKey', 'NotFound'):
+                return None
+            raise
+        return {'ContentLength': r['ContentLength'], 'LastModified': r['LastModified']}
+
 
 def get_r2_storage():
     """回傳 R2Storage 實例；憑證未設回 None（呼叫端跳過上傳）。"""

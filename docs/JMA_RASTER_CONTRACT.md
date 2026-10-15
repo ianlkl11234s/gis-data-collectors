@@ -25,11 +25,37 @@ B = https://www.jma.go.jp/bosai。各產品實際有內容的 zoom、member 意�
 |---|---|---|---|---|
 | spool（Zeabur /data） | 原始磚、當日累加器 | /data/weather_raw/jma/{product}/{YYYYMMDD}/… | 本機 | 打包上傳驗證成功即刪；上限 2 天 |
 | T3 冷 | 原始磚每產品每日 1 個 tar（不壓縮，PNG 已壓縮）＋ manifest.json（每幀 vt/bt、每檔 sha256/bytes、缺幀、抓取層級、解碼表版本） | S3 `weather-raw/jma/{product}/{YYYY}/{MM}/{YYYYMMDD}.tar` | 上傳時 **StorageClass=DEEP_ARCHIVE** | 永久 |
-| T2 溫 | 每小時級距網格（該小時所有幀 stack，np.savez_compressed） | S3 `weather-grid/jma/{product}/{YYYYMMDD}/{HH}.npz` | STANDARD | 90 天（主 agent 加 lifecycle expiration） |
+| T2 溫 | 每小時級距網格（該小時所有幀 stack，np.savez_compressed） | S3 `weather-grid/jma/{product}/{YYYYMMDD}/{HH}.npz` | STANDARD（全桶 lifecycle 30 天轉 IA、90 天轉 GLACIER_IR） | **永久**（2026-10-10 使用者決定：細節不可只留彙總；原「90 天 expiration」已作廢） |
 | T1 熱 | 每日彙總：count_ge_{k}（uint16，k 依產品，radar 取 1、2、4 級＝有回波、≥1mm/h、≥10mm/h）、max_level（uint8）、valid_frames（標量）＋ georef JSON | S3 `weather-daily/jma/{product}/{YYYY}/{YYYYMMDD}.npz` | STANDARD | 永久 |
 - 日期以 JST 切日。日結：JST 日期 D 在 D+1 01:00 之後、且該日上游已不可能補抓時（或幀已齊）打包；上傳後 head 驗 ContentLength＋自訂 metadata sha256，成功才刪 spool。
 - 累加器用 np.memmap 放 spool，跨重啟續算，不吃 RAM。單輪峰值記憶體目標 < 300 MB。
 - 不可每張圖磚一個物件（Deep Archive 每千物件 US$0.05）。
+
+| 發布幀（R2 快取） | 每幀一張 8-bit LA PNG（EPSG:3857，z7 產品 2×2 取最大降到 z6）；可由 T2 重算 | R2 `imagery/jma/{product}/{YYYYMMDD}/{HHMMSS}.png`（UTC valid_time） | R2（immutable Cache-Control） | 90 天（2026-10-15 拍板） |
+
+## 發布幀（2026-10-15；契約 analytics `docs/topic-research/japan_opendata/jma-frontend-contract.md`）
+- 模組 `collectors/weather_raster/publish.py`：純函式編碼（`level_la_v1`／`sst_la_v1`）、經緯度網格 nearest 轉 3857、`publish()` 上傳 R2。
+- 時點：radar／rasrf／risk_land／risk_inund／snow_depth 在 **`fetch_frame` 解碼完成當下**以記憶體內網格發布（不等小時收尾，前端即時可見）。
+  補抓段之後的 z8 細化**不重發**（key immutable；PNG 是 z6，z8 細節經 2×2 取最大後影響有限）。抓取當下 R2 失敗 → 幀定案（settle）時以 spool 網格重試一次；仍失敗留給回補腳本。
+  risk_flood（pbf）、himawari_b13 不發布。
+- DB：image 欄（gis-platform mig 461：image_key、image_bytes、image_width/height、lon/lat_min/max、encoding、published_at）跟著 frames 狀態列送 writer，
+  writer 在狀態列 upsert 成功後**另開 transaction 以 UPDATE 寫入**（`_write_weather_raster_images`），失敗只 log，不影響 frames／daily 狀態寫入。
+- 開關：`JAPAN_JMA_IMAGERY_PUBLISH`（預設 true）；R2_* 未設定自動略過（只 log 一次）。發布失敗絕不影響 T2／T3。
+- 回補：`scripts/backfill_jma_imagery.py`（讀 S3 T2 → 同一套編碼 → R2＋UPDATE；`image_key` 已填且 published_at 在 89 天內且 R2 HEAD 存在才跳過，否則重發並更新 published_at；T2 缺幀不動）。
+- 決定性：同環境同輸入同 bytes（compress_level 9、無 metadata）；不同機器的 zlib／Pillow 版本可能不同，冪等靠「已存在就跳過」。
+- 實測大小與 CPU 見本檔「發布幀量測」。
+
+## 發布幀量測（2026-10-16，`backfill_jma_imagery.py --dry-run`，真 S3 T2 2026-10-10..10-16，本機 M 系列 Mac）
+| product | 幀 | PNG 平均 | 最大 | 編碼 s/幀 | 每日約 |
+|---|---|---|---|---|---|
+| radar（2048×1536） | 1,550 | 21.3 KB | 52.8 KB | 0.32 | 288 幀 ≈ 6.1 MB（雨天 ~11 MB） |
+| rasrf | 259 | 22.2 KB | 45.5 KB | 0.24 | 48 幀 ≈ 1.1 MB |
+| risk_land／risk_inund | 423／425 | 6.2 KB | 6.3 KB | 0.1–0.2 | 各 48 幀 ≈ 0.3 MB |
+| snow_depth | 74 | 6.2 KB | 6.4 KB | 0.03 | 24 幀 ≈ 0.15 MB（10 月幾乎無雪；冬季會變大） |
+| uv_anal（768×768） | 60 | 3.3 KB | 3.8 KB | 0.02 | 13 幀 ≈ 0.04 MB |
+| sst_him（800×755） | 5 | 100 KB | 103 KB | 0.5 | 0.1 MB |
+| sea_ice | 0 | — | — | — | 季外（12–5 月） |
+合計約 8 MB／日 → R2 保留 90 天穩態約 0.7–1.2 GB；每年寫入約 3 GB。
 
 ## DB（gis-platform mig 437，live schema）
 - `live.weather_raster_frames`：source text, product text, valid_time timestamptz, base_time timestamptz, zoom_raw smallint, tiles_requested int, tiles_nonempty int, raw_bytes bigint, nonzero_pixels int, unknown_color_pixels int, status text（ok／partial／missing）, collected_at timestamptz default now()；PK (source, product, valid_time)；DO NOTHING；保留 400 天。

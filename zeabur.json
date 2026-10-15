@@ -428,6 +428,10 @@
       "description": "季節開關（JST 月份；季外不打上游、不算缺）；例：只收春季黃砂加 kosa_fcst=2,3,4,5",
       "default": "sea_ice=12,1,2,3,4,5"
     },
+    "JAPAN_JMA_IMAGERY_PUBLISH": {
+      "description": "JMA 發布幀：radar/rasrf/キキクル/積雪/UV/海溫/海冰 每幀產 LA PNG 上 R2 imagery/jma/{product}/{YYYYMMDD}/{HHMMSS}.png 並寫 frames.image_* 欄（需 R2_*；未設定自動略過，失敗不影響 T2/T3）",
+      "default": "true"
+    },
     "JAPAN_JMA_AMEDAS_DAILY_PARQUET": {
       "description": "AMeDAS 每 JST 日結（D+1 01:00 後）組每站×10 分 Parquet 上傳 S3 weather-obs/jma/amedas/YYYY/MM/YYYYMMDD.parquet（需 S3）",
       "default": "true"

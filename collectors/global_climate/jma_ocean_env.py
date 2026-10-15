@@ -40,6 +40,7 @@ import config
 from collectors.base import BaseCollector
 from collectors.global_climate.jma_common import new_jma_session
 from collectors.global_climate.jma_raster import _months, parse_product_map
+from collectors.weather_raster import publish as pub
 from collectors.weather_raster import spool as sp
 from collectors.weather_raster.decode import MISSING, DecodeTable, decode_tile
 
@@ -456,13 +457,19 @@ class JmaOceanEnvCollector(BaseCollector):
             ok, _ = self._put(t2_local, t2_key, "STANDARD")
             if not ok:
                 return None
+        # 發布幀（契約 §5：sst_him／sea_ice 每日一張，valid_time＝該日 00:00 JST）；失敗只 log，不影響 T2/T3
+        image = None
+        if grid is not None and p.name in pub.PUBLISH_PRODUCTS:
+            image = pub.publish(p.name, d0, grid, georef=lonlat_georef(p), r2=getattr(self, "_r2", None),
+                                log_prefix=f"[{self.name}]")
         nonzero = None
         if grid is not None:
             nonzero = (int(stats.get("valid", 0)) if p.kind == "sst" else int(stats.get("ice_any", 0)))
         status = "ok" if grid is not None else "partial"
         st["pending_frames"][day] = self._frame_row(
             p.name, d0, status, tiles_requested=1, tiles_nonempty=1, raw_bytes=len(body),
-            nonzero_pixels=nonzero, unknown_color_pixels=int(stats.get("unknown", 0)) if grid is not None else None)
+            nonzero_pixels=nonzero, unknown_color_pixels=int(stats.get("unknown", 0)) if grid is not None else None,
+            **(image or {}))
         row = self._daily_row(p.name, day, frames_expected=1, frames_ok=1, raw_key=t3_key,
                               raw_bytes=t3_local.stat().st_size, raw_sha256=t3_sha, grid_objects=1 if t2_key else 0,
                               grid_bytes=t2_bytes, decode_table_version=GRID_PARSER_VERSION, status="verified",
@@ -519,7 +526,10 @@ class JmaOceanEnvCollector(BaseCollector):
         sp.write_frame_tar(dd / "frames" / f"{vt}.tar", members, int(parse_vt(vt).timestamp()))
         sp.save_grid(dd / "grids" / f"{vt}.npz", grid)
         self._uv_acc(day).apply(vt, grid)
-        return {"status": "ok" if not failed else "partial", "tiles_requested": len(res), "tiles_nonempty": nonempty,
+        image = pub.publish("uv_anal", parse_vt(vt), grid,
+                            bounds_lonlat=sp.georef(UV_ZOOM, x0, y0, nx * 256, ny * 256)["bounds_lonlat"],
+                            r2=getattr(self, "_r2", None), log_prefix=f"[{self.name}]")
+        return {**(image or {}),"status": "ok" if not failed else "partial", "tiles_requested": len(res), "tiles_nonempty": nonempty,
                 "raw_bytes": sum(len(b) for _, b in members),
                 "nonzero_pixels": int(np.count_nonzero((grid > 0) & (grid < MISSING))),
                 "unknown_color_pixels": unknown, "unknown_colors": unknown_colors, "failed_tiles": failed,
@@ -532,7 +542,8 @@ class JmaOceanEnvCollector(BaseCollector):
             return self._frame_row("uv_anal", t, "missing")
         return self._frame_row("uv_anal", t, fr["status"], base_time=t.isoformat(), zoom_raw=UV_ZOOM,
                                **{k: fr.get(k) for k in ("tiles_requested", "tiles_nonempty", "raw_bytes",
-                                                         "nonzero_pixels", "unknown_color_pixels")})
+                                                         "nonzero_pixels", "unknown_color_pixels")},
+                               **{k: fr[k] for k in pub.IMAGE_FIELDS if fr.get(k) is not None})
 
     def collect_uv(self, now: datetime) -> dict:
         st = self._load_state("uv_anal")
