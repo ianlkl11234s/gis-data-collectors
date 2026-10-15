@@ -95,6 +95,7 @@ B = https://www.jma.go.jp/bosai。各產品實際有內容的 zoom、member 意�
   - 像素覆蓋率＝觀測量／經過量；< `JAPAN_JMA_ANALYSIS_MIN_COVERAGE`（0.5）→ 未涵蓋（L＝255）。
   - T1 缺日（例：snow_depth 10-13、10-14 上游已過期無法回補）＝當日全像素無觀測，只降覆蓋率。
   - frames 列 status：期間內每日 T1 都在且未被 EPOCH 截斷＝ok；有缺日或被截斷＝partial；完全沒有 T1＝missing（不出圖、無 image 欄）。
+    ⚠ 2026-10 各月圖與整個 season2026（到 2027-05）都會是 partial（EPOCH 晚於期間起日）；對 ana_* 而言 partial＝「期間有缺日或被截斷」，不是品質故障。
 - encoding **`count_la_v1`**：8-bit LA PNG、EPSG:3857、row 0＝北、z6 2048×1536。
   L＝值 clamp 0–254（254＝≥254；時數月上限 744h，警戒以上實務上不會累積到 254h）、A＝255；值 0 → (0,0) 透明；覆蓋率不足 → (255,255)。
   單位依 product（日序／日／小時）；ana_snow_first 的 L 是日序不是計數，但規則相同。
@@ -104,7 +105,7 @@ B = https://www.jma.go.jp/bosai。各產品實際有內容的 zoom、member 意�
   period_id＝`season2026`／`202610`）＝截至 D 的累積陣列＋meta；物件 metadata `sig`＝sha256(演算法版本、family、D、有效起日、納入的 T1 日清單)。
   算 D 時往回找最近一個 sig 相符的快照再逐日補算；遲到的 T1 讓之後的 sig 全變 → 自動重算＋重發。快照遺失可由 T1 重建（`--recompute` 強制全算）。
 - 執行位置：`jma_raster.collect()` 尾端 `run_analysis()`（獨立 try、時間預算 `JAPAN_JMA_ANALYSIS_MAX_SECONDS`＝180），每輪看近
-  `JAPAN_JMA_ANALYSIS_LOOKBACK_DAYS`（7）天。日 D 可出圖＝來源 T1 已在 S3，或已過 D+1+3 天寬限（之後當缺日）。
+  `JAPAN_JMA_ANALYSIS_LOOKBACK_DAYS`（7）天（collector 停超過 7 天時，更早的圖只能用 `backfill_jma_analysis.py` 補）。日 D 可出圖＝來源 T1 已在 S3，或已過 D+1+3 天寬限（之後當缺日）。
   本機 `state/jma_raster/_analysis.json`：`published`（{product:{日:pub_sig}}，同 sig 不重發、常態每輪 0 次 S3 GET）、
   `pending`（frame 列，鍵 `{product}:{YYYYMMDD}`，與 frames／daily 同一次 DB 寫入成功後才清；**不可放進產品的 pending_frames**：
   00:00 JST＝15:00 UTC 會與 snow_depth 整點 vt 相撞）。

@@ -436,6 +436,22 @@
       "description": "JMA 分析圖：jma_raster 每輪尾端由 S3 T1 累積季／月至今每日一張 count_la_v1 PNG（積雪初日／積雪日數／雨日／キキクル警戒時數）上 R2 imagery/jma/ana_*/ 並寫 frames 列（需 S3＋R2；失敗不影響收集）",
       "default": "true"
     },
+    "JAPAN_JMA_ANALYSIS_EPOCH": {
+      "description": "分析圖有效起日（T1 最早可用日；之前的日不計入經過量與覆蓋率）",
+      "default": "2026-10-10"
+    },
+    "JAPAN_JMA_ANALYSIS_LOOKBACK_DAYS": {
+      "description": "分析圖每輪檢查近 N 天（遲到的 T1 會讓之後的圖重算重發；更早的用 scripts/backfill_jma_analysis.py）",
+      "default": "7"
+    },
+    "JAPAN_JMA_ANALYSIS_MIN_COVERAGE": {
+      "description": "分析圖像素覆蓋率門檻（觀測量／經過量），低於畫未涵蓋（L=255）",
+      "default": "0.5"
+    },
+    "JAPAN_JMA_ANALYSIS_MAX_SECONDS": {
+      "description": "分析圖每輪時間預算（秒），用完下輪續做",
+      "default": "180"
+    },
     "JAPAN_JMA_AMEDAS_DAILY_PARQUET": {
       "description": "AMeDAS 每 JST 日結（D+1 01:00 後）組每站×10 分 Parquet 上傳 S3 weather-obs/jma/amedas/YYYY/MM/YYYYMMDD.parquet（需 S3）",
       "default": "true"
