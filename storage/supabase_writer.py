@@ -2132,6 +2132,40 @@ class SupabaseWriter:
         'decode_table_version', 'status', 'uploaded_at',
     ]
 
+    # 發布幀 image 欄（gis-platform mig 461；契約 jma-frontend-contract §2）
+    _JMA_RASTER_IMAGE_COLS = [
+        ('image_key', 'text'), ('image_bytes', 'integer'), ('image_width', 'smallint'),
+        ('image_height', 'smallint'), ('lon_min', 'double precision'), ('lon_max', 'double precision'),
+        ('lat_min', 'double precision'), ('lat_max', 'double precision'), ('encoding', 'text'),
+        ('published_at', 'timestamptz'),
+    ]
+
+    def _write_weather_raster_images(self, conn, collector_name: str, records: list[dict]) -> None:
+        """frames 狀態列寫入成功後，另開 transaction 以 UPDATE 寫 image 欄。
+
+        獨立 try/except：失敗只 log（圖已在 R2，可用 scripts/backfill_jma_imagery.py 補欄），
+        不讓發布幀問題拖垮 frames／daily 狀態寫入（require_db_write）。
+        """
+        imgs = {(r['source'], r['product'], r['valid_time']): r for r in records
+                if r.get('_type') == 'frame' and r.get('image_key')}
+        if not imgs:
+            return
+        cols = self._JMA_RASTER_IMAGE_COLS
+        names = ['source', 'product', 'valid_time'] + [c for c, _ in cols]
+        template = '(%s,%s,%s::timestamptz,' + ','.join(f'%s::{t}' for _, t in cols) + ')'
+        sets = ','.join(f'{c}=v.{c}' for c, _ in cols)
+        try:
+            with self._txn(conn) as cur:
+                execute_values(
+                    cur,
+                    f"UPDATE live.weather_raster_frames f SET {sets} FROM (VALUES %s) AS v({','.join(names)}) "
+                    f"WHERE f.source=v.source AND f.product=v.product AND f.valid_time=v.valid_time",
+                    [tuple(r.get(c) for c in names) for r in imgs.values()], template=template, page_size=500,
+                )
+            logger.info(f"[{collector_name}] ✓ 發布幀 image 欄 {len(imgs)} 筆")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[{collector_name}] ⚠ 發布幀 image 欄寫入失敗（frames 狀態已寫入；可跑 backfill 補）：{e}")
+
     def _transform_jma_raster(self, result: dict, ts: datetime) -> list[dict]:
         """網格圖磚狀態列：frame／daily 依 _type 分流；PK 欄缺值丟棄。"""
         required = {
@@ -2922,6 +2956,7 @@ class SupabaseWriter:
                         list(daily.values()), page_size=500,
                     )
             logger.info(f"[{collector_name}] ✓ frames {len(frames)} + daily {len(daily)} 筆寫入")
+            self._write_weather_raster_images(conn, collector_name, records)
             return
         if collector_name == 'jma_forecast':
             from collectors.global_climate.jma_forecast import FORECAST_COLS, PROB_COLS

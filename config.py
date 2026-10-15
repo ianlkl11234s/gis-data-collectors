@@ -404,6 +404,8 @@ for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
 # JMA 網格圖磚（jma_raster）：產品清單、z8 下鑽磚數上限（ADR 請求預算：48＋15×16＝288 req/幀）、並發、首跑回看
 # JMA AMeDAS 每日 Parquet（JST 日結後上傳 S3 weather-obs/jma/amedas/，第二批 2026-10-11）
 JAPAN_JMA_AMEDAS_DAILY_PARQUET = _env_bool('JAPAN_JMA_AMEDAS_DAILY_PARQUET', True)
+# JMA 發布幀（jma_raster／jma_ocean_env）：T2 網格 → LA PNG → R2 imagery/jma/…，前端時間軸用；R2 未設定自動略過
+JAPAN_JMA_IMAGERY_PUBLISH = _env_bool('JAPAN_JMA_IMAGERY_PUBLISH', True)
 JAPAN_JMA_RASTER_PRODUCTS = os.getenv(
     'JAPAN_JMA_RASTER_PRODUCTS',
     'radar,rasrf,risk_land,risk_inund,risk_flood,snow_depth,himawari_b13')

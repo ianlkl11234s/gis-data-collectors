@@ -51,6 +51,15 @@ daily 每產品每日 1 列（raw_key／sha256／grid_bytes／summary_key）。�
 看板以「frames missing＋無 daily」判讀；jma_raster 失敗日則寫 daily `failed`）；
 UV 超出上游保留期（34h）記 missing，該日其他幀照常日結。
 
+## 發布幀（2026-10-15）
+
+前端時間軸用的 R2 PNG（契約 analytics `jma-frontend-contract.md`；共用 `collectors/weather_raster/publish.py`，說明見 `JMA_RASTER_CONTRACT.md`「發布幀」）：
+- `uv_anal`：`fetch_uv_frame` 解碼完即發布（z5 768×768，`level_la_v1`，0＝範圍外透明、255 缺測）。
+- `sst_him`：T2 上傳成功後發布（`sst_la_v1`：L＝clamp(round((℃＋3)×7),1,254)；陸地透明、海冰 L＝0、無法解析 L＝255），nearest 轉 3857，800 寬。
+- `sea_ice`：同上時點，`level_la_v1`（0 開水面與 254 陸地透明、255 未分析＝缺測）；point 註冊外擴半格當格邊界，1001 寬。
+- 日檔產品 valid_time＝該日 00:00 JST，所以 R2 key 的日期是 **UTC 前一日 150000**（例：10-14 檔 → `imagery/jma/sst_him/20261013/150000.png`）。
+- sst_mgd、kosa_fcst 不發布。frames 列本來就有（日檔每日 1 列、UV 每幀 1 列），只多寫 image 欄，不新增列。
+
 ## 收集邏輯
 
 - 日檔產品：從 `finalized_until`（首跑＝今天−`INITIAL_LOOKBACK_DAYS`）掃到昨天（JST），季外日子不打、不算缺；每輪每產品最多 `MAX_DAYS_PER_RUN`（4）個 200。

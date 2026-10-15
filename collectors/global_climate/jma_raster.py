@@ -48,6 +48,7 @@ from collectors.global_climate.jma_common import JMA_BOSAI_BASE, new_jma_session
 from collectors.weather_raster.decode import (
     BLANK_PLACEHOLDER_BYTES, MISSING, DecodeTable, blank_tile, decode_tile, missing_tile, pool_max, upsample,
 )
+from collectors.weather_raster import publish as pub
 from collectors.weather_raster import spool as sp
 
 SOURCE = "jma"
@@ -472,6 +473,7 @@ class JmaRasterCollector(BaseCollector):
         nonzero = unknown = 0
         unknown_colors: dict[str, int] = {}
         grid_path = None
+        image = None
         day = jst_date(vt)
         dd = self.day_dir(product, day)
 
@@ -494,6 +496,7 @@ class JmaRasterCollector(BaseCollector):
             grid_path = dd / "grids" / f"{vt}.npz"
             sp.save_grid(grid_path, grid)
             nonzero = int(np.count_nonzero((grid > 0) & (grid < MISSING)))
+            image = self._publish(product, vt, grid)
             del grid
 
         sp.write_frame_tar(dd / "frames" / f"{vt}.tar", members, mtime)
@@ -530,7 +533,18 @@ class JmaRasterCollector(BaseCollector):
             "grid": bool(grid_path),
             "decode_table_version": table.version if table else None,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
+            # 發布幀（契約 jma-frontend-contract §4）：抓到即發布 z6 PNG；之後補抓段的 z8 細化不重發
+            # （PNG 為 z6，z8 細節經 2×2 池化後影響有限；key immutable）
+            **(image or {}),
         }
+
+    def _publish(self, product: Product, vt: str, grid: np.ndarray) -> Optional[dict]:
+        """發布幀；任何失敗回 None，不影響 T2/T3。"""
+        if product.name not in pub.PUBLISH_PRODUCTS:
+            return None
+        return pub.publish(product.name, parse_vt(vt), grid,
+                           bounds_lonlat=self._georef(product)["bounds_lonlat"],
+                           r2=getattr(self, "_r2", None), log_prefix=f"[{self.name}]")
 
     def _parent_rc(self, product: Product, parent: tuple[int, int]) -> tuple[int, int, int]:
         zc, gz = product.coarse_zoom, product.grid_zoom
@@ -669,6 +683,11 @@ class JmaRasterCollector(BaseCollector):
                 fr["fine_unfetched"] = fr.get("fine_unfetched", []) + [t for t, _ in fr.get("fine_pending", [])]
                 fr["fine_pending"] = []
                 fr["settled"] = True
+                if fr.get("grid") and not fr.get("image_key") and product.name in pub.PUBLISH_PRODUCTS:
+                    # 抓取當下發布失敗（R2 暫時故障）→ 定案時以 spool 網格重試一次；仍失敗留給 backfill
+                    gp = dd / "grids" / f"{vt}.npz"
+                    if gp.exists():
+                        fr.update(self._publish(product, vt, sp.load_grid(gp)) or {})
                 if fr.get("grid"):
                     acc = self._acc(product, dd.name)
                     if acc.needs_rebuild():
@@ -697,6 +716,8 @@ class JmaRasterCollector(BaseCollector):
             "probe_mode": fr.get("probe_mode"), "probe_misses": fr.get("probe_misses"),
             "tiles_inferred_blank": (len(fr["inferred_blank_tiles"]) if fr.get("inferred_blank_tiles") is not None
                                      else None),
+            # 發布幀 image 欄（mig 461）；writer 以獨立 UPDATE 寫入，失敗不影響 frames 狀態列
+            **{k: fr[k] for k in pub.IMAGE_FIELDS if fr.get(k) is not None},
         }
 
     # ───────── 一個產品一輪 ─────────
