@@ -28,9 +28,10 @@
   必須是原生間隔（PRODUCTS.cadence_min）的倍數，否則忽略。上游留 5.5h、每小時一輪，最多 11 幀可補。
 - 變更間隔當日已抓的非格點幀：close_day 一併打包進 T3（manifest `off_cadence_frames`），不隨 spool 刪掉；frames_ok 只計格點幀。
 
-### 2. 積雪只收 11–4 月（JST）
-- `JAPAN_JMA_RASTER_SEASON`（預設 `snow_depth=11,12,1,2,3,4`）。季外 validtime 在 expected_vts 裡就不存在：不抓、不產 frames 列、不算 missing。
-- 保留期內完全沒有季內時刻時不打 targetTimes；但仍設定視窗，讓 4/30 這種最後一天照常在 5/1 01:00 JST 日結。
+### 2. 積雪只收 10–5 月（JST）
+- 2026-10-15 由 11–4 月放寬為 10–5 月：上游 snowd 整年都有發佈，10-15 實測大雪山一帶 z6 已有著色；使用者要做「雪慢慢覆蓋上來」的時間軸，所以要接住 10 月初雪與 5 月北方融雪。季外空白磚以 sha256 去重、只記 manifest，放寬的成本很小。10-13～10-14 季外未收；上游只留 24h，部署後只能補回最近 24 小時。
+- `JAPAN_JMA_RASTER_SEASON`（預設 `snow_depth=10,11,12,1,2,3,4,5`）。季外 validtime 在 expected_vts 裡就不存在：不抓、不產 frames 列、不算 missing。
+- 保留期內完全沒有季內時刻時不打 targetTimes；但仍設定視窗，讓 5/31 這種最後一天照常在 6/1 01:00 JST 日結。
 
 ### 3. 粗圖探測（coarse probe）
 - `JAPAN_JMA_RASTER_COARSE_PROBE=off|shadow|on`，預設 shadow。z4 畫布＝x13..14、y5..6（2×2）；**修正 canvas(z<6)**：舊版 floor 只算到 y5，z4 少一排。
