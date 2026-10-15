@@ -432,6 +432,10 @@
       "description": "JMA 發布幀：radar/rasrf/キキクル/積雪/UV/海溫/海冰 每幀產 LA PNG 上 R2 imagery/jma/{product}/{YYYYMMDD}/{HHMMSS}.png 並寫 frames.image_* 欄（需 R2_*；未設定自動略過，失敗不影響 T2/T3）",
       "default": "true"
     },
+    "JAPAN_JMA_ANALYSIS_MAPS": {
+      "description": "JMA 分析圖：jma_raster 每輪尾端由 S3 T1 累積季／月至今每日一張 count_la_v1 PNG（積雪初日／積雪日數／雨日／キキクル警戒時數）上 R2 imagery/jma/ana_*/ 並寫 frames 列（需 S3＋R2；失敗不影響收集）",
+      "default": "true"
+    },
     "JAPAN_JMA_AMEDAS_DAILY_PARQUET": {
       "description": "AMeDAS 每 JST 日結（D+1 01:00 後）組每站×10 分 Parquet 上傳 S3 weather-obs/jma/amedas/YYYY/MM/YYYYMMDD.parquet（需 S3）",
       "default": "true"

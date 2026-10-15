@@ -406,6 +406,13 @@ for _prefix, _en_default, _intv_default in _COLLECTOR_TOGGLES:
 JAPAN_JMA_AMEDAS_DAILY_PARQUET = _env_bool('JAPAN_JMA_AMEDAS_DAILY_PARQUET', True)
 # JMA 發布幀（jma_raster／jma_ocean_env）：T2 網格 → LA PNG → R2 imagery/jma/…，前端時間軸用；R2 未設定自動略過
 JAPAN_JMA_IMAGERY_PUBLISH = _env_bool('JAPAN_JMA_IMAGERY_PUBLISH', True)
+# JMA 分析圖（jma_raster 每輪尾端）：T1 每日彙總 → 季／月至今每日一張 count_la_v1 PNG（ana_snow_first、ana_snow_days、
+# ana_rain_days、ana_risk_land_hours、ana_risk_inund_hours）；需 S3＋R2，且 JAPAN_JMA_IMAGERY_PUBLISH 為 true
+JAPAN_JMA_ANALYSIS_MAPS = _env_bool('JAPAN_JMA_ANALYSIS_MAPS', True)
+JAPAN_JMA_ANALYSIS_EPOCH = os.getenv('JAPAN_JMA_ANALYSIS_EPOCH', '2026-10-10')       # T1 最早可用日；之前的日不計入經過量
+JAPAN_JMA_ANALYSIS_LOOKBACK_DAYS = int(os.getenv('JAPAN_JMA_ANALYSIS_LOOKBACK_DAYS', '7'))  # 每輪檢查近 N 天（遲到的 T1）
+JAPAN_JMA_ANALYSIS_MIN_COVERAGE = float(os.getenv('JAPAN_JMA_ANALYSIS_MIN_COVERAGE', '0.5'))
+JAPAN_JMA_ANALYSIS_MAX_SECONDS = int(os.getenv('JAPAN_JMA_ANALYSIS_MAX_SECONDS', '180'))
 JAPAN_JMA_RASTER_PRODUCTS = os.getenv(
     'JAPAN_JMA_RASTER_PRODUCTS',
     'radar,rasrf,risk_land,risk_inund,risk_flood,snow_depth,himawari_b13')
