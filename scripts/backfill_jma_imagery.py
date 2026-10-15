@@ -194,12 +194,12 @@ def main() -> int:
                 r = pub.render(product, grid, **kw)
                 st["encode_sec"] += time.perf_counter() - tic
                 st["publish"] += 1
-                st["bytes"] += len(r["png"])
-                st["sizes"].append(len(r["png"]))
+                st["bytes"] += len(r["data"])
+                st["sizes"].append(len(r["data"]))
                 if not args.dry_run:
-                    key = pub.r2_key(product, vt)
+                    key = pub.r2_key(product, vt, r["ext"])
                     try:
-                        r2.upload_image(key, r["png"], pub.CONTENT_TYPE)
+                        r2.upload_image(key, r["data"], r["content_type"])
                         batch.append((vt, pub.image_fields(key, r, datetime.now(timezone.utc))))
                     except Exception as e:  # noqa: BLE001
                         st["failed"] += 1
