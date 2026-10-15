@@ -118,6 +118,20 @@ def _taipei_today() -> date:
     return datetime.now(timezone(timedelta(hours=8))).date()
 
 
+def _station_changed_cond(update_cols: list[str], alias: str = 's') -> str:
+    """站點 metadata upsert 的「有變才 UPDATE」條件（排除 updated_at）。
+
+    iot_wra／uswg 每 10 分鐘全量 upsert 約 2,800／2,100 站，metadata 幾乎不變；
+    無條件 UPDATE 會讓每輪都產生等量 dead tuple、每輪觸發 autovacuum
+    （2026-10-15 Disk IO 第三輪 W1）。因此 updated_at 的語意是「最後一次異動」。
+    """
+    cols = [c for c in update_cols if c != 'updated_at']
+    return (
+        f"({', '.join(f'{alias}.{c}' for c in cols)}) IS DISTINCT FROM "
+        f"({', '.join(f'EXCLUDED.{c}' for c in cols)})"
+    )
+
+
 # Collectors whose re-fetch of the same observation key can only add results
 # (RIPE Atlas buckets rebuilt from a rolling lookback).  A re-write with fewer
 # samples is a partial view and must not replace a fuller earlier write.
@@ -1537,7 +1551,7 @@ class SupabaseWriter:
         return result.get('data', [])
 
     def _transform_iot_wra(self, result: dict, ts: datetime) -> list[dict]:
-        """水利署 IoT 7 類站點即時感測讀值（每 60 分鐘）。
+        """水利署 IoT 7 類站點即時感測讀值（間隔由 IOT_WRA_INTERVAL 決定，正式環境為每 10 分鐘）。
 
         collector 已在 collect() 結束前呼叫 _upsert_iot_wra_stations()
         將靜態 metadata 寫入 public.iot_wra_stations，
@@ -1546,7 +1560,7 @@ class SupabaseWriter:
         return result.get('data', [])
 
     def _upsert_iot_wra_stations(self, rows: list[dict]) -> None:
-        """upsert 靜態站點 metadata 到 public.iot_wra_stations。
+        """upsert 靜態站點 metadata 到 public.iot_wra_stations（沒變的站不 UPDATE）。
 
         iot.wra 的 7 類站點共用同一張表，同一 UUID 可能出現在多種 station_type
         （例如河川站兼具閘門），因此 PK 為 (iow_station_id, station_type)。
@@ -1569,14 +1583,12 @@ class SupabaseWriter:
                 dedup[key] = r
 
         values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
-        update_set = ', '.join(
-            f"{c} = EXCLUDED.{c}"
-            for c in cols
-            if c not in ('iow_station_id', 'station_type')
-        )
+        update_cols = [c for c in cols if c not in ('iow_station_id', 'station_type')]
+        update_set = ', '.join(f"{c} = EXCLUDED.{c}" for c in update_cols)
         sql = (
-            f"INSERT INTO public.iot_wra_stations ({','.join(cols)}) VALUES %s "
-            f"ON CONFLICT (iow_station_id, station_type) DO UPDATE SET {update_set}"
+            f"INSERT INTO public.iot_wra_stations AS s ({','.join(cols)}) VALUES %s "
+            f"ON CONFLICT (iow_station_id, station_type) DO UPDATE SET {update_set} "
+            f"WHERE {_station_changed_cond(update_cols)}"
         )
         with self._pool.borrow() as conn:
             with self._txn(conn) as cur:
@@ -1621,7 +1633,7 @@ class SupabaseWriter:
         return result.get('data', [])
 
     def _upsert_uswg_stations(self, rows: list[dict]) -> None:
-        """upsert 靜態站點 metadata 到 public.uswg_stations。
+        """upsert 靜態站點 metadata 到 public.uswg_stations（沒變的站不 UPDATE）。
 
         USWG PK 為單一 iow_station_id（不像 iot_wra 還有 station_type）。
         """
@@ -1641,14 +1653,12 @@ class SupabaseWriter:
                 dedup[sid] = r
 
         values = [tuple(r.get(c) for c in cols) for r in dedup.values()]
-        update_set = ', '.join(
-            f"{c} = EXCLUDED.{c}"
-            for c in cols
-            if c != 'iow_station_id'
-        )
+        update_cols = [c for c in cols if c != 'iow_station_id']
+        update_set = ', '.join(f"{c} = EXCLUDED.{c}" for c in update_cols)
         sql = (
-            f"INSERT INTO public.uswg_stations ({','.join(cols)}) VALUES %s "
-            f"ON CONFLICT (iow_station_id) DO UPDATE SET {update_set}"
+            f"INSERT INTO public.uswg_stations AS s ({','.join(cols)}) VALUES %s "
+            f"ON CONFLICT (iow_station_id) DO UPDATE SET {update_set} "
+            f"WHERE {_station_changed_cond(update_cols)}"
         )
         with self._pool.borrow() as conn:
             with self._txn(conn) as cur:

@@ -76,7 +76,7 @@ def _parse_dt(s: str | None) -> Optional[datetime]:
 
 
 class IotWraCollector(BaseCollector):
-    """水利署 IoT 水文感測收集器（每 60 分鐘）"""
+    """水利署 IoT 水文感測收集器（間隔由 IOT_WRA_INTERVAL 決定，正式環境為每 10 分鐘；config 預設 60）"""
 
     name = "iot_wra"
     interval_minutes = config.IOT_WRA_INTERVAL
