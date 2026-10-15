@@ -3736,7 +3736,14 @@ class SupabaseWriter:
             )
 
     def _write_satellite_tle(self, conn, result: dict, timestamp: datetime):
-        """更新衛星 TLE 參數表（全量 UPSERT，供前端 SGP4 計算用）"""
+        """更新衛星 TLE 參數表（全量送出、只更新有變動的列，供前端 SGP4 計算用）
+
+        Space-Track 每輪回傳全部約 7 萬顆（含失效），其中約 95% 和上一輪完全相同。
+        無條件 UPDATE 會讓每輪產生約 7 萬個 dead tuple、每輪觸發 autovacuum，
+        所以 ON CONFLICT DO UPDATE 加 IS DISTINCT FROM 條件：沒變的列不寫。
+        因此 updated_at 的語意是「該列最後一次異動」，不是「最後一次收到」
+        （2026-10-15 Disk IO 第三輪 T1；max(updated_at) 仍每輪前進，監控不受影響）。
+        """
         # Space-Track 版：data_all 含全部衛星（活躍+失效）；舊格式 fallback 用 data
         data = result.get('data_all') or result.get('data', [])
         if not data:
@@ -3747,6 +3754,12 @@ class SupabaseWriter:
                 'decay_date', 'is_decayed', 'object_type', 'updated_at']
         update_cols = [c for c in cols if c != 'norad_id']
         update_set = ','.join(f'{c}=EXCLUDED.{c}' for c in update_cols)
+        # 比對欄位＝除了主鍵與 updated_at 以外的全部欄位（由 cols 產生，新增欄位自動納入）
+        compare_cols = [c for c in update_cols if c != 'updated_at']
+        changed_cond = (
+            f"({','.join(f't.{c}' for c in compare_cols)}) IS DISTINCT FROM "
+            f"({','.join(f'EXCLUDED.{c}' for c in compare_cols)})"
+        )
 
         values = []
         for r in data:
@@ -3772,13 +3785,27 @@ class SupabaseWriter:
 
         if values:
             with self._txn(conn) as cur:
-                sql = f"INSERT INTO live.satellite_tle ({','.join(cols)}) VALUES %s ON CONFLICT (norad_id) DO UPDATE SET {update_set}"
-                execute_values(cur, sql, values, page_size=1000)
+                sql = (
+                    f"INSERT INTO live.satellite_tle AS t ({','.join(cols)}) VALUES %s "
+                    f"ON CONFLICT (norad_id) DO UPDATE SET {update_set} "
+                    f"WHERE {changed_cond} "
+                    f"RETURNING norad_id"
+                )
+                # fetch=True：psycopg2 會把每一頁的 RETURNING 收齊
+                returned = execute_values(cur, sql, values, page_size=1000, fetch=True) or []
+            changed_ids = {str(row[0]) for row in returned}
+            changed_values = [v for v in values if str(v[0]) in changed_ids]
             decayed = sum(1 for v in values if v[12])
-            logger.info(f"[satellite] ✓ TLE 表已更新 {len(values)} 筆（其中失效 {decayed} 筆）")
+            logger.info(
+                f"[satellite] ✓ TLE 送出 {len(values)} 筆（其中失效 {decayed} 筆），"
+                f"新增或變動 {len(changed_values)} 筆"
+            )
 
-            # 同步寫入 TLE 歷史表（用於變軌偵測）— 共用同一條 conn
-            self._write_satellite_tle_history(conn, values, timestamp)
+            # 同步寫入 TLE 歷史表（用於變軌偵測）— 共用同一條 conn。
+            # 只送新增或變動的列：沒變的列 epoch 相同，本來就會被 history 的
+            # (norad_id, tle_epoch) unique 擋掉，重送只是白白探測索引。
+            if changed_values:
+                self._write_satellite_tle_history(conn, changed_values, timestamp)
 
     def _write_satellite_tle_history(self, conn, tle_values: list, timestamp: datetime):
         """追加 TLE 歷史紀錄，同一 norad_id + tle_epoch 不重複寫入"""
@@ -3801,7 +3828,7 @@ class SupabaseWriter:
                 sql = (f"INSERT INTO live.satellite_tle_history ({','.join(hist_cols)}) "
                        f"VALUES %s ON CONFLICT (norad_id, tle_epoch) DO NOTHING")
                 execute_values(cur, sql, hist_values, page_size=1000)
-            logger.info(f"[satellite] ✓ TLE 歷史已追加（新 epoch 才寫入）")
+            logger.info(f"[satellite] ✓ TLE 歷史已追加（送出 {len(hist_values)} 筆，新 epoch 才寫入）")
         except Exception as e:
             logger.warning(f"[satellite] TLE 歷史寫入失敗（表可能尚未建立）: {e}")
 
