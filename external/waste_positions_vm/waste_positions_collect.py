@@ -3,7 +3,7 @@
 
 跟主 repo (data-collectors) 完全一致的儲存規格：
   ┌── Supabase ──────────────────────────────────
-  │  history : spatial.waste_positions_realtime (INSERT, append-only)
+  │  history : spatial.waste_positions_realtime (INSERT … ON CONFLICT DO NOTHING, append-only)
   │  columns : city, vehicle_no, route_id, status,
   │            geometry (SRID 4326), observed_at, source_url
   └─────────────────────────────────────────────
@@ -235,7 +235,14 @@ COLUMNS = ["city", "vehicle_no", "route_id", "status", "geometry", "observed_at"
 
 
 def write_to_supabase(conn, records: list[dict]) -> int:
-    """append-only history INSERT，無 current 表、無 UPSERT（conn 由 caller 管理）"""
+    """append-only history INSERT，無 current 表、無 UPSERT（conn 由 caller 管理）
+
+    來源 API 每次回傳最近 N 分鐘的 GPS，每 2 分鐘輪詢一次會重疊抓到同一點
+    （臺南重複約 2.5 倍）。用「不指定目標」的 ON CONFLICT DO NOTHING：
+    表上還沒有 (city, vehicle_no, observed_at) 唯一索引時等同純 INSERT，
+    索引建好後重複點自動略過、整批不會失敗（gis-platform migration 458）。
+    回傳值是「送出」的列數，不是實際寫入的列數。
+    """
     rows = []
     for r in records:
         lat, lng = r.get("lat"), r.get("lng")
@@ -254,7 +261,7 @@ def write_to_supabase(conn, records: list[dict]) -> int:
     if not rows:
         return 0
 
-    sql = f"INSERT INTO {HISTORY_TABLE} ({','.join(COLUMNS)}) VALUES %s"
+    sql = f"INSERT INTO {HISTORY_TABLE} ({','.join(COLUMNS)}) VALUES %s ON CONFLICT DO NOTHING"
     with conn.cursor() as cur:
         execute_values(cur, sql, rows, page_size=1000)
     conn.commit()
@@ -330,7 +337,7 @@ def main() -> int:
         flush_pending(conn, BUFFER_DIR, _flush_write, log=log)
         if all_records:
             n = write_to_supabase(conn, all_records)
-            log.info(f"Supabase 寫入: {n} 筆")
+            log.info(f"Supabase 送出: {n} 筆（重複點由 ON CONFLICT DO NOTHING 略過）")
     except Exception as exc:
         log.error(f"DB 寫入失敗: {exc}")
         if all_records:
