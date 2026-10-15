@@ -45,6 +45,18 @@ B = https://www.jma.go.jp/bosai。各產品實際有內容的 zoom、member 意�
 - 決定性：同環境同輸入同 bytes（compress_level 9、無 metadata）；不同機器的 zlib／Pillow 版本可能不同，冪等靠「已存在就跳過」。
 - 實測大小與 CPU 見本檔「發布幀量測」。
 
+## 發布幀量測（2026-10-16，`backfill_jma_imagery.py --dry-run`，真 S3 T2 2026-10-10..10-16，本機 M 系列 Mac）
+| product | 幀 | PNG 平均 | 最大 | 編碼 s/幀 | 每日約 |
+|---|---|---|---|---|---|
+| radar（2048×1536） | 1,550 | 21.3 KB | 52.8 KB | 0.32 | 288 幀 ≈ 6.1 MB（雨天 ~11 MB） |
+| rasrf | 259 | 22.2 KB | 45.5 KB | 0.24 | 48 幀 ≈ 1.1 MB |
+| risk_land／risk_inund | 423／425 | 6.2 KB | 6.3 KB | 0.1–0.2 | 各 48 幀 ≈ 0.3 MB |
+| snow_depth | 74 | 6.2 KB | 6.4 KB | 0.03 | 24 幀 ≈ 0.15 MB（10 月幾乎無雪；冬季會變大） |
+| uv_anal（768×768） | 60 | 3.3 KB | 3.8 KB | 0.02 | 13 幀 ≈ 0.04 MB |
+| sst_him（800×755） | 5 | 100 KB | 103 KB | 0.5 | 0.1 MB |
+| sea_ice | 0 | — | — | — | 季外（12–5 月） |
+合計約 8 MB／日 → R2 保留 90 天穩態約 0.7–1.2 GB；每年寫入約 3 GB。
+
 ## DB（gis-platform mig 437，live schema）
 - `live.weather_raster_frames`：source text, product text, valid_time timestamptz, base_time timestamptz, zoom_raw smallint, tiles_requested int, tiles_nonempty int, raw_bytes bigint, nonzero_pixels int, unknown_color_pixels int, status text（ok／partial／missing）, collected_at timestamptz default now()；PK (source, product, valid_time)；DO NOTHING；保留 400 天。
 - `live.weather_raster_daily`：source, product, obs_date date, frames_expected int, frames_ok int, raw_key text, raw_bytes bigint, raw_sha256 text, raw_storage_class text, grid_objects int, grid_bytes bigint, summary_key text, decode_table_version text, status text（packed／uploaded／verified／failed）, uploaded_at timestamptz；PK (source, product, obs_date)；upsert 更新；永久。
