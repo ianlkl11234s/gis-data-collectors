@@ -11,7 +11,7 @@ analytics `docs/topic-research/japan_opendata/jma-collectors-plan.md`（分層�
 | rasrf (解析雨量 1h) | B/jmatile/data/rasrf/{bt}/immed/{vt}/surf/rasrf/{z}/{x}/{y}.png（只收解析值，不收預報） | 12h | 每 30 分 | 是 |
 | risk_land / risk_inund / risk_flood (キキクル) | B/jmatile/data/risk/{bt}/{member}/{vt}/surf/{land\|inund\|flood}/… | 5.5h | 每 10 分 | 是（危險度等級） |
 | snow_depth (解析積雪深 snowd) | B/jmatile/data/snow/{bt}/none/{vt}/surf/snowd/… | 24h | 每 1 小時 | 是 |
-| himawari_b13 | B/himawari/data/satimg/{bt}/fd/{vt}/B13/TBB/{z}/{x}/{y}.jpg | ~119h | 每 1 小時 1 張 | 否（只留原始） |
+| himawari_b13 | B/himawari/data/satimg/{bt}/fd/{vt}/B13/TBB/{z}/{x}/{y}.jpg | ~119h（targetTimes_fd 只列 ~36h；偶有整幀 404 的洞） | 每 1 小時 1 張 | 不解碼等級；2026-10-16 起 12 磚拼成灰階 uint8 1024×768（T2＋發布幀，無 T1） |
 B = https://www.jma.go.jp/bosai。各產品實際有內容的 zoom、member 意義、色票要先實測（radar／rasrf 已知 z5 是 334 byte 佔位，z4/z6/z8 有內容；4-bit 調色盤 idx2–9 → 8 級）。實測結果寫進回報與解碼表。
 
 ## 收集
@@ -31,13 +31,13 @@ B = https://www.jma.go.jp/bosai。各產品實際有內容的 zoom、member 意�
 - 累加器用 np.memmap 放 spool，跨重啟續算，不吃 RAM。單輪峰值記憶體目標 < 300 MB。
 - 不可每張圖磚一個物件（Deep Archive 每千物件 US$0.05）。
 
-| 發布幀（R2 快取） | 每幀一張 8-bit LA PNG（EPSG:3857，z7 產品 2×2 取最大降到 z6）；可由 T2 重算 | R2 `imagery/jma/{product}/{YYYYMMDD}/{HHMMSS}.png`（UTC valid_time） | R2（immutable Cache-Control） | 90 天（2026-10-15 拍板） |
+| 發布幀（R2 快取） | 每幀一張 8-bit LA PNG（EPSG:3857，z7 產品 2×2 取最大降到 z6）；himawari_b13 為 L-mode JPEG（gray_jpeg_v1）；可由 T2 重算 | R2 `imagery/jma/{product}/{YYYYMMDD}/{HHMMSS}.{png\|jpg}`（UTC valid_time） | R2（immutable Cache-Control） | 90 天（2026-10-15 拍板） |
 
 ## 發布幀（2026-10-15；契約 analytics `docs/topic-research/japan_opendata/jma-frontend-contract.md`）
 - 模組 `collectors/weather_raster/publish.py`：純函式編碼（`level_la_v1`／`sst_la_v1`）、經緯度網格 nearest 轉 3857、`publish()` 上傳 R2。
 - 時點：radar／rasrf／risk_land／risk_inund／snow_depth 在 **`fetch_frame` 解碼完成當下**以記憶體內網格發布（不等小時收尾，前端即時可見）。
   補抓段之後的 z8 細化**不重發**（key immutable；PNG 是 z6，z8 細節經 2×2 取最大後影響有限）。抓取當下 R2 失敗 → 幀定案（settle）時以 spool 網格重試一次；仍失敗留給回補腳本。
-  risk_flood（pbf）、himawari_b13 不發布。
+  risk_flood（pbf）不發布。himawari_b13 見下節「ひまわり B13 發布幀」。
 - DB：image 欄（gis-platform mig 461：image_key、image_bytes、image_width/height、lon/lat_min/max、encoding、published_at）跟著 frames 狀態列送 writer，
   writer 在狀態列 upsert 成功後**另開 transaction 以 UPDATE 寫入**（`_write_weather_raster_images`），失敗只 log，不影響 frames／daily 狀態寫入。
 - 開關：`JAPAN_JMA_IMAGERY_PUBLISH`（預設 true）；R2_* 未設定自動略過（只 log 一次）。發布失敗絕不影響 T2／T3。
@@ -56,6 +56,15 @@ B = https://www.jma.go.jp/bosai。各產品實際有內容的 zoom、member 意�
 | sst_him（800×755） | 5 | 100 KB | 103 KB | 0.5 | 0.1 MB |
 | sea_ice | 0 | — | — | — | 季外（12–5 月） |
 合計約 8 MB／日 → R2 保留 90 天穩態約 0.7–1.2 GB；每年寫入約 3 GB。
+
+## ひまわり B13 發布幀（2026-10-16）
+- 決定：**R2 發布 L-mode JPEG quality 80（`gray_jpeg_v1`，Content-Type image/jpeg，約 78 KB／幀）＋ S3 T2 每小時 uint8 npz（約 430 KB／小時，永久）**；T3 原始 tar（DEEP_ARCHIVE）不變；頻率維持每小時（使用者拍板，不加密）。量測與比較表見 JMA_RASTER_NOTES.md「ひまわり B13 編碼量測」。
+- 拼圖：z5 x26–29、y11–13 共 12 磚（`canvas(5)`）→ 1024×768，row 0＝北；四角 = `spool.georef(5, 26, 11, 1024, 768)`：經度 112.5–157.5、緯度 21.94–48.92（EPSG:3857 圖，四角以經緯度記）。
+- 值：上游灰階原值 0–255（越白越冷）。JMA bosai 前端資產沒有公開 B13 TBB 灰階→亮度溫度（K）的對照（2026-10-16 查 map.html 只見產品路徑 `ir:"B13/TBB"`，無圖例），所以 `gray_jpeg_v1` 定義為**顯示用單調映射、非輻射定標**。
+- 12 磚不齊（任一磚非 200 或無法解碼）：幀狀態照舊 partial，**不產 T2 網格、不發布**（灰階 0 是合法值，不可用 0 填）；原始磚照樣進 T3。
+- T2：`weather-grid/jma/himawari_b13/{YYYYMMDD JST}/{HH}.npz`，`spool.write_hour_npz` 同格式（每小時 1 幀），meta 由 `jma_raster.mosaic_t2_meta` 產生（collector 與回補共用），`decode_table_version=null`。無 T1。
+- 實作：`Product.publish_kind="gray_jpeg"`（`grid_zoom` 維持 None，不走 decode table／累加器）；`fetch_frame` 抓完 12 磚即拼圖、存 spool grids、發布；settle 時若當下 R2 失敗以 spool 網格重試一次。
+- 回補：`scripts/backfill_jma_himawari_imagery.py`（上游直抓，≤1 req/s，冪等規則同 backfill_jma_imagery；T2 已存在不寫）。T3 在 DEEP_ARCHIVE，不 restore。
 
 ## DB（gis-platform mig 437，live schema）
 - `live.weather_raster_frames`：source text, product text, valid_time timestamptz, base_time timestamptz, zoom_raw smallint, tiles_requested int, tiles_nonempty int, raw_bytes bigint, nonzero_pixels int, unknown_color_pixels int, status text（ok／partial／missing）, collected_at timestamptz default now()；PK (source, product, valid_time)；DO NOTHING；保留 400 天。

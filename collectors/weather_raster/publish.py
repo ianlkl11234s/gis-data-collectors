@@ -8,6 +8,10 @@ R2 是可由 T2 重算的快取層（保留 90 天）；T2（S3）才是真本�
                sea_ice：254 陸地 → 透明；255 未分析 → 缺測。開水面 0 依契約為透明。
   sst_la_v1    L＝clamp(round_half_up((°C＋3)×7), 1, 254)（前端：°C ≈ L/7 − 3）、A＝255；
                陸地 -32768 → A＝0；海冰 -32767 → (0,255)；無法解析 -32766 → (255,255)。
+  gray_jpeg_v1 himawari_b13（ひまわり B13 赤外 TBB）：z5 x26–29、y11–13 的 12 磚上游 JPEG 解成灰階 uint8 拼成
+               1024×768（L＝上游灰階原值，越白越冷；JMA 未公開灰階→K 對照，屬顯示用單調映射、非輻射定標），
+               以 L-mode JPEG quality 80 重編碼（＝上游磚的 IJG q80 亮度量化表；磚邊 256 對齊 8×8 block，
+               係數級重用，PSNR 見 docs/JMA_RASTER_NOTES.md）。無 alpha、全畫布不透明；12 磚不齊不發布。
 畫布 EPSG:3857、row 0＝北。z7 產品以 decode.pool_max 2×2 降到 z6（255 只在 4 格全缺時保留）。
 經緯度網格（sst_him、sea_ice）以 nearest 轉 3857，寬＝min(原欄數, 2048)，不放大。
 
@@ -29,9 +33,12 @@ from collectors.weather_raster.decode import MISSING, pool_max
 
 ENC_LEVEL = "level_la_v1"
 ENC_SST = "sst_la_v1"
+ENC_GRAY_JPEG = "gray_jpeg_v1"
+GRAY_JPEG_QUALITY = 80
 PNG_COMPRESS_LEVEL = 9
 MAX_WIDTH = 2048
 CONTENT_TYPE = "image/png"
+JPEG_CONTENT_TYPE = "image/jpeg"
 
 SST_LAND, SST_ICE, SST_BAD = -32768, -32767, -32766
 ICE_LAND = 254
@@ -46,6 +53,7 @@ PUBLISH_PRODUCTS: dict[str, dict] = {
     "uv_anal": {"kind": "tile", "pool": 1},
     "sea_ice": {"kind": "lonlat", "transparent": (0, ICE_LAND)},
     "sst_him": {"kind": "sst"},
+    "himawari_b13": {"kind": "gray_jpeg"},
 }
 
 IMAGE_FIELDS = ("image_key", "image_bytes", "image_width", "image_height",
@@ -82,6 +90,34 @@ def sst_la(sst_dc: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     L[ice] = 0
     L[bad] = 255
     return L.astype(np.uint8), A.astype(np.uint8)
+
+
+def jpeg_gray(L: np.ndarray, quality: int = GRAY_JPEG_QUALITY) -> bytes:
+    """單通道 L-mode JPEG（optimize 霍夫曼表、不寫 EXIF／JFIF 以外 metadata）。"""
+    bio = io.BytesIO()
+    Image.fromarray(np.ascontiguousarray(L, np.uint8)).save(bio, format="JPEG", quality=quality, optimize=True)
+    return bio.getvalue()
+
+
+def mosaic_gray(tiles: dict, x0: int, y0: int, nx: int, ny: int, tile_px: int = 256) -> Optional[np.ndarray]:
+    """{(x, y): JPEG bytes} → 灰階 uint8 拼圖（row 0＝北）。任一磚缺或無法解碼回 None（不以 0 填：灰階 0 是合法值）。"""
+    out = np.empty((ny * tile_px, nx * tile_px), np.uint8)
+    for ty in range(y0, y0 + ny):
+        for tx in range(x0, x0 + nx):
+            data = tiles.get((tx, ty))
+            if not data:
+                return None
+            try:
+                im = Image.open(io.BytesIO(data))
+                im.load()
+                a = np.asarray(im.convert("L"))
+            except Exception:  # noqa: BLE001
+                return None
+            if a.shape != (tile_px, tile_px):
+                return None
+            r0, c0 = (ty - y0) * tile_px, (tx - x0) * tile_px
+            out[r0:r0 + tile_px, c0:c0 + tile_px] = a
+    return out
 
 
 def decode_png_la(data: bytes) -> tuple[np.ndarray, np.ndarray]:
@@ -137,10 +173,17 @@ def reproject_lonlat_to_3857(grid: np.ndarray, edges: list[float], max_width: in
 
 def render(product: str, grid: np.ndarray, *, bounds_lonlat: Optional[list] = None,
            georef: Optional[dict] = None) -> dict:
-    """依產品規格產 PNG。tile 產品給 bounds_lonlat（spool.georef 的 [w,s,e,n]，池化不改四角）；
-    lonlat／sst 產品給 GridProduct 的 georef。回 {png, width, height, bounds, encoding}。"""
+    """依產品規格產發布圖（PNG；gray_jpeg 為 JPEG）。tile／gray_jpeg 產品給 bounds_lonlat（spool.georef 的 [w,s,e,n]，池化不改四角）；
+    lonlat／sst 產品給 GridProduct 的 georef。回 {data, png（PNG 產品才有，＝data）, width, height, bounds, encoding, ext, content_type}。"""
     spec = PUBLISH_PRODUCTS[product]
     kind = spec["kind"]
+    ext, ctype = "png", CONTENT_TYPE
+    if kind == "gray_jpeg":
+        g = np.asarray(grid, np.uint8)
+        data = jpeg_gray(g)
+        return {"data": data, "width": int(g.shape[1]), "height": int(g.shape[0]),
+                "bounds": [float(b) for b in bounds_lonlat], "encoding": ENC_GRAY_JPEG,
+                "ext": "jpg", "content_type": JPEG_CONTENT_TYPE}
     if kind == "tile":
         g = pool_max(grid, spec["pool"]) if spec["pool"] > 1 else np.asarray(grid, np.uint8)
         L, A = level_la(g)
@@ -154,19 +197,19 @@ def render(product: str, grid: np.ndarray, *, bounds_lonlat: Optional[list] = No
             L, A = level_la(canvas, spec.get("transparent", (0,)))
             enc = ENC_LEVEL
     png = png_la(L, A)
-    return {"png": png, "width": int(L.shape[1]), "height": int(L.shape[0]),
-            "bounds": [float(b) for b in bounds], "encoding": enc}
+    return {"data": png, "png": png, "width": int(L.shape[1]), "height": int(L.shape[0]),
+            "bounds": [float(b) for b in bounds], "encoding": enc, "ext": ext, "content_type": ctype}
 
 
-def r2_key(product: str, valid_time: datetime) -> str:
+def r2_key(product: str, valid_time: datetime, ext: str = "png") -> str:
     t = valid_time.astimezone(timezone.utc)
-    return f"imagery/jma/{product}/{t:%Y%m%d}/{t:%H%M%S}.png"
+    return f"imagery/jma/{product}/{t:%Y%m%d}/{t:%H%M%S}.{ext}"
 
 
 def image_fields(key: str, r: dict, published_at: datetime) -> dict:
     """frames 列的 image 欄（皆為 Python 原生型別，可直接寫 state.json）。"""
     lon_min, lat_min, lon_max, lat_max = r["bounds"]
-    return {"image_key": key, "image_bytes": len(r["png"]), "image_width": r["width"], "image_height": r["height"],
+    return {"image_key": key, "image_bytes": len(r["data"]), "image_width": r["width"], "image_height": r["height"],
             "lon_min": lon_min, "lon_max": lon_max, "lat_min": lat_min, "lat_max": lat_max,
             "encoding": r["encoding"], "published_at": published_at.isoformat()}
 
@@ -211,8 +254,8 @@ def publish(product: str, valid_time: datetime, grid: np.ndarray, *, bounds_lonl
             _warn_once("no_r2", f"{log_prefix} R2 未設定，略過發布幀（T2/T3 照常）")
             return None
         r = render(product, grid, bounds_lonlat=bounds_lonlat, georef=georef)
-        key = r2_key(product, valid_time)
-        store.upload_image(key, r["png"], CONTENT_TYPE)
+        key = r2_key(product, valid_time, r["ext"])
+        store.upload_image(key, r["data"], r["content_type"])
         return image_fields(key, r, datetime.now(timezone.utc))
     except Exception as e:  # noqa: BLE001
         print(f"{log_prefix} ✗ 發布幀失敗 {product} {valid_time.isoformat()}：{e}（T2/T3 不受影響）")

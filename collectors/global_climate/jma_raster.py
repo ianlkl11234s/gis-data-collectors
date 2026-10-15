@@ -7,7 +7,8 @@
   risk_inund   浸水キキクル（同上）
   risk_flood   洪水キキクル：pbf 向量磚，只打包原始檔進 T3，不解碼、不產 T1/T2
   snow_depth   解析積雪深 snowd（解析值 bt==vt）每 1 小時、留 24h   z6 → z6 網格
-  himawari_b13 ひまわり B13 TBB jpg：原生只到 z5（12 磚），每 1 小時 1 張，只留原始
+  himawari_b13 ひまわり B13 TBB jpg：原生只到 z5（12 磚），每 1 小時 1 張。不解碼等級（無 decode table、無 T1）；
+               2026-10-16 起 12 磚拼成灰階 1024×768 uint8：T2 每小時 npz（永久）＋發布幀 gray_jpeg_v1（R2 90 天）。
 
 分層（契約 jma_raster_contract.md）：
   spool  {LOCAL_DATA_DIR}/weather_raw/jma/{product}/{YYYYMMDD JST}/  上傳驗證成功即刪
@@ -72,10 +73,23 @@ class Product:
     analysis_filter: str = "bt_eq_vt"  # targetTimes 過濾方式
     probe_zoom: Optional[int] = None   # 粗圖探測層級（None＝不適用）；2026-10-11 實測 z4 皆 200（見 JMA_RASTER_NOTES）
     season_months: Optional[frozenset] = None  # JST 月份；None＝全年
+    # 不經 decode table、直接把粗層原始磚拼成網格（T2＋發布幀；無 T1）。目前只有 "gray_jpeg"（himawari_b13）
+    publish_kind: Optional[str] = None
 
     @property
     def decodes(self) -> bool:
         return self.grid_zoom is not None
+
+    @property
+    def grid_z(self) -> Optional[int]:
+        """T2 網格層級：解碼產品＝grid_zoom；拼圖產品（publish_kind）＝coarse_zoom；其他 None。"""
+        if self.grid_zoom is not None:
+            return self.grid_zoom
+        return self.coarse_zoom if self.publish_kind else None
+
+    @property
+    def has_grid(self) -> bool:
+        return self.grid_z is not None
 
 
 PRODUCTS: dict[str, Product] = {p.name: p for p in (
@@ -98,7 +112,7 @@ PRODUCTS: dict[str, Product] = {p.name: p for p in (
             analysis_filter="snowd", probe_zoom=4),
     Product("himawari_b13", "himawari/data/satimg/{bt}/fd/{vt}/B13/TBB/{z}/{x}/{y}.jpg",
             "himawari/data/satimg/targetTimes_fd.json", 60, timedelta(hours=119), 5, None, None,
-            fmt="jpg"),
+            fmt="jpg", publish_kind="gray_jpeg"),
 )}
 
 # 日本畫布：z6 x=52..59、y=22..27（＝z5 x26..29、y11..13；z4 x13..14、y5..6）
@@ -169,6 +183,15 @@ def configure_products(cadence_spec: str, season_spec: str) -> dict[str, Product
         if name in out:
             out[name] = dataclasses.replace(out[name], season_months=months)
     return out
+
+
+def mosaic_t2_meta(product: str, day: str, hh: str, georef: dict) -> dict:
+    """拼圖產品（himawari_b13）T2 小時檔 meta；collector 與 scripts/backfill_jma_himawari_imagery.py 共用。"""
+    return {"source": SOURCE, "product": product, "date_jst": day, "hour_jst": hh,
+            "decode_table_version": None, "georef": georef,
+            "values": "上游 B13 TBB JPEG 解碼後灰階 0–255（越白越冷；JMA 未公開灰階→K 對照，非輻射定標）",
+            "nodata": {"kind=missing": "缺幀或 12 磚不齊（灰階 0 是合法值，不當無資料）"},
+            "license": "気象庁ホームページ（PDL1.0）を加工"}
 
 
 def in_season(product: Product, t: datetime) -> bool:
@@ -498,6 +521,17 @@ class JmaRasterCollector(BaseCollector):
             nonzero = int(np.count_nonzero((grid > 0) & (grid < MISSING)))
             image = self._publish(product, vt, grid)
             del grid
+        elif product.publish_kind == "gray_jpeg":
+            # 12 磚不齊或無法解碼 → 不產網格、不發布（不以 0 填）；原始磚照樣進 T3
+            gx0, gy0, gnx, gny = canvas(zc)
+            grid = pub.mosaic_gray({k: b for k, (s_, b) in coarse.items() if s_ == 200}, gx0, gy0, gnx, gny)
+            if grid is not None:
+                grid_path = dd / "grids" / f"{vt}.npz"
+                sp.save_grid(grid_path, grid)
+                image = self._publish(product, vt, grid)
+                del grid
+            else:
+                print(f"[{self.name}] ⚠ {product.name} {vt} 磚不齊／無法解碼，不產 T2 網格、不發布")
 
         sp.write_frame_tar(dd / "frames" / f"{vt}.tar", members, mtime)
         status = "ok" if not failed else "partial"
@@ -688,7 +722,7 @@ class JmaRasterCollector(BaseCollector):
                     gp = dd / "grids" / f"{vt}.npz"
                     if gp.exists():
                         fr.update(self._publish(product, vt, sp.load_grid(gp)) or {})
-                if fr.get("grid"):
+                if fr.get("grid") and product.decodes:
                     acc = self._acc(product, dd.name)
                     if acc.needs_rebuild():
                         acc.rebuild({v: p for v, p in self._grids(product, dd.name, ds).items()
@@ -809,7 +843,7 @@ class JmaRasterCollector(BaseCollector):
         out.update(self.finish_product(product, now))
         return out
 
-    def _acc(self, product: Product, day: str) -> sp.DayAccumulator:
+    def _acc(self, product: Product, day: str) -> sp.DayAccumulator:  # 只用於 decodes 產品
         x0, y0, nx, ny = canvas(product.grid_zoom)
         return sp.DayAccumulator(self.day_dir(product, day) / "acc", (ny * 256, nx * 256),
                                  self.table(product).thresholds)
@@ -819,8 +853,8 @@ class JmaRasterCollector(BaseCollector):
         return {vt: d / f"{vt}.npz" for vt, fr in ds["frames"].items() if fr.get("grid")}
 
     def _georef(self, product: Product) -> dict:
-        x0, y0, nx, ny = canvas(product.grid_zoom)
-        return sp.georef(product.grid_zoom, x0, y0, nx * 256, ny * 256)
+        x0, y0, nx, ny = canvas(product.grid_z)
+        return sp.georef(product.grid_z, x0, y0, nx * 256, ny * 256)
 
     # ───────── 收尾 ─────────
     def close_ready(self, product: Product, st: dict, epoch: datetime, window_start: datetime,
@@ -838,7 +872,7 @@ class JmaRasterCollector(BaseCollector):
                 fr = ds["frames"].get(vt)
                 return fr is not None and (fr["status"] == "missing" or bool(fr.get("settled")))
             # 小時（JST）
-            if product.decodes and self.s3() is not None:
+            if product.has_grid and self.s3() is not None:
                 hours: dict[str, list[str]] = {}
                 for vt in exp:
                     hours.setdefault(parse_vt(vt).astimezone(JST).strftime("%H"), []).append(vt)
@@ -867,12 +901,15 @@ class JmaRasterCollector(BaseCollector):
         if not any(p for _, p in frames):
             ds["hours"][hh] = {"key": None, "bytes": 0, "frames": 0}
             return True
-        x0, y0, nx, ny = canvas(product.grid_zoom)
+        x0, y0, nx, ny = canvas(product.grid_z)
         local = dd / "t2" / f"{hh}.npz"
-        meta = {"source": SOURCE, "product": product.name, "date_jst": day, "hour_jst": hh,
-                "decode_table_version": self.table(product).version, "georef": self._georef(product),
-                "levels": {str(k): v for k, v in self.table(product).labels.items()},
-                "nodata": {"0": "無", "255": "缺測"}, "license": "気象庁ホームページ（PDL1.0）を加工"}
+        if product.decodes:
+            meta = {"source": SOURCE, "product": product.name, "date_jst": day, "hour_jst": hh,
+                    "decode_table_version": self.table(product).version, "georef": self._georef(product),
+                    "levels": {str(k): v for k, v in self.table(product).labels.items()},
+                    "nodata": {"0": "無", "255": "缺測"}, "license": "気象庁ホームページ（PDL1.0）を加工"}
+        else:
+            meta = mosaic_t2_meta(product.name, day, hh, self._georef(product))
         info = sp.write_hour_npz(local, frames, (ny * 256, nx * 256), meta,
                                  compression=config.JAPAN_JMA_RASTER_GRID_COMPRESSION)
         size = info["bytes"]

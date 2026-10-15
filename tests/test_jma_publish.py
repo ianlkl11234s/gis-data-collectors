@@ -24,7 +24,7 @@ class FakeR2:
     def upload_image(self, key, data, content_type, cache_control=None):
         if self.fail:
             raise RuntimeError("R2 down")
-        assert content_type == "image/png"
+        assert content_type == ("image/jpeg" if key.endswith(".jpg") else "image/png")
         self.objects[key] = data
 
     def head(self, key):
@@ -217,3 +217,152 @@ def test_writer_image_update_is_separate_and_failure_tolerant(monkeypatch):
     captured.clear(); fail["on"] = True
     w._write_to_db(conn, "jma_raster", recs, datetime.now(timezone.utc))
     assert len(captured) == 1
+
+
+# ───────────────────────── himawari_b13：gray_jpeg_v1 ─────────────────────────
+
+def _upstream_like_tile(value_fn, quality=80) -> bytes:
+    """仿上游：RGB（R=G=B）JPEG、IJG q80、4:2:0。"""
+    import io
+    from PIL import Image
+    yy, xx = np.mgrid[0:256, 0:256]
+    g = np.clip(value_fn(yy, xx), 0, 255).astype(np.uint8)
+    bio = io.BytesIO()
+    Image.fromarray(np.dstack([g, g, g])).save(bio, format="JPEG", quality=quality)
+    return bio.getvalue()
+
+
+def _himawari_tiles():
+    tiles = {}
+    for ty in range(11, 14):
+        for tx in range(26, 30):
+            base = 20 + 15 * (tx - 26) + 50 * (ty - 11)
+            tiles[(tx, ty)] = _upstream_like_tile(lambda yy, xx, b=base: b + (xx + yy) / 16)
+    return tiles
+
+
+def test_mosaic_gray_geometry_and_incomplete_tiles():
+    tiles = _himawari_tiles()
+    m = pub.mosaic_gray(tiles, 26, 11, 4, 3)
+    assert m.shape == (768, 1024) and m.dtype == np.uint8
+    # 磚 (x,y) 放在 row=(y-11)*256、col=(x-26)*256；row 0＝北（y 小）
+    for (tx, ty) in tiles:
+        r0, c0 = (ty - 11) * 256, (tx - 26) * 256
+        expect = 20 + 15 * (tx - 26) + 50 * (ty - 11)
+        assert abs(int(m[r0 + 2, c0 + 2]) - expect) <= 2
+    missing = dict(tiles); missing.pop((28, 12))
+    assert pub.mosaic_gray(missing, 26, 11, 4, 3) is None, "缺磚不可以 0 填"
+    broken = dict(tiles); broken[(26, 11)] = b"\xff\xd8jpg"
+    assert pub.mosaic_gray(broken, 26, 11, 4, 3) is None
+
+
+def test_himawari_bounds_from_z5_tile_range():
+    from collectors.global_climate import jma_raster as jr
+    import math
+    p = jr.PRODUCTS["himawari_b13"]
+    assert p.grid_z == 5 and not p.decodes and p.has_grid
+    assert jr.canvas(5) == (26, 11, 4, 3)
+    w, s_, e, n = sp.georef(5, 26, 11, 1024, 768)["bounds_lonlat"]
+    lat = lambda y: math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / 32))))  # noqa: E731
+    assert (w, e) == pytest.approx((112.5, 157.5))
+    assert (s_, n) == pytest.approx((lat(14), lat(11)))
+    assert 21.9 < s_ < 22.0 and 48.9 < n < 49.0  # 涵蓋沖繩到北海道
+
+
+def test_render_gray_jpeg_near_lossless_and_key():
+    import io
+    from PIL import Image
+    m = pub.mosaic_gray(_himawari_tiles(), 26, 11, 4, 3)
+    r = pub.render("himawari_b13", m, bounds_lonlat=[112.5, 21.94, 157.5, 48.92])
+    assert r["encoding"] == "gray_jpeg_v1" and r["ext"] == "jpg" and r["content_type"] == "image/jpeg"
+    assert (r["width"], r["height"]) == (1024, 768) and "png" not in r
+    im = Image.open(io.BytesIO(r["data"]))
+    assert im.format == "JPEG" and im.mode == "L" and im.size == (1024, 768)
+    # 同量化表（q80）、8×8 block 對齊 → 係數級重用，誤差 ≤ 1 灰階
+    diff = np.abs(np.asarray(im).astype(int) - m.astype(int))
+    assert diff.max() <= 1 and diff.mean() < 0.01
+    vt = datetime(2026, 10, 9, 0, 0, tzinfo=timezone.utc)
+    assert pub.r2_key("himawari_b13", vt, r["ext"]) == "imagery/jma/himawari_b13/20261009/000000.jpg"
+    f = pub.image_fields("k", r, vt)
+    assert f["image_bytes"] == len(r["data"]) and f["encoding"] == "gray_jpeg_v1"
+
+
+def test_jma_raster_himawari_publishes_jpeg_and_writes_t2(tmp_path, monkeypatch):
+    from tests.test_jma_raster import FakeS3, make_collector
+    from collectors.global_climate import jma_raster as jr
+    latest = "20261009000000"  # 09:00 JST
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
+                        lambda s, path, **k: [{"basetime": latest, "validtime": latest}])
+    tiles = _himawari_tiles()
+
+    def get(url):
+        z, x, y = url.rsplit(".", 1)[0].split("/")[-3:]
+        assert z == "5"
+        return 200, tiles[(int(x), int(y))]
+
+    s3, r2 = FakeS3(), FakeR2()
+    c = make_collector(tmp_path, ["himawari_b13"], s3, get, lookback_min=0)
+    c._r2 = r2
+    res = c.collect_product(jr.PRODUCTS["himawari_b13"], datetime(2026, 10, 9, 0, 5, tzinfo=timezone.utc), 1)
+    assert res["fetched"] == 1 and res["hours_closed"] == 1
+    fr = c._load_state("himawari_b13")["pending_frames"][latest]
+    assert fr["image_key"] == "imagery/jma/himawari_b13/20261009/000000.jpg"
+    assert fr["encoding"] == "gray_jpeg_v1" and (fr["image_width"], fr["image_height"]) == (1024, 768)
+    assert fr["lon_min"] == pytest.approx(112.5) and fr["lon_max"] == pytest.approx(157.5)
+    assert fr["nonzero_pixels"] is None  # 不是等級網格
+    assert r2.objects[fr["image_key"]][:2] == b"\xff\xd8"
+    key = "weather-grid/jma/himawari_b13/20261009/09.npz"
+    assert key in s3.objects
+    ds = c._day_state(jr.PRODUCTS["himawari_b13"], "20261009")
+    assert ds["hours"]["09"]["key"] == key and ds["hours"]["09"]["array"] == 1
+    assert "himawari_b13" not in c._tables  # 不需要 decode table
+
+
+def test_jma_raster_himawari_incomplete_frame_not_published(tmp_path, monkeypatch):
+    from tests.test_jma_raster import FakeS3, make_collector
+    from collectors.global_climate import jma_raster as jr
+    latest = "20261009000000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
+                        lambda s, path, **k: [{"basetime": latest, "validtime": latest}])
+    tiles = _himawari_tiles()
+
+    def get(url):
+        z, x, y = url.rsplit(".", 1)[0].split("/")[-3:]
+        if (int(x), int(y)) == (27, 12):
+            return 500, b""
+        return 200, tiles[(int(x), int(y))]
+
+    s3, r2 = FakeS3(), FakeR2()
+    c = make_collector(tmp_path, ["himawari_b13"], s3, get, lookback_min=0)
+    c._r2 = r2
+    c.collect_product(jr.PRODUCTS["himawari_b13"], datetime(2026, 10, 9, 0, 5, tzinfo=timezone.utc), 1)
+    fr = c._load_state("himawari_b13")["pending_frames"][latest]
+    assert fr["status"] == "partial" and "image_key" not in fr and not r2.objects
+    ds = c._day_state(jr.PRODUCTS["himawari_b13"], "20261009")
+    assert ds["hours"]["09"]["key"] is None and not any(k.startswith("weather-grid/") for k in s3.objects)
+
+
+def test_himawari_backfill_vts_t2_key_and_t2_roundtrip(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import backfill_jma_himawari_imagery as bf
+    from tests.test_jma_raster import FakeS3
+    vts = bf.hourly_vts(datetime(2026, 10, 9, 0, 30, tzinfo=timezone.utc), datetime(2026, 10, 9, 3, 0, tzinfo=timezone.utc))
+    assert [v.hour for v in vts] == [1, 2, 3]
+    # JST 切日：2026-10-09 15:00Z ＝ 10-10 00 時 JST
+    assert bf.t2_key(datetime(2026, 10, 9, 15, tzinfo=timezone.utc)) == (
+        "weather-grid/jma/himawari_b13/20261010/00.npz", "20261010", "00")
+    m = pub.mosaic_gray(_himawari_tiles(), 26, 11, 4, 3)
+    captured = {}
+
+    class S3(FakeS3):
+        def upload_path(self, local, key, **kw):
+            captured[key] = Path(local).read_bytes()
+            return super().upload_path(local, key, **kw)
+
+    vt = datetime(2026, 10, 9, 15, tzinfo=timezone.utc)
+    assert bf.write_t2(S3(), vt, m, sp.georef(5, 26, 11, 1024, 768))
+    import io
+    (stamp, g), = sp.load_hour_npz(io.BytesIO(captured["weather-grid/jma/himawari_b13/20261010/00.npz"]))
+    assert stamp == "20261009150000" and np.array_equal(g, m)
