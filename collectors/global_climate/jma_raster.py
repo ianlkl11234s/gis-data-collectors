@@ -49,6 +49,7 @@ from collectors.global_climate.jma_common import JMA_BOSAI_BASE, new_jma_session
 from collectors.weather_raster.decode import (
     BLANK_PLACEHOLDER_BYTES, MISSING, DecodeTable, blank_tile, decode_tile, missing_tile, pool_max, upsample,
 )
+from collectors.weather_raster import analysis as ana
 from collectors.weather_raster import publish as pub
 from collectors.weather_raster import spool as sp
 
@@ -118,6 +119,7 @@ PRODUCTS: dict[str, Product] = {p.name: p for p in (
 # 日本畫布：z6 x=52..59、y=22..27（＝z5 x26..29、y11..13；z4 x13..14、y5..6）
 CANVAS_Z6 = (52, 22, 8, 6)
 PROBE_MODES = ("off", "shadow", "on")
+ANALYSIS_COMMIT_KEY = "__analysis__"   # _pending_commit 內分析圖列的鍵（不可與產品名或 vt 相撞）
 
 
 def canvas(z: int) -> tuple[int, int, int, int]:
@@ -293,6 +295,9 @@ class JmaRasterCollector(BaseCollector):
         stats = super().run()
         if self._pending_commit is not None and not stats.get("error"):
             for pname, sent in self._pending_commit.items():
+                if pname == ANALYSIS_COMMIT_KEY:
+                    self._commit_analysis(sent)
+                    continue
                 st = self._load_state(pname)
                 for k in sent.get("frames", []):
                     st["pending_frames"].pop(k, None)
@@ -1007,6 +1012,45 @@ class JmaRasterCollector(BaseCollector):
             st["pending_daily"][day] = row
             return False
 
+    # ───────── 分析圖（collectors/weather_raster/analysis.py；契約 docs/JMA_RASTER_CONTRACT.md「分析圖」）─────────
+    def _analysis_state_path(self) -> Path:
+        return self.state_dir / "_analysis.json"
+
+    def _load_analysis_state(self) -> dict:
+        st = sp.read_json(self._analysis_state_path(), None) or {}
+        st.setdefault("published", {})   # {output: {YYYYMMDD: pub_sig}}：同 sig 已發布不重發
+        st.setdefault("pending", {})     # {"{output}:{YYYYMMDD}": frame 列}：DB 寫入成功才清
+        return st
+
+    def _commit_analysis(self, sent: dict) -> None:
+        st = self._load_analysis_state()
+        for k in sent.get("rows", []):
+            st["pending"].pop(k, None)
+        sp.write_json_atomic(self._analysis_state_path(), st)
+
+    def run_analysis(self, now: datetime, deadline: float) -> dict:
+        """近 N 天每個分析 family：確保 S3 累積快照、發布有變動的圖、把 frame 列放進 pending（與 frames 同一次 DB 寫入）。"""
+        if not (config.JAPAN_JMA_ANALYSIS_MAPS and pub.enabled()) or self.s3() is None:
+            return {"skipped": "disabled_or_no_s3"}
+        r2 = getattr(self, "_r2", None) or pub.get_r2()
+        if r2 is None:
+            return {"skipped": "no_r2"}
+        have = {p.name for p in self.products}
+        families = [f for f in ana.FAMILIES.values() if f.source_product in have]
+        engine = ana.AnalysisEngine(
+            ana.S3StateStore(self.s3()), r2, epoch=ana.parse_ymd(config.JAPAN_JMA_ANALYSIS_EPOCH.replace("-", "")),
+            min_coverage=config.JAPAN_JMA_ANALYSIS_MIN_COVERAGE, log_prefix=f"[{self.name}] [analysis]")
+        st = self._load_analysis_state()
+        today = now.astimezone(JST).date()
+        rows = ana.sync(engine, families, today, config.JAPAN_JMA_ANALYSIS_LOOKBACK_DAYS, st["published"], deadline)
+        for r in rows:
+            st["pending"][f"{r['product']}:{r['_day']}"] = ana.db_row(r)
+            st["published"].setdefault(r["product"], {})[r["_day"]] = r["_pub_sig"]
+        keep = ana.ymd(today - timedelta(days=config.JAPAN_JMA_ANALYSIS_LOOKBACK_DAYS + 7))
+        st["published"] = {o: {d: s for d, s in m.items() if d >= keep} for o, m in st["published"].items()}
+        sp.write_json_atomic(self._analysis_state_path(), st)
+        return {**engine.stats, "rows": len(rows)}
+
     # ───────── 主流程 ─────────
     def collect(self) -> dict:
         now = datetime.now(timezone.utc)
@@ -1041,8 +1085,17 @@ class JmaRasterCollector(BaseCollector):
             rows.extend(st["pending_frames"].values())
             rows.extend(st["pending_daily"].values())
             commit[product.name] = {"frames": list(st["pending_frames"]), "daily": list(st["pending_daily"])}
+        # 分析圖（T1 → 季／月至今每日一張）：獨立 try，失敗只 log，不影響收集與狀態列
+        analysis = {}
+        try:
+            analysis = self.run_analysis(now, time.monotonic() + config.JAPAN_JMA_ANALYSIS_MAX_SECONDS)
+        except Exception as e:  # noqa: BLE001
+            print(f"[{self.name}] ✗ 分析圖: {e}（收集不受影響）")
+        ana_pending = self._load_analysis_state()["pending"]
+        rows.extend(ana_pending.values())
+        commit[ANALYSIS_COMMIT_KEY] = {"rows": list(ana_pending)}
         self._pending_commit = commit
-        result = {"data": rows, "products": per, "source_failures": failures,
+        result = {"data": rows, "analysis": analysis, "products": per, "source_failures": failures,
                   "requests": sum(v.get("requests", 0) for v in per.values()),
                   "http_attempts": self._requests, "backlog": backlog, "peak_rss_mb": sp.peak_rss_mb()}
         if self.products and len(failures) == len(self.products):

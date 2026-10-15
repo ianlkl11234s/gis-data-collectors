@@ -31,6 +31,7 @@ B = https://www.jma.go.jp/bosai。各產品實際有內容的 zoom、member 意�
 - 累加器用 np.memmap 放 spool，跨重啟續算，不吃 RAM。單輪峰值記憶體目標 < 300 MB。
 - 不可每張圖磚一個物件（Deep Archive 每千物件 US$0.05）。
 
+| 分析圖（R2 快取） | 由 T1 累積的季／月至今每日一張 count_la_v1 PNG（見「分析圖」節）；S3 `weather-daily/jma/_analysis/` 存可重算的累積快照 | R2 `imagery/jma/ana_*/{YYYYMMDD}/{HHMMSS}.png`（＋同名 .json 旁檔） | R2（max-age=3600，可重發） | 90 天 |
 | 發布幀（R2 快取） | 每幀一張 8-bit LA PNG（EPSG:3857，z7 產品 2×2 取最大降到 z6）；himawari_b13 為 L-mode JPEG（gray_jpeg_v1）；可由 T2 重算 | R2 `imagery/jma/{product}/{YYYYMMDD}/{HHMMSS}.{png\|jpg}`（UTC valid_time） | R2（immutable Cache-Control） | 90 天（2026-10-15 拍板） |
 
 ## 發布幀（2026-10-15；契約 analytics `docs/topic-research/japan_opendata/jma-frontend-contract.md`）
@@ -65,6 +66,54 @@ B = https://www.jma.go.jp/bosai。各產品實際有內容的 zoom、member 意�
 - T2：`weather-grid/jma/himawari_b13/{YYYYMMDD JST}/{HH}.npz`，`spool.write_hour_npz` 同格式（每小時 1 幀），meta 由 `jma_raster.mosaic_t2_meta` 產生（collector 與回補共用），`decode_table_version=null`。無 T1。
 - 實作：`Product.publish_kind="gray_jpeg"`（`grid_zoom` 維持 None，不走 decode table／累加器）；`fetch_frame` 抓完 12 磚即拼圖、存 spool grids、發布；settle 時若當下 R2 失敗以 spool 網格重試一次。
 - 回補：`scripts/backfill_jma_himawari_imagery.py`（上游直抓，≤1 req/s，冪等規則同 backfill_jma_imagery；T2 已存在不寫）。T3 在 DEEP_ARCHIVE，不 restore。
+
+## 分析圖（analysis maps，2026-10-16；由 T1 累積、每日一張，給時間軸看「季／月至今」的累積）
+- 模組 `collectors/weather_raster/analysis.py`（演算法版本 `jma-analysis-v1`）；回補 `scripts/backfill_jma_analysis.py`；測試 `tests/test_jma_analysis.py`。
+- 每張圖代表 **截至 JST 日 D 結束**（含 D 當日 T1）；`valid_time`＝D 00:00 JST；R2 key 依 UTC：
+  `imagery/jma/{product}/{YYYYMMDD}/{HHMMSS}.png`（例：JST 10-15 → `imagery/jma/ana_rain_days/20261014/150000.png`）。
+
+| product | 來源 T1 | 期間 | 值（L） | 門檻 |
+|---|---|---|---|---|
+| ana_snow_first | snow_depth | 積雪季 10/1–5/31（季外不出圖） | 首次達門檻的日序（10/1＝1 … 5/31＝243），0＝至今未達 | max_level ≥ 2（≥5 cm） |
+| ana_snow_days | snow_depth | 同上 | 季內達門檻日數 | 同上 |
+| ana_rain_days | rasrf | JST 曆月 | 月內雨日數 | max_level ≥ 2（1 小時解析雨量 ≥1 mm） |
+| ana_risk_land_hours | risk_land | JST 曆月 | 月內警戒以上時數（分鐘累積後無條件進位到整小時） | count_ge_3（警戒【レベル３相当】） |
+| ana_risk_inund_hours | risk_inund | JST 曆月 | 同上 | 同上 |
+
+- 門檻依據：
+  - 積雪：解碼表 level 1＝<5 cm、level 2＝5–20 cm（兩級色票已以 10-15 大雪山實磚驗證）。level 1 含薄雪／殘值，不算積雪日。
+    T1 只有 count_ge_1/3/5，但雪圖是日粒度，「當日 max_level ≥2」恰等於「當日至少一小時 ≥5 cm」。
+  - 雨日：用 rasrf 不用 radar——解析雨量經雨量計校正且是 1 小時累積量；nowc hrpns 是瞬間回波，level 1（<1 mm/h）含非降水回波／海面雜波；
+    「≥1 mm」是雨日通用定義。代價：rasrf 上游只留 12h（radar 24h），中斷較易缺幀（以覆蓋率表達）；每小時都 <1 mm 的毛毛雨日不算（偏保守）。
+  - キキクル：土砂、浸水**分開兩張**。T1 只有各自的幀計數，「任一達警戒」的聯集時數無法由日計數推得（max 是下界、和是上界）。
+- 時數換算：每日 step＝1440／max(frames_expected, valid_frames) 分鐘（取樣間隔曾由 10 分改 30 分：risk 10-11 是 144 幀；
+  10-12 expected 48 但 valid 77；snow_depth 10-12 expected 0、valid 8），不寫死 /2。
+- 解析度：z7 來源（rasrf、risk_*）先 2×2 聚合到 z6 2048×1536（事件取任一、計數取最大、有效幀取最大），四角同發布幀。
+- 覆蓋率（缺資料不得變 0）：
+  - 有效起日＝max(期間起日, `JAPAN_JMA_ANALYSIS_EPOCH`＝2026-10-10)；之前的日不計入經過量。
+  - 日粒度：像素某日「有觀測」＝當日 T1 存在且（有事件 或 有效幀 ≥ 一半）。分鐘粒度：有效幀×step。
+  - 像素覆蓋率＝觀測量／經過量；< `JAPAN_JMA_ANALYSIS_MIN_COVERAGE`（0.5）→ 未涵蓋（L＝255）。
+  - T1 缺日（例：snow_depth 10-13、10-14 上游已過期無法回補）＝當日全像素無觀測，只降覆蓋率。
+  - frames 列 status：期間內每日 T1 都在且未被 EPOCH 截斷＝ok；有缺日或被截斷＝partial；完全沒有 T1＝missing（不出圖、無 image 欄）。
+    ⚠ 2026-10 各月圖與整個 season2026（到 2027-05）都會是 partial（EPOCH 晚於期間起日）；對 ana_* 而言 partial＝「期間有缺日或被截斷」，不是品質故障。
+- encoding **`count_la_v1`**：8-bit LA PNG、EPSG:3857、row 0＝北、z6 2048×1536。
+  L＝值 clamp 0–254（254＝≥254；時數月上限 744h，警戒以上實務上不會累積到 254h）、A＝255；值 0 → (0,0) 透明；覆蓋率不足 → (255,255)。
+  單位依 product（日序／日／小時）；ana_snow_first 的 L 是日序不是計數，但規則相同。
+- 旁檔：同 key 換 `.json`（period_start、effective_start、elapsed_days、t1_absent_days、coverage_mean、min_coverage、status、門檻說明）。
+- R2 Cache-Control＝`public, max-age=3600`（**不是 immutable**）：遲到的 T1 會讓之後每天的圖重算並覆寫同 key。
+- 狀態（可由 T1 重算）：S3 `weather-daily/jma/_analysis/{family}/{period_id}/{YYYYMMDD}.npz`（STANDARD；family＝snow／rain／risk_land／risk_inund，
+  period_id＝`season2026`／`202610`）＝截至 D 的累積陣列＋meta；物件 metadata `sig`＝sha256(演算法版本、family、D、有效起日、納入的 T1 日清單)。
+  算 D 時往回找最近一個 sig 相符的快照再逐日補算；遲到的 T1 讓之後的 sig 全變 → 自動重算＋重發。快照遺失可由 T1 重建（`--recompute` 強制全算）。
+- 執行位置：`jma_raster.collect()` 尾端 `run_analysis()`（獨立 try、時間預算 `JAPAN_JMA_ANALYSIS_MAX_SECONDS`＝180），每輪看近
+  `JAPAN_JMA_ANALYSIS_LOOKBACK_DAYS`（7）天（collector 停超過 7 天時，更早的圖只能用 `backfill_jma_analysis.py` 補）。日 D 可出圖＝來源 T1 已在 S3，或已過 D+1+3 天寬限（之後當缺日）。
+  本機 `state/jma_raster/_analysis.json`：`published`（{product:{日:pub_sig}}，同 sig 不重發、常態每輪 0 次 S3 GET）、
+  `pending`（frame 列，鍵 `{product}:{YYYYMMDD}`，與 frames／daily 同一次 DB 寫入成功後才清；**不可放進產品的 pending_frames**：
+  00:00 JST＝15:00 UTC 會與 snow_depth 整點 vt 相撞）。
+- DB：沿用 `live.weather_raster_frames`（source 'jma'、product ana_*、status ok／partial／missing、nonzero_pixels＝值>0 且覆蓋足夠的像素數），
+  image 欄照發布幀；表無 product CHECK，不需 migration。保留 400 天（frames cron）；R2 90 天（`imagery/jma/` lifecycle）。
+- 開關：`JAPAN_JMA_ANALYSIS_MAPS`（預設 true）；也受 `JAPAN_JMA_IMAGERY_PUBLISH` 與 R2_*／S3_* 是否設定控制。任何失敗只 log，不影響收集。
+- 量測（2026-10-16 `backfill_jma_analysis.py --dry-run`，真 S3 T1 10-10..10-15）：PNG 約 6 KB（無事件）～87 KB（ana_rain_days 月中），
+  5 張／日 ≈ 0.1–0.2 MB／日；6 天全量重算 48 s、峰值 RSS 約 350 MB（逐日讀 z7 T1）。
 
 ## DB（gis-platform mig 437，live schema）
 - `live.weather_raster_frames`：source text, product text, valid_time timestamptz, base_time timestamptz, zoom_raw smallint, tiles_requested int, tiles_nonempty int, raw_bytes bigint, nonzero_pixels int, unknown_color_pixels int, status text（ok／partial／missing）, collected_at timestamptz default now()；PK (source, product, valid_time)；DO NOTHING；保留 400 天。
