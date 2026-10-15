@@ -502,13 +502,17 @@ TABLE_MAP = {
     },
     'waste_positions': {
         # 表 schema 見 gis-platform/migrations/065_waste_management.sql §5.5
-        # 純 append-only history（無 UNIQUE constraint）；前端用
-        # DISTINCT ON (vehicle_no) ORDER BY observed_at DESC 取最新位置
+        # append-only history；前端用 DISTINCT ON (vehicle_no) ORDER BY observed_at DESC 取最新位置。
+        # 輪詢時間窗重疊會抓到同一點 → gis-platform 458 加 (city, vehicle_no, observed_at)
+        # 唯一索引；do_nothing 產生不指定目標的 ON CONFLICT DO NOTHING，索引建好前後都能寫。
+        # 正式寫入走 HiCloud VM（external/waste_positions_vm/），此路徑在 Zeabur 停用，保持兩邊一致。
         'history': 'spatial.waste_positions_realtime',
         'columns': [
             'city', 'vehicle_no', 'route_id', 'status',
             'geometry', 'observed_at', 'source_url',
         ],
+        'upsert_key': 'city,vehicle_no,observed_at',
+        'upsert_strategy': 'do_nothing',
     },
     'road_event_live': {
         # 表 schema 見 gis-platform/migrations/078_road_events.sql

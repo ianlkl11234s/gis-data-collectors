@@ -25,7 +25,7 @@
 [每 2 分鐘] cron → waste_positions_collect.py
                     ├─ (01–06 quiet hours skip)
                     ├─ 抓 3 家 (with 5/15s retry, 共 3 次)
-                    ├─ 統一 schema → INSERT spatial.waste_positions_realtime
+                    ├─ 統一 schema → INSERT … ON CONFLICT DO NOTHING spatial.waste_positions_realtime
                     └─ 寫本地 JSON snapshot
 
 [每天 03:05] cron → archive_waste_positions.py
@@ -34,6 +34,8 @@
 
 寫入規格與主 repo `collectors/waste_positions.py` + `_transform_waste_positions` + `TABLE_MAP['waste_positions']` **完全對齊**。
 注意：waste_positions 是 **append-only history**（無 current 表、無 UPSERT），前端用 `DISTINCT ON (vehicle_no) ORDER BY observed_at DESC` 取最新。
+
+去重（2026-10-15）：來源每次回傳最近 N 分鐘的 GPS，2 分鐘輪詢會重疊抓到同一點（臺南約 2.5 倍）。INSERT 改成**不指定目標**的 `ON CONFLICT DO NOTHING`，搭配 gis-platform migration 458 的 `(city, vehicle_no, observed_at)` 唯一索引擋掉重複點。**順序：先部署本程式，再套 458**；反過來的話，含重複點的整批 INSERT 會失敗，資料會一直卡在 buffer 重送。
 
 ## 檔案
 
