@@ -251,3 +251,14 @@ A 類 HOT 如預期沒改善（3.8%→4.5%）**但 dead tuple 為 0** —— 證
 - 主要來源是 ship／bus trails 每 30 分鐘「整天刪掉重建」，再加上它引發的 autovacuum。gis-platform mig 442／443 改成增量 refresh（水位＋晚到批偵測，夜間全量保留）；每次耗時從約 243 秒／122 秒降到約 3 秒。
 - 同輪還做了 mig 444（刪 9 顆重複或沒人用的索引）、mig 445（youbike 暫存檔外溢、temperature 改寫）。marine 寫入卡死另案處理（mig 441）。
 - 完整紀錄、量測查詢與待追蹤：gis-platform `docs/research/2026-10-12-disk-io-round2.md`
+
+## 2026-10-15 第三輪
+
+- 第二輪後讀取約 215 GB/天。第三輪大多在 gis-platform 端處理（bus_current 壓實、主鍵改時間開頭、衛星與城際公車增量化、船舶熱冷分離）；collector 端有三件。
+- **沒變就不寫（PR #146、#147）**：satellite TLE／history 只寫 epoch 有變的列；iot_wra_stations／uswg_stations 的測站 metadata 沒變就不 UPDATE（套用後 11 分鐘內 `n_tup_upd` 0 增加）。
+  代價：`updated_at` 的語意從「最後同步」變成「最後異動」，看新鮮度要改看 collector 心跳。
+  **不能亂套**：road_events 的 `collected_at` 同時是 3 天清理與 freshness 監控依據，加 `IS DISTINCT FROM` 會讓它不再更新，所以不做。
+- **VM 寫入要冪等（PR #148）**：HiCloud VM 的 `waste_positions_collect.py` 改成 `ON CONFLICT DO NOTHING`（重複來自同一城市輪詢時間窗重疊，不是跨城市）。
+  **部署順序：先 collector、後唯一索引**。唯一索引（gis-platform mig 458）若先建，舊版 collector 會撞唯一鍵失敗。VM 部署時留備份（`.bak_<日期>`），並選 quiet hours。
+- 壓實後 VACUUM FULL 對小表都是秒級（兩個測站表 20 MB → 1.35 MB、13 MB → 0.74 MB），不需為排時段拖延。
+- 完整紀錄、推估效益與待追蹤：gis-platform `docs/research/2026-10-16-disk-io-round3.md`（gis-platform 為 private repo）
