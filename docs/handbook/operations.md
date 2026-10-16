@@ -160,6 +160,20 @@ VM（`<VM_HOST>`）上的 collector 是手動部署，git push 不會生效。�
 
 VM 的建置、cron 與 health report 部署細節見 [EXTERNAL_COLLECTORS.md](../EXTERNAL_COLLECTORS.md) 與 `external/*/README.md`。VM 健康排障：在 VM 上手動跑一次 `health_report.py`，看 health log，確認 S3 上當天的 snapshot 存在。
 
+#### SSH 只允許金鑰登入（2026-10-16 起）
+
+- 設定：新增 `/etc/ssh/sshd_config.d/00-hardening.conf`，內容為 `PasswordAuthentication no`、`KbdInteractiveAuthentication no`、`PermitRootLogin prohibit-password`。原本的主設定檔備份在 `/etc/ssh/sshd_config.bak.20261016`。檔名用 `00-` 開頭，是因為 sshd 對同一選項採用第一個讀到的值，要排在其他 drop-in 前面。
+- 原因：`auth.log` 約 5 天內有約 8.9 萬次密碼爆破嘗試；同期兩週內所有成功登入都是 publickey，關掉密碼登入不影響現有用法。
+- ⚠️ **VM 只登記了一把金鑰**。換電腦或重灌之前，要先用舊電腦把新電腦的公鑰加進 `/root/.ssh/authorized_keys` 並測試登入成功；否則只能從 HiCloud 主控台（網頁 console）登入救援。
+
+**改遠端 sshd 的安全步驟**（改錯會把自己鎖在外面，每次都照做）：
+
+1. 先開一條連線並保持不關（建議用 SSH ControlMaster 留一條 master 連線），全程不要登出。
+2. 改設定前先排一個自動還原：`systemd-run --on-active=10min --unit=sshd-revert <還原指令>`（還原指令＝刪掉新的 drop-in、把備份複製回去、`systemctl reload ssh`），萬一後面斷線，10 分鐘後會自動回到舊設定。
+3. 寫入設定後先 `sshd -t` 檢查語法，再 `systemctl reload ssh`（服務名依發行版可能是 `sshd`；reload 不會中斷既有連線）。
+4. **另開一條新連線**測試：金鑰可以登入、密碼登入會被拒絕（例：`ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password …` 應該失敗）。
+5. 新連線測試都通過，才取消還原計時器（`systemctl stop sshd-revert.timer`）；沒通過就什麼都不做，等它自動還原。
+
 ### 5.3 祕密處理
 
 - 不讀 `.env` 的值再過濾；只查 key 名稱與是否存在。需要用到時 `set -a; source .env; set +a` 載入，過程不印出值。
