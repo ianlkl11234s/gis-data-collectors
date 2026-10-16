@@ -318,7 +318,7 @@ def run_mini_taipei_publish_task():
 
 
 def run_backup_task():
-    """設定 Supabase → S3 備份任務排程（每日 03:30 UTC，archive.py 之後執行）"""
+    """設定 Supabase → S3 備份任務排程（每日 03:30 容器時間＝台北，Dockerfile TZ=Asia/Taipei；archive.py 之後執行）"""
     if not config.BACKUP_ENABLED:
         print("\n⏸️  Supabase 備份已停用 (BACKUP_ENABLED=false)")
         return None
@@ -332,7 +332,7 @@ def run_backup_task():
         sched = get_scheduler()
         schedule.every().day.at("03:30").do(
             sched.submit, _as_task("backup_supabase", backup_task.run, timeout=1200))
-        print("\n✓ Supabase 備份任務已設定 (每日 03:30 UTC)")
+        print("\n✓ Supabase 備份任務已設定 (每日 03:30 台北)")
         return backup_task
     except Exception as e:
         print(f"\n✗ Supabase 備份任務初始化失敗: {e}")

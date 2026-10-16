@@ -79,7 +79,7 @@ current 表一個物件一列，物件只增不減時表會一直變大，每次
 
 ## 6. 溫層 → 冷層：本地 JSON 與 S3 歸檔
 
-`tasks/archive.py`（`ArchiveTask`，每日 `ARCHIVE_TIME`，預設 03:00 容器時間；`Dockerfile` 設 `TZ=Asia/Taipei`，所以是台北 03:00。gis-platform mig 282 檔頭寫「03:00 UTC ArchiveTask」，與程式不一致，正式 env 是否覆寫待確認）：
+`tasks/archive.py`（`ArchiveTask`，每日 `ARCHIVE_TIME`，預設 03:00 容器時間；`Dockerfile` 設 `TZ=Asia/Taipei`，所以是台北 03:00。2026-10-16 查 S3 `youbike`／`iot_wra`／`jma_amedas` 的 `archives/2026-10-15.tar.gz` LastModified 都是 19:02–19:12 UTC＝台北 03:02–03:12，確認正式環境沒有覆寫。gis-platform mig 282 檔頭寫的「03:00 UTC」是錯的）：
 
 1. 逐 collector 掃 `YYYY/MM/DD` 目錄，跳過今天。
 2. 每天的 JSON 壓成一個 `<collector>/archives/YYYY-MM-DD.tar.gz`（決定性 tar，串流寫到磁碟不佔記憶體），一次 PUT。每日一個 tar 是刻意的：物件數比容量貴（[principles R-07](principles.md)）。
@@ -108,12 +108,12 @@ S3 規則（正本 [AWS_INVENTORY.md](../AWS_INVENTORY.md)）：不設 expiratio
 
 - **影像雙寫**：`cwa_satellite`、`air_quality_imagery` 等影像 collector 除了寫 DB，另寫一份到 R2（`storage/r2.py`，key 由 `(dataset, observed_at)` 決定、永不變，所以設 immutable 長快取）。R2 憑證沒設時跳過上傳、`image_key` 為 NULL，DB 照寫。
 - **影像清理守衛**：DB 影像表的清理條件一律加 `image_key IS NOT NULL`——沒上 R2 的幀永不刪，寧可留著也不丟（[principles R-04](principles.md)；gis-platform `migrations/282…`、`388_aqi_imagery_cleanup_cron.sql`）。
-- **氣象網格發布幀**：`jma_raster` 等依 ADR-0021 分 T0–T3 四層，發布幀放 R2。R2 bucket 的 lifecycle 刪除物件；`get_weather_imagery_manifest` 只回傳回看窗內發布的幀（mig 462），避免前端拿到已被 R2 刪掉的 key，更舊的幀從 S3 的 T2 重新發布。**兩個天數之間的關係目前沒有文件交代清楚（待確認）**，改任何一邊之前先對照另一邊。
+- **氣象網格發布幀**：`jma_raster` 等依 ADR-0021 分 T0–T3 四層，發布幀放 R2。R2 bucket `mini-tw-pulse` 的 lifecycle 規則 `jma-imagery-expire-*`（前綴 `imagery/jma/`；另有較長的 `imagery-expire-*` 涵蓋整個 `imagery/`，短的先生效）刪除物件；`get_weather_imagery_manifest` 只回傳 `published_at` 在回看窗內的幀（gis-platform mig 462），**回看窗刻意比 R2 規則少一天**當安全邊際，避免前端拿到已被 R2 刪掉的 key；更舊的幀從 S3 的 T2 重新發布（重發會更新 `published_at`，R2 物件也重新起算）。兩邊天數不抄在這裡：R2 用 `get_bucket_lifecycle_configuration`（唯讀）查，RPC 看 mig 462 的 `interval`。改任何一邊都要同時改另一邊，維持「RPC 窗 < R2 天數」。
 - **凍結匯出**：DB 的 trails 是滾動視窗，`trails_export`（`scripts/export_daily_trails.py`，每日 `TRAILS_EXPORT_TIME` 預設 02:00 台北）把昨天凍結成 S3 靜態檔。資料在 D+1 01:00–01:20 才定版，太早會匯出半成品；漏跑不會自動補，超出 DB 保留窗就救不回（[principles R-08](principles.md)）。預設關閉，**只能開單一實例**（共用 manifest 是 get→merge→put，非原子）。
 
 ## 8. 備份：Supabase → S3
 
-`tasks/backup_supabase.py`，設定在 `config/backup_manifest.yaml`，`BACKUP_ENABLED` 預設關閉。排程 `03:30`（程式註解寫 UTC，但排程庫用容器時間＝台北，**待確認**）。
+`tasks/backup_supabase.py`，設定在 `config/backup_manifest.yaml`，`BACKUP_ENABLED` 預設關閉。排程台北 `03:30`：`schedule` 套件用容器時間（`Dockerfile` `TZ=Asia/Taipei`）。2026-10-16 查 `metadata.backup_audit_log` 當天各機器人在台北 03:30–03:38 執行、`backup_state.last_backup_at` 近 7 天全落在台北 03 時；`main.py` 舊註解寫的 UTC 已更正。
 
 | 機器人 | 做什麼 |
 |---|---|

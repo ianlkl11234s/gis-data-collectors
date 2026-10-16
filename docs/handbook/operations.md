@@ -16,7 +16,7 @@
 | DB 死人開關 | pg_cron 每 15 分 | gis-platform `migrations/255_collector_freshness_alert.sql` `metadata.check_collector_freshness(30)` | **所有** enabled collector 的 `MAX(last_success_at)` 超過 30 分鐘 → 用 pg_net 發 Telegram。用途是「整個 collector 進程死掉」，抓不到單一 collector 停擺（盲點 1） |
 | VM 健康 | VM cron 每日 | `external/_shared/health_report.py` | 推 `s3://<BUCKET>/_external_vm_health/<host>/YYYY-MM-DD.json`，日報讀取 |
 | 本機稽核 | macOS launchd 每日 | `scripts/local_audit_push.py` | 三個 GIS repo 的 git 狀態與 analytics 資料目錄稽核，推同一個 S3 前綴（`local-<hostname>`）；Mac 沒開機當天就沒有 |
-| 外部巡檢（Hermes） | 30 分鐘／4 小時 | 不在本 repo | 唯讀巡檢 Supabase 新鮮度、S3 metadata 與 VM health，發 Discord。**現在是否仍在執行待確認**，見 §2.5 |
+| 外部巡檢（Hermes） | 30 分鐘／4 小時 | 不在本 repo | 唯讀巡檢 Supabase 新鮮度、S3 metadata 與 VM health，發 Discord。**現在是否仍在執行待確認**（查法見 §2.5） |
 
 ## 2. 每日日報
 
@@ -72,7 +72,7 @@
 | critical | 確認的新鮮度或可用性事故；暫時性的 Supabase／S3 失敗連續 3 次才升級 |
 | unknown | 監控無法判定狀態；**不可以說成 green** |
 
-通知只在狀態轉換時發（新事故、升級、恢復）。巡檢一律唯讀，不得重啟、重新部署、寫資料或改設定。外部巡檢（Hermes）的本機狀態檔與 Discord 投遞是否仍在運作，本次未能查證（**待確認**）。
+通知只在狀態轉換時發（新事故、升級、恢復）。巡檢一律唯讀，不得重啟、重新部署、寫資料或改設定。外部巡檢（Hermes）是否仍在運作**待確認**。2026-10-16 查到的事實：Zeabur openAB 專案仍有 `habermas-hermes` 服務；同一容器負責的 air-ticket-radar 寫入（`air_tickets.fare_offers`）停在 2026-09-08；DB 端無法佐證巡檢是否還在——`pg_stat_statements` 已滿（5,000 筆上限、持續淘汰），低頻呼叫會被擠掉，查無 `gis_monitor_hermes` 的紀錄不代表沒呼叫。查法：Zeabur 主控台看該服務的執行狀態與最近 log，或看 Discord 巡檢頻道最後一則訊息的時間。
 
 ## 3. 健康判讀：三件事與三個盲點
 

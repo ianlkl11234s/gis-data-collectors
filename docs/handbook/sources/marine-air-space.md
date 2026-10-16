@@ -33,7 +33,7 @@ AISStream WebSocket（獨立 provider，五個區域 bbox）。
 - 已知坑：
   - 船名可能合法含西里爾字母，所以不放進亂碼防護名單（見 [cwa-ncdr.md#ncdr_alerts](cwa-ncdr.md#ncdr_alerts)）。
   - 沒有同名 collector 心跳，健康要看專用的 `aisstream_ingest_health`；`config/realtime_tables.yaml` 曾用不存在的 `created_at` 監控 archive manifests（DIO-5，[collector-health 調查](../../investigations/2026-10-05-collector-health.md)），2026-10-16 改成 `uploaded_at`。
-  - Disk IO 第三輪評估過「逐筆寫改成批次寫」，結論是省不到 IO，所以沒做（評估細節見 gis-platform（private）`docs/research/2026-10-16-disk-io-round3.md`，**待確認**該檔是否收錄此項）。
+  - Disk IO 第三輪評估過「逐筆寫改成批次寫」，結論是省不到 IO，所以沒做（gis-platform（private）`docs/research/2026-10-16-disk-io-round3.md` 第 18 行：整體約 0.4 GB/天，判為不值得做）。
 - 細節：[`docs/AISSTREAM.md`](../../AISSTREAM.md)；上游：analytics `aisstream/gotchas.md`（去重、observed vs received、watchdog）。
 
 ### gfw_vessel_presence
@@ -62,7 +62,8 @@ GFW 每小時軌跡＋格網＋SAR 未配對偵測的每日發布 job（`tasks/g
 - **ledger 閘門**：`live.upsert_gfw_hourly_publish_run(jsonb)` 必須在第一個 GFW 請求前成功寫 `running`，失敗就不發請求；root cutover 後才寫 `succeeded`；之前的例外寫 `failed` 並保留 spool。cutover 後若 `succeeded` 寫不進去，有限重試 3 次，仍失敗則保留 `cutover_succeeded_ledger_pending` spool 與 `reconcile-ledger.json` 對帳，不反向寫 `failed`。前端新鮮度以 CDN root manifest 為準，DB health RPC（`public.get_gfw_hourly_publish_health()`）只供維運；`live.gfw_hourly_publish_runs` 因此不放進 `realtime_tables.yaml`。
 - **full-fidelity 不變量**（schema v3）：每個 tile 都要在 fetch ledger、同一個 resolved dataset 版本、沒有非零 `nextOffset`；每小時 `sum(grid vessel_count) == canonical_vessel_hour_count`；發布的 segment 數與點數等於 eligible；不允許 display cap；每個 canonical 點屬於一條 segment 或一個 singleton。資源不夠時可以讓整輪失敗，**不可只發布一部分**。軌跡規則：每船每 UTC 小時一個 canonical 點；間隔或隱含航速超過門檻就斷開新 segment；只有一點的 segment 發布成 singleton，不捏造線；只允許同 segment 相鄰點的線性內插。格網多邊形是以中心 ±0.005° 推定的視覺化範圍，不是 GFW 官方邊界。
 - 對外使用：非商業，前端要顯示 `Powered by Global Fishing Watch`、資料集版本與日期範圍、「延遲且為近似位置」的說明；token 不得進前端 bundle。
-- 歷程（時點性，**待確認**現況）：2026-08-20 首次發布 v2 release；當時 root edge cache 回 `CF-Cache-Status: DYNAMIC` 尚未驗收。v3 shadow（2026-08-15..21，約 995 MB、3,313 檔）已完成 S3 全量 HEAD 稽核與 migration 377，但 2026-08-26 時 v3 程式尚未部署；P0 轉換問題（`running` 列繼承 v2 預設）由 migration 377 與 collector 防禦修正。安全發布的調查：[2026-09-18 GFW safe publish](../../investigations/2026-09-18-gfw-safe-publish.md)。
+- 現況（2026-10-16 查 `live.gfw_hourly_publish_runs`）：schema v3 已上線並每日發布，近 60 天 v3 `succeeded` 24 次、最新發布 2026-10-16；v2 最後一次成功是 2026-08-25。同期另有 v3 `failed` 25 次與 3 筆停在 `running`，看健康時要一起看。CDN root 的 edge cache 狀態本次沒有重驗。
+- 歷程：2026-08-20 首次發布 v2 release；當時 root edge cache 回 `CF-Cache-Status: DYNAMIC` 尚未驗收。v3 shadow（2026-08-15..21，約 995 MB、3,313 檔）已完成 S3 全量 HEAD 稽核與 migration 377，但 2026-08-26 時 v3 程式尚未部署；P0 轉換問題（`running` 列繼承 v2 預設）由 migration 377 與 collector 防禦修正。安全發布的調查：[2026-09-18 GFW safe publish](../../investigations/2026-09-18-gfw-safe-publish.md)。
 - 本機 POC 腳本：`scripts/gfw_hourly_tracks_poc.py`、`gfw_hourly_grid_poc.py`、`gfw_hourly_release.py`；測試 `tests/test_gfw_*`。
 - 舊檔 [`docs/GFW_VESSEL_PRESENCE.md`](../../GFW_VESSEL_PRESENCE.md)、[`docs/GFW_HOURLY_FULL_FIDELITY.md`](../../GFW_HOURLY_FULL_FIDELITY.md) 已改為指向本節。官方文件：GFW 4Wings report API、license-rate-limits。上游：analytics `global_fishing_watch/`。
 

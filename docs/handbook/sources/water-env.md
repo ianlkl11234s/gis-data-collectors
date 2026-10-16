@@ -49,7 +49,7 @@
 
 - 頻率／位置：每 10 分鐘，Zeabur。需 `IOW_CLIENT_ID`、`IOW_CLIENT_SECRET`（OAuth2 client credentials，token 30 分鐘）。
 - 寫入：`live.uswg_measurements`（`ON CONFLICT DO NOTHING`）；另 upsert `public.uswg_stations`（沒變不寫，#147）。
-- 已知坑：憑證缺 SKI，`verify=False`；官方 schema 欄位拼成 `Longtiude`。保留期在註冊表有登記但清理排程曾暫緩，以 `retention_policies` 實際狀態為準（**待確認**）。
+- 已知坑：憑證缺 SKI，`verify=False`；官方 schema 欄位拼成 `Longtiude`。保留期以 `metadata.retention_policies` 為準；清理排程已恢復：2026-10-16 查 pg_cron `cleanup-uswg-measurements` 為 active、近 4 天每天 succeeded，超過保留期的列只剩個位數尾巴。
 
 ### precipitation_raster
 累積雨量柵格 PNG（水利署 IoT，1／3／6／24 小時四種）。每小時，Zeabur；與 `uswg` 共用 OAuth 憑證；寫 `live.precipitation_raster_frames`。上游常延遲 1–2 小時，所以清冊監控門檻放寬到 2 小時。
