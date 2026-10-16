@@ -73,7 +73,7 @@ S3 是冷層也是**最後的副本**：Supabase 寫入失敗時本地 → S3 �
 
 current 表一個物件一列，物件只增不減時表會一直變大，每次 UPSERT 的代價也跟著變大。
 
-- `ship_current` 曾有 22.7 萬艘，其中 79% 超過 7 天沒出現。gis-platform `migrations/460_ship_last_seen_registry.sql` 建名冊 `live.ship_last_seen`（記每艘船最後出現時間，永久），再每天清掉 current 裡 7 天未出現的船。刪除不可逆，但船再出現時 collector 會自然寫回。
+- `ship_current` 曾有 22.7 萬艘，其中 79% 超過 7 天沒出現。gis-platform `migrations/460_ship_last_seen_registry.sql` 建名冊 `live.ship_last_seen`（記每艘船最後出現時間，永久），再每天清掉 current 裡 7 天未出現的船。刪除不可逆，但船再出現時 collector 會自然寫回。名冊本身每日整表備份到 S3（`config/backup_manifest.yaml` 的 `cadence: full_table`，見 §8）。
 - `TABLE_MAP` 的 `current_prune_by` 是另一種做法：寫完 current 後刪掉本批沒出現的舊列（例：satellite 清幽靈列）。只適合「每輪都是完整快照」的來源。
 - 新 collector 若寫 current 表，設計時就決定「多久沒出現算離開」與名冊放哪（見 [new-collector.md](new-collector.md)）。
 
@@ -118,7 +118,7 @@ S3 規則（正本 [AWS_INVENTORY.md](../AWS_INVENTORY.md)）：不設 expiratio
 | 機器人 | 做什麼 |
 |---|---|
 | A 靜態快照 | 逐表算指紋（列數＋最大 `updated_at`），有變才重新 COPY → gzip → S3 |
-| B 即時快照 | 傾印昨天的即時表資料；已由 ArchiveTask 歸檔的表跳過（`skip_if_archive_py_covered`） |
+| B 即時快照 | 傾印昨天的即時表資料；已由 ArchiveTask 歸檔的表跳過（`skip_if_archive_py_covered`）。找不到時間欄的表會被跳過（`skipped_no_time_column`），隔天盤點報 `missing_s3`；這類表若要備份，在 manifest `overrides` 設 `cadence: full_table` 改成每日整表快照（例：`live.ship_last_seen` 名冊，2026-10-16 起） |
 | C 盤點 | 比對資料庫、備份狀態與 S3 物件，列出缺漏、孤兒與新表 |
 
 表的完整清冊與備份三層：gis-platform `docs/data-safety-inventory.md`、`docs/data-inventory.md`（手冊不重抄數量）。

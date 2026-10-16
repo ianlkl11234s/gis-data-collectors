@@ -12,6 +12,8 @@ defaults:
     skip_if_archive_py_covered: true
 
 # Per-table configuration overrides (optional)
+# realtime（live.*）表目前只讀 storage_class 與 cadence: full_table；
+# cadence: daily_yesterday 是預設行為，寫出來只為說明。
 overrides:
   live.aisstream_position_observations:
     cadence: daily_yesterday
@@ -53,6 +55,11 @@ overrides:
     cadence: daily_yesterday
     storage_class: STANDARD
     notes: "CWA/ISOHE canonical long readings; collector raw archives remain replay source"
+
+  live.ship_last_seen:
+    cadence: full_table           # 沒有時間欄（只有 first/last_seen_at、updated_at）→ 每日整表快照
+    storage_class: GLACIER_IR
+    notes: "船舶名冊（gis-platform mig 460，Disk IO 第三輪）：每 mmsi 一列、永久；表小（2026-10-16 約 23 萬列、38 MB），但 ship_current 只留近期出現的船、ship_positions 只有短期分區，遺失後要掃 S3 完整歷史才能重建"
 
 # analytics.* tables are append-only; row_count fingerprint catches all changes.
 # They belong to static_schemas (fingerprint-driven), so no cadence override needed.

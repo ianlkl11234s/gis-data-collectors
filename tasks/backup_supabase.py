@@ -601,6 +601,11 @@ class BackupSupabaseTask:
         qualified = f"{schema}.{table}"
         date_str = target_date.strftime("%Y-%m-%d")
 
+        # 0. manifest override cadence: full_table → 整表快照（給沒有時間欄、
+        #    但重建成本高的小型名冊表，例：live.ship_last_seen）
+        if self._overrides.get(qualified, {}).get("cadence") == "full_table":
+            return self._process_realtime_full_table(schema, table, target_date)
+
         # 1. 找時間欄位
         time_col = self._find_time_column(schema, table)
         if time_col is None:
@@ -681,6 +686,76 @@ class BackupSupabaseTask:
             details={
                 "target_date": date_str,
                 "time_col": time_col,
+                "row_count": row_count,
+                "size_bytes": size_bytes,
+                "storage_class": storage_class,
+                "s3_key": s3_key,
+            },
+        )
+        return "uploaded"
+
+    def _process_realtime_full_table(self, schema: str, table: str, target_date: date) -> str:
+        """cadence: full_table：整表 COPY 到與每日 dump 相同的 S3 key。
+
+        內容是「備份執行當下」的整表狀態，key 沿用 target_date（昨日），
+        所以 Robot C 的 missing_s3 檢查不需特例。
+        """
+        qualified = f"{schema}.{table}"
+        date_str = target_date.strftime("%Y-%m-%d")
+
+        with self._cursor() as cur:
+            cur.execute(f'SELECT count(*) FROM "{schema}"."{table}"')
+            row_count = cur.fetchone()[0]
+        if row_count == 0:
+            self._audit(
+                run_kind="realtime_snapshot",
+                schema_name=schema,
+                table_name=table,
+                severity="warn",
+                code="skipped_empty_table",
+                message="full_table 表目前沒有任何資料列，跳過上傳",
+                details={"target_date": date_str, "cadence": "full_table"},
+            )
+            return "empty"
+
+        s3_key_schema = _S3_KEY_SCHEMA_ALIAS.get(schema, schema)
+        s3_key = f"{_S3_REALTIME_PREFIX}/{date_str}/{s3_key_schema}.{table}.csv.gz"
+        override = self._overrides.get(qualified, {})
+        storage_class = override.get(
+            "storage_class",
+            self.manifest.get("defaults", {}).get("realtime", {}).get(
+                "storage_class", self.realtime_storage_class
+            ),
+        )
+
+        if self.dry_run:
+            print(f"   [DRY_RUN] 跳過 COPY + upload: {qualified} (full_table {row_count} rows) → {s3_key}")
+            self._audit(
+                run_kind="realtime_snapshot",
+                schema_name=schema,
+                table_name=table,
+                severity="ok",
+                code="snapshot_uploaded",
+                message=f"[DRY_RUN] full_table {row_count} rows → {s3_key}",
+            )
+            return "uploaded"
+
+        gz_bytes = self._copy_table_to_gzip(schema, table)
+        ok = self.s3.upload_snapshot(s3_key, gz_bytes, storage_class=storage_class)
+        if not ok:
+            raise RuntimeError("S3 upload_snapshot 回傳 False")
+
+        size_bytes = len(gz_bytes)
+        self._audit(
+            run_kind="realtime_snapshot",
+            schema_name=schema,
+            table_name=table,
+            severity="ok",
+            code="snapshot_uploaded",
+            message=f"full_table {row_count} rows, {_human_size(size_bytes)} → s3:{s3_key}",
+            details={
+                "target_date": date_str,
+                "cadence": "full_table",
                 "row_count": row_count,
                 "size_bytes": size_bytes,
                 "storage_class": storage_class,
