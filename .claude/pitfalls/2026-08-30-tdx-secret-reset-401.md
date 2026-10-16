@@ -80,4 +80,4 @@ print(r.text[:300] if not r.ok else 'token OK, expires_in=%s' % r.json().get('ex
 
 ## 相關文件
 
-- [docs/TDX_RATE_LIMITING.md](../../docs/TDX_RATE_LIMITING.md) 第六節「401 認證失敗排查」— 完整判別表與 SOP
+- [docs/handbook/sources/tdx.md](../../docs/handbook/sources/tdx.md)「429 和 401 是兩回事」「認證層的程式防護」— 判別表與 SOP（原 TDX_RATE_LIMITING.md 第六節已併入）

@@ -3,6 +3,8 @@
 Status: **Atlas and RIS Live are production enabled at 5-minute cadence and
 remain internal-only. Repo defaults remain disabled for both.**
 
+> 2026-10-16 註：`config/cross_layer_map.yaml` 對這兩支標 `enabled: false`／`deployment: disabled`，與本段「production enabled」矛盾，待確認 Zeabur 實際環境變數後修正其中一邊。見 [handbook/sources/internet-health.md](handbook/sources/internet-health.md)。
+
 These are evidence collectors.  They do not decide that Taiwan is normal,
 degraded, or offline.  RIPE Atlas and RIPE RIS are separate technical signals
 but share `independence_group=ripe_ncc`, so they cannot by themselves satisfy a

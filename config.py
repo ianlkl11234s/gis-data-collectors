@@ -36,7 +36,7 @@ TDX_API_BASE = "https://tdx.transportdata.tw/api/basic"
 # TDX 全域 rate limit (req/sec/金鑰)
 # TDX 免費/專業方案多為 5 req/sec/金鑰，預設 4 留 1 req/sec buffer
 # 所有 TDX collector 的 HTTP 請求（含 token refresh）都會共用此節流器
-# 詳見 docs/TDX_RATE_LIMITING.md
+# 詳見 docs/handbook/sources/tdx.md
 TDX_RATE_LIMIT = float(os.getenv('TDX_RATE_LIMIT', '4'))
 
 # ============================================================

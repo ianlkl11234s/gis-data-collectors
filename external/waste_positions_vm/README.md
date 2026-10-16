@@ -1,6 +1,8 @@
 # waste_positions on HiCloud VM
 
-> 第二個搬到 HiCloud 的 collector，**跟 ship_ais 共用同一台 VM** (`210.61.15.74`)。
+> VM 位址與登入帳號不放在公開 repo：文中的 `<VM_HOST>`、`<帳號>` 請見私人筆記。
+
+> 第二個搬到 HiCloud 的 collector，**跟 ship_ais 共用同一台 VM** (`<VM_HOST>`)。
 > Pattern 與動機請看 [`docs/EXTERNAL_COLLECTORS.md`](../../docs/EXTERNAL_COLLECTORS.md)。
 
 ## 為什麼
@@ -11,7 +13,7 @@
 
 | 項目 | 值 |
 |---|---|
-| VM | 共用 ship_ais 那台（HiCloud b.1c1g，第二區域 `210.61.15.74`） |
+| VM | 共用 ship_ais 那台（HiCloud b.1c1g，第二區域 `<VM_HOST>`） |
 | App dir | `/opt/waste-positions/` |
 | Data dir | `/var/lib/waste-positions/data/` |
 | Logs | `/var/log/waste-positions/` |
@@ -55,10 +57,10 @@
 # 1. scp 4 個檔案
 cd .../data-collectors/external/waste_positions_vm
 scp waste_positions_collect.py archive_waste_positions.py setup_waste.sh setup_waste_cron.sh \
-    root@210.61.15.74:/tmp/
+    <帳號>@<VM_HOST>:/tmp/
 
 # 2. 在 VM 上裝
-ssh root@210.61.15.74
+ssh <帳號>@<VM_HOST>
 bash /tmp/setup_waste.sh
 
 # 3. 複用 ship_ais 的 .env（key 完全一樣，只差 DATA_DIR / QUIET_HOURS）

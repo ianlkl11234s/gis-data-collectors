@@ -1,3 +1,5 @@
+> 歷史紀錄（2026-09-18）。長期結論已併入 [handbook/data-lifecycle.md](handbook/data-lifecycle.md) §6「歸檔驗證」，以手冊為準。
+
 # Generic raw archive verification
 
 Raw date directories may be removed only after a full remote tar member readback verifies every regular JSON filename, SHA-256 and byte count, and an atomic local receipt records that manifest and remote identity. Legacy gzip timestamps do not affect content equivalence. Verification pins GET to HEAD VersionId or ETag and closes its stream.

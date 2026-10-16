@@ -1,5 +1,7 @@
 # ship_ais on HiCloud VM
 
+> VM 位址與登入帳號不放在公開 repo：文中的 `<VM_HOST>`、`<帳號>` 請見私人筆記。
+
 > `ship_ais` collector 不在 Zeabur 跑、而是在中華電信 HiCloud 上一台 VM 跑的特殊版本。
 > **完整 pattern 與動機請看 [`docs/EXTERNAL_COLLECTORS.md`](../../docs/EXTERNAL_COLLECTORS.md)。**
 
@@ -21,7 +23,7 @@
 | 項目 | 值 |
 |---|---|
 | VM | HiCloud CaaS 第二區（台南），通用型 b.1c1g (1vCPU/1GB/30GB) |
-| Public IP | `210.61.15.74` |
+| Public IP | `<VM_HOST>` |
 | OS | Ubuntu 22.04 LTS |
 | App dir | `/opt/ship-ais/` |
 | Data dir | `/var/lib/ship-ais/data/` |
@@ -65,15 +67,15 @@
 
 ```bash
 # 1. 開好 HiCloud VM、拿到 IP、能 SSH 進去
-ssh root@<NEW_IP>   # 確認 OK 後 exit 回本機
+ssh <帳號>@<NEW_IP>   # 確認 OK 後 exit 回本機
 
 # 2. scp 6 個檔案
 cd .../data-collectors/external/ship_ais_vm
 scp ship_ais_collect.py archive_ship_ais.py setup_vm.sh setup_cron.sh test_ais.py test_s3.py \
-    root@<NEW_IP>:/tmp/
+    <帳號>@<NEW_IP>:/tmp/
 
 # 3. 在 VM 上跑 setup
-ssh root@<NEW_IP>
+ssh <帳號>@<NEW_IP>
 bash /tmp/setup_vm.sh
 install -m 755 /tmp/ship_ais_collect.py /opt/ship-ais/ship_ais_collect.py
 install -m 755 /tmp/archive_ship_ais.py /opt/ship-ais/archive_ship_ais.py

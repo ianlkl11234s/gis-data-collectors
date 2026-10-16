@@ -1,5 +1,7 @@
 # 外部 Collectors（台灣 IP 必需）
 
+> VM 位址與登入帳號不放在公開 repo：文中的 `<VM_HOST>`、`<帳號>` 請見私人筆記。
+
 > 此文件記錄**因網路限制無法在 Zeabur 跑、必須在台灣 ISP 機房跑**的 collector 們，
 > 以及未來新增此類 collector 的標準流程。
 
@@ -18,7 +20,7 @@
 
 | Collector | 來源 API | 部署位置 | 子目錄 |
 |---|---|---|---|
-| `ship_ais` | `mpbais.motcmpb.gov.tw` (航港局) | HiCloud VM `210.61.15.74` | [`external/ship_ais_vm/`](../external/ship_ais_vm/) |
+| `ship_ais` | `mpbais.motcmpb.gov.tw` (航港局) | HiCloud VM `<VM_HOST>` | [`external/ship_ais_vm/`](../external/ship_ais_vm/) |
 | `waste_positions` | 高雄/新北/台南 GPS 三家 | 同上 VM | [`external/waste_positions_vm/`](../external/waste_positions_vm/) |
 | `cdc_public_health_weekly` | 疾管署 `od.cdc.gov.tw` | 同上 VM（待部署） | [`external/cdc_public_health_weekly_vm/`](../external/cdc_public_health_weekly_vm/) |
 | `isohe_port_marine` | ISOHE 商港 Wave/Current/Tide/Wind | 同上 VM（部署前需 Taiwan egress smoke） | [`external/isohe_port_marine_vm/`](../external/isohe_port_marine_vm/) |
@@ -133,7 +135,7 @@ buffer 目錄持續累積不消化 = DB 一直連不上，去看 Supabase 狀態
 TODO：目前依賴主 repo 的 `notify_error`。VM 沒有 notify hook，得想辦法把錯誤 push 出來（簡單做法：cron 失敗自動 mail，或寫個 healthcheck endpoint）。
 
 ### 帳號 / 帳單
-- HiCloud 帳號：個人 Gmail `ianlk11234s@gmail.com`
+- HiCloud 帳號：repo owner 的個人帳號（登入資訊見私人筆記）
 - 月結，刷信用卡
 - Console: https://hicloud.hinet.net/
 
