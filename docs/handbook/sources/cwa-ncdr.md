@@ -72,7 +72,7 @@ NCDR EQ1 全台 2.5 km 網格（4,377 格，免金鑰）。清冊標停用。上
 ### isohe_port_marine
 商港海氣象（ISOHE，8 港 × 波浪、海流、潮位、風）。
 
-- 頻率／位置：**跑在 HiCloud VM**（只有台灣出口 IP 連得到），cron `8-59/10`（每 10 分、錯開整點）並以 `timeout -k 30 540` 包住；Zeabur 端 `ISOHE_PORT_MARINE_ENABLED` 必須維持 false。2026-10-12 的上線紀錄顯示 VM 實際在跑，但清冊 `cross_layer_map.yaml` 的 enabled 標 false（deployment 標 hicloud_vm），兩者不一致，**待確認**後修正清冊。VM 部署方式見 [EXTERNAL_COLLECTORS.md](../../EXTERNAL_COLLECTORS.md)，VM 主機以 `<VM_HOST>` 表示。
+- 頻率／位置：**跑在 HiCloud VM**（只有台灣出口 IP 連得到），cron `8-59/10`（每 10 分、錯開整點）並以 `timeout -k 30 540` 包住；Zeabur 端 `ISOHE_PORT_MARINE_ENABLED` 必須維持 false。VM 不寫 `metadata.collector_status`，看健康要看 `live.marine_observation_current` 裡 `station_uid` 以 `isohe:` 開頭的列的 `collected_at`，以及 S3 `isohe_port_marine/archives/`（VM 晚約 2 天上傳，清冊 `archive_lag_days: 3`）。清冊曾標 `enabled: false`，2026-10-16 依上述兩項都新鮮校正為 `true`。VM 部署方式見 [EXTERNAL_COLLECTORS.md](../../EXTERNAL_COLLECTORS.md)，VM 主機以 `<VM_HOST>` 表示。
 - 寫入：與 `cwa_marine_observation` 共用 `reference.marine_observation_stations`、`live.marine_observation_readings`、`live.marine_observation_current`（`station_uid` 不同）。
 - 守門：VM 版 `external/isohe_port_marine_vm/marine_write.py` 與 `storage/marine_write.py` **必須逐位元組相同**（`tests/test_isohe_port_marine_vm.py` 強制）；VM 另有 `SIGALRM` 480 秒、`collect.lock` 非阻塞鎖（前一輪沒跑完就拒跑）、站表狀態存 `$DATA_DIR/state/station_roster.json`。排除 MZ legacy XML；不同潮位基準面分開存，不混算。
 - 已知坑：2026-10-12 同一事件中，VM 上兩個 collect 程序卡了 3.6 天與 1.5 天，因為 Python 的 alarm handler 在阻塞於 libpq 時不會觸發，改用預設處置讓 kernel 終止。VM 是手動 scp 部署，git push 不會生效。

@@ -137,7 +137,7 @@ cwa_marine_observation:
   notes: CWA O-B0076 registry plus O-B0075 rolling 48h; 85th orphan StationID is quarantined, never silently dropped
 
 isohe_port_marine:
-  enabled: false
+  enabled: true  # 2026-10-16 校正：VM 在跑（marine_observation_current 的 isohe 列 collected_at 新鮮、S3 archives 持續到位）；VM 不寫 collector_status
   deployment: hicloud_vm
   expected_interval_min: 10
   supabase_tables: [reference.marine_observation_stations, live.marine_observation_readings, live.marine_observation_current]
@@ -147,8 +147,8 @@ isohe_port_marine:
   notes: 8 ports x wave/current/tide/wind; Taiwan egress only; MZ legacy XML excluded and tide datums stay separate
 
 aisstream:
-  enabled: false
-  deployment: disabled
+  enabled: true  # 2026-10-16 校正：無同名 collector_status，但 aisstream_position_observations／ingest_health 數分鐘內、archive manifests 當天
+  deployment: zeabur
   expected_interval_min: 1
   supabase_tables:
     - live.aisstream_ingest_runs
@@ -359,8 +359,8 @@ ioda_internet_health:
     公開排除由 platform contract 強制。alerts 未驗證且保持關閉；Composite detector 未實作。
 
 ripe_atlas_internet_health:
-  enabled: false
-  deployment: disabled
+  enabled: true  # 2026-10-16 依 metadata.collector_status 校正（is_enabled=t、last_success 數分鐘內）
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs
@@ -380,8 +380,8 @@ ripe_atlas_internet_health:
     succeeded 916/56/0。health HTTP 200、main loop/DB green。
 
 ripe_ris_live:
-  enabled: false
-  deployment: disabled
+  enabled: true  # 2026-10-16 依 metadata.collector_status 校正（is_enabled=t、last_success 數分鐘內）
+  deployment: zeabur
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs

@@ -27,12 +27,12 @@ TDX 國內航線船位。已被 `ship_ais`（覆蓋更廣）取代，清冊標�
 ### aisstream
 AISStream WebSocket（獨立 provider，五個區域 bbox）。
 
-- 頻率／位置：**長駐 worker**（`workers/aisstream.py`；registry 裡的 class 只是 shim，不走 interval scheduler），清冊標停用（repo 預設關）。需 `AISSTREAM_API_KEY`。
+- 頻率／位置：**長駐 worker**（`workers/aisstream.py`；registry 裡的 class 只是 shim，不走 interval scheduler）。repo 預設關，正式環境已啟用；清冊 2026-10-16 校正為 `enabled: true`。需 `AISSTREAM_API_KEY`。
 - 寫入：`live.aisstream_*` 五張表（ingest runs、archive manifests、position observations、vessel current、ingest health），不寫既有 `live.ship_*`。raw 以 gzip NDJSON＋manifest 永久存 S3 `aisstream/raw/v1/`，上傳並 HEAD 驗證後才清本地 spool，不設 S3 到期刪除。
 - 守門：DB run／health ledger 與 S3 冷儲存是**啟動硬條件**，preflight 失敗就讓容器啟動失敗，不會出現「容器活著、worker 靜默死掉」；socket 開著不算健康，要收到訂閱確認或第一筆合法事件；`observed_at` 與 `received_at` 分開；out-of-order 不可覆蓋較新的 current。
 - 已知坑：
   - 船名可能合法含西里爾字母，所以不放進亂碼防護名單（見 [cwa-ncdr.md#ncdr_alerts](cwa-ncdr.md#ncdr_alerts)）。
-  - 沒有同名 collector 心跳，健康要看專用的 `aisstream_ingest_health`；`config/realtime_tables.yaml` 曾用不存在的 `created_at` 監控 archive manifests（DIO-5，[collector-health 調查](../../investigations/2026-10-05-collector-health.md)）。
+  - 沒有同名 collector 心跳，健康要看專用的 `aisstream_ingest_health`；`config/realtime_tables.yaml` 曾用不存在的 `created_at` 監控 archive manifests（DIO-5，[collector-health 調查](../../investigations/2026-10-05-collector-health.md)），2026-10-16 改成 `uploaded_at`。
   - Disk IO 第三輪評估過「逐筆寫改成批次寫」，結論是省不到 IO，所以沒做（評估細節見 gis-platform（private）`docs/research/2026-10-16-disk-io-round3.md`，**待確認**該檔是否收錄此項）。
 - 細節：[`docs/AISSTREAM.md`](../../AISSTREAM.md)；上游：analytics `aisstream/gotchas.md`（去重、observed vs received、watchdog）。
 
