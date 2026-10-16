@@ -33,7 +33,7 @@ RIPE Atlas 公開 ping 量測（經審核的 roster）。
 
 - 頻率／位置：每 5 分鐘、30 分鐘 lookback，對齊已結束的 5 分鐘 bucket；樣本數較少的結果不覆蓋較多的。寫入共同契約的 runs／observations／current。
 - 守門：**roster 硬閘門** `config/ripe_internet_health.yaml`（版本化、不含憑證）：`review_status: approved`、`internal_only: true`、Atlas 至少一個有明確 probe ID 的量測，否則 fail closed。roster 漂移要審核後改版，不自動探索。公開結果讀取不需金鑰；`RIPE_ATLAS_API_KEY` 只用於經審核的私有量測。
-- **狀態不一致（待確認）**：[`docs/RIPE_INTERNET_HEALTH.md`](../../RIPE_INTERNET_HEALTH.md) 與清冊 notes 都寫 2026-08-31 起 production 已啟用，但 `config/cross_layer_map.yaml` 的 `enabled` 是 false、deployment 是 disabled，所以 [collectors.md](../collectors.md) 顯示「停用」，日報也不會掃它。要確認 Zeabur 實際環境變數後修正清冊。
+- **正式環境已啟用**（2026-08-31 起）：清冊曾標 `enabled: false`／`deployment: disabled`，日報因此不掃它；2026-10-16 依 `metadata.collector_status`（`is_enabled = true`、`last_success_at` 在幾分鐘內）校正為 `enabled: true`／`zeabur`。
 - 細節：[`docs/RIPE_INTERNET_HEALTH.md`](../../RIPE_INTERNET_HEALTH.md)。
 
 ### ripe_ris_live
@@ -42,7 +42,7 @@ RIPE RIS Live BGP 更新（有界 WebSocket 訂閱，15 個 origin ASN）。
 - 頻率／位置：**長駐 worker**（`workers/ripe_ris_live.py`；registry class 是 shim），每 5 分鐘一個 bucket。強制 replicas=1、process-local lock，DB 與 private S3 都是啟用硬閘；不支援跨 replica 的分散式 lease。
 - 寫入：共同契約的 runs／observations／current；raw JSON 與 manifest 只進 private S3 `ripe_ris_live/raw/v1/`。
 - 守門：roster 只允許有界的 prefix（≤ 256）或 origin ASN（≤ 64）清單，設定上不可能訂閱整條 firehose。
-- 狀態不一致：同 `ripe_atlas_internet_health`（清冊標停用、文件寫已啟用），**待確認**。
+- 正式環境已啟用：清冊同樣曾標停用，2026-10-16 依 `metadata.collector_status` 校正為 `enabled: true`／`zeabur`（同 `ripe_atlas_internet_health`）。
 
 ## 收這類資料要注意
 

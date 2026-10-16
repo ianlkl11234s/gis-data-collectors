@@ -55,7 +55,7 @@ tables:
   - {schema: live, table: marine_observation_current, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: serving cache; current update only accepts newer observed_at}
   - {schema: live, table: marine_observation_quarantine, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: CWA reading IDs absent from metadata roster}
   - {schema: live, table: aisstream_ingest_runs,   time_column: started_at,    owner_collector: aisstream, expected_interval_min: 1440, critical: false, notes: AISStream run ledger}
-  - {schema: live, table: aisstream_archive_manifests,time_column: created_at,   owner_collector: aisstream, expected_interval_min: 60, critical: false, notes: S3 permanent raw archive ledger}
+  - {schema: live, table: aisstream_archive_manifests,time_column: uploaded_at,   owner_collector: aisstream, expected_interval_min: 60, critical: false, notes: S3 permanent raw archive ledger}
   - {schema: live, table: aisstream_position_observations,time_column: received_at, owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream independent provider; raw S3 archive is permanent}
   - {schema: live, table: aisstream_vessel_current,time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream current snapshot; sticky static fields and positions}
   - {schema: live, table: aisstream_ingest_health,  time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 5, critical: false, notes: AISStream worker health heartbeat}
@@ -72,7 +72,7 @@ tables:
 
   # ── 航空 ────────────────────────────────
   - {schema: live, table: flight_positions,          time_column: collected_at, owner_collector: flight_fr24, expected_interval_min: 5, critical: false, notes: 多 collector 共用}
-  - {schema: air_tickets, table: fare_offers,             time_column: observed_at, owner_collector: air_ticket_radar, expected_interval_min: 2880, critical: false, notes: 每 48 小時掃描；private SSOT。未配置 writer 或尚無首筆資料時屬預期，不升事故}
+  - {schema: air_tickets, table: fare_offers,             time_column: observed_at, owner_collector: air_ticket_radar, expected_interval_min: 2880, critical: false, notes: 外部 owner（不在本 repo；writer 在 openAB 的 Hermes 容器，見 openab-ops docs/11-air-ticket-radar-runbook.md）；每 48 小時掃描；private SSOT。2026-10-16 查最新 observed_at 停在 2026-09-08}
   # flight_trails — partitioned parent，本來就為空，NEVER 是預期。從清冊移除避免干擾顯示。
 
   # ── 氣象 / 地震 ─────────────────────────
@@ -193,7 +193,7 @@ tables:
 
   # ── 日本氣象廳 JMA P0（2026-10-09；gis-platform migration 435）──
   - {schema: live, table: jma_amedas_current,          time_column: updated_at,   owner_collector: jma_amedas, expected_interval_min: 10, critical: false, notes: AMeDAS 約 1,286 站；updated_at 每輪 touch＝心跳；來源 stale 看 source_time（>40 分 collector 會 log）}
-  - {schema: live, table: jma_amedas_observations,     time_column: collected_at, owner_collector: jma_amedas, expected_interval_min: 60, critical: false, notes: 只寫整點；保留 90 天}
+  - {schema: live, table: jma_amedas_observations,     time_column: collected_at, owner_collector: jma_amedas, expected_interval_min: 60, critical: false, notes: 只寫整點；保留期見 metadata.retention_policies（mig 436）}
   - {schema: live, table: jma_warning_events,          time_column: collected_at, owner_collector: jma_warnings, expected_interval_min: 1440, critical: false, notes: 438 起只記變動（start/status_change/end，永久）；安靜時可整天無新列屬預期；control_datetime >6h 未變 collector 會 log stale；舊 live.jma_warnings 停寫、7 天自然清空}
   - {schema: live, table: jma_quake_reports,           time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（DO NOTHING，僅新地震推進 MAX）}
   - {schema: live, table: jma_tsunami_reports,         time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（無津波情報即無資料），長期 DEAD 屬預期}

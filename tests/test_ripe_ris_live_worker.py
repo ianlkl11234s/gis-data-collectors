@@ -256,14 +256,16 @@ def test_process_local_lock_blocks_second_worker(monkeypatch, tmp_path):
     second.run()
 
 
-def test_inventory_keeps_ripe_internal_disabled_and_documents_archive_contract():
+def test_inventory_keeps_ripe_repo_default_disabled_and_documents_archive_contract():
     repo = Path(__file__).resolve().parent.parent
     cross = yaml.safe_load((repo / "config" / "cross_layer_map.yaml").read_text(encoding="utf-8"))
     backup = yaml.safe_load((repo / "config" / "backup_manifest.yaml").read_text(encoding="utf-8"))
     zeabur = json.loads((repo / "zeabur.json").read_text(encoding="utf-8"))["env"]
+    # cross_layer_map 反映 production 實況（2026-08-31 起已啟用，2026-10-16 依 collector_status 校正）；
+    # repo 預設關閉由下方 zeabur.json default 守住。
     for name in ("ripe_atlas_internet_health", "ripe_ris_live"):
-        assert cross[name]["enabled"] is False
-        assert cross[name]["deployment"] == "disabled"
+        assert cross[name]["enabled"] is True
+        assert cross[name]["deployment"] == "zeabur"
         assert cross[name]["critical"] is False
     assert cross["ripe_atlas_internet_health"]["s3_prefixes"][0]["expected_daily"] is False
     assert cross["ripe_ris_live"]["s3_prefixes"][0]["prefix"] == "ripe_ris_live/raw/v1/"

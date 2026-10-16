@@ -16,7 +16,7 @@
 | DB 死人開關 | pg_cron 每 15 分 | gis-platform `migrations/255_collector_freshness_alert.sql` `metadata.check_collector_freshness(30)` | **所有** enabled collector 的 `MAX(last_success_at)` 超過 30 分鐘 → 用 pg_net 發 Telegram。用途是「整個 collector 進程死掉」，抓不到單一 collector 停擺（盲點 1） |
 | VM 健康 | VM cron 每日 | `external/_shared/health_report.py` | 推 `s3://<BUCKET>/_external_vm_health/<host>/YYYY-MM-DD.json`，日報讀取 |
 | 本機稽核 | macOS launchd 每日 | `scripts/local_audit_push.py` | 三個 GIS repo 的 git 狀態與 analytics 資料目錄稽核，推同一個 S3 前綴（`local-<hostname>`）；Mac 沒開機當天就沒有 |
-| 外部巡檢（Hermes） | 30 分鐘／4 小時 | 不在本 repo | 唯讀巡檢 Supabase 新鮮度、S3 metadata 與 VM health，發 Discord。**現在是否仍在執行待確認**，見 §2.5 |
+| 外部巡檢（Hermes） | 30 分鐘／4 小時 | 不在本 repo | 唯讀巡檢 Supabase 新鮮度、S3 metadata 與 VM health，發 Discord。**現在是否仍在執行待確認**（查法見 §2.5） |
 
 ## 2. 每日日報
 
@@ -72,7 +72,7 @@
 | critical | 確認的新鮮度或可用性事故；暫時性的 Supabase／S3 失敗連續 3 次才升級 |
 | unknown | 監控無法判定狀態；**不可以說成 green** |
 
-通知只在狀態轉換時發（新事故、升級、恢復）。巡檢一律唯讀，不得重啟、重新部署、寫資料或改設定。外部巡檢（Hermes）的本機狀態檔與 Discord 投遞是否仍在運作，本次未能查證（**待確認**）。
+通知只在狀態轉換時發（新事故、升級、恢復）。巡檢一律唯讀，不得重啟、重新部署、寫資料或改設定。外部巡檢（Hermes）是否仍在運作**待確認**。2026-10-16 查到的事實：Zeabur openAB 專案仍有 `habermas-hermes` 服務；同一容器負責的 air-ticket-radar 寫入（`air_tickets.fare_offers`）停在 2026-09-08；DB 端無法佐證巡檢是否還在——`pg_stat_statements` 已滿（5,000 筆上限、持續淘汰），低頻呼叫會被擠掉，查無 `gis_monitor_hermes` 的紀錄不代表沒呼叫。查法：Zeabur 主控台看該服務的執行狀態與最近 log，或看 Discord 巡檢頻道最後一則訊息的時間。
 
 ## 3. 健康判讀：三件事與三個盲點
 
@@ -106,8 +106,9 @@
 
 - 共用表時，一個來源壞掉會被其他來源的新鮮度蓋過去：`lightning_events`（台電、CWA、JMA）、`internet_health_*`（Cloudflare、IODA、RIPE）。
 - `tra_static`、`satellite_passes_daily`、`global_climate_bake` 啟用中但沒有表級監控（`tra_static` 沒有 TABLE_MAP 條目、`satellite_passes_daily` 用獨立連線寫入、`global_climate_bake` 只輸出到 S3）。
-- VM 上的 `ship_ais`、`waste_positions`、`cdc_public_health_weekly` 寫入繞過 generic writer，`collector_status` 會是舊的；`aisstream` 沒有同名 status。
-- `config/realtime_tables.yaml` 把 `live.aisstream_archive_manifests` 的 `time_column` 寫成 `created_at`，表上沒有這欄（DIO-5，建議改 `uploaded_at`；本次未改設定）。
+- VM 上的 `ship_ais`、`waste_positions`、`cdc_public_health_weekly` 寫入繞過 generic writer，`collector_status` 會是舊的；`isohe_port_marine`（VM）在 `collector_status` 沒有列；`aisstream` 沒有同名 status。
+- `config/realtime_tables.yaml` 曾把 `live.aisstream_archive_manifests` 的 `time_column` 寫成表上沒有的 `created_at`（DIO-5），2026-10-16 已改成 `uploaded_at`。
+- `aisstream` 清冊曾標 `enabled: false`／`deployment: disabled`，但 worker 一直在跑；2026-10-16 依 `live.aisstream_position_observations.received_at`、`aisstream_ingest_health.updated_at`（數分鐘內）校正為 `enabled: true`／`zeabur`。S3 檢查讀 `aisstream/raw/v1/date=YYYY-MM-DD/`，`tasks/monitoring.py` 會從 key 解析日期。
 
 ## 4. 量測口徑（DB 負載）
 
@@ -158,6 +159,20 @@ VM（`<VM_HOST>`）上的 collector 是手動部署，git push 不會生效。�
 5. 要配合 DB 變更時注意順序：寫入端冪等先上，DB 唯一索引後建（[principles I-02](principles.md)）；可挑 collector 的 quiet hours 動 DB。
 
 VM 的建置、cron 與 health report 部署細節見 [EXTERNAL_COLLECTORS.md](../EXTERNAL_COLLECTORS.md) 與 `external/*/README.md`。VM 健康排障：在 VM 上手動跑一次 `health_report.py`，看 health log，確認 S3 上當天的 snapshot 存在。
+
+#### SSH 只允許金鑰登入（2026-10-16 起）
+
+- 設定：新增 `/etc/ssh/sshd_config.d/00-hardening.conf`，內容為 `PasswordAuthentication no`、`KbdInteractiveAuthentication no`、`PermitRootLogin prohibit-password`。原本的主設定檔備份在 `/etc/ssh/sshd_config.bak.20261016`。檔名用 `00-` 開頭，是因為 sshd 對同一選項採用第一個讀到的值，要排在其他 drop-in 前面。
+- 原因：`auth.log` 約 5 天內有約 8.9 萬次密碼爆破嘗試；同期兩週內所有成功登入都是 publickey，關掉密碼登入不影響現有用法。
+- ⚠️ **VM 只登記了一把金鑰**。換電腦或重灌之前，要先用舊電腦把新電腦的公鑰加進 `/root/.ssh/authorized_keys` 並測試登入成功；否則只能從 HiCloud 主控台（網頁 console）登入救援。
+
+**改遠端 sshd 的安全步驟**（改錯會把自己鎖在外面，每次都照做）：
+
+1. 先開一條連線並保持不關（建議用 SSH ControlMaster 留一條 master 連線），全程不要登出。
+2. 改設定前先排一個自動還原：`systemd-run --on-active=10min --unit=sshd-revert <還原指令>`（還原指令＝刪掉新的 drop-in、把備份複製回去、`systemctl reload ssh`），萬一後面斷線，10 分鐘後會自動回到舊設定。
+3. 寫入設定後先 `sshd -t` 檢查語法，再 `systemctl reload ssh`（服務名依發行版可能是 `sshd`；reload 不會中斷既有連線）。
+4. **另開一條新連線**測試：金鑰可以登入、密碼登入會被拒絕（例：`ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password …` 應該失敗）。
+5. 新連線測試都通過，才取消還原計時器（`systemctl stop sshd-revert.timer`）；沒通過就什麼都不做，等它自動還原。
 
 ### 5.3 祕密處理
 

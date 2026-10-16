@@ -109,3 +109,4 @@
 | D-05 | 祕密不進 log、例外訊息、fixture、commit 與 CLI 輸出；API key 放 params 時改寫例外訊息 | `raise_for_status()` 的訊息含完整 URL；Zeabur CLI 會用表格印出祕密值 | `AGENTS.md`；`collectors/moenv_common.py`；[operations.md](operations.md)「祕密處理」 |
 | D-06 | 新的 live／reference／spatial 表要開 RLS，anon 與 authenticated 兩個角色都授權 | 只授權 anon 讓登入會員靜默看到 0 筆，持續 3 週 | mini-taiwan-pulse `.claude/pitfalls/2026-07-26-live-rls-anon-only.md` |
 | D-07 | 401 和 429 分開判讀；401 時先本地重放 token 請求看 error body | TDX secret 被重置時 retry storm 產生的 429 蓋住了真正的 401，拖了 15.4 小時 | [pitfall 2026-08-30](../../.claude/pitfalls/2026-08-30-tdx-secret-reset-401.md) |
+| D-08 | 改遠端登入設定（sshd、防火牆）要先留退路：保留既有連線、排自動還原計時器、用新連線驗證通過才取消 | VM 只有一把登記的金鑰，鎖在外面只能從 HiCloud 主控台救；2026-10-16 改成只允許金鑰登入時照此執行 | [operations.md](operations.md)「SSH 只允許金鑰登入」 |

@@ -332,7 +332,7 @@ _COLLECTOR_TOGGLES = (
     ('GROUNDWATER_LEVEL',            False, 60),  # 原始每 10 分鐘更新，但資料量大
     ('WATER_RESERVOIR_DAILY_OPS',    False, 1440),  # 官方 09:30 前更新
     ('WRA_DROUGHT_ALERT',            False, 1440),  # 水情燈號 daily（上游不定期，hash 比對去重）
-    ('IOT_WRA',                      False, 60),   # 水利署 IoT 7 類站點整合收集（河川/地下水/閘門/沖刷/流量/堤防/揚塵）
+    ('IOT_WRA',                      False, 60),   # 水利署 IoT 7 類站點整合收集（河川/地下水/閘門/沖刷/流量/堤防/揚塵）；repo 預設 60，正式 env 覆寫為 10（live.iot_wra_measurements.collected_at 每 10 分一批）
     ('USWG',                         False, 10),   # 都市淹水感知器（OAuth2，1999 站全國淹水深度即時，rain-impact 用）
     ('PRECIPITATION_RASTER',         False, 60),   # 水利署累積雨量柵格圖 PNG（共用 IOW_CLIENT_*，每小時 4 張 ch=1/3/6/24）
     ('WASTE_POSITIONS',              False, 2),    # ⚠️ 跑在 HiCloud VM（Zeabur 端強制關閉，見 docs/EXTERNAL_COLLECTORS.md）— 對齊 NTPC 官方 2 分頻率
@@ -384,8 +384,8 @@ _COLLECTOR_TOGGLES = (
     ('GLOBAL_CLIMATE_NOAA_GFS',        False, 1440), # NOAA GFS 全球風場（無認證 AWS Open Data）；HTTP Range pull
     ('GLOBAL_CLIMATE_BAKE',            False, 360),  # 烤圖：GFS/CMEMS/CAMS 最新實況場 → deploy-assets/climate/*_latest.{png,json}（前端粒子/raster）；每 6h 重烤取最新
     # === 日本氣象廳 JMA P0（2026-10-09；gis-platform migration 435；ADR-0021）===
-    ('JAPAN_JMA_AMEDAS',             False, 10),   # AMeDAS 約 1,286 站 10 分值（免金鑰）；current 全量 upsert、observations 只寫整點（90 天）
-    ('JAPAN_JMA_WARNINGS',           False, 5),    # R8 警報・注意報 map_time 有變才抓 map.json（禁用舊 warning/data/warning/）；30 天
+    ('JAPAN_JMA_AMEDAS',             False, 10),   # AMeDAS 約 1,286 站 10 分值（免金鑰）；current 全量 upsert、observations 只寫整點（保留期見 metadata.retention_policies，gis-platform mig 436 起）
+    ('JAPAN_JMA_WARNINGS',           False, 5),    # R8 警報・注意報 map_time 有變才抓 map.json（禁用舊 warning/data/warning/）；保留期見 metadata.retention_policies（mig 436／438）
     ('JAPAN_JMA_QUAKE',              False, 2),    # 地震 list + 津波 list + 火山 warning.json（DO NOTHING，永久）
     ('JAPAN_JMA_SEASONAL',           False, 360),  # 季節觀測：生物季節 HTML＋XML VGSK55／山頂初冠雪／梅雨速報；只記變動、永久（migration 439）   # 網格圖磚 G 型（雷達/解析雨量/キキクル/積雪/ひまわり）；spool→S3 T1–T3（migration 437；ADR-0021）
     ('JAPAN_JMA_RASTER',             False, 60),   # 網格圖磚 G 型（雷達/解析雨量/キキクル/積雪/ひまわり）；spool→S3 T1–T3（migration 437；ADR-0021）
