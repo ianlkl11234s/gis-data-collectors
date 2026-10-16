@@ -54,7 +54,7 @@
 - 啟動時 scheduler 仍會立即跑一次（可能落在 :14／:15），之後才對齊固定分鐘。
 
 ## 上線紀錄（2026-10-12，台灣時間）
-- 16:22 VM `210.61.15.74`：先備份 crontab 到 `/root/crontab.bak.20261012`，把 isohe collect 排程註解為 `# PAUSED …`（保留每日 archive）；kill 兩個卡住的 collect 程序（已跑 3 天 14 小時、1 天 12 小時）。
+- 16:22 VM `<VM_HOST>`：先備份 crontab 到 `/root/crontab.bak.20261012`，把 isohe collect 排程註解為 `# PAUSED …`（保留每日 archive）；kill 兩個卡住的 collect 程序（已跑 3 天 14 小時、1 天 12 小時）。
 - 16:4x gis-platform mig 441 apply（VM 與 Zeabur marine 都暫停時），剩 4 個索引（pkey、station_metric_time、time、valid_time）；cron `refresh-marine-observation-hourly` 改為 `40 * * * *`。gis-platform #149。
 - 16:5x data-collectors #138（`da2bf2d`）Zeabur 自動部署。
 - 16:51 VM：備份舊 `isohe_port_marine_collect.py` 為 `.bak.20261012`，scp 新版 `isohe_port_marine_collect.py`、`marine_write.py`、`setup_cron.sh`；手動跑一輪 12 秒，`readings_sent=1501/27072`；`setup_cron.sh` 恢復排程（`8-59/10`，`timeout -k 30 540`）。

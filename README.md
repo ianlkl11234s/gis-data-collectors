@@ -17,6 +17,8 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 **資料清冊唯一真相**：[`../gis-platform/docs/data-inventory.md`](../gis-platform/docs/data-inventory.md)
 
+**手冊（架構、上線 SOP、原則、營運、踩雷、歷程）**：[`docs/handbook/README.md`](docs/handbook/README.md)
+
 ---
 
 ## 部署位置
@@ -57,7 +59,7 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 每個 collector 的 enabled / interval / Supabase 表 / S3 prefix 真相在：
 - [`config/cross_layer_map.yaml`](config/cross_layer_map.yaml) — collector → 各層對應
-- [`config/realtime_tables.yaml`](config/realtime_tables.yaml) — Supabase 50 表清冊
+- [`config/realtime_tables.yaml`](config/realtime_tables.yaml) — Supabase 表清冊（張數以檔案為準）
 
 ---
 
@@ -70,7 +72,7 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 - **獨立 thread**：互不阻塞
 - **Skip-if-running**：同一 collector 還沒跑完，下個 tick 自動跳過
 - **`schedule` 套件只觸發**，實際執行交給 pool
-- **Pool 大小**：`max(10, collector 數 + 2)`
+- **Pool 大小**：以 `main.py` 的 `run_collectors()` 為準
 
 ### Supabase 旁路寫入
 
@@ -99,12 +101,12 @@ S3 設 lifecycle：30 天 → IA、90 天 → Glacier IR（見 [docs/AWS_INVENTO
 
 > **單一 Telegram 日報蓋全部**。每天看一則訊息知道整套基礎設施健康度。
 
-詳細架構、yaml 維護、災難復原見 **[docs/MONITORING.md](docs/MONITORING.md)**。摘要：
+詳細架構、yaml 維護、健康判讀見 **[docs/handbook/operations.md](docs/handbook/operations.md)**。摘要：
 
 `tasks/daily_report.py` 12 段：
 
 1. Collector 心跳
-2. **Supabase 50 表寫入新鮮度**（RPC `public.health_snapshot()` 一次撈；migration 306，原 `live.health_snapshot()` 已 deprecated）
+2. **Supabase 表寫入新鮮度**（清冊見 `realtime_tables.yaml`）（RPC `public.health_snapshot()` 一次撈；migration 306，原 `live.health_snapshot()` 已 deprecated）
 3. **S3 archives 每 collector 心跳**（解 silent fail）
 4. **跨層一致性**（collector × SB × S3 三向交叉診斷）
 5. **HiCloud VM 健康**（VM cron 07:00 推 snapshot 到 S3）
@@ -113,7 +115,7 @@ S3 設 lifecycle：30 天 → IA、90 天 → Glacier IR（見 [docs/AWS_INVENTO
 11. **成本趨勢**（CloudWatch 月增 > 20% 警告）
 12. **今日 Action**（規則式 1-3 件最該做的事）
 
-範例輸出 + 故障排除見 [docs/MONITORING.md](docs/MONITORING.md)。
+範例輸出 + 故障排除見 [docs/handbook/operations.md](docs/handbook/operations.md)。
 
 ---
 
@@ -152,7 +154,7 @@ data-collectors/
 │
 ├── config/                         # ⭐ 監控真相來源
 │   ├── cross_layer_map.yaml        # collector ↔ SB ↔ S3 對應
-│   └── realtime_tables.yaml        # 50 張 Supabase 表清冊
+│   └── realtime_tables.yaml        # Supabase 表清冊
 │
 ├── external/                       # ⭐ HiCloud VM 上跑的鏡像
 │   ├── ship_ais_vm/                # 單檔 collector + S3 archiver + setup script
@@ -177,14 +179,11 @@ data-collectors/
 ├── data/                           # 本地資料（.gitignore，含 buffer/）
 │
 └── docs/
-    ├── MONITORING.md               # ⭐ 監控系統完整文件
+    ├── handbook/                   # ⭐ 手冊正本：架構、生命週期、各類來源、上線、原則、踩雷索引
     ├── EXTERNAL_COLLECTORS.md      # ⭐ HiCloud VM SOP
-    ├── ARCHITECTURE.md             # Phase 1+ 架構
     ├── API.md                      # HTTP API
     ├── AWS_INVENTORY.md            # S3 bucket + lifecycle
     ├── S3_SETUP.md                 # S3 設定步驟
-    ├── TDX_RATE_LIMITING.md        # TDX 全域節流器
-    ├── BUS_NIGHT_PAUSE.md          # bus collector 夜間策略分析
     ├── sql/                        # 預聚合 matview RPC
     └── _archive/                   # 已完成計畫 / 研究紀錄
 ```
@@ -268,22 +267,7 @@ psql "$SUPABASE_DB_URL" -f ../gis-platform/migrations/NNN_xxx.sql
 
 ## 開發新收集器
 
-照 [`.claude/CLAUDE.md`](.claude/CLAUDE.md) 「新增 Collector 的必要步驟」走（10 步、跨 3 repo）。
-
-關鍵步驟摘要：
-
-1. `gis-platform/migrations/NNN_xxx.sql` 建表
-2. `collectors/xxx.py` 寫 collector（繼承 BaseCollector）
-3. `collectors/registry.py` 加 entry
-4. `config.py` 的 `_COLLECTOR_TOGGLES` 加一筆
-5. `storage/supabase_tables.py` 加 `TABLE_MAP[xxx]`
-6. `storage/supabase_writer.py` 加 `_transform_xxx`
-7. **`config/cross_layer_map.yaml` 加 entry**（漏寫日報會漏報）— 可跑 `python3 scripts/sync_cross_layer_map.py` 自動從 config + TABLE_MAP 回填缺的 entry（再人工複核 TODO 欄位）；`--check` 會擋 drift，`tests/test_cross_layer_sync.py` 已納入測試
-8. **`config/realtime_tables.yaml` 加表條目**（漏寫 RPC 撈不到）
-9. `gis-platform/docs/data-inventory.md` 更新清冊（含部署位置欄）
-10. `taipei-gis-analytics/docs/data-sources.md` 更新
-
-需要 HiCloud VM 出口：步驟 4 預設 `enabled=False`、步驟 7 `deployment: hicloud_vm`，並補 `external/<name>_vm/`。
+照 [`docs/handbook/new-collector.md`](docs/handbook/new-collector.md) 走：設計前 12 題 → 跨 repo 上線步驟（gis-platform 建表與保留期、本 repo 接線、S3 lifecycle、analytics 清冊）→ 驗收「證明它真的在跑」。需要台灣 IP 的 collector 也在同一份的「VM 分支」。
 
 ---
 
@@ -308,19 +292,19 @@ curl -H "X-API-Key: $API_KEY" "https://<your-app>.zeabur.app/api/data/youbike?da
 
 | 文件 | 用途 |
 |---|---|
-| [`docs/MONITORING.md`](docs/MONITORING.md) | ⭐ 日報架構 / yaml 維護 / 災難復原 |
+| [`docs/handbook/README.md`](docs/handbook/README.md) | ⭐ 手冊入口：讀者路徑、各檔用途、維護規則 |
+| [`docs/handbook/operations.md`](docs/handbook/operations.md) | ⭐ 監控、日報、健康判讀、營運 |
 | [`docs/EXTERNAL_COLLECTORS.md`](docs/EXTERNAL_COLLECTORS.md) | ⭐ HiCloud VM pattern + 新增 SOP |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | scheduler + storage 設計 |
+| [`docs/handbook/architecture.md`](docs/handbook/architecture.md) | scheduler + storage 設計 |
 | [`docs/API.md`](docs/API.md) | HTTP API 規格 |
 | [`docs/AWS_INVENTORY.md`](docs/AWS_INVENTORY.md) | S3 bucket / lifecycle / 用量 |
 | [`docs/S3_SETUP.md`](docs/S3_SETUP.md) | S3 設定步驟 |
-| [`docs/TDX_RATE_LIMITING.md`](docs/TDX_RATE_LIMITING.md) | TDX 全域節流器設計 |
-| [`docs/BUS_NIGHT_PAUSE.md`](docs/BUS_NIGHT_PAUSE.md) | bus 夜間策略分析 |
+| [`docs/handbook/sources/tdx.md`](docs/handbook/sources/tdx.md) | TDX 節流、401／429、夜間暫停 |
 | [`docs/sql/`](docs/sql/) | 預聚合 matview RPC |
 | [`docs/_archive/`](docs/_archive/) | 已完成計畫 / 歷史研究 |
-| [`.claude/CLAUDE.md`](.claude/CLAUDE.md) | 開發 SOP（新增 collector 10 步） |
+| [`.claude/CLAUDE.md`](.claude/CLAUDE.md) | agent 硬規則與路由（SOP 在 handbook） |
 | [`.claude/principles.md`](.claude/principles.md) | 程式碼慣例 |
-| [`.claude/pitfalls/`](.claude/pitfalls/) | 踩坑紀錄 |
+| [`docs/handbook/pitfalls.md`](docs/handbook/pitfalls.md) | 踩坑索引（長文在 `.claude/pitfalls/`） |
 
 ---
 

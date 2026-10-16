@@ -1,7 +1,7 @@
 # JMA 海洋・環境網格（C8＋附加）— collector `jma_ocean_env`
 
 依據：ADR-0021（G 型、T0–T3）、`docs/JMA_RASTER_CONTRACT.md`、analytics `docs/topic-research/japan_opendata/jma-collectors-plan.md`（C8）。
-狀態：2026-10-12 功能完成、單元測試與本機實打通過、真實 S3 smoke 通過；**未 push、未部署、Zeabur 未設 env**。
+狀態：2026-10-12 起 production 啟用（`config/cross_layer_map.yaml` 標 enabled）。收集方式摘要見 [handbook/sources/jma-global.md#jma_ocean_env](handbook/sources/jma-global.md#jma_ocean_env)。（原狀態行「未 push、未部署」是 2026-10-12 實作當下的紀錄，已過時。）
 
 ## 設計選擇
 

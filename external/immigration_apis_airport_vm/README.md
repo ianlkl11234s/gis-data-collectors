@@ -1,5 +1,7 @@
 # immigration_apis_airport on HiCloud VM
 
+> VM 位址與登入帳號不放在公開 repo：文中的 `<VM_HOST>`、`<帳號>` 請見私人筆記。
+
 > `immigration_apis_airport` collector 不在 Zeabur 跑、而是在中華電信 HiCloud 上一台 VM 跑的特殊版本。
 > **完整 pattern 與動機請看 [`docs/EXTERNAL_COLLECTORS.md`](../../docs/EXTERNAL_COLLECTORS.md)。**
 
@@ -18,7 +20,7 @@
 
 | 項目 | 值 |
 |---|---|
-| VM | 共用 HiCloud VM `210.61.15.74`（與 ship_ais / waste_positions 同台） |
+| VM | 共用 HiCloud VM `<VM_HOST>`（與 ship_ais / waste_positions 同台） |
 | App dir | `/opt/immigration-apis-airport/` |
 | Data dir | `/var/lib/immigration-apis-airport/data/` |
 | Logs | `/var/log/immigration-apis-airport/` |
@@ -59,10 +61,10 @@ external/immigration_apis_airport_vm/
 
 ```bash
 # 1. SCP 6 個檔到 /tmp/
-scp external/immigration_apis_airport_vm/*.{py,sh} ubuntu@210.61.15.74:/tmp/
+scp external/immigration_apis_airport_vm/*.{py,sh} <帳號>@<VM_HOST>:/tmp/
 
 # 2. SSH 進去
-ssh ubuntu@210.61.15.74
+ssh <帳號>@<VM_HOST>
 
 # 3. 跑安裝（root or sudo）
 sudo bash /tmp/setup_vm.sh

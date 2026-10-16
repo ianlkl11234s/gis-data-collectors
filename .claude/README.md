@@ -8,7 +8,7 @@
 ```
 .claude/
 ├── README.md              # 本檔案，索引
-├── principles.md          # 專案運作原則 / 慣例
+├── principles.md          # 協作慣例（收集原則已搬到 docs/handbook/principles.md）
 └── pitfalls/              # 過往踩過的坑（按日期 + 主題命名）
     └── YYYY-MM-DD-<主題>.md
 ```
@@ -16,16 +16,15 @@
 ## 文件清單
 
 ### 原則 & 慣例
-- [principles.md](principles.md) — 專案運作原則、開發 / 部署 / 資料處理慣例
+- [docs/handbook/principles.md](../docs/handbook/principles.md) — 收集原則正本（固定編號、附出處）
+- [principles.md](principles.md) — Git、開發環境、與 Claude 協作慣例
 
 ### Pitfalls（踩坑紀錄）
 
-| 日期 | 主題 | 摘要 |
-|------|------|------|
-| 2026-04-07 | [Supabase 寫入 +8h 時區偏移](pitfalls/2026-04-07-timezone-bug.md) | `datetime.now()` naive 導致全部時間戳偏移 8 小時，發現後從 S3 全量回補 30 天歷史資料 |
+索引統一放在 [docs/handbook/pitfalls.md](../docs/handbook/pitfalls.md)（日期｜一句教訓｜連結，含外部 repo 的相關事故）。長文仍放在本資料夾 `pitfalls/`。
 
 ## 怎麼使用
 
-- 新發現的 bug / 設計陷阱 → 在 `pitfalls/` 加新檔案，並更新本檔的清單
-- 新確立的開發原則 → 補進 `principles.md`
-- Claude Code 開啟此專案時會自動讀到 `CLAUDE.md`（在專案根目錄），可在 `CLAUDE.md` 引用此資料夾的文件
+- 新發現的 bug / 設計陷阱 → 在 `pitfalls/` 加新檔案，並在 [docs/handbook/pitfalls.md](../docs/handbook/pitfalls.md) 加一行
+- 新確立的收集原則 → 補進 [docs/handbook/principles.md](../docs/handbook/principles.md)（接在該類最後，不重排編號）
+- Claude Code 開啟此專案時會自動讀到 `.claude/CLAUDE.md`，可在其中引用此資料夾與手冊的文件

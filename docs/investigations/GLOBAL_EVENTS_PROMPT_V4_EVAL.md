@@ -2,7 +2,7 @@
 
 日期：2026-09-05 · 模型：`qwen/qwen3.7-flash`（temperature 0、`reasoning.effort=none`、`max_tokens` 8192，兩臂完全相同）
 輸入：S3 `global_events/handoff/batches/` 最近 3 個 batch，各取前 10 筆候選 = **30 個候選 / 3 個 chunk**
-腳本：[`scripts/eval_global_event_prompt_ab.py`](../scripts/eval_global_event_prompt_ab.py)
+腳本：[`scripts/eval_global_event_prompt_ab.py`](../../scripts/eval_global_event_prompt_ab.py)
 背景與建議編號：[`GLOBAL_EVENTS_GEO_QUALITY.md`](./GLOBAL_EVENTS_GEO_QUALITY.md) §4（B1–B9）、§3 A-3、§6
 
 **呼叫次數：15 次**（v3 基線 3 ＋ draft-1 3 ＋ draft-2 3 ＋ FINAL 3 ＋ FINAL-2 3），預算上限 15。

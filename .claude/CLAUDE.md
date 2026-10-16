@@ -1,168 +1,32 @@
 # Data Collectors - Claude 專案指引
 
-## 專案概述
+GIS 基礎設施的**持續收集層**：Zeabur（主力）與 HiCloud VM 上 24/7 收集，寫入共用 Supabase（gis-platform）與 S3。上游是 taipei-gis-analytics（探索、分流決策），表結構與保留期在 gis-platform。
 
-Zeabur 雲端持續資料收集服務，定期抓取各來源資料並寫入 Supabase。
+詳細知識都在 [docs/handbook/](../docs/handbook/README.md)；本檔只放硬規則與路由，不放 SOP 全文。
 
-## GIS 基礎設施三部曲（強綁定）
+## 硬規則
 
-本專案是 GIS 基礎設施的**持續收集層**，與另外兩個 repo 緊密連動：
+1. **新增 collector 一律照 [handbook/new-collector.md](../docs/handbook/new-collector.md) 全部步驟走**：跨 repo 多步是刻意設計，不算過度流程；漏一步就斷鏈且多半默默漏報。
+2. 新 collector 在 `_COLLECTOR_TOGGLES` **預設 `enabled=False`**；跑在 HiCloud VM 的 collector，Zeabur 上對應 `*_ENABLED` **一律 `false`**（雙跑會重複寫入）。
+3. **保留期只在 `metadata.retention_policies` 登記一列**（gis-platform mig 282 起），不要改清理函式、不要找「硬編碼清單」。天數不寫進文件，去註冊表或 migration 查。
+4. 新表建在 `live`，**同一支 migration 就 ENABLE RLS**＋anon／authenticated SELECT policy（範本 gis-platform `418_funeral_enable_rls.sql`）。
+5. 走 Supavisor transaction pool（6543）**禁止 session 級 SET**（含 `set_session`），只用交易內 `SET LOCAL`。
+6. 寫 DB 的時間一律 tz-aware；缺值存 NULL，不可當 0。
+7. 要加唯一索引去重時，**先部署 collector 的冪等寫入，再建唯一索引**。
+8. 動到 S3 storage class／lifecycle／prefix 後，**同步更新 [docs/AWS_INVENTORY.md](../docs/AWS_INVENTORY.md)**；新 collector 要補 `archive-deep-270d:{name}`（整份覆寫，不可只送新規則）。
+9. 本 repo 是 **PUBLIC**：不寫金鑰值、連線字串、VM 位址與登入帳號（寫 `<VM_HOST>`）、個人 email；Zeabur CLI 輸出祕密值時導向 `/dev/null`。
+10. 程式行為以程式碼為準（例：寫入層是連線池 `storage/db.py`；scheduler pool 大小見 `main.py` 的 `run_collectors()`），文件與程式不一致時改文件。
 
-```
-taipei-gis-analytics  →  gis-platform  ←  data-collectors
-     探索 & 開發          儲存 & 呈現       持續收集（本專案）
-```
+## 做 X 先讀
 
-| Repo | 路徑 | 職責 |
-|------|------|------|
-| **taipei-gis-analytics** | `../taipei-gis-analytics/` | 探索開放資料、開發清洗 pipeline |
-| **gis-platform** | `../gis-platform/` | Supabase 資料庫 + 前端 + 資料清冊 |
-| **data-collectors**（本專案） | `.` | Zeabur 雲端持續收集，寫入 Supabase |
-
-### 資料清冊（唯一真相來源）
-
-**`../gis-platform/docs/data-inventory.md`** 是所有資料來源的唯一清冊。
-
-### 新增 Collector 的必要步驟（跨 repo）
-
-SSOT 為 `../taipei-gis-analytics/docs/DATA_LIFECYCLE.md` §5.2，本表為 data-collectors 側細化，兩邊同步維護。
-
-重構後（registry + config dataclass + TABLE_MAP 拆出），每次新增需改以下檔案：
-
-| 步驟 | Repo | 檔案 | 說明 |
-|------|------|------|------|
-| 1 | gis-platform | `migrations/NNN_{name}.sql` | 建 Supabase 表 **＋ retention**（分區表：加入 `cleanup_expired_partitions()` 硬編碼清單；非分區表：建 `cleanup_{name}` pg_cron）— 漏設會讓磁碟無限長且只擴不縮 |
-| 2 | data-collectors | `collectors/{name}.py` | Collector 實作（繼承 BaseCollector） |
-| 3 | data-collectors | `collectors/registry.py` | `COLLECTOR_REGISTRY` 加一筆（class + display_name + config_prefix + required_env） |
-| 4 | data-collectors | `config.py` | `_COLLECTOR_TOGGLES` 加一筆 (prefix, enabled_default, interval_default)；如需額外變數（CITIES/AIRPORTS/API Key）另外宣告 |
-| 5 | data-collectors | `storage/supabase_tables.py` | 若需寫 Supabase，加一筆 `TABLE_MAP[name]` |
-| 6 | data-collectors | `storage/supabase_writer.py` | 若需寫 Supabase，加 `_transform_{name}` 並註冊到 `TRANSFORMERS` |
-| 7 | data-collectors | `config/cross_layer_map.yaml` | **新增 collector 條目**（enabled / deployment / supabase_tables / s3_prefixes / critical）— 漏寫日報會漏報 |
-| 8 | data-collectors | `config/realtime_tables.yaml` | **新增所有 Supabase 表條目**（每張 history / current / multi-table 都要列）— 漏寫 RPC 撈不到 |
-| 9 | gis-platform | `docs/data-inventory.md` | 更新資料清冊（含 `部署位置` 欄：Zeabur / HiCloud VM / Disabled） |
-| 10 | taipei-gis-analytics | `docs/data-sources.md` | 更新 pipeline 狀態 |
-| 11 | gis-platform | `docs/data-safety-inventory.md` | 加進動態/靜態表清單＋S3 archive 起始日＋健康度 |
-| 12 | data-collectors | `config/backup_manifest.yaml` | 加進 `archive_py_covered` |
-
-> 步驟 7 + 8 是監控系統（daily_report）的真相來源，漏寫不會立刻爆炸但會默默漏報，加新 collector 時請務必同步。
-
-> 若新 collector 因目標 API 對國際雲商 IP 封鎖需走 HiCloud VM：
-> - 步驟 4 的 `_COLLECTOR_TOGGLES` 預設 `enabled=False`
-> - 步驟 7 的 `deployment: hicloud_vm`
-> - 額外加 `external/{name}_vm/` 鏡像實作（見 [docs/EXTERNAL_COLLECTORS.md](../docs/EXTERNAL_COLLECTORS.md) SOP）
-
-Registry + toggle list 自動處理：
-- `config.XXX_ENABLED` / `config.XXX_INTERVAL` 變數（來自 `_COLLECTOR_TOGGLES`）
-- `collectors/__init__.py` 的 import / `__all__`（來自 `COLLECTOR_REGISTRY`）
-- `main.py` 的啟動迴圈（走 registry）
-
-**Transform 邏輯仍在 `storage/supabase_writer.py` 內**（下放到 collector 尚未實作）。
-
-**漏掉任何一步都會造成斷鏈。**
-
----
-
-## 常見踩雷（新增 collector 前必讀）
-
-- **政府憑證缺 SKI** → requests 用 `verify=False`（NHI ER / 台電核安 / IoW USWG 都踩過）
-- **二進位資料走 base64 轉接 Supabase**（CWA imagery 模式）— 不要直接 bytea
-- **`cleanup_expired_partitions()` 是硬編碼清單，不會自動掃新分區表**（migration 220 錯誤假設踩過）— 新分區表沒加進清單 = 永遠不清理，2026-07 因此 7 張表累到 DB 52GB 產生磁碟費。用 `select * from metadata.check_retention_coverage()` 查漏網
-- **新表必開 RLS**：建在 API 暴露 schema（live/reference/spatial…）的表，同一支 migration 就要 ENABLE RLS + anon/authenticated SELECT policy（範本 gis-platform `418_funeral_enable_rls.sql`）；reference/spatial 預設自動 grant anon 讀，漏開會收 Supabase CRITICAL `rls_disabled_in_public` 告警（2026-09-27 踩過）
-- **schema 現況**：表已全量在 `live` schema（ADR-0010，2026-07-24），新表建 live、RPC 建 public；歷程見 ADR-0009/0010
-- **走 Supavisor transaction pool（6543）絕不可下 session 級 SET**（含 psycopg2 set_session）：會殘留在共享 backend 毒到其他 client（2026-07-24 collector 唯讀爆炸事故）；只讀查詢用 autocommit 或 SET LOCAL，長 session 走 5432 — 詳見 `pitfalls/2026-07-24-supavisor-session-set-poisoning.md`
-
-事故與踩雷詳情：
-- 本地 [.claude/pitfalls/](pitfalls/)——含 disk IO cron spiral（高頻聚合鐵則：單次執行時間 > 間隔 1/3 必降頻或增量化）、分區表 pruning、required_env silent skip
-- 架構級決策 `.gis-agent-system/decisions/`——ADR-0009 高頻聚合三鐵則、ADR-0010 live schema 遷移
-- TDX / Zeabur 類（TDXSession、env 改後要 restart、出口 IP 被政府 WAF 擋）→ 全域記憶與 [docs/TDX_RATE_LIMITING.md](../docs/TDX_RATE_LIMITING.md)
-
----
-
-## 架構
-
-### Collector 模式
-
-```python
-class MyCollector(BaseCollector):
-    name = "my_collector"
-    interval_minutes = config.MY_INTERVAL
-
-    def collect(self) -> dict:
-        # 抓資料
-        return {'data': [...], 'count': N}
-```
-
-### 排程模型（Phase 1 後統一）
-
-所有 collector 都交由 `CollectorScheduler`（`scheduler.py`）以 `ThreadPoolExecutor` 平行執行：
-
-- **`schedule` 套件只負責觸發**（cron-like 時間排程）
-- **CollectorScheduler 負責執行**：每個 collector 獨立線程、不互相阻塞
-- **Skip-if-running**：同一 collector 上一輪還沒跑完，下個 tick 自動 skip 並記錄 warning
-- **Pool 大小**：`max(10, collector 數量 + 2)`
-
-舊的「前景主 thread + 背景 daemon thread」雙軌模型、以及 `BACKGROUND_COLLECTORS` 集合已淘汰。耗時的 collector（如 `flight_fr24`, `foursquare_poi`, `satellite`, `cwa_satellite`）會在 pool 內自己一條 thread 跑完，不影響其他人。
-
-### Supabase 寫入流程
-
-```
-collect() → BaseCollector.run() → supabase_writer.write()
-                                    ├─ _transform_{name}()                          → records
-                                    │    （在 SupabaseWriter class 內，TRANSFORMERS dispatch）
-                                    └─ _write_to_db()                               → INSERT/UPSERT
-                                         ├─ TABLE_MAP['history']  → 歷史分區表
-                                         └─ TABLE_MAP['current']  → 最新狀態表
-                                           （TABLE_MAP 在 storage/supabase_tables.py）
-```
-
-### 特殊 TABLE_MAP 模式
-
-| 模式 | 設定 | 範例 |
-|------|------|------|
-| 一般（history + current） | `history` + `current` + `current_key` | youbike, bus |
-| 只有 history（upsert） | `history` + `upsert_key` | earthquake, foursquare_poi |
-| Reference 表 | `is_reference: True` | rail_timetable |
-| 多表 | `is_multi_table: True` | freeway_vd, flight_fr24 |
-
----
-
-## 環境
-
-- **部署**：Zeabur 長駐容器（Python 3.11-slim）
-- **連線**：Supavisor transaction pool（port 6543）
-- **設定**：環境變數（Zeabur 平台 or `.env`）
-- **共用 Supabase**：`utcmcikhvxnohbxchbrs`（同 gis-platform）
-- **HiCloud VM 備援**：部分 collector 因目標 API 對國際雲商 IP 封鎖（白名單只放台灣 ISP AS），改在中華電信 HiCloud VM 跑；單檔鏡像版住在 [`external/`](../external/)，完整 pattern 與 SOP 見 [`docs/EXTERNAL_COLLECTORS.md`](../docs/EXTERNAL_COLLECTORS.md)。目前外部清單：`ship_ais`（航港局 AIS）。Zeabur 上對應 `*_ENABLED` 一律設 `false`。
-
----
-
-## 開發注意事項
-
-0. **新增 collector 的多步驟 SOP 是刻意設計** — 12 步全跑、不要嫌多，跨檔修改是本工作型態的必要複雜度，不屬過度流程
-1. **新 collector 預設 ENABLED=false**，避免部署後立即啟動
-2. **排程**：見上方「排程模型」；耗時 collector 記得設 `COLLECT_TIMEOUT`（只是觀察值，不強制中斷）
-3. **SupabaseWriter 是單例**（所有 collector 共用、`RLock` 保護），DB 寫入失敗會暫存 `data/buffer/` 每 5 分鐘重試
-4. **本地測試**：見 [.claude/principles.md](principles.md)
-5. **AWS 變動同步**：動到 S3 storage class / lifecycle / prefix 增刪後，**務必更新 [docs/AWS_INVENTORY.md](../docs/AWS_INVENTORY.md)**（避免日後忘記哪些資料在哪個 tier、為何而存）
-
----
-
-## 上線前驗收四連
-
-對齊目標導向驗證原則 — 新 collector 上線前四件事都要綠：
-
-1. **本地跑一輪**：`python3 main.py` 不報錯，看到 collector 被 schedule + collect 成功 log
-2. **DB 有新 row**：`select count(*) from {table} where collected_at > now() - interval '1h'` > 0
-3. **日報列入**：`daily_report` 排程列出該 collector（步驟 7 `cross_layer_map.yaml` 寫對才會生效）（daily_report 機制見 [docs/MONITORING.md](../docs/MONITORING.md)）
-4. **Retention 有覆蓋**：`select * from metadata.check_retention_coverage()` 沒列出新表（分區表要進 `cleanup_expired_partitions()` 清單、非分區表要有 cleanup pg_cron）
-
-任何一條沒綠都算未上線。
-
----
-
-## 相關文件
-
-- [.claude/principles.md](principles.md) — 開發慣例
-- [.claude/pitfalls/](pitfalls/) — 踩坑紀錄
-- [../gis-platform/docs/data-inventory.md](../../gis-platform/docs/data-inventory.md) — 資料清冊
-- [docs/AWS_INVENTORY.md](../docs/AWS_INVENTORY.md) — AWS S3 用量清冊（改 AWS 後必更新）
+| 要做的事 | 先讀 |
+|---|---|
+| 新增或改動 collector | [handbook/new-collector.md](../docs/handbook/new-collector.md)、對應的 `handbook/sources/*.md` |
+| 了解架構、寫入流程、TABLE_MAP 模式 | [handbook/architecture.md](../docs/handbook/architecture.md) |
+| 保留期、S3／R2、歸檔、備份 | [handbook/data-lifecycle.md](../docs/handbook/data-lifecycle.md) |
+| collector 出問題、監控、量測 Disk IO | [handbook/operations.md](../docs/handbook/operations.md)、[handbook/pitfalls.md](../docs/handbook/pitfalls.md) |
+| 判斷某個寫法對不對 | [handbook/principles.md](../docs/handbook/principles.md) |
+| 改 HiCloud VM 上的 collector | [docs/EXTERNAL_COLLECTORS.md](../docs/EXTERNAL_COLLECTORS.md)、`external/{name}_vm/README.md` |
+| 想知道為什麼這樣設計 | [handbook/history.md](../docs/handbook/history.md) |
+| 改文件、踩到新雷 | [handbook/maintenance.md](../docs/handbook/maintenance.md) |
+| 本地測試、Git 慣例 | [.claude/principles.md](principles.md) |

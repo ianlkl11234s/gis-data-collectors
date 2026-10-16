@@ -3,6 +3,7 @@
 > 2026-10-12 實作。契約：taipei-gis-analytics `docs/topic-research/japan_opendata/jma-collectors-plan.md`、
 > `docs/api-platforms/{jma,env_jp_wbgt}/`。DB：gis-platform migration 440（分支 `feat/jma-c457-tables`，**未 apply**）。
 > 三個 collector 預設 disabled；migration apply 後設 Zeabur env `*_ENABLED=true` 並 restart 才生效。
+> 狀態更新：2026-10-12 起三個 collector 在 production 啟用（`config/cross_layer_map.yaml` 標 enabled），上文「未 apply」是實作當下的紀錄。摘要見 [handbook/sources/jma-global.md](handbook/sources/jma-global.md)。
 
 | collector | prefix | 預設間隔 | 寫入 | DB 保留 |
 |---|---|---|---|---|

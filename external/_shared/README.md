@@ -1,5 +1,7 @@
 # external/_shared — HiCloud VM 共用工具
 
+> VM 位址與登入帳號不放在公開 repo：文中的 `<VM_HOST>`、`<帳號>` 請見私人筆記。
+
 放跨 collector 共用的 VM 端工具。
 
 ## 目前內容
@@ -37,10 +39,10 @@
 ```bash
 # 1. 從本機 Mac scp 過去
 scp external/_shared/health_report.py external/_shared/setup_health.sh \
-    root@210.61.15.74:/tmp/
+    <帳號>@<VM_HOST>:/tmp/
 
 # 2. 在 VM 上安裝
-ssh root@210.61.15.74
+ssh <帳號>@<VM_HOST>
 bash /tmp/setup_health.sh
 
 # 3. 手動跑一次驗證
