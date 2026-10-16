@@ -554,7 +554,7 @@ wra_drought_alert:
 iot_wra:
   enabled: true
   deployment: zeabur
-  expected_interval_min: 60
+  expected_interval_min: 10  # 正式 env IOT_WRA_INTERVAL=10（repo 預設 60）；2026-10-16 依 collected_at 每 10 分一批校正
   supabase_tables: [live.iot_wra_measurements]
   s3_prefixes:
     - {prefix: iot_wra/archives/, expected_daily: false}

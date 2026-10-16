@@ -54,7 +54,7 @@
 | `groundwater_level` | 水利／環境 | 1 小時 | Zeabur | live.groundwater_level_readings | history | 見 retention_policies | [sources/water-env](sources/water-env.md#groundwater_level) |  |
 | `water_reservoir_daily_ops` | 水利／環境 | 1 日 | Zeabur | live.reservoir_daily_ops | history | 見 retention_policies | [sources/water-env](sources/water-env.md#water_reservoir_daily_ops) | 官方 09:30 後更新，排程晚於資料源發布即可能延遲 |
 | `wra_drought_alert` | 水利／環境 | 1 日 | Zeabur | public.drought_alert_history<br>public.drought_alert_current | current＋history | 見 retention_policies | [sources/water-env](sources/water-env.md#wra_drought_alert) | 監控門檻 30 日；current 表列 realtime_tables（fetched_at），history 由 current 代監控（測試豁免） |
-| `iot_wra` | 水利／環境 | 1 小時 | Zeabur | live.iot_wra_measurements | history | 見 retention_policies | [sources/water-env](sources/water-env.md#iot_wra) |  |
+| `iot_wra` | 水利／環境 | 1 小時 | Zeabur | live.iot_wra_measurements | history | 見 retention_policies | [sources/water-env](sources/water-env.md#iot_wra) | 監控門檻 10 分 |
 | `uswg` | 水利／環境 | 10 分 | Zeabur | live.uswg_measurements | history | 見 retention_policies | [sources/water-env](sources/water-env.md#uswg) | 需 IOW_CLIENT_ID、IOW_CLIENT_SECRET |
 | `precipitation_raster` | 水利／環境 | 1 小時 | Zeabur | live.precipitation_raster_frames | history | 見 retention_policies | [sources/water-env](sources/water-env.md#precipitation_raster) | 需 IOW_CLIENT_ID、IOW_CLIENT_SECRET；上游柵格發布常延遲 1-2h → interval 放寬 120 避免 STALE 誤報（collector 每 60min 跑） |
 | `nuclear_radiation` | 水利／環境 | 15 分 | Zeabur | live.nuclear_radiation_measurements<br>live.nuclear_radiation_stations | history＋reference | 見 retention_policies | [sources/water-env](sources/water-env.md#nuclear_radiation) |  |

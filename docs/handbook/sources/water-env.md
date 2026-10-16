@@ -40,7 +40,7 @@
 ### iot_wra
 水利署 IoT 水文感測（河川、累計流量、閘門、沖刷、堤防、揚塵 6 類；地下水已停）。
 
-- 頻率／位置：Zeabur。**production 實際每 10 分鐘一輪**（`IOT_WRA_INTERVAL`，見 `collectors/iot_wra.py` class docstring），但 `config.py` 的 repo 預設和模組開頭說明都寫 60 分／每小時，清冊監控門檻也是 60。**待修**：把 repo 預設、說明與清冊對齊實際值，並確認上游更新頻率（模組說明寫「每小時更新」）。
+- 頻率／位置：Zeabur，**每 10 分鐘一輪**：正式 env `IOT_WRA_INTERVAL` 覆寫為 10，`config.py` 的 repo 預設仍是 60（只在 env 未設時生效）。2026-10-16 唯讀查 `live.iot_wra_measurements` 的 `collected_at`，每 10 分一批、每批約 2,900 筆新讀值，所以上游也至少每 10 分更新。清冊監控門檻（`cross_layer_map.yaml` 的 `expected_interval_min`）已同步改為 10。
 - 寫入：`live.iot_wra_measurements`（`ON CONFLICT DO NOTHING`）；另 upsert `public.iot_wra_stations`（沒變不寫，#147）。保留期以 `metadata.retention_policies` 為準（gis-platform mig 412 曾調整，mini-taiwan-pulse DATA_SCOPE 的舊天數已過時）。
 - 已知坑：Swagger 寫要 Bearer，實際端點免授權。主鍵欄序曾讓每次寫入散落到大量索引頁（每天讀約 5.7 GB），gis-platform 第三輪改成以時間開頭，見 gis-platform（private）`docs/research/2026-10-16-disk-io-round3.md`。
 

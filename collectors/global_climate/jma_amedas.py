@@ -7,7 +7,7 @@
 
 寫入（gis-platform migration 435，is_multi_table）：
   live.jma_amedas_current       PK station_id，每輪全量 upsert（updated_at=now()）
-  live.jma_amedas_observations  PK (station_id, observed_at)，只寫整點（分鐘=00），DO NOTHING；保留 90 天
+  live.jma_amedas_observations  PK (station_id, observed_at)，只寫整點（分鐘=00），DO NOTHING；保留期見 metadata.retention_policies（gis-platform mig 436）
 
 缺值語意（docs/api-platforms/jma/gotchas.md）：
   - 值為 [值, 品質碼]；品質碼 None = 缺值 → NULL（不補 0）

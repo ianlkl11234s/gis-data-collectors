@@ -73,7 +73,7 @@ AMeDAS 約 1,286 站 10 分觀測（bosai 非公式 JSON）。
 
 - 頻率／位置：每 10 分鐘，Zeabur。`COLLECT_TIMEOUT` 600 秒。
 - 寫入：`live.jma_amedas_current`（全量 upsert）、`live.jma_amedas_observations`（只寫整點）。另外每個 JST 日結一份每站×10 分的 Parquet 上 S3 `weather-obs/jma/amedas/YYYY/MM/YYYYMMDD.parquet`（`put_verified`；缺的時刻向上游補抓，上游可回溯約 7 天；`JAPAN_JMA_AMEDAS_DAILY_PARQUET=false` 可關）。
-- 已知坑：`config.py` 註解與舊文件寫 observations 保留 90 天，但 gis-platform migration 436 已收緊。**以 `retention_policies` 為準**，註解**待修**。本機 JSON 目錄用台北日期，JST 日 D 跨兩個目錄。
+- 已知坑：舊註解曾寫 observations 保留 90 天，gis-platform migration 436 已收緊；註解已改成指向 `metadata.retention_policies`（2026-10-16），**以 `retention_policies` 為準**。本機 JSON 目錄用台北日期，JST 日 D 跨兩個目錄。
 
 ### jma_warnings
 JMA 警報・注意報（R8 `map.json`）。

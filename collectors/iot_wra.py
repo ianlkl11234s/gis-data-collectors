@@ -1,7 +1,7 @@
 """
 水利署 IoT 水文感測收集器
 
-資料來源：經濟部水利署 IoT 水文感測平台（每小時更新）
+資料來源：經濟部水利署 IoT 水文感測平台（上游約每 10 分鐘更新；2026-10-16 實測每輪約 2,900 筆新讀值）
   https://iot.wra.gov.tw/
 
 涵蓋 7 種站點類型：
@@ -76,7 +76,7 @@ def _parse_dt(s: str | None) -> Optional[datetime]:
 
 
 class IotWraCollector(BaseCollector):
-    """水利署 IoT 水文感測收集器（間隔由 IOT_WRA_INTERVAL 決定，正式環境為每 10 分鐘；config 預設 60）"""
+    """水利署 IoT 水文感測收集器（間隔由 IOT_WRA_INTERVAL 決定：repo 預設 60，正式環境 env 覆寫為 10）"""
 
     name = "iot_wra"
     interval_minutes = config.IOT_WRA_INTERVAL
