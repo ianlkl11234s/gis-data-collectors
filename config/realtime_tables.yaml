@@ -164,7 +164,8 @@ tables:
   - {schema: live, table: yt_live_current,            time_column: updated_at,   owner_collector: yt_live_video_resolver, expected_interval_min: 5, critical: false}
   - {schema: live, table: precipitation_raster_frames, time_column: collected_at, owner_collector: precipitation_raster, expected_interval_min: 120, critical: false, notes: 上游柵格發布常延遲 1-2h，interval 放寬 120}
   - {schema: live, table: earthquakes_global,         time_column: collected_at, owner_collector: global_climate_usgs_earthquake, expected_interval_min: 60, critical: false}
-  - {schema: live, table: typhoon_positions,          time_column: collected_at, owner_collector: global_climate_jma_typhoon, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（jma/jtwc）；事件驅動，颱風季外 DEAD 屬預期}
+  - {schema: live, table: typhoon_positions,          time_column: collected_at, owner_collector: global_climate_jma_typhoon, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（jma/jtwc/cwa，cwa 自 mig 476）；事件驅動，颱風季外 DEAD 屬預期}
+  - {schema: live, table: typhoon_agency_forecasts,   time_column: collected_at, owner_collector: global_climate_ncdr_typhoon_routes, expected_interval_min: 1440, critical: false, notes: NCDR 五家颱風預報（mig 476）；事件驅動，同版重抓 DO NOTHING 不更新 collected_at，無颱風時 DEAD 屬預期}
   - {schema: live, table: global_climate_grids,       time_column: collected_at, owner_collector: global_climate_cmems, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（cmems/cams/noaa_gfs），日級模型}
   - {schema: live, table: border_airport_snapshot,    time_column: collected_at, owner_collector: immigration_apis_airport, expected_interval_min: 60, critical: false, notes: 跑在 HiCloud VM}
   - {schema: live, table: lightning_events,           time_column: collected_at, owner_collector: lightning_events, expected_interval_min: 1440, critical: false, notes: 事件驅動（無落雷即無資料），比照 earthquake_events 放寬}

@@ -379,6 +379,8 @@ _COLLECTOR_TOGGLES = (
     ('GLOBAL_CLIMATE_USGS_EARTHQUAKE', False, 60),  # USGS hourly feed M≥任意（無認證、GeoJSON），全球地震寫 live.earthquakes_global；台灣周邊 1y M≥4.0 約 172 筆
     ('GLOBAL_CLIMATE_JMA_TYPHOON',     False, 180), # JMA RSMC Tokyo 颱風（無認證、JSON）；targetTc.json 空就 idle；展開為 typhoon_positions row source='jma'
     ('GLOBAL_CLIMATE_JTWC',            False, 360), # JTWC 颱風（無認證、RSS+ATCF 文字）；同 typhoon_positions source='jtwc'
+    ('GLOBAL_CLIMATE_CWA_TYPHOON',     False, 60),  # 氣象署 W-C0034-005 颱風路徑＋7/10 級風圈＋70% 機率圈（需 CWA_API_KEY）；typhoon_positions source='cwa'（mig 476）；無颱風 idle
+    ('GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES', False, 30),  # NCDR 各國颱風預測 KML（JTWC/JMA/NMC/CWA/KMA，免金鑰）→ live.typhoon_agency_forecasts（mig 476）；無颱風 idle
     ('GLOBAL_CLIMATE_CMEMS',           False, 1440), # CMEMS 海洋模式（CMEMS account 必設 USERNAME/_PASSWORD）；binary 走 S3 + Supabase digest
     ('GLOBAL_CLIMATE_CAMS',            False, 1440), # CAMS 大氣（CAMS_API_KEY 必設 + dataset licence accept）；排隊 5-30 min
     ('GLOBAL_CLIMATE_NOAA_GFS',        False, 1440), # NOAA GFS 全球風場（無認證 AWS Open Data）；HTTP Range pull

@@ -120,10 +120,20 @@ JMA 雷ナウキャスト LIDEN 5 分幀。
 USGS 全球地震（`all_day.geojson`，免認證）。每小時，Zeabur；寫 `live.earthquakes_global`。地名可能合法含西里爾字母。
 
 ### global_climate_jma_typhoon
-JMA RSMC Tokyo 颱風（免認證 JSON）。每 3 小時，Zeabur；`targetTc.json` 為空時不寫；寫 `live.typhoon_positions`（`source='jma'`），與 JTWC 共用表。事件驅動，清冊門檻放寬到 1 日。
+JMA RSMC Tokyo 颱風（免認證 JSON）。每 3 小時，Zeabur；`targetTc.json` 為空時回 `status=no_active_storm`、不寫列；寫 `live.typhoon_positions`（`source='jma'`），與 JTWC／CWA 共用表。事件驅動，清冊門檻放寬到 1 日。位置與軌跡取 `forecast.json`，氣壓、風速、風圈、預報圓取 `specifications.json`（以 `advancedHours` 對齊；2026-10-17 前讀錯檔，數值欄全 NULL，歷史不回填）。預報段的 `stormWarning` 是暴風警戒域，只放 `wind_radii.storm_warning_area`，不進 `storm_radius_km`。非 404 的抓取錯誤一律記失敗，不當成沒颱風。
 
 ### global_climate_jtwc
 JTWC 颱風（RSS＋ATCF 文字，免認證）。每 6 小時，Zeabur；寫 `live.typhoon_positions`（`source='jtwc'`）。
+名稱取標題行「29W (CHAMPI) WARNING」的括號（全文第一個括號可能是別的系統）；DTG 只有日時，日差超過 15 天時退回上月或進下月（修正 valid_at 落在三週後的壞列）。
+
+### global_climate_cwa_typhoon
+氣象署 W-C0034-005 熱帶氣旋路徑（需 `CWA_API_KEY`）。每 60 分，Zeabur；寫 `live.typhoon_positions`（`source='cwa'`，gis-platform mig 476）。`storm_id`＝`cwa`＋年兩位＋`CwaTdNo`（例 `cwa2633`，不可用 `TC` 開頭）；`advisory_number`＝`InitialTime` 的分鐘 epoch。分析點每 6 小時、帶 7 級（15 m/s）／10 級（25 m/s）風圈與四象限，預報點（+6…+120h，`InitialTime`＋`ForecastHour`）只有單一半徑與 70% 機率圈；早期分析點沒有風圈（NULL）。風速是 10 分鐘平均 m/s，`max_wind_kt` 由 ×1.943844 換算，原值在 `max_wind_ms`。沒有颱風回 `status=no_active_storm`、不寫列；HTTP／JSON 錯誤一律記失敗。
+
+### global_climate_ncdr_typhoon_routes
+NCDR「各國颱風預測」KML（`satis.ncdr.nat.gov.tw/kml/multityroute.aspx`，免金鑰；入口 TYRoute.kml 只是 NetworkLink）。每 30 分，Zeabur；寫 `live.typhoon_agency_forecasts`（mig 476）。JTWC／JMA／NMC／CWA／KMA 每家 00–120h 6 點；KML 沒有颱風名稱與編號，配對在 view `public.typhoon_agency_forecasts` 事後做；發佈時間「MM/DD HH」沒有年份與時區，推定 +08、年份取最接近收集時間者。同一版重抓 DO NOTHING。上游沒有 CORS，前端不能直讀。
+
+### 颱風跨來源對應
+三家編號互不相同（JMA `TC2636`／國際 2630、JTWC `wp2926`、CWA TD33／TY29），以 `storm_key`＝「年＋英文名大寫去符號」對應（`collectors/global_climate/typhoon_common.py`，與 gis-platform `public.typhoon_normalize_storm_key()` 同規則）；TD 階段的序數名（TWENTYNINE）為 NULL。對應表 view `public.typhoon_storms`；接近度 RPC 去重優先序 JMA＞CWA＞JTWC。
 
 ### global_climate_cmems
 Copernicus Marine GLO12 海洋模式 subset。

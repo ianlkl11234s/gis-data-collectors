@@ -95,6 +95,8 @@ from .npa_traffic_accident_a1 import NpaTrafficAccidentA1Collector
 from .global_climate.usgs_earthquake import UsgsEarthquakeCollector
 from .global_climate.jma_typhoon import JmaTyphoonCollector
 from .global_climate.jtwc import JtwcCollector
+from .global_climate.cwa_typhoon import CwaTyphoonCollector
+from .global_climate.ncdr_typhoon_routes import NcdrTyphoonRoutesCollector
 from .global_climate.cmems import CmemsCollector
 from .global_climate.cams import CamsCollector
 from .global_climate.noaa_gfs import NoaaGfsCollector
@@ -221,6 +223,8 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(UsgsEarthquakeCollector, "USGS 全球地震 hourly 收集器", "GLOBAL_CLIMATE_USGS_EARTHQUAKE"),
     CollectorEntry(JmaTyphoonCollector, "JMA RSMC Tokyo 颱風收集器", "GLOBAL_CLIMATE_JMA_TYPHOON"),
     CollectorEntry(JtwcCollector, "JTWC 颱風 ATCF 收集器", "GLOBAL_CLIMATE_JTWC"),
+    CollectorEntry(CwaTyphoonCollector, "氣象署颱風路徑＋風圈收集器", "GLOBAL_CLIMATE_CWA_TYPHOON", ("CWA_API_KEY",)),
+    CollectorEntry(NcdrTyphoonRoutesCollector, "NCDR 各國颱風預報路徑收集器", "GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES"),
     CollectorEntry(CmemsCollector, "CMEMS 海洋模式收集器", "GLOBAL_CLIMATE_CMEMS",
                    ("COPERNICUSMARINE_SERVICE_USERNAME", "COPERNICUSMARINE_SERVICE_PASSWORD")),
     CollectorEntry(CamsCollector, "CAMS 大氣化學收集器", "GLOBAL_CLIMATE_CAMS", ("CAMS_API_KEY",)),

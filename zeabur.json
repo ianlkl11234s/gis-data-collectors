@@ -356,6 +356,22 @@
       "description": "CWA 紫外線收集間隔（分鐘）；上游每日一值",
       "default": "720"
     },
+    "GLOBAL_CLIMATE_CWA_TYPHOON_ENABLED": {
+      "description": "氣象署颱風路徑＋7/10 級風圈 W-C0034-005（需 CWA_API_KEY；gis-platform migration 476 先 apply）",
+      "default": "false"
+    },
+    "GLOBAL_CLIMATE_CWA_TYPHOON_INTERVAL": {
+      "description": "氣象署颱風收集間隔（分鐘）；無颱風時 idle 不寫列",
+      "default": "60"
+    },
+    "GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES_ENABLED": {
+      "description": "NCDR 各國颱風預測 KML 五家路徑（免金鑰；gis-platform migration 476 先 apply）",
+      "default": "false"
+    },
+    "GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES_INTERVAL": {
+      "description": "NCDR 颱風預報收集間隔（分鐘）；上游 KML refreshInterval 1201 秒，同版重抓 DO NOTHING",
+      "default": "30"
+    },
     "JAPAN_JMA_AMEDAS_ENABLED": {
       "description": "日本氣象廳 AMeDAS 約 1,286 站 10 分值（免金鑰；migration 435）；多實例只在一個實例設 true",
       "default": "false"
