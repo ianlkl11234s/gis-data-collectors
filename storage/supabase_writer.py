@@ -2242,6 +2242,33 @@ class SupabaseWriter:
                 'geom':                f'SRID=4326;POINT({lon} {lat})',
                 'raw_json':            r.get('raw_json'),
                 'collected_at':        ts.isoformat(),
+                # migration 476（缺值 NULL，不補 0）
+                'max_wind_ms':         r.get('max_wind_ms'),
+                'max_gust_ms':         r.get('max_gust_ms'),
+                'prob70_radius_km':    r.get('prob70_radius_km'),
+                'wind_radii':          r.get('wind_radii'),
+                'storm_key':           r.get('storm_key'),
+            })
+        return records
+
+    def _transform_global_climate_typhoon_agency_forecasts(self, result: dict, ts: datetime) -> list[dict]:
+        """NCDR 各國颱風預報點：補 geom WKT。"""
+        records: list[dict] = []
+        for r in result.get('data', []):
+            lon, lat = r.get('center_lon'), r.get('center_lat')
+            if lon is None or lat is None or not r.get('issued_at'):
+                continue
+            records.append({
+                'agency':       r.get('agency'),
+                'track_index':  r.get('track_index', 0),
+                'issued_at':    r.get('issued_at'),
+                'issued_label': r.get('issued_label'),
+                'lead_hour':    r.get('lead_hour'),
+                'valid_at':     r.get('valid_at'),
+                'center_lat':   lat,
+                'center_lon':   lon,
+                'geom':         f'SRID=4326;POINT({lon} {lat})',
+                'collected_at': ts.isoformat(),
             })
         return records
 
@@ -2611,6 +2638,8 @@ class SupabaseWriter:
         'jma_forecast': _transform_jma_forecast,
         'env_jp_wbgt': _transform_env_jp_wbgt,
         'global_climate_jtwc': _transform_global_climate_typhoon_positions,
+        'global_climate_cwa_typhoon': _transform_global_climate_typhoon_positions,
+        'global_climate_ncdr_typhoon_routes': _transform_global_climate_typhoon_agency_forecasts,
         'global_climate_cmems': _transform_global_climate_grids,
         'global_climate_cams': _transform_global_climate_grids,
         'global_climate_noaa_gfs': _transform_global_climate_grids,

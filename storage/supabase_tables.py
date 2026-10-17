@@ -572,6 +572,8 @@ TABLE_MAP = {
             'advisory_issued_at', 'name_local', 'name_en',
             'center_lat', 'center_lon', 'center_pressure_hpa', 'max_wind_kt',
             'gale_radius_km', 'storm_radius_km', 'geom', 'raw_json', 'collected_at',
+            # migration 476
+            'max_wind_ms', 'max_gust_ms', 'prob70_radius_km', 'wind_radii', 'storm_key',
         ],
         'upsert_key': 'storm_id,source,valid_at,point_type,advisory_number',
         'upsert_strategy': 'do_nothing',
@@ -585,8 +587,33 @@ TABLE_MAP = {
             'advisory_issued_at', 'name_local', 'name_en',
             'center_lat', 'center_lon', 'center_pressure_hpa', 'max_wind_kt',
             'gale_radius_km', 'storm_radius_km', 'geom', 'raw_json', 'collected_at',
+            # migration 476
+            'max_wind_ms', 'max_gust_ms', 'prob70_radius_km', 'wind_radii', 'storm_key',
         ],
         'upsert_key': 'storm_id,source,valid_at,point_type,advisory_number',
+        'upsert_strategy': 'do_nothing',
+    },
+    'global_climate_cwa_typhoon': {
+        # 氣象署 W-C0034-005 — gis-platform migration 476；跟 jma／jtwc 共表，source='cwa'
+        'history': 'live.typhoon_positions',
+        'columns': [
+            'storm_id', 'source', 'valid_at', 'point_type', 'advisory_number',
+            'advisory_issued_at', 'name_local', 'name_en',
+            'center_lat', 'center_lon', 'center_pressure_hpa', 'max_wind_kt',
+            'gale_radius_km', 'storm_radius_km', 'geom', 'raw_json', 'collected_at',
+            'max_wind_ms', 'max_gust_ms', 'prob70_radius_km', 'wind_radii', 'storm_key',
+        ],
+        'upsert_key': 'storm_id,source,valid_at,point_type,advisory_number',
+        'upsert_strategy': 'do_nothing',
+    },
+    'global_climate_ncdr_typhoon_routes': {
+        # NCDR 各國颱風預測 KML — gis-platform migration 476；同一版重抓 DO NOTHING
+        'history': 'live.typhoon_agency_forecasts',
+        'columns': [
+            'agency', 'track_index', 'issued_at', 'issued_label', 'lead_hour', 'valid_at',
+            'center_lat', 'center_lon', 'geom', 'collected_at',
+        ],
+        'upsert_key': 'agency,issued_at,lead_hour,track_index',
         'upsert_strategy': 'do_nothing',
     },
     'global_climate_cmems': {

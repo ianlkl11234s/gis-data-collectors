@@ -26,12 +26,16 @@ import requests
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
+from collectors.global_climate.typhoon_common import storm_key, valid_position, valid_time
 
 URL_JTWC_RSS = "https://www.metoc.navy.mil/jtwc/rss/jtwc.rss"
 
 # ATCF 段提取
 RE_WARNING_NR = re.compile(r"WARNING\s+NR\s+(\d+)", re.IGNORECASE)
 RE_NAME = re.compile(r"\((\w+)\)")  # (MEKKHALA) capture
+# 標題行「TYPHOON 29W (CHAMPI) WARNING NR 013」：編號後的括號才是本颱風名稱
+# （全文第一個括號可能是別的系統；DB 實測 wp2626 混有 Eir／Nolo／Surigae 三種名稱）
+RE_TITLE_NAME = re.compile(r"\b\d{1,2}[A-Z]\s+\(([A-Z][A-Z-]*)\)\s+WARNING", re.IGNORECASE)
 RE_DTG = re.compile(r"^\s*(\d{6})Z\s+---?\s+NEAR\s+([\d.]+)\s*([NS])\s+([\d.]+)\s*([EW])", re.MULTILINE)
 RE_FORECAST_BLOCK = re.compile(
     r"(\d+)\s+HRS,?\s+VALID\s+AT:\s*\n\s*(\d{6})Z\s+---?\s+([\d.]+)\s*([NS])\s+([\d.]+)\s*([EW])\s*\n\s*MAX SUSTAINED WINDS\s*-\s*(\d+)\s+KT",
@@ -47,7 +51,7 @@ RE_PRESENT_WINDS = re.compile(
 )
 
 
-def _parse_dtg(dtg: str, ref_year_month: tuple[int, int]) -> Optional[datetime]:
+def _parse_dtg(dtg: str, ref_year_month: tuple) -> Optional[datetime]:
     """ATCF DTG (e.g. '271200') = day/hour/minute, 補上參考年月轉成 UTC。"""
     if len(dtg) != 6:
         return None
@@ -55,7 +59,18 @@ def _parse_dtg(dtg: str, ref_year_month: tuple[int, int]) -> Optional[datetime]:
         day = int(dtg[0:2])
         hour = int(dtg[2:4])
         minute = int(dtg[4:6])
-        year, month = ref_year_month
+        year, month = ref_year_month[0], ref_year_month[1]
+        # 月初收到上月底的 DTG（例：10/01 收到 30 日）時，直接補本月會跑到三週後；
+        # 日差 > 15 天就退回上一個月（W0：DB 有 valid_at 落在 2026-10-30 的壞列）
+        ref_day = ref_year_month[2] if len(ref_year_month) > 2 else None
+        if ref_day is not None and day - ref_day > 15:
+            month -= 1
+            if month == 0:
+                year, month = year - 1, 12
+        elif ref_day is not None and ref_day - day > 15:
+            month += 1
+            if month == 13:
+                year, month = year + 1, 1
         return datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
     except (ValueError, TypeError):
         return None
@@ -122,12 +137,16 @@ class JtwcCollector(BaseCollector):
         advisory_number = int(m_nr.group(1)) if m_nr else None
 
         # name
-        m_name = RE_NAME.search(atcf_text)
+        m_name = RE_TITLE_NAME.search(atcf_text) or RE_NAME.search(atcf_text)
         name_en = m_name.group(1).title() if m_name else None  # MEKKHALA → Mekkhala
+        # storm_id {basin}{NN}{YY}：wp2926 → 2026（南半球 sh0127 是 2026-27 季，鍵年 2027）
+        year = 2000 + int(storm_id[-2:]) if storm_id[-2:].isdigit() else None
+        skey = storm_key(year, name_en)
 
         # 推算參考年月：用 collected_at 為基準（DTG 只給 day/hour）
         # 月底跨月會錯一天，但 collector 每 6h 跑可接受
-        ref_year_month = (collected_at.year, collected_at.month)
+        ref_utc = collected_at.astimezone(timezone.utc)
+        ref_year_month = (ref_utc.year, ref_utc.month, ref_utc.day)
 
         # 1. WARNING POSITION (現在) + PRESENT WIND
         m = RE_WARN_POS_DTG.search(atcf_text)
@@ -138,10 +157,11 @@ class JtwcCollector(BaseCollector):
             if valid_at:
                 lat, lon = _latlon(float(lat_v), lat_d, float(lon_v), lon_d)
                 max_wind = int(m_wind.group(1)) if m_wind else None
-                rows.append(self._make_row(
-                    storm_id, "observed", valid_at, advisory_number, collected_at,
-                    name_en=name_en, lat=lat, lon=lon, max_wind_kt=max_wind,
-                ))
+                if valid_position(lat, lon) and valid_time("observed", valid_at, collected_at):
+                    rows.append(self._make_row(
+                        storm_id, "observed", valid_at, advisory_number, collected_at,
+                        name_en=name_en, lat=lat, lon=lon, max_wind_kt=max_wind, storm_key=skey,
+                    ))
 
         # 2. FORECASTS
         for m in RE_FORECAST_BLOCK.finditer(atcf_text):
@@ -150,15 +170,17 @@ class JtwcCollector(BaseCollector):
             if not valid_at:
                 continue
             lat, lon = _latlon(float(lat_v), lat_d, float(lon_v), lon_d)
+            if not (valid_position(lat, lon) and valid_time("forecast", valid_at, collected_at)):
+                continue
             rows.append(self._make_row(
                 storm_id, "forecast", valid_at, advisory_number, collected_at,
-                name_en=name_en, lat=lat, lon=lon, max_wind_kt=int(max_wind),
+                name_en=name_en, lat=lat, lon=lon, max_wind_kt=int(max_wind), storm_key=skey,
             ))
 
         return rows
 
     def _make_row(self, storm_id, point_type, valid_at, advisory_number,
-                  collected_at, *, name_en=None, lat, lon, max_wind_kt=None):
+                  collected_at, *, name_en=None, lat, lon, max_wind_kt=None, storm_key=None):
         return {
             "storm_id":            storm_id,
             "source":              "jtwc",
@@ -174,6 +196,7 @@ class JtwcCollector(BaseCollector):
             "max_wind_kt":         max_wind_kt,
             "gale_radius_km":      None,
             "storm_radius_km":     None,
+            "storm_key":           storm_key,
             "lon":                 lon,
             "lat":                 lat,
             "raw_json":            None,

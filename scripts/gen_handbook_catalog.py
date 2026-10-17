@@ -87,6 +87,7 @@ SOURCES_DOC = {
     # 日本／全球氣候
     "global_climate_usgs_earthquake": "jma-global", "global_climate_jma_typhoon": "jma-global",
     "global_climate_jtwc": "jma-global", "global_climate_cmems": "jma-global",
+    "global_climate_cwa_typhoon": "jma-global", "global_climate_ncdr_typhoon_routes": "jma-global",
     "global_climate_cams": "jma-global", "global_climate_noaa_gfs": "jma-global",
     "global_climate_bake": "jma-global", "jma_amedas": "jma-global",
     "jma_warnings": "jma-global", "jma_quake": "jma-global", "jma_raster": "jma-global",
