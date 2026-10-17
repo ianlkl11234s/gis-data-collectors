@@ -16,17 +16,14 @@
 
 API 使用 API Key 認證，支援兩種方式：
 
-### 方式 1: Header（推薦）
+只接受 `X-API-Key` header（2026-10-17 起停用 `api_key` query 參數，避免金鑰進 access log）：
 
 ```bash
 curl -H "X-API-Key: your_api_key" https://your-app.zeabur.app/api/collectors
 ```
 
-### 方式 2: Query Parameter
-
-```bash
-curl "https://your-app.zeabur.app/api/collectors?api_key=your_api_key"
-```
+`<collector>` 參數只接受 `collectors/registry.py` 已註冊的 collector 名稱；
+其他前綴（例如 `supabase-snapshots`、`private-research`）一律回 404。
 
 ### 產生 API Key
 
@@ -73,7 +70,7 @@ openssl rand -hex 32
     "/api/download/<collector>/<path>": "Download file",
     "/api/archive/status": "Archive status and statistics"
   },
-  "auth": "Use X-API-Key header or api_key query parameter",
+  "auth": "Use X-API-Key header",
   "note": "Data automatically retrieved from S3 if not available locally"
 }
 ```

@@ -183,7 +183,7 @@ VM 沒有主容器的 Telegram 通知與 in-memory 心跳；每日由 `external/
 
 ## 7. 內建 API
 
-`api/server.py`（Flask，背景執行緒；沒設 `API_KEY` 就不啟動）。除 `/health` 外都要 `X-API-Key` header 或 `api_key` 參數。
+`api/server.py`（Flask，背景執行緒；沒設 `API_KEY` 就不啟動）。除 `/health` 外都要 `X-API-Key` header（2026-10-17 起不再接受 `api_key` query 參數）；`<collector>` 只接受 `collectors/registry.py` 已註冊名稱。
 
 | 路徑 | 用途 |
 |---|---|
