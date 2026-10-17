@@ -50,6 +50,7 @@ Rule ID: archive-deep-270d:{collector}（每個 collector 一條，Prefix={colle
 - 2026-10-09 起：所有 ArchiveTask 歸檔 `{collector}/archives/` 走 IA 30 → GIR 90 → **DEEP_ARCHIVE 270**。`deploy-assets/` 等非歸檔前綴不受影響（仍是 IA 30 → GIR 90）。
 - **新增 collector 時要補一條 `archive-deep-270d:{name}` 規則**，否則它的歸檔停在 GLACIER_IR。補法：讀出現有設定、append 一條 `{"ID":"archive-deep-270d:{name}","Filter":{"Prefix":"{name}/archives/"},"Status":"Enabled","Transitions":[{"Days":270,"StorageClass":"DEEP_ARCHIVE"}]}`，再整份 `put-bucket-lifecycle-configuration`（這個 API 是整份覆寫，不可只送新規則）。
 - 2026-10-12：規則共 94 條（新增 jma_raster、jma_seasonal、jma_lightning、jma_forecast、env_jp_wbgt 的 archives/，晚間再新增 `archive-deep-270d:jma_ocean_env`，對應 collector `jma_ocean_env`，說明見 `docs/JMA_OCEAN_ENV.md`）。改規則前的設定備份：10-09 的原始備份放在 session 暫存區，已遺失；10-12 的備份同樣只在暫存區。以本節文字為規則全貌的權威紀錄。
+- 2026-10-17：規則共 96 條（新增 `archive-deep-270d:global_climate_cwa_typhoon`、`archive-deep-270d:global_climate_ncdr_typhoon_routes`，對應 G02 颱風兩個新 collector，gis-platform mig 476）。改規則前的完整設定備份（94 條原樣 JSON）放在 repo：[`docs/aws-lifecycle-backups/2026-10-17-before-g02-typhoon.md`](aws-lifecycle-backups/2026-10-17-before-g02-typhoon.md)；put 後重讀比對，既有 94 條 0 變動。此後改規則前的備份一律放進 `docs/aws-lifecycle-backups/`，不要只放暫存區。
 - 讀 270 天以前的歸檔（例如 `scripts/backfill_vessel_watch.py`）要先 restore，見下方 Deep Archive 取回指令。
 
 ---
