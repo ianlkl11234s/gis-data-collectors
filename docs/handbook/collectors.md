@@ -4,7 +4,7 @@
 > **自動產生，勿手改**；跑 `python3 scripts/gen_handbook_catalog.py` 重產，`--check` 檢查是否最新（CI：`tests/test_handbook_catalog.py`）。
 > 來源：`collectors/registry.py`、`config.py` 的 `_COLLECTOR_TOGGLES`、`config/cross_layer_map.yaml`、`storage/supabase_tables.py` 的 `TABLE_MAP`、`config/realtime_tables.yaml`。要改內容就改這些來源（備註取自 cross_layer_map 的 notes）。
 
-共 104 筆（含排程 task），production 應在跑 91 筆。
+共 104 筆（含排程 task），production 應在跑 93 筆。
 
 欄位說明：
 
@@ -76,10 +76,10 @@
 | `launch` | 海空太空 | 15 分 | Zeabur | live.launches<br>live.launch_events<br>live.launch_pads | history（多表） | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#launch) |  |
 | `gfw_hourly_publish` | 海空太空 | 1 日 | Zeabur | live.gfw_hourly_publish_runs | ledger | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#gfw_hourly_publish) | 排程 task（非 registry）；Zeabur production fixed-time job（每日 08:30 Asia/Taipei，UTC 換日後） |
 | `global_climate_usgs_earthquake` | 日本／全球氣候 | 1 小時 | Zeabur | live.earthquakes_global | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_usgs_earthquake) | 全球 hourly feed 恆有事件，count 穩定 |
-| `global_climate_jma_typhoon` | 日本／全球氣候 | 3 小時 | Zeabur | live.typhoon_positions | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_jma_typhoon) | 監控門檻 1 日；與 global_climate_jtwc 共用表（一源壞掉可能被他源新鮮度蓋過）；事件驅動（targetTc 空即無資料）→ interval 比照 earthquake 放寬 1440 |
-| `global_climate_jtwc` | 日本／全球氣候 | 6 小時 | Zeabur | live.typhoon_positions | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_jtwc) | 監控門檻 1 日；與 global_climate_jma_typhoon 共用表（一源壞掉可能被他源新鮮度蓋過）；事件驅動同 jma_typhoon，interval 放寬 1440（collector 輪詢 360min） |
-| `global_climate_cwa_typhoon` | 日本／全球氣候 | 1 小時 | 停用 | live.typhoon_positions | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_cwa_typhoon) | 需 CWA_API_KEY；監控門檻 1 日；氣象署 W-C0034-005（mig 476） |
-| `global_climate_ncdr_typhoon_routes` | 日本／全球氣候 | 30 分 | 停用 | live.typhoon_agency_forecasts | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_ncdr_typhoon_routes) | 監控門檻 1 日；NCDR 各國颱風預測 KML（mig 476） |
+| `global_climate_jma_typhoon` | 日本／全球氣候 | 3 小時 | Zeabur | live.typhoon_positions | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_jma_typhoon) | 監控門檻 1 日；與 global_climate_cwa_typhoon、global_climate_jtwc 共用表（一源壞掉可能被他源新鮮度蓋過）；事件驅動（targetTc 空即無資料）→ interval 比照 earthquake 放寬 1440 |
+| `global_climate_jtwc` | 日本／全球氣候 | 6 小時 | Zeabur | live.typhoon_positions | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_jtwc) | 監控門檻 1 日；與 global_climate_cwa_typhoon、global_climate_jma_typhoon 共用表（一源壞掉可能被他源新鮮度蓋過）；事件驅動同 jma_typhoon，interval 放寬 1440（collector 輪詢 360min） |
+| `global_climate_cwa_typhoon` | 日本／全球氣候 | 1 小時 | Zeabur | live.typhoon_positions | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_cwa_typhoon) | 需 CWA_API_KEY；監控門檻 1 日；與 global_climate_jma_typhoon、global_climate_jtwc 共用表（一源壞掉可能被他源新鮮度蓋過）；氣象署 W-C0034-005（mig 476） |
+| `global_climate_ncdr_typhoon_routes` | 日本／全球氣候 | 30 分 | Zeabur | live.typhoon_agency_forecasts | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_ncdr_typhoon_routes) | 監控門檻 1 日；NCDR 各國颱風預測 KML（mig 476） |
 | `global_climate_cmems` | 日本／全球氣候 | 1 日 | Zeabur | live.global_climate_grids | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_cmems) | 需 COPERNICUSMARINE_SERVICE_USERNAME、COPERNICUSMARINE_SERVICE_PASSWORD；與 global_climate_cams、global_climate_noaa_gfs 共用表（一源壞掉可能被他源新鮮度蓋過） |
 | `global_climate_cams` | 日本／全球氣候 | 1 日 | Zeabur | live.global_climate_grids | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_cams) | 需 CAMS_API_KEY；與 global_climate_cmems、global_climate_noaa_gfs 共用表（一源壞掉可能被他源新鮮度蓋過） |
 | `global_climate_noaa_gfs` | 日本／全球氣候 | 1 日 | Zeabur | live.global_climate_grids | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#global_climate_noaa_gfs) | 與 global_climate_cams、global_climate_cmems 共用表（一源壞掉可能被他源新鮮度蓋過） |

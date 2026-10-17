@@ -1176,8 +1176,8 @@ env_jp_wbgt:
   notes: 環境省 WBGT 841 站（站號＝AMeDAS）實況逐時（列 hash 變動才寫、可回溯修正 DO UPDATE）＋預報每期保留；服務期約 4/22–10/21，季外 DEAD 屬預期；出典：環境省（電子情報提供サービス，非 PDL1.0）
 
 global_climate_cwa_typhoon:
-  enabled: false
-  deployment: disabled  # 部署＋設 GLOBAL_CLIMATE_CWA_TYPHOON_ENABLED=true 後改 enabled: true／deployment: zeabur
+  enabled: true  # 2026-10-17 部署（#158）＋Zeabur GLOBAL_CLIMATE_CWA_TYPHOON_ENABLED=true；19:59Z 首輪成功寫入
+  deployment: zeabur
   expected_interval_min: 1440
   supabase_tables: [live.typhoon_positions]
   s3_prefixes:
@@ -1186,8 +1186,8 @@ global_climate_cwa_typhoon:
   notes: 氣象署 W-C0034-005（mig 476）；事件驅動同 jma_typhoon，interval 放寬 1440（collector 輪詢 60min）；無颱風回 status=no_active_storm、不寫列
 
 global_climate_ncdr_typhoon_routes:
-  enabled: false
-  deployment: disabled  # 部署＋設 GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES_ENABLED=true 後改 enabled: true／deployment: zeabur
+  enabled: true  # 2026-10-17 部署（#158）＋Zeabur GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES_ENABLED=true；19:59Z 首輪成功寫入
+  deployment: zeabur
   expected_interval_min: 1440
   supabase_tables: [live.typhoon_agency_forecasts]
   s3_prefixes:
