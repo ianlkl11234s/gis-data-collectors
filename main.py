@@ -215,7 +215,7 @@ def run_api_server_thread():
         print(f"🌐 API Server 已啟動")
         print(f"{'=' * 60}")
         print(f"   URL: http://0.0.0.0:{config.API_PORT}")
-        print(f"   認證: X-API-Key header 或 api_key 參數")
+        print(f"   認證: X-API-Key header")
         print(f"{'=' * 60}")
 
         app.run(

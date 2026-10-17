@@ -6,8 +6,10 @@ API Server
 """
 
 import gc
+import hmac
 import os
 import json
+import re
 from pathlib import Path
 from functools import wraps
 from datetime import datetime
@@ -33,11 +35,76 @@ def get_s3_storage():
     return _s3_storage
 
 
+# ========== collector / 路徑白名單 ==========
+# /api/download 等端點會依 URL 參數組出本地路徑與 S3 key（{collector}/{filepath}）。
+# 2026-10-17：舊版只擋 filepath 的 '..'，collector 不受限 → 持有 key 即可讀主 bucket
+# 任意物件（supabase-snapshots/、private-research/、deploy-assets/…），collector='..'
+# 還能讀到資料目錄以外的本地檔。改為只接受已註冊 collector 名稱（fail closed）。
+
+_COLLECTOR_NAME_RE = re.compile(r'^[a-z0-9_]+$')
+# 非 collector 的 S3 前綴：即使未來有人用同名註冊 collector，也一律拒絕
+DENIED_PREFIXES = frozenset({
+    'supabase-snapshots', 'supabase_snapshots',
+    'private-research', 'private_research',
+    'deploy-assets', 'deploy_assets',
+    'mini-taipei', 'mini_taipei',
+    'flight-arc', 'flight_arc',
+    'archives', 'pulse-db', 'pulse_db',
+})
+_known_collectors = None
+
+
+def get_known_collectors() -> frozenset:
+    """已註冊 collector 名稱（collectors/registry.py 的 cls.name）；載入失敗回空集合＝全部拒絕"""
+    global _known_collectors
+    if _known_collectors is None:
+        try:
+            from collectors.registry import COLLECTOR_REGISTRY
+            names = {getattr(e.cls, 'name', None) for e in COLLECTOR_REGISTRY}
+            _known_collectors = frozenset(n for n in names if isinstance(n, str) and n)
+        except Exception as e:
+            print(f"⚠️  collector registry 載入失敗，API 資料端點全部拒絕: {e}")
+            return frozenset()
+    return _known_collectors
+
+
+def is_allowed_collector(collector: str) -> bool:
+    return (
+        isinstance(collector, str)
+        and bool(_COLLECTOR_NAME_RE.match(collector))
+        and collector not in DENIED_PREFIXES
+        and collector in get_known_collectors()
+    )
+
+
+def is_safe_filepath(filepath: str) -> bool:
+    """只接受相對路徑；拒絕 '..'、'.'、空段、絕對路徑、反斜線與控制字元"""
+    if not filepath or filepath.startswith('/') or '\\' in filepath:
+        return False
+    if any(ord(ch) < 32 for ch in filepath):
+        return False
+    parts = filepath.split('/')
+    return all(part not in ('', '.', '..') for part in parts)
+
+
+def require_known_collector(f):
+    """拒絕未註冊的 collector（須放在 require_api_key 之後）"""
+    @wraps(f)
+    def decorated(collector, *args, **kwargs):
+        if not is_allowed_collector(collector):
+            return jsonify({
+                'error': 'Not found',
+                'message': 'Unknown collector'
+            }), 404
+        return f(collector, *args, **kwargs)
+    return decorated
+
+
 def require_api_key(f):
-    """API Key 認證裝飾器"""
+    """API Key 認證裝飾器（只接受 X-API-Key header；query string 會進 access log，已停用）"""
     @wraps(f)
     def decorated(*args, **kwargs):
-        api_key = request.headers.get('X-API-Key') or request.args.get('api_key')
+        api_key = request.headers.get('X-API-Key')
 
         if not config.API_KEY:
             # 未設定 API Key 時拒絕所有請求
@@ -49,10 +116,10 @@ def require_api_key(f):
         if not api_key:
             return jsonify({
                 'error': 'Unauthorized',
-                'message': 'Missing API key. Use X-API-Key header or api_key parameter'
+                'message': 'Missing API key. Use X-API-Key header'
             }), 401
 
-        if api_key != config.API_KEY:
+        if not hmac.compare_digest(api_key.encode(), str(config.API_KEY).encode()):
             return jsonify({
                 'error': 'Forbidden',
                 'message': 'Invalid API key'
@@ -89,7 +156,7 @@ def create_app():
                 '/api/download/<collector>/<path>': 'Download file (e.g., 2025/12/16/weather_1443.json)',
                 '/api/archive/status': 'Archive status and statistics'
             },
-            'auth': 'Use X-API-Key header or api_key query parameter',
+            'auth': 'Use X-API-Key header',
             'note': 'Data automatically retrieved from S3 if not available locally'
         })
 
@@ -158,6 +225,7 @@ def create_app():
 
     @app.route('/api/data/<collector>')
     @require_api_key
+    @require_known_collector
     def list_data(collector):
         """列出收集器的資料檔案"""
         collector_dir = config.LOCAL_DATA_DIR / collector
@@ -191,6 +259,7 @@ def create_app():
 
     @app.route('/api/data/<collector>/latest')
     @require_api_key
+    @require_known_collector
     def get_latest(collector):
         """取得最新的資料"""
         collector_dir = config.LOCAL_DATA_DIR / collector
@@ -244,6 +313,7 @@ def create_app():
 
     @app.route('/api/data/<collector>/<date>')
     @require_api_key
+    @require_known_collector
     def get_by_date(collector, date):
         """取得特定日期的資料（自動從本地或 S3 讀取）"""
         # 驗證日期格式
@@ -313,10 +383,11 @@ def create_app():
 
     @app.route('/api/download/<collector>/<path:filepath>')
     @require_api_key
+    @require_known_collector
     def download_file(collector, filepath):
         """下載特定檔案（支援巢狀路徑如 2025/12/16/weather_1443.json）- 自動從本地或 S3 讀取"""
         # 防止路徑遍歷攻擊
-        if '..' in filepath:
+        if not is_safe_filepath(filepath):
             return jsonify({
                 'error': 'Invalid path',
                 'message': 'Invalid file path'
@@ -393,6 +464,7 @@ def create_app():
 
     @app.route('/api/data/<collector>/dates')
     @require_api_key
+    @require_known_collector
     def list_dates(collector):
         """列出收集器有資料的所有日期（從 S3 讀取）"""
         dates = []
