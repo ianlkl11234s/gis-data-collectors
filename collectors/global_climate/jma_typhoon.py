@@ -18,7 +18,7 @@
       非對稱時可能有多個 area（未實測）：單欄取最大值（長半徑），全部 area 存 wind_radii.*.areas。
       probabilityCircleRadius.km（予報円＝70% 機率圈）→ prob70_radius_km。
     - 錯誤處理：targetTc 抓取失敗 raise；個別颱風檔非 404 錯誤 → _collector_error（已解析的列照寫，
-      本輪記失敗）。targetTc 空陣列 → status=no_active_storm、不帶 data（不寫列）。
+      本輪記失敗）；specifications.json 404 只記 stats specs_missing（位置照寫）。targetTc 空陣列 → status=no_active_storm、不帶 data（不寫列）。
       歷史列不回填（DO NOTHING；舊 raw_json 是 forecast.json 的段落，沒有數值）。
 
 寫入：live.typhoon_positions (source='jma')
@@ -326,6 +326,7 @@ class JmaTyphoonCollector(BaseCollector):
         all_rows: list[dict] = []
         storms: list[str] = []
         errors: list[str] = []
+        specs_missing: list[str] = []
         for entry in target:
             tc_id = entry.get("tropicalCyclone") if isinstance(entry, dict) else None
             if not tc_id:
@@ -340,13 +341,15 @@ class JmaTyphoonCollector(BaseCollector):
             if not forecast:
                 continue  # 404：颱風檔已撤下
             if specs_raw is None:
-                errors.append(f"{tc_id} specifications.json 404（位置照寫、數值欄 NULL）")
+                # TD 階段是否有 specifications 未實測；404 只記 stats，不算失敗（位置照寫、數值欄 NULL）
+                specs_missing.append(tc_id)
             rows = self._decompose_forecast(tc_id, forecast, now, parse_jma_specifications(specs_raw))
             all_rows.extend(rows)
 
         base = {
             "storm_count":   len(storms),
             "active_storms": storms,
+            "specs_missing": specs_missing,
             "collected_at":  now.isoformat(),
         }
         if not storms:

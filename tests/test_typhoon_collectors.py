@@ -242,6 +242,17 @@ def test_jma_collect_idle_and_errors():
     out = c.collect()
     assert out["status"] == "ok" and "_collector_error" in out
 
+    def specs_404(url):
+        if url.endswith("targetTc.json"):
+            return target
+        if url.endswith("forecast.json"):
+            return JMA_FORECAST
+        return None  # 404
+    c._fetch_json = specs_404
+    out = c.collect()
+    assert out["status"] == "ok" and "_collector_error" not in out
+    assert out["specs_missing"] == ["TC2636"] and out["data"]
+
 
 # ───────────────────────── JTWC ─────────────────────────
 
