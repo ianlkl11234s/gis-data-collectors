@@ -49,6 +49,15 @@ def _as_list(v) -> list:
     return [v]
 
 
+def _children(node, key: str) -> list:
+    """XML 轉 JSON 的容器節點：{key: x|[..]} 取子項；容器本身就是 list／單筆時照收；其他形狀回空。"""
+    if isinstance(node, dict) and key in node:
+        return _as_list(node.get(key))
+    if isinstance(node, list):
+        return node
+    return []
+
+
 def _parse_dt(s) -> Optional[datetime]:
     if not s:
         return None
@@ -67,8 +76,7 @@ def _circle(c) -> tuple[Optional[float], Optional[dict]]:
     out: dict = {}
     if radius is not None:
         out["all"] = radius
-    quad = (c.get("QuadrantRadii") or {}).get("Radius")
-    for q in _as_list(quad):
+    for q in _children(c.get("QuadrantRadii"), "Radius"):
         if not isinstance(q, dict):
             continue
         d = str(q.get("dir") or "").upper()
@@ -131,8 +139,8 @@ def parse_cwa_typhoons(payload: dict, now: datetime, collected_at: Optional[date
         skey = storm_key(year, name_en_raw)
         storms.append(sid)
 
-        analysis = _as_list((tc.get("AnalysisData") or {}).get("Fix"))
-        forecast = _as_list((tc.get("ForecastData") or {}).get("Fix"))
+        analysis = _children(tc.get("AnalysisData"), "Fix")
+        forecast = _children(tc.get("ForecastData"), "Fix")
 
         init_time = None
         for f in forecast:

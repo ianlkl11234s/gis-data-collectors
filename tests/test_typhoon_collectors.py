@@ -28,6 +28,7 @@ FX = Path(__file__).parent / "fixtures" / "typhoon"
 CWA = json.loads((FX / "cwa_w_c0034_005_20261017.json").read_text())
 JMA_FORECAST = json.loads((FX / "jma_TC2636_forecast_20261017.json").read_text())
 JMA_SPECS = json.loads((FX / "jma_TC2636_specifications_20261017.json").read_text())
+JMA_SPECS_ASYM = json.loads((FX / "jma_TC2636_specifications_20261019.json").read_text())
 JTWC_TXT = (FX / "jtwc_wp2926web_20261017.txt").read_text()
 NCDR_KML = (FX / "ncdr_multityroute_20261017.kml").read_text(encoding="utf-8")
 NOW = datetime(2026, 10, 17, 23, 30, tzinfo=TAIPEI_TZ)
@@ -130,6 +131,20 @@ def test_cwa_single_storm_as_dict_and_no_storm():
         assert out["no_active"] and out["rows"] == []
 
 
+def test_cwa_container_shape_variants():
+    # XML 轉 JSON：單一象限變物件、容器直接是 list、或空字串，都不可讓整輪失敗
+    p = copy.deepcopy(CWA)
+    tc = p["records"]["TropicalCyclones"]["TropicalCyclone"][0]
+    tc["AnalysisData"] = tc["AnalysisData"]["Fix"]
+    fix = tc["AnalysisData"][-1]
+    fix["Circle15ms"]["QuadrantRadii"] = {"Radius": {"dir": "NE", "value": "300"}}
+    fix["Circle25ms"]["QuadrantRadii"] = ""
+    out = parse_cwa_typhoons(p, NOW)
+    assert len(out["rows"]) == 24
+    row = [r for r in out["rows"] if r["point_type"] == "observed"][-1]
+    assert json.loads(row["wind_radii"])["gale"]["ne"] == 300
+
+
 def test_cwa_bad_payload_raises():
     with pytest.raises(ValueError):
         parse_cwa_typhoons({"success": "false"}, NOW)
@@ -193,14 +208,28 @@ def test_jma_specifications_parse():
 
 
 def test_jma_asymmetric_areas_take_longest():
-    specs = copy.deepcopy(JMA_SPECS)
-    specs[1]["galeWarning"] = [
-        {"area": {"en": "Northeast"}, "range": {"km": 500}},
-        {"area": {"en": "Southwest"}, "range": {"km": 300}},
-    ]
-    a = parse_jma_specifications(specs)[0]
-    assert a["gale_radius_km"] == 500
-    assert len(json.loads(a["wind_radii"])["gale"]["areas"]) == 2
+    # 2026-10-18 起非對稱強風域的 area 是純字串方位（不是 {"jp","en"} 物件）
+    specs = parse_jma_specifications(JMA_SPECS_ASYM)
+    a = specs[0]
+    assert a["gale_radius_km"] == 650 and a["storm_radius_km"] == 130
+    radii = json.loads(a["wind_radii"])
+    assert radii["gale"]["areas"] == [{"area": "東", "km": 650.0}, {"area": "西", "km": 440.0}]
+    assert radii["storm"] == {"all": 130.0}
+
+
+def test_jma_specs_parse_failure_keeps_positions(monkeypatch):
+    from collectors.global_climate import jma_typhoon
+    c = JmaTyphoonCollector.__new__(JmaTyphoonCollector)
+    target = json.loads((FX / "jma_targetTc_20261017.json").read_text())
+    c._fetch_json = lambda url: (target if url.endswith("targetTc.json")
+                                 else JMA_FORECAST if url.endswith("forecast.json") else JMA_SPECS)
+
+    def boom(_):
+        raise AttributeError("unexpected shape")
+    monkeypatch.setattr(jma_typhoon, "parse_jma_specifications", boom)
+    out = c.collect()
+    assert out["data"] and "specifications" in out["_collector_error"]
+    assert all(r["gale_radius_km"] is None for r in out["data"])
 
 
 def test_jma_decompose_fills_numbers():
@@ -241,6 +270,7 @@ def test_jma_collect_idle_and_errors():
     c._fetch_json = partial
     out = c.collect()
     assert out["status"] == "ok" and "_collector_error" in out
+    assert out["data"]  # specifications 失敗時位置照寫
 
     def specs_404(url):
         if url.endswith("targetTc.json"):

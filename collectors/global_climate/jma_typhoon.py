@@ -15,10 +15,13 @@
     - specifications 的 galeWarning（強風域 ≥15 m/s）、stormWarning（暴風域 ≥25 m/s）
       只有實況段（advancedHours=0）是當下半徑 → 填 gale_radius_km／storm_radius_km；
       預報段的 stormWarning 是「暴風警戒域」（含預報圓的包絡），只放 wind_radii.storm_warning_area。
-      非對稱時可能有多個 area（未實測）：單欄取最大值（長半徑），全部 area 存 wind_radii.*.areas。
+      非對稱時有多個 area，且 area 是純字串方位（2026-10-18 薔琵實測：
+      [{"area":"東","range":{"km":650}},{"area":"西","range":{"km":440}}]），對稱時才是
+      {"jp":"全域","en":"All"} 物件：單欄取最大值（長半徑），全部 area 原樣存 wind_radii.*.areas。
       probabilityCircleRadius.km（予報円＝70% 機率圈）→ prob70_radius_km。
-    - 錯誤處理：targetTc 抓取失敗 raise；個別颱風檔非 404 錯誤 → _collector_error（已解析的列照寫，
-      本輪記失敗）；specifications.json 404 只記 stats specs_missing（位置照寫）。targetTc 空陣列 → status=no_active_storm、不帶 data（不寫列）。
+    - 錯誤處理：targetTc 抓取失敗 raise；forecast.json 非 404 錯誤 → 該颱風跳過、_collector_error；
+      specifications.json 抓取或解析失敗 → 位置照寫（數值欄 NULL）、_collector_error（本輪記失敗、照常告警）；
+      一個颱風解析失敗不影響其他颱風。specifications.json 404 只記 stats specs_missing（位置照寫）。targetTc 空陣列 → status=no_active_storm、不帶 data（不寫列）。
       歷史列不回填（DO NOTHING；舊 raw_json 是 forecast.json 的段落，沒有數值）。
 
 寫入：live.typhoon_positions (source='jma')
@@ -56,8 +59,10 @@ def _warning_ranges(items) -> tuple[Optional[float], Optional[dict]]:
         km = to_float((it.get("range") or {}).get("km"))
         if km is None:
             continue
-        area = it.get("area") or {}
-        areas.append({"area": area.get("en") or area.get("jp"), "km": km})
+        area = it.get("area")
+        if isinstance(area, dict):
+            area = area.get("en") or area.get("jp")
+        areas.append({"area": area, "km": km})
     if not areas:
         return None, None
     longest = max(a["km"] for a in areas)
@@ -334,17 +339,26 @@ class JmaTyphoonCollector(BaseCollector):
             storms.append(tc_id)
             try:
                 forecast = self._fetch_json(URL_JMA_FORECAST.format(tc_id=tc_id))
-                specs_raw = self._fetch_json(URL_JMA_SPECS.format(tc_id=tc_id))
             except JmaFetchError as e:
                 errors.append(str(e))
                 continue
             if not forecast:
                 continue  # 404：颱風檔已撤下
-            if specs_raw is None:
-                # TD 階段是否有 specifications 未實測；404 只記 stats，不算失敗（位置照寫、數值欄 NULL）
-                specs_missing.append(tc_id)
-            rows = self._decompose_forecast(tc_id, forecast, now, parse_jma_specifications(specs_raw))
-            all_rows.extend(rows)
+            # 數值欄是加值：specifications 抓取或解析失敗時位置照寫、本輪記失敗，不可整輪中止
+            specs: dict[int, dict] = {}
+            try:
+                specs_raw = self._fetch_json(URL_JMA_SPECS.format(tc_id=tc_id))
+                if specs_raw is None:
+                    # TD 階段是否有 specifications 未實測；404 只記 stats，不算失敗（位置照寫、數值欄 NULL）
+                    specs_missing.append(tc_id)
+                else:
+                    specs = parse_jma_specifications(specs_raw)
+            except Exception as e:
+                errors.append(f"{tc_id} specifications: {type(e).__name__}: {e}")
+            try:
+                all_rows.extend(self._decompose_forecast(tc_id, forecast, now, specs))
+            except Exception as e:
+                errors.append(f"{tc_id} forecast: {type(e).__name__}: {e}")
 
         base = {
             "storm_count":   len(storms),
