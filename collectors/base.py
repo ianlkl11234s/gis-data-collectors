@@ -89,6 +89,7 @@ class BaseCollector(ABC):
 
         print(f"\n[{self.name}] 開始收集 ({timestamp.strftime('%H:%M:%S')})")
 
+        writer_reported = False
         try:
             # 執行收集
             result = self.collect()
@@ -101,6 +102,7 @@ class BaseCollector(ABC):
 
                 # 旁路寫入 Supabase（不影響本地儲存流程）
                 if self.supabase_writer:
+                    writer_reported = True  # write() 成功或失敗都會自己回報心跳
                     try:
                         db_written = self.supabase_writer.write(self.name, result, timestamp)
                         if self.require_db_write() and not db_written:
@@ -144,6 +146,10 @@ class BaseCollector(ABC):
             error_msg = str(e)
             print(f"[{self.name}] ✗ 錯誤: {error_msg}")
             notify_error(self.name, error_msg, self.consecutive_errors)
+            # collect() 本身失敗時 writer 不會被呼叫，collector_status 原本完全不知道
+            # （2026-10-21 news_events 連續失敗 4 天，表上仍是 consecutive_errors=0）。
+            if self.supabase_writer and not writer_reported:
+                self.supabase_writer._report_heartbeat(self.name, False, 0, error_msg[:500])
 
             return {
                 'timestamp': timestamp.isoformat(),
