@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -29,6 +30,8 @@ import requests
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
+
+logger = logging.getLogger(__name__)
 
 BASE = "https://data.moa.gov.tw"
 
@@ -136,7 +139,7 @@ class FoodPricesCollector(BaseCollector):
                 return []
             d = r.json()
         except Exception as e:
-            self.logger.warning(f"[food_prices] {path} 取得失敗: {type(e).__name__}: {e}")
+            logger.warning(f"[food_prices] {path} 取得失敗: {type(e).__name__}: {e}")
             return []
         if isinstance(d, dict):
             return d.get("Data") or []
@@ -245,7 +248,7 @@ class FoodPricesCollector(BaseCollector):
             try:
                 got = fn(lo, hi)
             except Exception as e:
-                self.logger.error(f"[food_prices] {key} 收集失敗: {type(e).__name__}: {e}")
+                logger.error(f"[food_prices] {key} 收集失敗: {type(e).__name__}: {e}")
                 failed.append(key)
                 got = []
             per_source[key] = len(got)
