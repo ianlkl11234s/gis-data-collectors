@@ -109,6 +109,7 @@
 - 共用表時，一個來源壞掉會被其他來源的新鮮度蓋過去：`lightning_events`（台電、CWA、JMA）、`internet_health_*`（Cloudflare、IODA、RIPE）。
 - `tra_static`、`satellite_passes_daily`、`global_climate_bake` 啟用中但沒有表級監控（`tra_static` 沒有 TABLE_MAP 條目、`satellite_passes_daily` 用獨立連線寫入、`global_climate_bake` 只輸出到 S3）。
 - VM 上的 `ship_ais`、`waste_positions`、`cdc_public_health_weekly` 寫入繞過 generic writer，`collector_status` 會是舊的；`isohe_port_marine`（VM）在 `collector_status` 沒有列；`aisstream` 沒有同名 status。
+- 動物福利快照類（`animal_adoption`、`animal_shelter_*`、`animal_veterinary_clinics` 等）抓取失敗時只在自己的 run ledger 記 `failed`：寫入 failed ledger 本身算一次成功的 DB 寫入，`collector_status` 照樣回報成功（`BaseCollector.run()` 的 `writer_reported` 讓 `_collector_error` 不再補報失敗心跳）。2026-10-23 00:56 起 `live.animal_adoption_snapshot_runs` 已記 `failed`，`collector_status` 卻顯示正常。程式未修；判斷這幾支健康要看 ledger 的 `status`，不能只看 `collector_status`。
 - `config/realtime_tables.yaml` 曾把 `live.aisstream_archive_manifests` 的 `time_column` 寫成表上沒有的 `created_at`（DIO-5），2026-10-16 已改成 `uploaded_at`。
 - `aisstream` 清冊曾標 `enabled: false`／`deployment: disabled`，但 worker 一直在跑；2026-10-16 依 `live.aisstream_position_observations.received_at`、`aisstream_ingest_health.updated_at`（數分鐘內）校正為 `enabled: true`／`zeabur`。S3 檢查讀 `aisstream/raw/v1/date=YYYY-MM-DD/`，`tasks/monitoring.py` 會從 key 解析日期。
 

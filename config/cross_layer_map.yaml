@@ -671,7 +671,7 @@ correctional_daily_snapshot:
 
 animal_adoption:
   enabled: true
-  deployment: zeabur
+  deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 1440
   supabase_tables:
     - live.animal_adoption_snapshot_runs
@@ -684,10 +684,11 @@ animal_adoption:
   notes: >-
     農業部待認領養名單完整快照；2026-08-20 起由 Zeabur production collector 每日收集。
     僅完整成功 run 才呼叫 finalize 更新 current/daily；原始 payload 留本地 JSON 並由 archive.py 上傳 S3。
+    2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_shelter_outcomes:
   enabled: true
-  deployment: zeabur
+  deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 43200
   supabase_tables:
     - live.animal_shelter_outcome_runs
@@ -698,10 +699,11 @@ animal_shelter_outcomes:
   notes: >-
     農業部 datagov:41236 收容成果歷史月報；2026-08-20 起由 Zeabur production collector 定期收集，完整 root array 才寫入，
     canonical key 為來源年/月/縣市，raw payload 由 archive.py 保存。
+    2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_shelter_pressure:
   enabled: true
-  deployment: zeabur
+  deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 43200
   supabase_tables:
     - live.animal_shelter_outcome_runs
@@ -712,36 +714,43 @@ animal_shelter_pressure:
   notes: >-
     農業部 datagov:73396 收容壓力/去向歷史月報；2026-08-20 起由 Zeabur production collector 定期收集，保留 source ID 與
     同年/月/縣市的 revision，不以 canonical grain 去重。
+    2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_veterinary_clinics:
   enabled: true
-  deployment: zeabur
+  deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 259200
   supabase_tables: [live.animal_welfare_point_runs, live.animal_welfare_point_snapshots]
   s3_prefixes:
     - {prefix: animal_veterinary_clinics/archives/, expected_daily: false}
   critical: false
-  notes: 農業部 datagov:8705；2026-08-20 起由 Zeabur production collector 每 180 日收完整快照，raw 由 archive.py 保存；不寫負責獸醫姓名。
+  notes: >-
+    農業部 datagov:8705；2026-08-20 起由 Zeabur production collector 每 180 日收完整快照，raw 由 archive.py 保存；不寫負責獸醫姓名。
+    2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_licensed_pet_businesses:
   enabled: true
-  deployment: zeabur
+  deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 525600
   supabase_tables: [live.animal_welfare_point_runs, live.animal_welfare_point_snapshots]
   s3_prefixes:
     - {prefix: animal_licensed_pet_businesses/archives/, expected_daily: false}
   critical: false
-  notes: 農業部 datagov:97070；2026-08-20 起由 Zeabur production collector 每 365 日收完整快照，raw 由 archive.py 保存；不寫 own_name/bos_name。
+  notes: >-
+    農業部 datagov:97070；2026-08-20 起由 Zeabur production collector 每 365 日收完整快照，raw 由 archive.py 保存；不寫 own_name/bos_name。
+    2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_protection_offices:
   enabled: true
-  deployment: zeabur
+  deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 129600
   supabase_tables: [live.animal_welfare_point_runs, live.animal_welfare_point_snapshots]
   s3_prefixes:
     - {prefix: animal_protection_offices/archives/, expected_daily: false}
   critical: false
-  notes: 農業部 datagov:134283；2026-08-20 起由 Zeabur production collector 每 90 日收 22 個縣市動物保護機關完整快照。
+  notes: >-
+    農業部 datagov:134283；2026-08-20 起由 Zeabur production collector 每 90 日收 22 個縣市動物保護機關完整快照。
+    2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 global_climate_bake:
   enabled: true
@@ -998,7 +1007,7 @@ tpml_seat:
 
 food_prices:
   enabled: true
-  deployment: zeabur
+  deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 1440
   supabase_tables: [live.food_price_daily]
   s3_prefixes:
@@ -1007,6 +1016,7 @@ food_prices:
   notes: >-
     農業部四類批發價（蔬果/漁產/毛豬/家禽）。2026-08-03 併入時漏加本檔，CI 自那時起
     一直紅著 —— 補回時依 production 實況標 enabled/zeabur（實測 2026-08-07 11:43 有寫入）。
+    2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 lightning_cwa:
   enabled: true

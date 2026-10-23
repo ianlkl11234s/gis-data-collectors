@@ -162,7 +162,7 @@ ConnectTimeout（不是 403／404）、本機（台灣 ISP）連得到、Zeabur 
 固定做法：
 
 - 主 repo 仍保留完整 collector 實作與 `TABLE_MAP`／轉換邏輯（schema 只有一份真相），Zeabur 端 `{PREFIX}_ENABLED=false`，避免雙跑。
-- VM 版是 `external/<name>_vm/` 的單檔腳本，由 cron 執行，寫同一個 Supabase、同一個 S3 bucket。
+- VM 版是 `external/<name>_vm/` 的單檔腳本，由 cron 執行，寫同一個 Supabase、同一個 S3 bucket。例外：`external/moa_opendata_vm/`（農業部 7 個 collector，2026-10-23）把主 repo 程式原樣打包上 VM，由 runner 呼叫同一個 `BaseCollector.run()`，所以會寫 `collector_status`，並沿用主 repo 的 buffer 與 `tasks/archive.py`。
 - 和主 repo 共用寫入邏輯時要逐位元組相同（例：`external/isohe_port_marine_vm/marine_write.py` 與 `storage/marine_write.py`，由測試強制）。
 - VM 是手動部署，**git push 不會生效**（[principles D-04](principles.md)；操作步驟見 [operations.md](operations.md)「VM 操作」）。
 

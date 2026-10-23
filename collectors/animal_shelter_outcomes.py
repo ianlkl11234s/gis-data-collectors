@@ -1,5 +1,7 @@
 """農業部動物福利月報收集器。
 
+⚠️ Taiwan IP required, runs on external VM (external/moa_opendata_vm/)：2026-10-23 起 data.moa.gov.tw 擋 Zeabur（JP IP）。
+
 兩個資料集都回傳「截至目前的完整歷史月報」，不是事件流：
 
 * ``datagov:41236``：收容成果，canonical grain 為 年／月／縣市。

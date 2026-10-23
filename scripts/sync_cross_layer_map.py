@@ -58,7 +58,12 @@ from storage.supabase_tables import TABLE_MAP  # noqa: E402
 CROSS_LAYER_YAML = _REPO_ROOT / "config" / "cross_layer_map.yaml"
 
 # 已知跑在 HiCloud VM 的 collector（name）— 需 Taiwan IP，Zeabur 端強制關閉
-HICLOUD_VM_COLLECTORS = frozenset({"ship_ais", "waste_positions", "cdc_public_health_weekly"})
+HICLOUD_VM_COLLECTORS = frozenset({
+    "ship_ais", "waste_positions", "cdc_public_health_weekly",
+    # 2026-10-23 data.moa.gov.tw 擋 Zeabur → external/moa_opendata_vm/
+    "food_prices", "animal_adoption", "animal_shelter_outcomes", "animal_shelter_pressure",
+    "animal_veterinary_clinics", "animal_licensed_pet_businesses", "animal_protection_offices",
+})
 
 # Fixed-time production tasks live outside _COLLECTOR_TOGGLES/registry but still
 # need cross-layer inventory and health ownership.
@@ -139,7 +144,7 @@ def compute_drift() -> tuple[list[str], list[str]]:
 # 欄位推導
 # ────────────────────────────────────────────────────────────────────
 def derive_deployment(name: str, enabled: bool) -> str:
-    """hicloud_vm（3 例外）/ zeabur（enabled）/ disabled（未 enabled）。
+    """hicloud_vm（HICLOUD_VM_COLLECTORS 例外）/ zeabur（enabled）/ disabled（未 enabled）。
 
     此規則可 100% 重現既有 41 筆 entry 的 deployment 值。
     """
