@@ -35,6 +35,7 @@
 | I-02 | 要加唯一索引時，**先部署冪等的 collector，再建唯一索引** | 順序反了 collector 會撞唯一鍵失敗 | gis-platform `docs/research/2026-10-16-disk-io-round3.md` §6 |
 | I-03 | 「寫成功才標記」的批次處理要另外記 attempt | 沒有成功結果的項目下一輪又被撈出來，永遠重試（waste_match 每天固定 80 筆） | mini-taiwan-pulse `.claude/memory/INCIDENTS.md` §2026-05-09；gis-platform `migrations/075…` |
 | I-04 | 新來源和既有來源疑似重疊時，用座標 100 m 配對判定，不信編號 | >90% 重複停一邊、<30% 互補兩邊留（iot_wra 地下水 95% 重複，已停子端點） | mini-taiwan-pulse `.claude/memory/PRINCIPLES.md` §Collector 重複度檢核 |
+| I-05 | 對外部服務逐批處理（LLM 標註等）時，單批失敗只跳過該批、下一輪重送；全部批次失敗才讓整輪失敗。批內維持原子，一則不合法整批跳過 | 全有全無在積壓時幾乎每輪都碰到一批失敗：news_events 積壓 28 批、約 18% 批次失敗，加值後還卡 9 小時，且每輪重送全部積壓 | [pitfall 2026-10-21](../../.claude/pitfalls/2026-10-21-news-llm-all-or-nothing.md) |
 
 ## L DB 負載
 
@@ -97,6 +98,7 @@
 | H-02 | 「0 筆」常是合法結果；判準依可靠度：ledger 表 > 第二資料源 > 第三方訊號反證 | 無雷雨、無共機、無地震都會是 0；落雷曾斷 28 天、A1 停 6 週都沒告警 | mini-taiwan-pulse `.claude/pitfalls/2026-08-07-silent-upstream-outage.md` |
 | H-03 | 判斷部署生效看「只有新版才會產生的內容特徵」；判斷 collector 在跑看 DB 實際資料，不看 config 預設 | UPSERT 的 UPDATE 分支不一定更新 `updated_at`；自動回填的清冊把 19 個正在寫的 collector 標成停用 | mini-taiwan-pulse `.claude/memory/INCIDENTS.md` §2026-07-03、§2026-08-03 |
 | H-04 | 多個來源共用一張表時，要能分來源看新鮮度 | 一個來源壞掉會被其他來源的新資料蓋過去（lightning 三源、internet_health 三源） | 盤點 2026-10-15（本手冊建立時發現，見 [operations.md](operations.md)「已知監控缺口」） |
+| H-05 | `collect()` 失敗也要寫失敗心跳；失敗訊息帶原因類別（例外類別＋HTTP 狀態碼，不帶內文） | 心跳原本只由 `write()` 回報，`collect()` raise 時狀態表永遠是 0 錯誤：news_events 停 4 天沒被發現，錯誤原因又被 `from None` 吞掉 | `collectors/base.py::run()`；[pitfall 2026-10-21](../../.claude/pitfalls/2026-10-21-news-llm-all-or-nothing.md) |
 
 ## D 部署與來源
 

@@ -94,6 +94,8 @@
 | 2 | `write()` 失敗只回傳 False 或例外被印成警告，非 `require_db_write` 的 collector 這一輪仍算成功 | `collectors/base.py::run()` | in-memory 狀態與通知都顯示成功 |
 | 3 | 零筆（或去重後沒有新列）時 `write()` 在心跳之前就 return，`last_success_at` 不更新，舊的 current snapshot 也不會清 | `storage/supabase_writer.py::write()` 的 `if not records: return True` | 上游回空時看起來像 collector 掛了；已撤銷的舊資料（例：限水區域）永久殘留 |
 
+另一個已修正的盲點：`collect()` 本身 raise 時 writer 不會被呼叫，原本不寫任何心跳，狀態表看不到「每輪都失敗」。2026-10-23 起 `BaseCollector.run()` 會自己回報失敗心跳（H-05，[pitfall 2026-10-21](../../.claude/pitfalls/2026-10-21-news-llm-all-or-nothing.md)）。
+
 調查證據：[2026-10-05-collector-health](../investigations/2026-10-05-collector-health.md)（DIO-4、DIO-6）。決策背景：.gis-agent-system `decisions/0018-data-freshness-auto-refresh.md`。
 
 ### 3.3 `last_error` 怎麼讀

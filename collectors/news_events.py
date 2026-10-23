@@ -327,6 +327,19 @@ OPENROUTER_RETRY_DELAYS = (2.0, 5.0)  # 429 / 5xx / 連線 / read timeout 重試
 CATEGORY_ENUM = ('accident', 'crime', 'disaster', 'traffic', 'health', 'policy', 'other')
 
 
+# 通過 annotation 的項目標記；collect() 只寫有標記的項目（失敗批次留到下一輪重送）
+ANNOTATED_KEY = '_annotated'
+
+
+def _annotation_failure_cause(exc: Exception) -> str:
+    """失敗原因摘要：只取例外類別與 HTTP 狀態碼（例外內文可能夾帶回應內容，不進 log／DB）。
+    NewsAnnotationError 是本模組自己寫的訊息，可以原樣保留。"""
+    if isinstance(exc, NewsAnnotationError):
+        return str(exc)[:120]
+    status = getattr(getattr(exc, 'response', None), 'status_code', None)
+    return f"{type(exc).__name__} {status}" if isinstance(status, int) else type(exc).__name__
+
+
 class NewsAnnotationError(RuntimeError):
     """新聞 annotation 不完整時中止整輪，避免未分類資料寫入。"""
 
@@ -809,38 +822,36 @@ class NewsEventsCollector(BaseCollector):
             )
 
     def _annotate_items(self, items: list[dict], gaz: TownshipGazetteer) -> dict:
-        """完整 annotation 所有新項目；任一 batch 異常即中止整輪。"""
-        total_usage = {'input': 0, 'output': 0, 'cached': 0, 'batches': 0, 'failed_batches': 0}
+        """逐批 annotation。單批異常（API 錯誤、JSON 壞掉、缺 idx、欄位不合法）只跳過該批：
+        該批項目不標 ANNOTATED_KEY、不入庫，下一輪去重時仍是新項目會重送。
+        全部 batch 都失敗才中止整輪（2026-10-21：積壓 28 批時一批失敗就整輪放棄，卡住 9 小時）。
+        """
+        total_usage = {
+            'input': 0, 'output': 0, 'cached': 0, 'batches': 0, 'failed_batches': 0,
+            'skipped_items': 0, 'failure_causes': [],
+        }
 
         for start in range(0, len(items), LLM_BATCH_SIZE):
             batch = items[start:start + LLM_BATCH_SIZE]
-            if total_usage['batches'] > 0:
+            if start > 0:
                 time.sleep(LLM_BATCH_SLEEP)
             try:
                 annotations, usage = self._llm_extract_batch(batch, gaz)
-                total_usage['batches'] += 1
                 for k in ('input', 'output', 'cached'):
                     total_usage[k] += usage[k]
-            except Exception:
-                total_usage['failed_batches'] += 1
-                raise NewsAnnotationError(
-                    f"LLM annotation batch failed ({len(batch)} records); refusing to write this run"
-                ) from None
-
-            expected_indexes = set(range(len(batch)))
-            if set(annotations) != expected_indexes:
-                total_usage['failed_batches'] += 1
-                raise NewsAnnotationError(
-                    "LLM annotation batch incomplete; refusing to write this run"
-                )
-            for ann in annotations.values():
-                try:
+                if set(annotations) != set(range(len(batch))):
+                    raise NewsAnnotationError("LLM annotation batch incomplete")
+                for ann in annotations.values():
                     self._validate_annotation(ann)
-                except NewsAnnotationError:
-                    total_usage['failed_batches'] += 1
-                    raise
+            except Exception as exc:
+                total_usage['failed_batches'] += 1
+                total_usage['skipped_items'] += len(batch)
+                total_usage['failure_causes'].append(_annotation_failure_cause(exc))
+                continue
+            total_usage['batches'] += 1
 
             for i, it in enumerate(batch):
+                it[ANNOTATED_KEY] = True
                 ann = annotations.get(i) or {}
                 loc = gaz.validate(ann.get('county'), ann.get('township'))
                 it.update(loc)
@@ -877,6 +888,13 @@ class NewsEventsCollector(BaseCollector):
                 it['severity']      = _int_in_range(ann.get('severity'), 0, 3)
                 raw_event = ann.get('is_event')
                 it['is_event'] = bool(raw_event) if isinstance(raw_event, bool) else None
+
+        if total_usage['failed_batches'] and not total_usage['batches']:
+            causes = '; '.join(sorted(set(total_usage['failure_causes'])))
+            raise NewsAnnotationError(
+                f"LLM annotation batch failed (all {total_usage['failed_batches']} batches, "
+                f"{len(items)} records: {causes}); refusing to write this run"
+            )
         return total_usage
 
     @staticmethod
@@ -932,6 +950,13 @@ class NewsEventsCollector(BaseCollector):
                 else getattr(config, 'NEWS_EVENTS_OPENROUTER_MODEL', 'qwen/qwen3.7-flash')
             )
             usage = self._annotate_items(fresh, gaz)
+            if usage['failed_batches']:
+                causes = '; '.join(sorted(set(usage['failure_causes'])))
+                print(
+                    f"   ⚠ LLM 標註 {usage['failed_batches']} 批失敗，跳過 {usage['skipped_items']} 則"
+                    f"（下一輪重送）：{causes}"
+                )
+            fresh = [it for it in fresh if it.get(ANNOTATED_KEY)]
             cost_text = ""
             if llm_provider == 'gemini':
                 cost = (
@@ -983,6 +1008,7 @@ class NewsEventsCollector(BaseCollector):
             'township_level': township_level,
             'llm_batches': usage['batches'],
             'llm_failed_batches': usage['failed_batches'],
+            'llm_skipped_items': usage.get('skipped_items', 0),
             'llm_tokens_input': usage['input'],
             'llm_tokens_cached': usage['cached'],
             'llm_tokens_output': usage['output'],

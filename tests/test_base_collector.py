@@ -289,3 +289,42 @@ def test_mojibake_rejection_fails_run_even_without_require_db_write(_ok, _err):
     _ok.assert_not_called()
     _err.assert_called_once()
     assert collector.last_success_at is None
+
+
+# ============================================================
+# collector_status 心跳：collect() 失敗也要回報
+# ============================================================
+
+@patch('collectors.base.notify_error')
+def test_collect_failure_reports_error_heartbeat(_mock_notify):
+    """collect() 本身失敗時 writer 不會被呼叫，base 要自己回報失敗心跳"""
+    def boom():
+        raise RuntimeError("LLM annotation batch failed")
+
+    collector = DummyCollector(collect_impl=boom)
+    collector.supabase_writer = MagicMock()
+
+    collector.run()
+
+    collector.supabase_writer._report_heartbeat.assert_called_once_with(
+        'dummy', False, 0, 'LLM annotation batch failed'
+    )
+    collector.supabase_writer.write.assert_not_called()
+
+
+@patch('collectors.base.notify_error')
+@patch('collectors.base.notify_success')
+def test_write_path_failure_does_not_double_report(_mock_success, _mock_error):
+    """write() 已自己回報心跳（成功或失敗），base 不再重複回報"""
+    class StrictCollector(DummyCollector):
+        def require_db_write(self):
+            return True
+
+    collector = StrictCollector()
+    collector.supabase_writer = MagicMock()
+    collector.supabase_writer.write.return_value = False
+
+    collector.run()
+
+    collector.supabase_writer.write.assert_called_once()
+    collector.supabase_writer._report_heartbeat.assert_not_called()
