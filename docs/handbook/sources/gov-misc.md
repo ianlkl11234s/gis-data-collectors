@@ -82,6 +82,8 @@
 - 頻率／位置：每 10 分鐘，Zeabur；`COLLECT_TIMEOUT` 600 秒。
 - 寫入：`live.news_events`；simhash 去重。
 - 守門：LLM 金鑰依 `NEWS_EVENTS_LLM_PROVIDER` 在執行期驗證（所以 registry 不宣告 `required_env`，避免 OpenRouter 被 Gemini 的檢查擋掉）。
+- LLM 標註逐批（15 則）處理：單批失敗（API 錯誤、JSON 壞掉、缺 idx、欄位不合法）只跳過該批，該批不入庫、下一輪重送；全部批次失敗才整輪失敗。log 的「⚠ LLM 標註 N 批失敗」帶原因類別；結果欄 `llm_failed_batches`、`llm_skipped_items`（I-05）。
+- 已知坑：2026-10-16 OpenRouter 額度用完停 4 天，加值後又被舊的全有全無邏輯卡 9 小時；10/17–10/20 的新聞已從 RSS 消失，補不回來（[pitfall](../../../.claude/pitfalls/2026-10-21-news-llm-all-or-nothing.md)）。額度不足時 OpenRouter 回 402。
 
 ### global_events
 GDELT masterfilelist（只取 metadata）＋OpenRouter Qwen 第一階段評估。
