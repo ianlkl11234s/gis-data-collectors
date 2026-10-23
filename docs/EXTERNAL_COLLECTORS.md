@@ -24,6 +24,7 @@
 | `waste_positions` | 高雄/新北/台南 GPS 三家 | 同上 VM | [`external/waste_positions_vm/`](../external/waste_positions_vm/) |
 | `cdc_public_health_weekly` | 疾管署 `od.cdc.gov.tw` | 同上 VM（待部署） | [`external/cdc_public_health_weekly_vm/`](../external/cdc_public_health_weekly_vm/) |
 | `isohe_port_marine` | ISOHE 商港 Wave/Current/Tide/Wind | 同上 VM（部署前需 Taiwan egress smoke） | [`external/isohe_port_marine_vm/`](../external/isohe_port_marine_vm/) |
+| `food_prices`、`animal_adoption`、`animal_shelter_outcomes`、`animal_shelter_pressure`、`animal_veterinary_clinics`、`animal_licensed_pet_businesses`、`animal_protection_offices` | 農業部 `data.moa.gov.tw` | 同上 VM（2026-10-23 起）；**不重寫**，runner 直接跑主 repo 的 collector class | [`external/moa_opendata_vm/`](../external/moa_opendata_vm/) |
 
 主 repo 對應 collector 的 `*_ENABLED` 環境變數**必須在 Zeabur 上設為 `false`**（避免雙跑、避免無意義的 timeout 錯誤刷 log）。
 
@@ -52,6 +53,7 @@
 | `*.motcmpb.gov.tw`（航港局）| 高 |
 | `*.afa.gov.tw`（空中航管） | 推測高 |
 | `od.cdc.gov.tw`（疾管署 CSV 下載）| **高**（2026-06-16 實證 Zeabur timeout，雖然 `data.cdc.gov.tw` CKAN API 仍開放）|
+| `data.moa.gov.tw`（農業部開放資料）| **高**（2026-10-23 實證 Zeabur JP IP ConnectTimeout，`www.moa.gov.tw` 仍可連）|
 | `*.cwa.gov.tw`（氣象） | 中（部分 API 仍開放） |
 | `data.gov.tw` | 低（國際 IP 多半 OK） |
 | `tdx.transportdata.tw` | 低（明確開放 API 給開發者） |

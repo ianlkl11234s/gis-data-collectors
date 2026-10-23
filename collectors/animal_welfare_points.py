@@ -1,5 +1,7 @@
 """低頻動物福利服務據點快照（預設停用）。
 
+⚠️ Taiwan IP required, runs on external VM (external/moa_opendata_vm/)：2026-10-23 起 data.moa.gov.tw 擋 Zeabur（JP IP）。
+
 三個來源都是完整清單快照；完整 raw 留在 LocalStorage，交由 archive.py 歸檔，
 normalized rows 僅保留公開機構資訊，不把姓名欄寫入 Supabase。
 """

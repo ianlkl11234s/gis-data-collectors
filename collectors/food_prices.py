@@ -1,6 +1,8 @@
 """
 食品價格每日收集器（菜 / 魚 / 肉 / 蛋批發拍賣成交價）
 
+⚠️ Taiwan IP required, runs on external VM (external/moa_opendata_vm/)：2026-10-23 起 data.moa.gov.tw 擋 Zeabur（JP IP）。
+
 資料來源：農業部 data.moa.gov.tw（全部免金鑰、OGDL-Taiwan-1.0、每日 T+1 更新）
 
 🔴 四個來源的分頁與日期參數規則**完全不同**，不可共用 helper：

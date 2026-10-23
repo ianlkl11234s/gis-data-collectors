@@ -1,5 +1,7 @@
 """農業部動物認領養完整快照收集器。
 
+⚠️ Taiwan IP required, runs on external VM (external/moa_opendata_vm/)：2026-10-23 起 data.moa.gov.tw 擋 Zeabur（JP IP）。
+
 來源沒有可靠的事件流，也不能從名單消失推論動物已被認養。因此每次完整
 下載都先建立一個不可變快照；current 狀態、每日存量和連續缺席判定全部由
 gis-platform 的 ``live.finalize_animal_adoption_snapshot(run_id)`` 在同一筆交易中

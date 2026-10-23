@@ -40,22 +40,22 @@
 - 已知坑：**一列是一個當事人，不是一起事故**，下游算件數要去重。2026-08-07 查出曾停約 6 週而沒有告警（與台電落雷同一天查出）。
 
 ### animal_adoption
-農業部待認領養動物完整快照。每日，Zeabur；寫 `live.animal_adoption_snapshot_runs`、`animal_adoption_snapshots`、`animal_adoption_current` 與 `analytics.animal_adoption_daily`。只有完整成功的 run 才呼叫 `live.finalize_animal_adoption_snapshot` 更新 current 與每日彙總；raw JSON 留本地，由 archive 每日上 S3。`COLLECT_TIMEOUT` 120 秒。
+農業部待認領養動物完整快照。每日，HiCloud VM（2026-10-23 起；`data.moa.gov.tw` 擋 Zeabur，見 [`external/moa_opendata_vm/`](../../../external/moa_opendata_vm/README.md)）；寫 `live.animal_adoption_snapshot_runs`、`animal_adoption_snapshots`、`animal_adoption_current` 與 `analytics.animal_adoption_daily`。只有完整成功的 run 才呼叫 `live.finalize_animal_adoption_snapshot` 更新 current 與每日彙總；raw JSON 留本地，由 archive 每日上 S3。`COLLECT_TIMEOUT` 120 秒。
 
 ### animal_shelter_outcomes
-農業部收容成果月報（datagov 41236，整份歷史快照）。每 30 日，Zeabur；寫 `live.animal_shelter_outcome_runs`、`live.animal_shelter_outcomes`，完整 root array 才 finalize。與 `animal_shelter_pressure` 共用表。
+農業部收容成果月報（datagov 41236，整份歷史快照）。每 30 日，VM（同上）；寫 `live.animal_shelter_outcome_runs`、`live.animal_shelter_outcomes`，完整 root array 才 finalize。與 `animal_shelter_pressure` 共用表。
 
 ### animal_shelter_pressure
-農業部收容壓力／去向月報（datagov 73396）。每 30 日，Zeabur；與 `animal_shelter_outcomes` 共用表，保留同月同縣市的 revision。
+農業部收容壓力／去向月報（datagov 73396）。每 30 日，VM（同上）；與 `animal_shelter_outcomes` 共用表，保留同月同縣市的 revision。
 
 ### animal_veterinary_clinics
-農業部獸醫開業執照（datagov 8705）。每 180 日，Zeabur；寫 `live.animal_welfare_point_runs`、`live.animal_welfare_point_snapshots`（三支動保點位共用）。**不寫負責獸醫姓名**。
+農業部獸醫開業執照（datagov 8705）。每 180 日，VM（同上）；寫 `live.animal_welfare_point_runs`、`live.animal_welfare_point_snapshots`（三支動保點位共用）。**不寫負責獸醫姓名**。
 
 ### animal_licensed_pet_businesses
-農業部合法特定寵物業（datagov 97070）。每 365 日，Zeabur；共用動保點位表。**不寫負責人姓名**（`own_name`、`bos_name`）。
+農業部合法特定寵物業（datagov 97070）。每 365 日，VM（同上）；共用動保點位表。**不寫負責人姓名**（`own_name`、`bos_name`）。
 
 ### animal_protection_offices
-農業部動物保護機關（datagov 134283，22 縣市）。每 90 日，Zeabur；共用動保點位表。
+農業部動物保護機關（datagov 134283，22 縣市）。每 90 日，VM（同上）；共用動保點位表。
 
 動保點位三支的頻率很低（90–365 日），表級新鮮度門檻也跟著拉長；它們共用表，一支停掉要很久才會從表上看出來。
 
@@ -70,7 +70,7 @@
 ### food_prices
 農業部四類批發價（蔬果、漁產、毛豬、家禽）。
 
-- 頻率／位置：每日，Zeabur（上游 T+1 更新）。
+- 頻率／位置：每日，HiCloud VM（2026-10-23 起；`data.moa.gov.tw` 擋 Zeabur，見 [`external/moa_opendata_vm/`](../../../external/moa_opendata_vm/README.md)）（上游 T+1 更新）。
 - 寫入：`live.food_price_daily`。
 - 已知坑：四支 API 的分頁與日期規則互不相容，而且誤用不報錯：蔬果單次上限 1,000 筆、`Page` 參數無效、`Next:true` 是假訊號，要用「市場 × 類別 × 自適應時間窗遞迴切分」；數值欄會混入「休市」字串，要當成無觀測，不是 0；土雞資料集 2014-03 起停更但仍回 200 加 1,253 筆舊資料。**不可共用 helper**。2026-08-03 併入時漏加清冊，CI 紅了四天。詳細：gis-wiki `inbox/2026-08-06-…四套互不相容的API規則.md`、analytics `docs/topic-research/food_prices/`。
 
