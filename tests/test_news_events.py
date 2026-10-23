@@ -276,16 +276,20 @@ class TestAnnotationFailClosed:
 
         assert 'category' not in annotation_items[0]
 
-    def test_partial_batch_failure_aborts_whole_run(self, monkeypatch, gazetteer, annotation_items):
+    def test_partial_batch_failure_skips_only_that_batch(self, monkeypatch, gazetteer, annotation_items):
         collector = NewsEventsCollector.__new__(NewsEventsCollector)
         monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 1)
         monkeypatch.setattr(news_events, 'LLM_BATCH_SLEEP', 0)
         collector._llm_extract_batch = Mock(side_effect=[({0: _annotation()}, _usage()), RuntimeError('timeout')])
 
-        with pytest.raises(NewsAnnotationError, match='refusing to write this run'):
-            collector._annotate_items(annotation_items, gazetteer)
+        usage = collector._annotate_items(annotation_items, gazetteer)
 
         assert collector._llm_extract_batch.call_count == 2
+        assert usage['batches'] == 1 and usage['failed_batches'] == 1 and usage['skipped_items'] == 1
+        assert usage['failure_causes'] == ['RuntimeError']
+        assert annotation_items[0][news_events.ANNOTATED_KEY] is True
+        assert news_events.ANNOTATED_KEY not in annotation_items[1]
+        assert 'category' not in annotation_items[1]
 
     def test_missing_response_index_raises(self, monkeypatch, gazetteer, annotation_items):
         collector = NewsEventsCollector.__new__(NewsEventsCollector)
@@ -296,6 +300,25 @@ class TestAnnotationFailClosed:
             collector._annotate_items(annotation_items, gazetteer)
 
         assert 'category' not in annotation_items[0]
+
+    def test_invalid_batch_is_skipped_atomically_while_other_batches_write(self, monkeypatch, gazetteer):
+        items = [{'title': f'新聞{i}', 'summary': ''} for i in range(4)]
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 2)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SLEEP', 0)
+        bad = dict(_annotation(1), category='bogus')
+        collector._llm_extract_batch = Mock(side_effect=[
+            ({0: _annotation(0), 1: bad}, _usage()),
+            ({0: _annotation(0), 1: _annotation(1)}, _usage()),
+        ])
+
+        usage = collector._annotate_items(items, gazetteer)
+
+        # 壞的那批整批不寫（連同欄位合法的第 0 則），另一批照寫
+        assert [news_events.ANNOTATED_KEY in it for it in items] == [False, False, True, True]
+        assert 'category' not in items[0]
+        assert usage['failed_batches'] == 1 and usage['skipped_items'] == 2
+        assert 'invalid' in usage['failure_causes'][0]
 
     @pytest.mark.parametrize('mutate', [
         lambda a: a.pop('category'),
@@ -380,6 +403,32 @@ class TestAnnotationFailClosed:
         assert result['dry_run_preview'][0]['category'] == 'other'
         collector._annotate_items.assert_not_called()
 
+    def test_collect_writes_only_annotated_items(self, monkeypatch, gazetteer, annotation_items):
+        collector = NewsEventsCollector.__new__(NewsEventsCollector)
+        collector.dry_run = False
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 1)
+        monkeypatch.setattr(news_events, 'LLM_BATCH_SLEEP', 0)
+        monkeypatch.setattr(config, 'NEWS_EVENTS_LLM_PROVIDER', 'openrouter')
+        for index, item in enumerate(annotation_items):
+            item.update({
+                'source': 'test',
+                'url': f'https://example.test/{index}',
+                'url_norm': f'https://example.test/{index}',
+                'published_ts': '2026-10-21T00:00:00+08:00',
+                'title_simhash': index,
+            })
+        collector._fetch_all_feeds = Mock(return_value=(annotation_items, 1, 0))
+        collector._dedup = Mock(return_value=(annotation_items, {'dup_url': 0, 'dup_simhash': 0}))
+        collector._load_gazetteer = Mock(return_value=gazetteer)
+        collector._validate_llm_config = Mock(return_value='openrouter')
+        collector._llm_extract_batch = Mock(side_effect=[({0: _annotation()}, _usage()), RuntimeError('timeout')])
+
+        result = collector.collect()
+
+        assert [r['url'] for r in result['data']] == ['https://example.test/0']
+        assert result['llm_failed_batches'] == 1 and result['llm_skipped_items'] == 1
+        assert '_annotated' not in result['data'][0]
+
 
 class TestLlmProviders:
 
@@ -431,7 +480,9 @@ class TestLlmProviders:
         with pytest.raises(NewsAnnotationError, match='refusing to write this run') as exc:
             collector._annotate_items([{'title': '測試', 'summary': ''}], gazetteer)
 
-        assert '401' not in str(exc.value)
+        # 原因只帶例外類別（狀態碼存在時也帶），不帶例外內文與金鑰
+        assert 'HTTPError' in str(exc.value)
+        assert 'test-openrouter-key' not in str(exc.value)
 
     @staticmethod
     def _http_error(status):
