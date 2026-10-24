@@ -448,6 +448,10 @@ JAPAN_JMA_OCEAN_ENV_MAX_DAYS_PER_RUN = int(os.getenv('JAPAN_JMA_OCEAN_ENV_MAX_DA
 # JMA 落雷（jma_lightning）：補抓視窗（小時，須小於上游約 4–5 天保留期）、每輪最多幾幀、剛出爐幾分鐘內的幀下輪再抓一次
 JAPAN_JMA_LIGHTNING_BACKFILL_HOURS = int(os.getenv('JAPAN_JMA_LIGHTNING_BACKFILL_HOURS', '48'))
 JAPAN_JMA_LIGHTNING_MAX_FRAMES = int(os.getenv('JAPAN_JMA_LIGHTNING_MAX_FRAMES', '36'))
+
+# CDC 公衛週報：逗號分隔，停用個別疾病（influenza,dengue,enterovirus）；預設空＝全啟用。
+#   用於上游已下架的疾病（例：dengue，UDI-0001），避免每輪告警。VM 版讀同名 env。
+CDC_PUBLIC_HEALTH_WEEKLY_DISABLED = os.getenv('CDC_PUBLIC_HEALTH_WEEKLY_DISABLED', '')
 JAPAN_JMA_LIGHTNING_SETTLE_MINUTES = int(os.getenv('JAPAN_JMA_LIGHTNING_SETTLE_MINUTES', '10'))
 # 環境省 WBGT（env_jp_wbgt）：收集月份（JST；服務期約 4 月第 4 個週三～10 月 21 日）、首跑回看天數
 JAPAN_ENV_WBGT_SEASON_MONTHS = os.getenv('JAPAN_ENV_WBGT_SEASON_MONTHS', '4,5,6,7,8,9,10')

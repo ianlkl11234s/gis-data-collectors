@@ -173,18 +173,45 @@ def parse_dengue(row, disease_code, dataset_id):
 # ────────────────────────────────────────────────────────────────────
 # Fetch + parse
 # ────────────────────────────────────────────────────────────────────
+REQUIRED_COLUMNS = {
+    "rods": {
+        "年": ("年", "Year"),
+        "週": ("週", "Week"),
+        "就診人次": ("類流感急診就診人次", "腸病毒急診就診人次", "就診數"),
+    },
+    "dengue": {
+        "發病年份": ("發病年份", "年"),
+        "發病週別": ("發病週別", "週"),
+        "確定病例數": ("確定病例數", "病例數"),
+    },
+}
+
+
+def disabled_diseases() -> set[str]:
+    """CDC_PUBLIC_HEALTH_WEEKLY_DISABLED=dengue,... 停用個別疾病（預設空＝全啟用）"""
+    raw = os.environ.get("CDC_PUBLIC_HEALTH_WEEKLY_DISABLED", "")
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+
 def fetch_dataset(ds: dict, cutoff_year: int, log: logging.Logger) -> list[dict]:
+    """抓 + 解析單一疾病。HTTP 非 2xx / 空檔 / 全列解析失敗（格式改變）一律 raise。"""
     url = f"{CDC_CSV_BASE}/{ds['filename']}"
     resp = SESSION.get(url, timeout=HTTP_TIMEOUT)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
-    reader = csv.DictReader(io.StringIO(text))
+    all_rows = list(csv.DictReader(io.StringIO(text)))
+    if not all_rows:
+        raise ValueError("CSV 解析 0 列（空檔或上游下架頁面）")
+    header = set(all_rows[0].keys())
+    missing = [name for name, aliases in REQUIRED_COLUMNS[ds["kind"]].items()
+               if not header & set(aliases)]
     parser = parse_dengue if ds["kind"] == "dengue" else parse_rods
-    out: list[dict] = []
-    for r in reader:
-        n = parser(r, ds["disease_code"], ds["dataset_id"])
-        if n and n["iso_year"] >= cutoff_year:
-            out.append(n)
+    parsed = [n for n in (parser(r, ds["disease_code"], ds["dataset_id"]) for r in all_rows) if n]
+    if not parsed:
+        raise ValueError(
+            f"{len(all_rows)} 列全部解析失敗（格式疑似改變）；缺必要欄位: {missing or '無（值格式異常）'}；"
+            f"表頭: {sorted(header)[:12]}")
+    out = [n for n in parsed if n["iso_year"] >= cutoff_year]
     log.info(f"{ds['disease_code']}: {len(out)} 筆（>= {cutoff_year}）")
     return out
 
@@ -267,15 +294,23 @@ def main() -> int:
     cutoff_year = ts.year - KEEP_YEARS + 1
 
     all_records: list[dict] = []
-    stats: dict[str, int | str] = {}
+    stats: dict[str, dict] = {}
+    disabled = disabled_diseases()
     for ds in DATASETS:
+        code = ds["disease_code"]
+        if code in disabled:
+            stats[code] = {"status": "disabled"}
+            log.info(f"{code}: 已停用（CDC_PUBLIC_HEALTH_WEEKLY_DISABLED）")
+            continue
         try:
             rows = fetch_dataset(ds, cutoff_year, log)
             all_records.extend(rows)
-            stats[ds["disease_code"]] = len(rows)
+            stats[code] = {"status": "ok", "rows": len(rows)}
         except Exception as e:
-            stats[ds["disease_code"]] = f"error: {str(e)[:160]}"
-            log.error(f"{ds['disease_code']}: {e}")
+            # 失敗標 error，不記 0 筆；其他疾病好資料照寫，最後以結束碼非 0 告警
+            stats[code] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:200]}"}
+            log.error(f"{code}: 失敗 {type(e).__name__}: {e}")
+    failed = sorted(k for k, v in stats.items() if v["status"] == "error")
 
     # DB：連線 retry → 先補寫積壓 buffer → 寫本輪；寫入失敗存 buffer 不丟資料
     inserted = 0
@@ -302,11 +337,15 @@ def main() -> int:
         "total": len(all_records),
         "inserted": inserted,
         "per_disease": stats,
+        "failed": failed,
         "data": all_records,
     }
     snap = save_snapshot(result, ts)
     log.info(f"snapshot: {snap}")
-    return 0 if inserted > 0 or len(all_records) > 0 else 1
+    if failed:
+        log.error(f"✗ 本輪失敗疾病: {failed}（好資料已照寫）→ exit 1")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

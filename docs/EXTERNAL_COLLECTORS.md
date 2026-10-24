@@ -22,7 +22,7 @@
 |---|---|---|---|
 | `ship_ais` | `mpbais.motcmpb.gov.tw` (航港局) | HiCloud VM `<VM_HOST>` | [`external/ship_ais_vm/`](../external/ship_ais_vm/) |
 | `waste_positions` | 高雄/新北/台南 GPS 三家 | 同上 VM | [`external/waste_positions_vm/`](../external/waste_positions_vm/) |
-| `cdc_public_health_weekly` | 疾管署 `od.cdc.gov.tw` | 同上 VM（待部署） | [`external/cdc_public_health_weekly_vm/`](../external/cdc_public_health_weekly_vm/) |
+| `cdc_public_health_weekly` | 疾管署 `od.cdc.gov.tw` | 同上 VM（**部署與 cron 狀態未驗**：無證據顯示已部署或在跑）。B235 修正：任一疾病 HTTP 非 2xx／空檔／欄位缺失即標 `error` 並以 exit 1 告警（其他疾病好資料照寫），不再記 0 筆；`CDC_PUBLIC_HEALTH_WEEKLY_DISABLED=dengue` 可停用單一疾病（登革熱上游已下架，UDI-0001） | [`external/cdc_public_health_weekly_vm/`](../external/cdc_public_health_weekly_vm/) |
 | `isohe_port_marine` | ISOHE 商港 Wave/Current/Tide/Wind | 同上 VM（部署前需 Taiwan egress smoke） | [`external/isohe_port_marine_vm/`](../external/isohe_port_marine_vm/) |
 | `food_prices`、`animal_adoption`、`animal_shelter_outcomes`、`animal_shelter_pressure`、`animal_veterinary_clinics`、`animal_licensed_pet_businesses`、`animal_protection_offices` | 農業部 `data.moa.gov.tw` | 同上 VM（2026-10-23 起）；**不重寫**，runner 直接跑主 repo 的 collector class | [`external/moa_opendata_vm/`](../external/moa_opendata_vm/) |
 
