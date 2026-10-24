@@ -66,6 +66,27 @@ DATASETS = [
 ]
 
 
+# 各 kind 的必要欄位（任一別名存在即可）；用於格式改變時指出缺哪些欄
+_REQUIRED_COLUMNS = {
+    "rods": {
+        "年": ["年", "Year", "year"],
+        "週": ["週", "Week", "week"],
+        "就診人次": ["類流感急診就診人次", "腸病毒急診就診人次", "就診數", "Cases", "cases"],
+    },
+    "dengue": {
+        "發病年份": ["發病年份", "年", "Year", "year"],
+        "發病週別": ["發病週別", "週", "Week", "week"],
+        "確定病例數": ["確定病例數", "病例數", "Cases", "cases"],
+    },
+}
+
+
+def _disabled_diseases() -> set[str]:
+    """CDC_PUBLIC_HEALTH_WEEKLY_DISABLED=dengue,... 停用個別疾病（預設空＝全啟用）"""
+    raw = getattr(config, "CDC_PUBLIC_HEALTH_WEEKLY_DISABLED", "") or ""
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+
 def _num(v) -> Optional[float]:
     try:
         if v is None or v == "" or v == "-":
@@ -185,31 +206,53 @@ class CdcPublicHealthWeeklyCollector(BaseCollector):
     # 只保留近 N 年資料（CDC 歷史可達 20+ 年，monitor 用 2 年足夠）
     KEEP_YEARS = 2
 
+    def _fetch_one(self, ds: dict, cutoff_year: int) -> list[dict]:
+        """抓並解析單一疾病。任何異常 / 空檔 / 格式改變一律 raise（呼叫端標 error，不當 0 筆）。"""
+        rows = self._fetch_csv(ds["filename"])   # HTTP 非 2xx → HTTPError
+        if not rows:
+            raise ValueError("CSV 解析 0 列（空檔或上游下架頁面）")
+        required = _REQUIRED_COLUMNS[ds["kind"]]
+        header = set(rows[0].keys())
+        missing = [name for name, aliases in required.items() if not header & set(aliases)]
+        parser = _parse_dengue if ds["kind"] == "dengue" else _parse_rods
+        parsed = [n for n in (parser(r, ds["disease_code"], ds["dataset_id"]) for r in rows) if n]
+        if not parsed:
+            raise ValueError(
+                f"{len(rows)} 列全部解析失敗（格式疑似改變）；缺必要欄位: {missing or '無（值格式異常）'}；"
+                f"表頭: {sorted(header)[:12]}")
+        return [n for n in parsed if n["iso_year"] >= cutoff_year]
+
     def collect(self) -> dict:
         now = datetime.now(tz=TAIPEI_TZ)
         cutoff_year = now.year - self.KEEP_YEARS + 1
+        disabled = _disabled_diseases()
         all_records: list[dict] = []
-        dataset_stats: dict[str, int] = {}
+        dataset_stats: dict[str, int | str] = {}
+        errors: dict[str, str] = {}
 
         for ds in DATASETS:
-            try:
-                rows = self._fetch_csv(ds["filename"])
-            except requests.RequestException as e:
-                print(f"[{self.name}] ⚠ 抓 {ds['filename']} 失敗: {e}")
-                dataset_stats[ds["disease_code"]] = 0
+            code = ds["disease_code"]
+            if code in disabled:
+                dataset_stats[code] = "disabled"
                 continue
-            parser = _parse_dengue if ds["kind"] == "dengue" else _parse_rods
-            parsed_count = 0
-            for r in rows:
-                n = parser(r, ds["disease_code"], ds["dataset_id"])
-                if n and n["iso_year"] >= cutoff_year:
-                    all_records.append(n)
-                    parsed_count += 1
-            dataset_stats[ds["disease_code"]] = parsed_count
+            try:
+                recs = self._fetch_one(ds, cutoff_year)
+            except Exception as e:  # noqa: BLE001 — 任何失敗都要標 error，不可變 0
+                msg = f"{type(e).__name__}: {str(e)[:200]}"
+                print(f"[{self.name}] ✗ {code} ({ds['filename']}) 失敗: {msg}")
+                dataset_stats[code] = f"error: {msg}"
+                errors[code] = msg
+                continue
+            all_records.extend(recs)
+            dataset_stats[code] = len(recs)
 
-        return {
+        result = {
             "data":           all_records,
             "dataset_stats":  dataset_stats,
             "total_rows":     len(all_records),
             "collected_at":   now.isoformat(),
         }
+        if errors:
+            # 好資料照寫（base.run 先寫 DB 再檢查此欄），但本輪判失敗 → notify_error
+            result["_collector_error"] = f"cdc 疾病來源失敗 {sorted(errors)}: {errors}"
+        return result

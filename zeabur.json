@@ -440,6 +440,10 @@
       "description": "日檔產品（海溫/海冰）首跑回看天數；上游有完整歷史，加大即逐輪回補（每輪每產品最多 JAPAN_JMA_OCEAN_ENV_MAX_DAYS_PER_RUN 個）",
       "default": "3"
     },
+    "CDC_PUBLIC_HEALTH_WEEKLY_DISABLED": {
+      "description": "CDC 公衛週報停用的疾病（逗號分隔：influenza,dengue,enterovirus）；預設空＝全啟用。登革熱上游已下架時設 dengue 可避免每輪告警（Zeabur 本 collector 預設關閉，實際在 VM 跑）",
+      "default": ""
+    },
     "JAPAN_JMA_OCEAN_ENV_SEASON": {
       "description": "季節開關（JST 月份；季外不打上游、不算缺）；例：只收春季黃砂加 kosa_fcst=2,3,4,5",
       "default": "sea_ice=12,1,2,3,4,5"
