@@ -222,6 +222,34 @@ def _read_root_manifest_date(s3, key: str) -> str | None:
         return None
 
 
+_DASHED_DATE_RE = re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)")
+_COMPACT_DATE_RE = re.compile(r"(?<!\d)(\d{8})(?!\d)")
+
+
+def _extract_key_dates(key: str) -> list[str]:
+    """從 S3 key 取出所有合法日期，統一回 YYYY-MM-DD。
+
+    認 YYYY-MM-DD 與緊湊的 YYYYMMDD（例如 20260920.parquet、.../20260920/...）；
+    緊湊格式限 2000–2099 年，避免把任意 8 位數 ID 當日期。
+    """
+    out: list[str] = []
+    for date_part in _DASHED_DATE_RE.findall(key):
+        try:
+            datetime.strptime(date_part, "%Y-%m-%d")
+        except ValueError:
+            continue
+        out.append(date_part)
+    for raw in _COMPACT_DATE_RE.findall(key):
+        if not raw.startswith("20"):
+            continue
+        try:
+            d = datetime.strptime(raw, "%Y%m%d")
+        except ValueError:
+            continue
+        out.append(d.strftime("%Y-%m-%d"))
+    return out
+
+
 def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[str, str]:
     """依 cross-layer map 的 bounded prefixes 取每個 collector 最新歸檔日期。
 
@@ -260,12 +288,7 @@ def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[s
                     for obj in page.get("Contents", []):
                         # Covers archive tarballs, raw partition manifests,
                         # derived release directories, and dated JPG charts.
-                        matches = re.findall(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)", obj["Key"])
-                        for date_part in matches:
-                            try:
-                                datetime.strptime(date_part, "%Y-%m-%d")
-                            except ValueError:
-                                continue
+                        for date_part in _extract_key_dates(obj["Key"]):
                             if collector_name not in result or date_part > result[collector_name]:
                                 result[collector_name] = date_part
     except Exception as exc:
