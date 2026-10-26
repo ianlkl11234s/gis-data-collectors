@@ -17,6 +17,7 @@ TAIPEI_TZ = timezone(timedelta(hours=8))
 import config
 from storage import get_storage
 from utils.notify import notify_error, notify_success, notify_recovery
+from utils.redact import redact_secrets
 
 
 # Supabase writer 單例（所有 collector 共用同一條連線）
@@ -143,7 +144,8 @@ class BaseCollector(ABC):
         except Exception as e:
             self.error_count += 1
             self.consecutive_errors += 1
-            error_msg = str(e)
+            # requests 例外訊息含完整 URL（可能帶 Authorization/api_key），先脫敏再 print／通知／寫心跳
+            error_msg = redact_secrets(e)
             print(f"[{self.name}] ✗ 錯誤: {error_msg}")
             notify_error(self.name, error_msg, self.consecutive_errors)
             # collect() 本身失敗時 writer 不會被呼叫，collector_status 原本完全不知道
