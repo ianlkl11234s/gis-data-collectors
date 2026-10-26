@@ -158,3 +158,45 @@ def test_archive_dates_gfw_root_manifest_ignores_uncommitted_release_dirs(monkey
         "gfw": {"s3_prefixes": [{"prefix": "gfw/", "expected_daily": True, "root_manifest": "manifest.json"}]},
     })
     assert monitoring.list_archive_dates_per_collector() == {"gfw": "2026-09-20"}
+
+
+def test_extract_key_dates_supports_compact_and_dashed():
+    f = monitoring._extract_key_dates
+    assert f("weather-obs/jma/amedas/20260920.parquet") == ["2026-09-20"]
+    assert f("weather-raw/grid/uv_anal/20261001/x.bin") == ["2026-10-01"]
+    assert f("demo/archives/2026-09-21.tar.gz") == ["2026-09-21"]
+    assert f("a/20261301.bin") == []          # 非法月份
+    assert f("a/12345678.bin") == []          # 非 20xx
+    assert f("a/202609201230.bin") == []      # 不是剛好 8 位
+
+
+def test_archive_dates_compact_parquet_keys(monkeypatch):
+    class Paginator:
+        def paginate(self, **kwargs):
+            return [{"Contents": [{"Key": "wo/20260919.parquet"}, {"Key": "wo/20260921.parquet"}]}]
+
+    class Client:
+        def get_paginator(self, name):
+            return Paginator()
+
+    class Storage:
+        def __init__(self):
+            self.s3 = Client()
+
+    import storage.s3
+    monkeypatch.setattr(monitoring.config, "S3_BUCKET", "test")
+    monkeypatch.setattr(storage.s3, "S3Storage", Storage)
+    monkeypatch.setattr(monitoring, "load_cross_layer_map", lambda: {
+        "amedas": {"s3_prefixes": [{"prefix": "wo/", "expected_daily": True}]},
+    })
+    assert monitoring.list_archive_dates_per_collector() == {"amedas": "2026-09-21"}
+
+
+def test_gfw_root_manifest_matches_published_shadow_manifest():
+    """cross_layer_map 的 root_manifest 要指向 publisher 實際寫的 shadow manifest。"""
+    import dataclasses
+    from tasks.gfw_hourly_publish import GFWHourlyPublishSettings  # noqa: F401
+    fields = {f.name: f.default for f in dataclasses.fields(GFWHourlyPublishSettings)}
+    shadow = fields["shadow_key_prefix"]
+    spec = monitoring.load_cross_layer_map()["gfw_hourly_publish"]["s3_prefixes"][0]
+    assert spec["prefix"] + spec["root_manifest"] == f"{shadow}/manifest.json"
