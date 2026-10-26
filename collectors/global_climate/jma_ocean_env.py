@@ -676,8 +676,11 @@ class JmaOceanEnvCollector(BaseCollector):
                 raise RuntimeError(f"kosa list HTTP {status}")
             list_sha = sp.sha256_bytes(body)
             if list_sha != st["last_list_sha"]:
-                out.update(self.fetch_kosa_issue(body, headers, now, st))
-                st["last_list_sha"] = list_sha
+                issue = self.fetch_kosa_issue(body, headers, now, st)
+                out.update(issue)
+                # 有圖抓取失敗時不推進 last_list_sha，下輪同一份清單會再抓（review F079）
+                if not issue.get("failed"):
+                    st["last_list_sha"] = list_sha
         else:
             out["off_season"] = True
         # 日結：發布日（JST）D 在 D+1 01:00 後
@@ -719,12 +722,15 @@ class JmaOceanEnvCollector(BaseCollector):
             h = sp.sha256_bytes(b)
             e.update(sha256=h, bytes=len(b))
             prev = st["recent_shas"].get(h)
-            if prev and prev["day"] != day:
-                e["same_as"] = prev          # 內容已在另一日的 T3 tar（blobs.pack 內），此處只記引用
+            if prev and prev["day"] != day and self._kosa_sha_verified(prev):
+                e["same_as"] = prev          # 內容已在另一日「已驗證上傳」的 T3 tar，此處只記引用
                 refs += 1
             else:
                 members.append((f"kosa_fcst/{ivt}/{kind}_{t}.png", b))
-                st["recent_shas"].setdefault(h, {"day": day, "issue": ivt, "member": f"{kind}_{t}.png"})
+                entry = {"day": day, "issue": ivt, "member": f"{kind}_{t}.png", "verified": False}
+                if prev is None or prev["day"] != day:
+                    # 舊日條目尚未驗證：改指向本日（本日 tar 自帶這張圖）；本日 T3 驗證後才升級為可引用
+                    st["recent_shas"][h] = entry
                 new_blobs += 1
             entries.append(e)
         issue_doc = {"issued_utc": issued.isoformat(), "last_modified": lm, "images": entries,
@@ -746,6 +752,13 @@ class JmaOceanEnvCollector(BaseCollector):
             print(f"[{self.name}] ⚠ kosa_fcst {ivt} {len(failed)} 張抓取失敗：{failed[:5]}")
         return {"issued": True, "issue": ivt, "images": len(items), "new_blobs": new_blobs, "dedup_refs": refs,
                 "failed": len(failed)}
+
+    def _kosa_sha_verified(self, entry: dict) -> bool:
+        """same_as 只能指向已驗證上傳的 T3：新條目看 verified 旗標；
+        舊版 state 沒有旗標時，該日 spool 已不在（已日結刪除）才視為已驗證。"""
+        if "verified" in entry:
+            return bool(entry["verified"])
+        return not self.day_dir("kosa_fcst", entry["day"]).exists()
 
     def close_kosa_day(self, day: str, st: dict) -> bool:
         dd = self.day_dir("kosa_fcst", day)
@@ -770,6 +783,9 @@ class JmaOceanEnvCollector(BaseCollector):
             sp.write_json_atomic(self.receipt_path("kosa_fcst", day), {**row, "dedup": {k: info[k] for k in (
                 "tiles", "unique_blobs", "bytes_before", "bytes_blobs")}})
             shutil.rmtree(dd)
+            for v in st["recent_shas"].values():   # T3 已驗證上傳：此日的圖才可被後日 same_as 引用
+                if v["day"] == day:
+                    v["verified"] = True
             st["pending_daily"][day] = row
             return True
         except Exception as e:  # noqa: BLE001
