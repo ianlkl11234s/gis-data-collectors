@@ -3973,6 +3973,9 @@ class SupabaseWriter:
         不另外 borrow — 主寫入已 commit，心跳失敗只 rollback 心跳自己。
         conn 未給定時（失敗路徑）：維持原樣自行借一條短 timeout 連線。
         """
+        if error is not None:
+            from utils.redact import redact_secrets
+            error = redact_secrets(error)
         try:
             if conn is not None:
                 self._exec_heartbeat(conn, collector_name, success, records, error)
