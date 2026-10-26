@@ -2965,6 +2965,7 @@ class SupabaseWriter:
                       for r in records if r.get('_type') == 'frame'}
             daily = {(r['source'], r['product'], r['obs_date']): tuple(r.get(c) for c in dcols)
                      for r in records if r.get('_type') == 'daily'}
+            # status 升級規則：missing < partial < ok；例外見下方 WHERE（定案後 ok→partial）
             rank = "CASE {t}.status WHEN 'missing' THEN 0 WHEN 'partial' THEN 1 WHEN 'ok' THEN 2 ELSE -1 END"
             with self._txn(conn) as cur:
                 if frames:
@@ -2973,7 +2974,9 @@ class SupabaseWriter:
                         cur,
                         f"INSERT INTO live.weather_raster_frames ({','.join(fcols)}) VALUES %s "
                         f"ON CONFLICT (source, product, valid_time) DO UPDATE SET {upd},collected_at=now() "
-                        f"WHERE {rank.format(t='live.weather_raster_frames')} <= {rank.format(t='EXCLUDED')}",
+                        f"WHERE {rank.format(t='live.weather_raster_frames')} <= {rank.format(t='EXCLUDED')} "
+                        # 暫定 ok（補抓清單未清）定案後可能降為 partial：允許 partial 蓋掉 ok，missing 仍不可蓋資料
+                        f"OR (live.weather_raster_frames.status = 'ok' AND EXCLUDED.status = 'partial')",
                         list(frames.values()), page_size=500,
                     )
                 if daily:

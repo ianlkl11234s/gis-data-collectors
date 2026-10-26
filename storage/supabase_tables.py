@@ -954,7 +954,7 @@ TABLE_MAP = {
         'is_multi_table': True,
     },
     'jma_raster': {
-        # live.weather_raster_frames（PK source,product,valid_time；status 只升不降 upsert）
+        # live.weather_raster_frames（PK source,product,valid_time；status 只升不降（例外：定案 partial 可蓋暫定 ok）upsert）
         # live.weather_raster_daily（PK source,product,obs_date；upsert）— migration 437
         'is_multi_table': True,
     },
