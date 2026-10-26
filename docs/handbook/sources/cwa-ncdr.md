@@ -93,7 +93,7 @@ NCDR 災害示警（CAP 總和 feed）。
 
 - 頻率／位置：Zeabur。repo 預設**每 30 分鐘**，但這是因為上游停供而降頻：**上游恢復時必須立刻調回每 1 分鐘**（端點每分鐘整檔覆寫，每批只存在 60 秒，30 分鐘會漏掉 29/30）。collector 偵測到恢復會發 Telegram 提醒（`_maybe_notify_recovery`）。
 - 寫入：`live.lightning_events`（`source` 區分來源），與 `lightning_cwa`、`jma_lightning` 共用。去重靠 `event_id`＋`dedup_hash`，表上有兩個唯一索引，所以 INSERT 用**不指定目標**的 `ON CONFLICT DO NOTHING`（指定單一 key 會讓整批失敗，2026-07-02 曾因此連續寫入失敗）。
-- 已知坑：**上游自 2026-07-10 起靜默斷供**：端點 200，但檔案只有標題列。程序成功、沒有例外、沒有告警，28 天後才發現。S3 archive 每天檔案大小完全相同就是停供起點的證據。全文：mini-taiwan-pulse `.claude/pitfalls/2026-08-07-silent-upstream-outage.md`。
+- 已知坑：**上游自 2026-07-10 起靜默斷供**：端點 200，但檔案只有標題列。程序成功、沒有例外、沒有告警，28 天後才發現。S3 archive 每天檔案大小完全相同就是停供起點的證據。全文：本 repo `.claude/pitfalls/2026-08-07-silent-upstream-outage.md`。
 - 共用表風險：三個來源寫同一張表，台電這支停了，表的新鮮度仍被 CWA／JMA 的新列撐著，表級監控看不出來。
 
 ### lightning_cwa

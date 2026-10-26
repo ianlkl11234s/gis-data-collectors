@@ -70,7 +70,7 @@ P10 與 P11 時間重疊，以主題分段。
 | 2026-10-15 – 16 | Disk IO 第三輪 | 沒變也寫、主鍵順序不對、熱表無清理、重複列 | 見上方「Disk IO 三輪」 | 先部署冪等寫入，再建唯一索引；心跳欄位不能套「沒變不寫」 |
 | 2026-10-16 | VM SSH 遭密碼爆破（約 5 天 8.9 萬次） | SSH 仍開放密碼登入 | 改成只允許金鑰登入（`sshd_config.d/00-hardening.conf`），用自動還原計時器保護變更過程 | 改遠端登入設定先留退路（D-08）；換電腦前先加新金鑰 |
 
-事故 2026-08-07 的長文目前在 mini-taiwan-pulse `.claude/pitfalls/2026-08-07-silent-upstream-outage.md`。
+事故 2026-08-07 的長文在本 repo `.claude/pitfalls/2026-08-07-silent-upstream-outage.md`。
 
 ---
 

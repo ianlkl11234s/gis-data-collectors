@@ -95,7 +95,7 @@
 | ID | 原則 | 為什麼 | 出處 |
 |---|---|---|---|
 | H-01 | 有心跳不等於健康：分開看「有沒有跑」「有沒有解析成功」「有沒有新資料」 | 心跳在零筆時不更新、寫入失敗也可能算成功，DB 告警只看全域最大值（見 [operations.md](operations.md)「三個盲點」） | [調查 2026-10-05](../investigations/2026-10-05-collector-health.md)；.gis-agent-system `decisions/0018…` |
-| H-02 | 「0 筆」常是合法結果；判準依可靠度：ledger 表 > 第二資料源 > 第三方訊號反證 | 無雷雨、無共機、無地震都會是 0；落雷曾斷 28 天、A1 停 6 週都沒告警 | mini-taiwan-pulse `.claude/pitfalls/2026-08-07-silent-upstream-outage.md` |
+| H-02 | 「0 筆」常是合法結果；判準依可靠度：ledger 表 > 第二資料源 > 第三方訊號反證 | 無雷雨、無共機、無地震都會是 0；落雷曾斷 28 天、A1 停 6 週都沒告警 | 本 repo `.claude/pitfalls/2026-08-07-silent-upstream-outage.md` |
 | H-03 | 判斷部署生效看「只有新版才會產生的內容特徵」；判斷 collector 在跑看 DB 實際資料，不看 config 預設 | UPSERT 的 UPDATE 分支不一定更新 `updated_at`；自動回填的清冊把 19 個正在寫的 collector 標成停用 | mini-taiwan-pulse `.claude/memory/INCIDENTS.md` §2026-07-03、§2026-08-03 |
 | H-04 | 多個來源共用一張表時，要能分來源看新鮮度 | 一個來源壞掉會被其他來源的新資料蓋過去（lightning 三源、internet_health 三源） | 盤點 2026-10-15（本手冊建立時發現，見 [operations.md](operations.md)「已知監控缺口」） |
 | H-05 | `collect()` 失敗也要寫失敗心跳；失敗訊息帶原因類別（例外類別＋HTTP 狀態碼，不帶內文） | 心跳原本只由 `write()` 回報，`collect()` raise 時狀態表永遠是 0 錯誤：news_events 停 4 天沒被發現，錯誤原因又被 `from None` 吞掉 | `collectors/base.py::run()`；[pitfall 2026-10-21](../../.claude/pitfalls/2026-10-21-news-llm-all-or-nothing.md) |

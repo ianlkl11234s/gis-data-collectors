@@ -8,7 +8,7 @@
 
 - **擋雲端 IP 的政府網站跑 HiCloud VM**：ConnectTimeout（不是 403／404）優先懷疑 IP 被擋。高雄、臺南、航港局、移民署、疾管署都擋雲端 ASN。做法：程式在主 repo 保留完整實作（transform 與 schema 的單一真相），production 改由 `external/<name>_vm/` 的 VM 版 cron 跑，Zeabur 端 `*_ENABLED` 維持 false。VM 是**手動 scp 部署**，git push 不會生效；VM 寫入繞過主程式的 writer，**心跳不可信**，健康要直接看表。部署與監控方式見 [EXTERNAL_COLLECTORS.md](../../EXTERNAL_COLLECTORS.md)（主機以 `<VM_HOST>` 表示）。換機房前要從新機實際 curl 目標 API，不能只測連通。
 - **完整快照型 collector**：失敗時要回 `_collector_error` 讓本輪算失敗（`collectors/base.py`），不能用空清單假裝成功；動保系列只有完整成功才呼叫 finalize RPC 更新 current。
-- **0 筆是合法結果**：沒共機、沒新事故、休市、閉館都會是 0；用 ledger 表或第二來源判斷健康，不要用「這輪有沒有資料」（mini-taiwan-pulse `.claude/pitfalls/2026-08-07-silent-upstream-outage.md`，同日查出台電落雷、警政署 A1、共機航跡三支同病）。
+- **0 筆是合法結果**：沒共機、沒新事故、休市、閉館都會是 0；用 ledger 表或第二來源判斷健康，不要用「這輪有沒有資料」（本 repo `.claude/pitfalls/2026-08-07-silent-upstream-outage.md`，同日查出台電落雷、警政署 A1、共機航跡三支同病）。
 - **改解析邏輯等於改資料契約**：回填要和部署一起排，否則線上舊版 collector 會把修好的資料蓋回去（共機 `raw_text` 曾因此反覆被截斷；mini-taiwan-pulse `.claude/memory/INCIDENTS.md` §2026-08-01/02）。判斷新版有沒有生效，看「只有新版才會產生的內容特徵」，不看 `updated_at`。
 
 ## 醫療、公衛、社會

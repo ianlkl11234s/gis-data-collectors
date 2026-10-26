@@ -84,7 +84,7 @@
 | 有沒有解析成功？ | run ledger／receipt 表、`consecutive_errors`、`_collector_error` | `last_success_at`（見盲點 2） |
 | 有沒有新資料？ | 目標表 `max(time_column)` 與資料內的來源時間；共用表要分來源 | 心跳；HTTP 200；`updated_at`（UPSERT 不一定更新它） |
 
-「0 筆」常是合法結果（沒雷雨、沒共機、沒地震）。判斷上游是否斷供，可靠度由高到低：ledger 表 → 第二資料源交叉驗證 → 第三方訊號反證（例：同期有雷雨特報卻 0 筆落雷）。S3 歸檔檔案大小連續好幾天完全一樣，表示內容一樣，是上游停供的免費時間軸。正本：mini-taiwan-pulse `.claude/pitfalls/2026-08-07-silent-upstream-outage.md`。
+「0 筆」常是合法結果（沒雷雨、沒共機、沒地震）。判斷上游是否斷供，可靠度由高到低：ledger 表 → 第二資料源交叉驗證 → 第三方訊號反證（例：同期有雷雨特報卻 0 筆落雷）。S3 歸檔檔案大小連續好幾天完全一樣，表示內容一樣，是上游停供的免費時間軸。正本：本 repo `.claude/pitfalls/2026-08-07-silent-upstream-outage.md`。
 
 ### 3.2 三個盲點
 

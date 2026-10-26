@@ -255,7 +255,7 @@ A 類 HOT 如預期沒改善（3.8%→4.5%）**但 dead tuple 為 0** —— 證
 ## 2026-10-15 第三輪
 
 - 第二輪後讀取約 215 GB/天。第三輪大多在 gis-platform 端處理（bus_current 壓實、主鍵改時間開頭、衛星與城際公車增量化、船舶熱冷分離）；collector 端有三件。
-- **沒變就不寫（PR #146、#147）**：satellite TLE／history 只寫 epoch 有變的列；iot_wra_stations／uswg_stations 的測站 metadata 沒變就不 UPDATE（套用後 11 分鐘內 `n_tup_upd` 0 增加）。
+- **沒變就不寫（PR #146、#147）**：satellite TLE 的 current 表（`live.satellite_tle`）比較全部非鍵欄位、有任何欄位變動才 UPDATE，history 表（`live.satellite_tle_history`）另以 `(norad_id, tle_epoch)` 去重、只追加新 epoch；iot_wra_stations／uswg_stations 的測站 metadata 沒變就不 UPDATE（套用後 11 分鐘內 `n_tup_upd` 0 增加）。
   代價：`updated_at` 的語意從「最後同步」變成「最後異動」，看新鮮度要改看 collector 心跳。
   **不能亂套**：road_events 的 `collected_at` 同時是 3 天清理與 freshness 監控依據，加 `IS DISTINCT FROM` 會讓它不再更新，所以不做。
 - **VM 寫入要冪等（PR #148）**：HiCloud VM 的 `waste_positions_collect.py` 改成 `ON CONFLICT DO NOTHING`（重複來自同一城市輪詢時間窗重疊，不是跨城市）。

@@ -28,9 +28,10 @@ C) 修監控盲點（現在的 freshness gate 結構上偵測不到這種失效�
 
 上游雖然停更，但把 2019-04-18 ~ 2026-05-15 的每日檔整包留著。
 
-- SQL 已產好：`prison_backfill.sql`（同目錄，213 KB，2,501 筆 INSERT）
-- 產生器：`prison_backfill_build.py`（解析邏輯逐字複製 collector 的 `_roc_date`/`_int`/`_pct`）
-- 重跑：`python3 prison_backfill_build.py mjac.zip prison_backfill.sql`
+- **產物不在本 repo**：調查當時產出的 `prison_backfill.sql`（約 213 KB，2,501 筆 INSERT）、
+  `prison_backfill_build.py`（解析邏輯複製 collector 的 `_roc_date`/`_int`/`_pct`）與下載的 `mjac.zip`
+  都沒有隨本檔搬入；要採用本提案須重建：重新下載 `mjac.zip`，依 collector 同一套解析規則逐檔產生
+  `INSERT ... ON CONFLICT (observed_date) DO NOTHING`（輸出格式同下列驗證點）。
 
 驗證過的點：
 - 2,501 檔全部解析成功，0 筆失敗
@@ -42,7 +43,7 @@ C) 修監控盲點（現在的 freshness gate 結構上偵測不到這種失效�
 
 **執行需用戶拍板**（寫入正式 DB）：
 ```bash
-psql "$SUPABASE_DB_URL" -f prison_backfill.sql
+psql "$SUPABASE_DB_URL" -f prison_backfill.sql   # 重建後的檔案
 ```
 
 ---
@@ -74,15 +75,19 @@ STALE_ALERT_DAYS = 7   # observed_date 落後今天超過幾天就告警
         用它偵測不到「回傳 200 但內容是三個月前」這種失效。
         """
         lag = (now.date() - observed_date).days
-        if lag < STALE_ALERT_DAYS or self._stale_notified:
+        if lag < STALE_ALERT_DAYS:
+            self._stale_notified = False   # 已恢復：重置旗標，下次再停滯才會再告警
             return
-        send_telegram(
+        if self._stale_notified:
+            return
+        sent = send_telegram(
             "🔒 *矯正收容日資料上游停滯*\n\n"
             f"`today.xml` 仍回 200，但日期停在 *{observed_date}*（落後 {lag} 天）。\n"
             "來源：prisonmuseum.moj.gov.tw/jqw_pub/today.xml\n\n"
             "若已恢復請忽略；長期停滯考慮改抓 rjsd.moj.gov.tw 月報。"
         )
-        self._stale_notified = True
+        if sent:   # 通知真的送出才上旗標；失敗則下一輪再試
+            self._stale_notified = True
         print(f"[{self.name}] 🔒 上游停滯 {lag} 天（observed_date={observed_date}）")
 ```
 
