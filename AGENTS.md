@@ -15,5 +15,6 @@
 ### 已決定、不需再提的事項
 
 - 政府來源頁未標示授權的資料照常收集與寫入，下游來源卡標「授權待確認」即可；collector 不需為此另設 HOLD 或停收。
+- 授權只禁止「商用」不算明確受限（個人非營利網站），照常處理，下游標示限制即可。
 - Google 定位或 Google Places 推得的座標維持現狀，不要求額外標注或改授權欄。
 - 正本在 gis-agent-system reports/code-review/POLICIES.md。
