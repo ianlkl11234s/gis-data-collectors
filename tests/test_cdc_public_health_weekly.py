@@ -210,3 +210,11 @@ def test_vm_disabled_dengue_exit0_no_fetch(vm, monkeypatch, tmp_path):
     mod = vm(_mapping(dengue=("gone", 404)))
     assert mod.main() == 0
     assert _snapshot(tmp_path)["per_disease"]["dengue"] == {"status": "disabled"}
+
+
+def test_vm_no_retained_rows_after_cutoff_exit1(vm, monkeypatch, tmp_path):
+    mod = vm(_mapping())
+    monkeypatch.setattr(mod, "KEEP_YEARS", 0)   # cutoff 在未來 → 啟用來源皆 0 筆保留列
+    assert mod.main() == 1
+    snap = _snapshot(tmp_path)
+    assert snap["failed"] == ["dengue", "enterovirus", "influenza"]
