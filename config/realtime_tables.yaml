@@ -52,7 +52,7 @@ tables:
   # 表上 idx_marine_observation_readings_time 的 leading column 就是 observed_at，改看它即走 index probe。
   # 實測兩欄位落差僅 2.3 秒（門檻 15 分），不影響 STALE 判定。
   - {schema: live, table: marine_observation_readings, time_column: observed_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: canonical long history; ISOHE writes same table under separate source_network}
-  - {schema: live, table: marine_observation_current, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: serving cache; current update only accepts newer observed_at}
+  - {schema: live, table: marine_observation_current, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 60, critical: false, notes: serving cache; current update only accepts newer observed_at and skips unchanged rows (collected_at does not advance on no-change), so interval is relaxed to 60}
   - {schema: live, table: marine_observation_quarantine, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: CWA reading IDs absent from metadata roster}
   - {schema: live, table: aisstream_ingest_runs,   time_column: started_at,    owner_collector: aisstream, expected_interval_min: 1440, critical: false, notes: AISStream run ledger}
   - {schema: live, table: aisstream_archive_manifests,time_column: uploaded_at,   owner_collector: aisstream, expected_interval_min: 60, critical: false, notes: S3 permanent raw archive ledger}
@@ -115,7 +115,7 @@ tables:
   - {schema: live, table: river_water_level,         time_column: observed_at,  owner_collector: river_water_level, expected_interval_min: 10, critical: false}
   - {schema: live, table: rain_gauge_readings,       time_column: observed_at,  owner_collector: rain_gauge_realtime, expected_interval_min: 10, critical: false}
   - {schema: live, table: groundwater_level_readings, time_column: observed_at, owner_collector: groundwater_level, expected_interval_min: 60, critical: false}
-  - {schema: live, table: iot_wra_measurements,      time_column: observed_at,  owner_collector: iot_wra, expected_interval_min: 60, critical: false}
+  - {schema: live, table: iot_wra_measurements,      time_column: observed_at,  owner_collector: iot_wra, expected_interval_min: 10, critical: false}
   - {schema: live, table: uswg_measurements,         time_column: observed_at,  owner_collector: uswg, expected_interval_min: 10, critical: false}
   # drought_alert_current — 2026-07-08 確認 collector 在主站實際運作，加回監控。
   # 事件驅動（hash 未變即不寫，18 天未變屬常態）→ interval 比照 foursquare_poi 放寬 43200
