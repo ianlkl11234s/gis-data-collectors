@@ -28,6 +28,7 @@ REPO_FILES=(
   storage/marine_write.py
   utils/__init__.py
   utils/notify.py
+  utils/redact.py
   utils/auth.py
   utils/tdx_session.py
   utils/rate_limiter.py
