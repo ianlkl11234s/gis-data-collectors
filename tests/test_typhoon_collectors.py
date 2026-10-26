@@ -121,14 +121,23 @@ def test_cwa_single_storm_as_dict_and_no_storm():
     p["records"]["TropicalCyclones"]["TropicalCyclone"] = p["records"]["TropicalCyclones"]["TropicalCyclone"][0]
     assert len(parse_cwa_typhoons(p, NOW)["rows"]) == 24
 
-    for empty in ({"TropicalCyclone": []}, {}, None):
+    for empty in ({"TropicalCyclone": []}, {"TropicalCyclone": None}, {}):
         q = copy.deepcopy(CWA)
-        if empty is None:
-            q["records"].pop("TropicalCyclones")
-        else:
-            q["records"]["TropicalCyclones"] = empty
+        q["records"]["TropicalCyclones"] = empty
         out = parse_cwa_typhoons(q, NOW)
         assert out["no_active"] and out["rows"] == []
+
+
+def test_cwa_missing_or_bad_cyclone_container_raises():
+    # review F193：容器缺失／型別不符不可靜默當無颱風
+    for bad in ("MISSING", None, "", [], "x", {"Other": 1}, {"TropicalCyclone": "x"}):
+        q = copy.deepcopy(CWA)
+        if bad == "MISSING":
+            q["records"].pop("TropicalCyclones")
+        else:
+            q["records"]["TropicalCyclones"] = bad
+        with pytest.raises(ValueError):
+            parse_cwa_typhoons(q, NOW)
 
 
 def test_cwa_container_shape_variants():

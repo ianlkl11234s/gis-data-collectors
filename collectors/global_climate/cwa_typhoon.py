@@ -112,8 +112,17 @@ def parse_cwa_typhoons(payload: dict, now: datetime, collected_at: Optional[date
     if not isinstance(records, dict):
         raise ValueError("W-C0034-005 缺 records")
 
-    tcs_node = records.get("TropicalCyclones")
-    tcs = _as_list(tcs_node.get("TropicalCyclone")) if isinstance(tcs_node, dict) else []
+    # 容器缺失或型別不符＝上游 schema 異常，不可當「無颱風」靜默 idle（review F193）；
+    # 只有 TropicalCyclones 是 dict 且（空 dict 或 TropicalCyclone 為空）才算顯式無颱風。
+    if "TropicalCyclones" not in records or not isinstance(records["TropicalCyclones"], dict):
+        raise ValueError("W-C0034-005 缺 records.TropicalCyclones 或型別不符")
+    tcs_node = records["TropicalCyclones"]
+    if tcs_node and "TropicalCyclone" not in tcs_node:
+        raise ValueError("W-C0034-005 TropicalCyclones 缺 TropicalCyclone 欄位")
+    tc_value = tcs_node.get("TropicalCyclone")
+    if tc_value is not None and not isinstance(tc_value, (list, dict)):
+        raise ValueError("W-C0034-005 TropicalCyclone 型別不符")
+    tcs = _as_list(tc_value)
     collected_iso = (collected_at or now).isoformat()
 
     rows: list[dict] = []
