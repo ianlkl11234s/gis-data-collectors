@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -199,6 +200,7 @@ class JmaQuakeCollector(BaseCollector):
         self.state_path = Path(config.LOCAL_DATA_DIR) / "state" / "jma_quake_seen.json"
         self._seen: Optional[set[str]] = None
         self._pending_seen: Optional[set[str]] = None
+        self._partial_msg: Optional[str] = None
 
     # ---- 只送新項目：上游清單每 2 分鐘幾乎不變，整份重存會讓本地與 S3 歸檔膨脹（2026-10-09 實測 14h 203MB）----
     def require_db_write(self) -> bool:
@@ -225,8 +227,13 @@ class JmaQuakeCollector(BaseCollector):
 
     def run(self) -> dict:
         self._pending_seen = None
+        self._partial_msg = None
         stats = super().run()
-        if self._pending_seen is not None and not stats.get("error"):
+        # 部分來源失敗時 DB 已寫入成功（錯誤只用來告警），成功來源的 key 仍要前進，
+        # 失敗來源沿用舊 key（見 collect 的 kept）；其他錯誤（含 DB 寫入失敗）不前進
+        err = stats.get("error")
+        partial_only = bool(err) and self._partial_msg is not None and "部分來源失敗" in str(err)
+        if self._pending_seen is not None and (not err or partial_only):
             self._save_seen(self._pending_seen)
         self._pending_seen = None
         return stats
@@ -249,7 +256,11 @@ class JmaQuakeCollector(BaseCollector):
         counts = {"quake": 0, "tsunami": 0, "volcano": 0}
 
         try:
-            q = parse_quake_list(fetch(self._session, URL_QUAKE_LIST), collected_at)
+            quake_items = fetch(self._session, URL_QUAKE_LIST)
+            if not isinstance(quake_items, list) or not quake_items:
+                # 地震歷史清單常態非空；空或型別錯誤視為來源異常，不當成「成功但無資料」
+                raise JmaFetchError(f"{URL_QUAKE_LIST}: 清單為空或格式異常")
+            q = parse_quake_list(quake_items, collected_at)
             records.extend(q)
             counts["quake"] = len(q)
         except JmaFetchError as e:
@@ -281,9 +292,11 @@ class JmaQuakeCollector(BaseCollector):
         keys = {record_key(r) for r in records}
         fresh = [r for r in records if record_key(r) not in seen]
         kept = {k for k in seen if k.split("|", 1)[0] in failures}
+        self._partial_msg = None
+        if failures:
+            self._partial_msg = f"jma_quake: 部分來源失敗 {failures}"
         if not fresh:
-            if not failures:
-                self._pending_seen = keys | kept
+            self._pending_seen = keys | kept
             print(f"[{self.name}] no change（清單 {counts}）")
             out = {"no_change": True, "counts": counts, "source_failures": failures,
                    "collected_at": collected_at}
@@ -313,5 +326,7 @@ if __name__ == "__main__":
     c.name = "jma_quake"
     c._session = new_jma_session("jma-quake-test")
     c._volcanoes, c._volcanoes_loaded_at = {}, None
+    c._seen, c._pending_seen, c._partial_msg = None, None, None
+    c.state_path = Path(tempfile.mkdtemp(prefix="jma_quake_smoke_")) / "seen.json"
     out = c.collect()
     print({k: v for k, v in out.items() if k != "data"})
