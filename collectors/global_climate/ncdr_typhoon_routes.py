@@ -31,6 +31,7 @@ import requests
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
+from collectors.global_climate.jma_common import mount_bounded_retry
 from collectors.global_climate.typhoon_common import valid_position
 
 URL_NCDR_MULTI_ROUTE = "https://satis.ncdr.nat.gov.tw/kml/multityroute.aspx"
@@ -157,6 +158,7 @@ class NcdrTyphoonRoutesCollector(BaseCollector):
             "User-Agent": "Mozilla/5.0 (compatible; GIS-DataCollectors/1.0; global-climate-ncdr-typhoon-routes)",
             "Accept": "application/vnd.google-earth.kml+xml, application/xml, */*",
         })
+        mount_bounded_retry(self._session)
 
     def collect(self) -> dict:
         now = datetime.now(tz=TAIPEI_TZ)

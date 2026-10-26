@@ -31,6 +31,23 @@ def new_jma_session(tag: str) -> requests.Session:
     return s
 
 
+def mount_bounded_retry(session: requests.Session) -> requests.Session:
+    """有限次、僅暫時性錯誤（429/5xx/連線逾時）重試，並忽略伺服器指定的 Retry-After
+    （避免長睡眠繞過單輪時限）。"""
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    adapter = HTTPAdapter(max_retries=Retry(
+        total=2, connect=2, read=2, backoff_factor=1.0,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(("GET",)),
+        respect_retry_after_header=False,
+        raise_on_status=False,
+    ))
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
 def fetch(session: requests.Session, path: str, *, as_text: bool = False,
           timeout: Optional[int] = None, retries: int = 1) -> Any:
     """GET bosai 路徑（相對 JMA_BOSAI_BASE 或完整 URL）。失敗丟 JmaFetchError。"""

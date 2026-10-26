@@ -107,6 +107,7 @@ class CwaUvDailyCollector(BaseCollector):
             total=2, connect=2, read=2, backoff_factor=1.0,
             status_forcelist=(429, 500, 502, 503, 504),
             allowed_methods=frozenset(("GET",)),
+            respect_retry_after_header=False,
             raise_on_status=False,
         )
         self._session.mount("https://", adapter)

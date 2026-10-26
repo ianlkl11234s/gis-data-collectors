@@ -98,17 +98,26 @@ class Fetcher:
         self._last = 0.0
         self.requests = 0
 
+    RETRIES = 2  # 有限次重試：429／5xx／逾時才重試，間隔 2s、4s（不理會 Retry-After）
+
     def get(self, url: str) -> tuple[int, bytes]:
-        wait = self._last + self.gap - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        self._last = time.monotonic()
-        self.requests += 1
-        try:
-            r = self.session.get(url, timeout=config.REQUEST_TIMEOUT)
-            return r.status_code, (r.content if r.status_code == 200 else b"")
-        except Exception:  # noqa: BLE001
-            return -1, b""
+        status, body = -1, b""
+        for attempt in range(self.RETRIES + 1):
+            if attempt:
+                time.sleep(2.0 * attempt)
+            wait = self._last + self.gap - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.monotonic()
+            self.requests += 1
+            try:
+                r = self.session.get(url, timeout=config.REQUEST_TIMEOUT)
+                status, body = r.status_code, (r.content if r.status_code == 200 else b"")
+            except Exception:  # noqa: BLE001
+                status, body = -1, b""
+            if not (status == -1 or status == 429 or status >= 500):
+                break
+        return status, body
 
     def frame(self, vt: datetime) -> tuple[str, dict]:
         """回 (狀態, tiles)。狀態：ok／upstream_404（第一磚 404＝上游無此幀）／incomplete。"""
