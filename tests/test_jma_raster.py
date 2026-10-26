@@ -302,6 +302,27 @@ def test_close_day_failure_keeps_spool_and_retry_skips_existing(tmp_path, monkey
     assert s3.objects[raw]["StorageClass"] == "DEEP_ARCHIVE"
 
 
+def test_hour_upload_failure_blocks_day_close_until_retry(tmp_path, monkeypatch):
+    """review F047：小時 T2 上傳失敗時不可日結（日結會刪 spool，該小時 grid 永久遺失）。"""
+    latest = "20261009160000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch", lambda s, path, **k: snow_tt(latest))
+    idx = np.zeros((256, 256), np.uint8); idx[10, 10:20] = 3
+    content = png_p(idx)
+    s3 = FakeS3(fail_keys=["weather-grid/"])
+    c = make_collector(tmp_path, ["snow_depth"], s3,
+                       lambda url: (200, content) if url.endswith("/56/24.png") else (200, png_blank()))
+    now = datetime(2026, 10, 9, 16, 5, tzinfo=timezone.utc)
+    res = c.collect_product(jr.PRODUCTS["snow_depth"], now, budget_frames=10)
+    assert res["days_closed"] == [] and res["days_failed"] == []
+    assert not any(k.startswith("weather-raw/") for k, _ in s3.uploads), "T3 不可在 T2 缺時上傳"
+    assert (c.spool_root / "snow_depth" / "20261009" / "grids").exists(), "spool 必須保留"
+    # S3 恢復後下一輪補傳小時並日結
+    s3.fail_keys = set()
+    res2 = c.collect_product(jr.PRODUCTS["snow_depth"], now, budget_frames=10)
+    assert res2["days_closed"] == ["20261009"]
+    assert "weather-grid/jma/snow_depth/20261009/22.npz" in s3.objects
+
+
 def test_missing_finalized_only_after_retention(tmp_path, monkeypatch):
     latest = "20261009160000"
     monkeypatch.setattr("collectors.global_climate.jma_common.fetch", lambda s, path, **k: snow_tt(latest))

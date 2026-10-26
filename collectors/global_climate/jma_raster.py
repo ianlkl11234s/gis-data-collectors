@@ -896,6 +896,14 @@ class JmaRasterCollector(BaseCollector):
             if self.s3() is None:
                 print(f"[{self.name}] ⚠ S3 未設定，{product.name} {day} 無法日結")
                 continue
+            if product.has_grid:
+                # 各小時 T2 必須都已驗證上傳（ds["hours"] 有紀錄）才能日結：
+                # close_day 成功後會 rmtree 整個 spool，失敗的小時 grid 就永久遺失（review F047）。
+                need_hours = {parse_vt(v).astimezone(JST).strftime("%H") for v in exp}
+                pending_h = sorted(need_hours - set(ds["hours"]))
+                if pending_h:
+                    print(f"[{self.name}] ⚠ {product.name} {day} 小時 T2 未完成 {pending_h}，暫不日結（下輪重試）")
+                    continue
             ok = self.close_day(product, day, ds, exp, st)
             (out["days_closed"] if ok else out["days_failed"]).append(day)
         return out

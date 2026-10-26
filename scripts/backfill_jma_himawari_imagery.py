@@ -66,6 +66,31 @@ def t2_key(vt: datetime) -> tuple[str, str, str]:
     return f"weather-grid/{jr.SOURCE}/{PRODUCT}/{day}/{hh}.npz", day, hh
 
 
+def frame_already_published(row, vt: datetime, keep: datetime, r2, s3, dry_run: bool, st: dict) -> bool:
+    """R2 圖仍新鮮、且（有 S3 時）T2 小時檔也存在才可跳過；缺 T2 要重發以補寫（review F120）。"""
+    if not (row and row[1] and row[2] and row[2] > keep):
+        return False
+    try:
+        if dry_run:
+            return True
+        if r2.head(row[1]) is None:
+            return False
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠ R2 HEAD {row[1]}：{e}（改為重發）")
+        return False
+    if s3 is not None:
+        key = t2_key(vt)[0]
+        try:
+            if s3.head(key) is None:
+                st["t2_missing_refetch"] = st.get("t2_missing_refetch", 0) + 1
+                return False
+        except Exception as e:  # noqa: BLE001
+            print(f"  ⚠ S3 HEAD {key}：{e}（改為重發）")
+            return False
+    st["skipped"] += 1
+    return True
+
+
 class Fetcher:
     def __init__(self, rps: float):
         self.session = new_jma_session("jma_himawari_backfill")
@@ -165,13 +190,8 @@ def main() -> int:
         row = rows.get(vt)
         if row is None and conn is not None:
             st["no_row"] += 1
-        if row and row[1] and row[2] and row[2] > keep:
-            try:
-                if args.dry_run or r2.head(row[1]) is not None:
-                    st["skipped"] += 1
-                    continue
-            except Exception as e:  # noqa: BLE001
-                print(f"  ⚠ R2 HEAD {row[1]}：{e}（改為重發）")
+        if frame_already_published(row, vt, keep, r2, s3, args.dry_run, st):
+            continue
         st["to_fetch"] += 1
         if args.plan_only:
             continue

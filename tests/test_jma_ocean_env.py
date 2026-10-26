@@ -308,20 +308,26 @@ def test_kosa_sha256_dedup_within_and_across_days(tmp_path):
     calls.clear()
     out = c.collect_kosa(datetime(2026, 10, 12, 1, tzinfo=timezone.utc))
     assert not out["issued"] and len(calls) == 1
-    # 隔日新發布：202610130300 內容未變 → 只記引用（same_as 指向 10-12 的 tar）
+    # 隔日新發布：同一輪裡 10-12 的 T3 尚未驗證上傳 → 不可 same_as 指向它（review F080），
+    # 202610130300（內容 A 未變）要在新一日自帶一份
     state["list"] = kosa_list({"fcst": ["202610140300", "202610130300"], "anly": []})
     state["lm"] = "Mon, 12 Oct 2026 21:00:48 GMT"
     out = c.collect_kosa(datetime(2026, 10, 12, 21, 5, tzinfo=timezone.utc))
-    assert out["new_blobs"] == 1 and out["dedup_refs"] == 1 and "20261012" in out["days_closed"]
+    assert out["new_blobs"] == 2 and out["dedup_refs"] == 0 and "20261012" in out["days_closed"]
     with tarfile.open(fileobj=io.BytesIO(s3.files["weather-raw/jma/kosa_fcst/2026/10/20261012.tar"])) as tf:
         man = json.loads(tf.extractfile("manifest.json").read())
     # 10-12：list.js＋issue.json＋3 張圖，其中 A 重複 → 圖只存 2 份
     assert man["dedup"]["tiles"] == 5 and man["dedup"]["unique_blobs"] == 4
     assert man["decoded"] is False and "why_not_decoded" in man
-    c.collect_kosa(datetime(2026, 10, 13, 17, tzinfo=timezone.utc))
+    c.collect_kosa(datetime(2026, 10, 13, 17, tzinfo=timezone.utc))   # 10-13 日結（list 沒變）
     with tarfile.open(fileobj=io.BytesIO(s3.files["weather-raw/jma/kosa_fcst/2026/10/20261013.tar"])) as tf:
         man = json.loads(tf.extractfile("manifest.json").read())
-    assert len(man["blobs"]) == 3, "list.js＋issue.json＋C；A 只在 issue.json 記 same_as"
+    assert len(man["blobs"]) == 4, "list.js＋issue.json＋A＋C"
+    # 再隔日：10-13 已驗證上傳 → A 才可只記引用
+    state["list"] = kosa_list({"fcst": ["202610130300"], "anly": []})
+    state["lm"] = "Wed, 14 Oct 2026 21:00:48 GMT"
+    out = c.collect_kosa(datetime(2026, 10, 14, 21, 5, tzinfo=timezone.utc))
+    assert out["new_blobs"] == 0 and out["dedup_refs"] == 1
     st = c._load_state("kosa_fcst")
     assert {r["status"] for r in st["pending_daily"].values()} == {"verified"}
     assert all(r["product"] == "kosa_fcst" for r in st["pending_frames"].values())
@@ -362,3 +368,25 @@ def test_run_commits_pending_only_after_db_success(tmp_path, monkeypatch):
     monkeypatch.setattr(oe.BaseCollector, "run", ok_run)
     c.run()
     assert c._load_state("sst_him")["pending_frames"] == {}
+
+
+def test_kosa_list_hash_not_advanced_when_image_fetch_fails(tmp_path):
+    """review F079：有圖抓取失敗不推進 last_list_sha，下輪同一份清單會重抓。"""
+    lst = kosa_list({"fcst": ["202610130300", "202610130000"], "anly": []})
+    fail = {"on": True}
+
+    def get(url):
+        if url.endswith("s_jpjp_list.js"):
+            return 200, lst, {"Last-Modified": "Sun, 11 Oct 2026 21:00:48 GMT"}
+        t = url.rsplit("/", 1)[1][:12]
+        if fail["on"] and t == "202610130000":
+            return 500, b"", {}
+        return 200, t.encode() * 10, {}
+    c = make_collector(tmp_path, ["kosa_fcst"], FakeS3(), get)
+    out = c.collect_kosa(datetime(2026, 10, 12, 0, tzinfo=timezone.utc))
+    assert out["failed"] == 1 and c._load_state("kosa_fcst")["last_list_sha"] is None
+    fail["on"] = False
+    out = c.collect_kosa(datetime(2026, 10, 12, 1, tzinfo=timezone.utc))
+    assert out["issued"] and out["failed"] == 0 and c._load_state("kosa_fcst")["last_list_sha"]
+    out = c.collect_kosa(datetime(2026, 10, 12, 2, tzinfo=timezone.utc))
+    assert not out["issued"]

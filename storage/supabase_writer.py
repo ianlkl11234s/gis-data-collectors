@@ -3858,6 +3858,10 @@ class SupabaseWriter:
             ))
 
         if values:
+            # current upsert 與 history 追加放在【同一個 transaction】：
+            # history 失敗 → 整筆 rollback（含 current），write() 回 False 並進 buffer，
+            # 下輪該 epoch 仍是「變動列」會重送。若分兩個 txn，current 已 commit，
+            # 下輪該列變成 unchanged，失敗的 history epoch 永遠補不回（review F100）。
             with self._txn(conn) as cur:
                 sql = (
                     f"INSERT INTO live.satellite_tle AS t ({','.join(cols)}) VALUES %s "
@@ -3867,22 +3871,25 @@ class SupabaseWriter:
                 )
                 # fetch=True：psycopg2 會把每一頁的 RETURNING 收齊
                 returned = execute_values(cur, sql, values, page_size=1000, fetch=True) or []
-            changed_ids = {str(row[0]) for row in returned}
-            changed_values = [v for v in values if str(v[0]) in changed_ids]
-            decayed = sum(1 for v in values if v[12])
-            logger.info(
-                f"[satellite] ✓ TLE 送出 {len(values)} 筆（其中失效 {decayed} 筆），"
-                f"新增或變動 {len(changed_values)} 筆"
-            )
+                changed_ids = {str(row[0]) for row in returned}
+                changed_values = [v for v in values if str(v[0]) in changed_ids]
+                decayed = sum(1 for v in values if v[12])
+                logger.info(
+                    f"[satellite] ✓ TLE 送出 {len(values)} 筆（其中失效 {decayed} 筆），"
+                    f"新增或變動 {len(changed_values)} 筆"
+                )
 
-            # 同步寫入 TLE 歷史表（用於變軌偵測）— 共用同一條 conn。
-            # 只送新增或變動的列：沒變的列 epoch 相同，本來就會被 history 的
-            # (norad_id, tle_epoch) unique 擋掉，重送只是白白探測索引。
-            if changed_values:
-                self._write_satellite_tle_history(conn, changed_values, timestamp)
+                # 同步寫入 TLE 歷史表（用於變軌偵測）。
+                # 只送新增或變動的列：沒變的列 epoch 相同，本來就會被 history 的
+                # (norad_id, tle_epoch) unique 擋掉，重送只是白白探測索引。
+                if changed_values:
+                    self._write_satellite_tle_history(conn, changed_values, timestamp, cur=cur)
 
-    def _write_satellite_tle_history(self, conn, tle_values: list, timestamp: datetime):
-        """追加 TLE 歷史紀錄，同一 norad_id + tle_epoch 不重複寫入"""
+    def _write_satellite_tle_history(self, conn, tle_values: list, timestamp: datetime, cur=None):
+        """追加 TLE 歷史紀錄，同一 norad_id + tle_epoch 不重複寫入。
+
+        cur 給定時沿用呼叫端的 transaction，失敗直接往上拋（讓 current upsert 一併 rollback）。
+        """
         hist_cols = ['norad_id', 'name', 'constellation', 'orbit_type',
                      'tle_line1', 'tle_line2', 'tle_epoch',
                      'inclination', 'eccentricity', 'period_min',
@@ -3896,12 +3903,17 @@ class SupabaseWriter:
              v[11], v[12], v[13], timestamp.isoformat())
             for v in tle_values
         ]
+        sql = (f"INSERT INTO live.satellite_tle_history ({','.join(hist_cols)}) "
+               f"VALUES %s ON CONFLICT (norad_id, tle_epoch) DO NOTHING")
+
+        if cur is not None:
+            execute_values(cur, sql, hist_values, page_size=1000)
+            logger.info(f"[satellite] ✓ TLE 歷史已追加（送出 {len(hist_values)} 筆，新 epoch 才寫入）")
+            return
 
         try:
-            with self._txn(conn) as cur:
-                sql = (f"INSERT INTO live.satellite_tle_history ({','.join(hist_cols)}) "
-                       f"VALUES %s ON CONFLICT (norad_id, tle_epoch) DO NOTHING")
-                execute_values(cur, sql, hist_values, page_size=1000)
+            with self._txn(conn) as c:
+                execute_values(c, sql, hist_values, page_size=1000)
             logger.info(f"[satellite] ✓ TLE 歷史已追加（送出 {len(hist_values)} 筆，新 epoch 才寫入）")
         except Exception as e:
             logger.warning(f"[satellite] TLE 歷史寫入失敗（表可能尚未建立）: {e}")

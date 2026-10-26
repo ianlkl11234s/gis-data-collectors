@@ -123,3 +123,23 @@ def test_rows_without_tle_lines_are_not_sent(writer_and_calls):
     writer._write_satellite_tle(conn, {'data_all': [_sat(1), bad]}, TS)
     assert [v[0] for v in _tle_calls(calls)[0][1]] == [1]
     assert [v[0] for v in _hist_calls(calls)[0][1]] == [1]
+
+
+def test_history_failure_propagates_so_current_is_rolled_back(writer_and_calls, monkeypatch):
+    """review F100：history 失敗要往上拋（同 transaction → current 一併 rollback，下輪才會重送）。"""
+    writer, conn, calls, set_returning = writer_and_calls
+    set_returning([1])
+
+    import storage.supabase_writer as sw
+    real = sw.execute_values
+
+    def boom(cur, sql, values, **kw):
+        if 'satellite_tle_history' in sql:
+            raise RuntimeError('history down')
+        return real(cur, sql, values, **kw)
+
+    monkeypatch.setattr(sw, 'execute_values', boom)
+    with pytest.raises(RuntimeError, match='history down'):
+        writer._write_satellite_tle(conn, {'data_all': [_sat(1)]}, TS)
+    conn.rollback.assert_called()
+    conn.commit.assert_not_called()
