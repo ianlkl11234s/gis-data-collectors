@@ -59,11 +59,11 @@ def test_full_table_uploads_whole_table_to_daily_key():
     assert task.audit_buf[-1]["code"] == "snapshot_uploaded"
 
 
-def test_full_table_empty_table_is_not_uploaded():
+def test_full_table_empty_table_uploads_header_only_snapshot():
     task = _task(0, {"live.ship_last_seen": {"cadence": "full_table"}})
-    assert task._process_realtime_table("live", "ship_last_seen", date(2026, 10, 15)) == "empty"
-    assert task.s3.uploads == []
-    assert task.audit_buf[-1]["code"] == "skipped_empty_table"
+    assert task._process_realtime_table("live", "ship_last_seen", date(2026, 10, 15)) == "uploaded"
+    assert len(task.s3.uploads) == 1
+    assert task.audit_buf[-1]["code"] == "snapshot_uploaded"
 
 
 def test_manifest_backs_up_ship_last_seen_as_full_table():
