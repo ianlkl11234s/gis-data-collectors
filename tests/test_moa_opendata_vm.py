@@ -152,3 +152,37 @@ def _run_in_subprocess(code: str) -> str:
     if proc.returncode != 0:
         pytest.fail(proc.stderr[-2000:])
     return proc.stdout
+
+
+def test_child_run_fails_when_supabase_write_missing_or_failed(monkeypatch):
+    """review F243：writer 缺失或寫入失敗時 child_run 要回失敗碼。"""
+    from collectors.base import BaseCollector
+
+    class Fake(BaseCollector):
+        name = "fake_moa"
+        interval_minutes = 60
+
+        def should_persist_local(self):
+            return False
+
+        def collect(self):
+            return {"data": [{"a": 1}]}
+
+    monkeypatch.setattr(runner, "load_collector_class", lambda n: Fake)
+    monkeypatch.setattr("collectors.base.notify_error", lambda *a, **k: None)
+    monkeypatch.setattr("collectors.base.notify_success", lambda *a, **k: None)
+
+    class Writer:
+        def __init__(self, ok):
+            self.ok = ok
+
+        def write(self, *a):
+            return self.ok
+
+        def _report_heartbeat(self, *a):
+            pass
+
+    for writer, expected in ((None, runner.EXIT_FAILED), (Writer(False), runner.EXIT_FAILED),
+                             (Writer(True), runner.EXIT_OK)):
+        monkeypatch.setattr("collectors.base.get_supabase_writer", lambda w=writer: w)
+        assert runner.child_run("x") == expected

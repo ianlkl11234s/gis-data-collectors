@@ -147,7 +147,11 @@ def load_collector_class(name: str):
 
 def child_run(name: str) -> int:
     cls = load_collector_class(name)
-    result = cls().run()
+    collector = cls()
+    # 這 7 支都是只寫 Supabase 的收集器（review F243）：writer 缺失或寫入失敗不可 exit 0，
+    # 否則 runner 會記成功、不會重試。以實例層覆寫 require_db_write，由 base.run() fail closed。
+    collector.require_db_write = lambda: True
+    result = collector.run()
     if result.get("error"):
         print(f"[moa_opendata_run] ✗ {name}: {result['error']}", flush=True)
         return EXIT_FAILED
