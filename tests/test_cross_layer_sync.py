@@ -168,3 +168,20 @@ def test_supabase_tables_covered_by_realtime_tables():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_table_map_tables_are_listed_in_cross_layer_map():
+    """TABLE_MAP 推導出的表必須都在 cross_layer_map.yaml 該 collector 的 supabase_tables（手冊清單只讀 yaml）。"""
+    from storage.supabase_tables import TABLE_MAP
+
+    clm = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "cross_layer_map.yaml").read_text())
+    clm = clm.get("collectors", clm)
+    drift = {}
+    for name in TABLE_MAP:
+        derived = derive_tables(name)
+        if not derived or name not in clm:
+            continue
+        missing = sorted(set(derived) - set(clm[name].get("supabase_tables") or []))
+        if missing:
+            drift[name] = missing
+    assert not drift, f"TABLE_MAP 有表未登記在 cross_layer_map.yaml supabase_tables：{drift}"
