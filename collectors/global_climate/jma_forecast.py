@@ -274,6 +274,9 @@ class JmaForecastCollector(BaseCollector):
         collected_at = datetime.now(TAIPEI_TZ).isoformat()
         seen = dict(self._load_state())
         office_of = self._office_index()
+        if not office_of:
+            # 無快取且 area.json 不可用：沒有 office 對照就會把 probability 寫成不完整列，本輪整個放棄
+            raise RuntimeError("jma_forecast: area.json 不可用且無快取，本輪跳過")
         records: list[dict] = []
         raw: dict[str, Any] = {}
         failures: dict[str, str] = {}
@@ -300,8 +303,12 @@ class JmaForecastCollector(BaseCollector):
                 rdt = iso((blk or {}).get("reportDatetime"))
                 if series not in todo or not rdt or seen.get(f"fc|{office}|{series}") == rdt:
                     continue
-                records.extend({"_type": "forecast", **r}
-                               for r in parse_forecast_block(blk, series, office, collected_at))
+                block_rows = parse_forecast_block(blk, series, office, collected_at)
+                if not block_rows:
+                    # 解析不出列不推進 seen，下輪重試（避免空公報被標成已處理）
+                    failures[f"forecast:{office}:{series}"] = "解析 0 列"
+                    continue
+                records.extend({"_type": "forecast", **r} for r in block_rows)
                 seen[f"fc|{office}|{series}"] = rdt
                 changed["forecast_blocks"] += 1
 

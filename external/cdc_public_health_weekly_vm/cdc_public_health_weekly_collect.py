@@ -311,6 +311,13 @@ def main() -> int:
             stats[code] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:200]}"}
             log.error(f"{code}: 失敗 {type(e).__name__}: {e}")
     failed = sorted(k for k, v in stats.items() if v["status"] == "error")
+    enabled = [k for k, v in stats.items() if v["status"] != "disabled"]
+    if enabled and not failed and not all_records:
+        # 啟用的來源全部「成功」卻沒有任何保留列（cutoff 後全空／上游只剩舊資料）：視為失敗，不當成正常
+        for k in enabled:
+            stats[k] = {**stats[k], "status": "error", "error": "no retained rows after cutoff"}
+        failed = sorted(enabled)
+        log.error(f"啟用的來源全部 0 筆保留列（cutoff_year={cutoff_year}）：{failed}")
 
     # DB：連線 retry → 先補寫積壓 buffer → 寫本輪；寫入失敗存 buffer 不丟資料
     inserted = 0

@@ -41,6 +41,7 @@ import requests
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
+from collectors.global_climate.jma_common import mount_bounded_retry
 
 BASE = "https://www.wbgt.env.go.jp"
 URL_OBS = BASE + "/est15WG/dl/wbgt_all_{ym}.csv"
@@ -154,6 +155,7 @@ class EnvJpWbgtCollector(BaseCollector):
         self._session = requests.Session()
         self._session.headers.update(
             {"User-Agent": "Mozilla/5.0 (compatible; GIS-DataCollectors/1.0; env-jp-wbgt)"})
+        mount_bounded_retry(self._session)
         self.state_path = Path(config.LOCAL_DATA_DIR) / "state" / "env_jp_wbgt.json"
         self._state: Optional[dict] = None
         self._pending_state: Optional[dict] = None

@@ -706,17 +706,9 @@ class BackupSupabaseTask:
         with self._cursor() as cur:
             cur.execute(f'SELECT count(*) FROM "{schema}"."{table}"')
             row_count = cur.fetchone()[0]
+        # 空表也上傳只有表頭的快照：S3 key 代表「該日已備份」，不上傳會讓 reconcile 誤報 missing_s3
         if row_count == 0:
-            self._audit(
-                run_kind="realtime_snapshot",
-                schema_name=schema,
-                table_name=table,
-                severity="warn",
-                code="skipped_empty_table",
-                message="full_table 表目前沒有任何資料列，跳過上傳",
-                details={"target_date": date_str, "cadence": "full_table"},
-            )
-            return "empty"
+            print(f"   ⚠ {qualified} full_table 目前 0 列，上傳只有表頭的快照")
 
         s3_key_schema = _S3_KEY_SCHEMA_ALIAS.get(schema, schema)
         s3_key = f"{_S3_REALTIME_PREFIX}/{date_str}/{s3_key_schema}.{table}.csv.gz"

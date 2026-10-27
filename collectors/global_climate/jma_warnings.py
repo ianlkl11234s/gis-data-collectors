@@ -135,6 +135,12 @@ def parse_warning_map(entries: list, area: dict, *, control_datetime: str,
                             if rkey not in rel_sort or rsort > rel_sort[rkey]:
                                 rel_sort[rkey] = rsort
                                 released[rkey] = {"status": status, "report_datetime": report_iso}
+                        # 解除／なし 也參與「同鍵最新公報」比較：較新的解除要蓋掉較舊的有效列
+                        xkey = (area_code, str(code))
+                        xsort = report_dt.astimezone(timezone.utc).isoformat() if report_dt else ""
+                        prev_x = best.get(xkey)
+                        if prev_x is None or xsort > prev_x["_report_sort"]:
+                            best[xkey] = {"_report_sort": xsort, "_excluded": True}
                         continue
                     code = str(code)
                     if code not in KIND_NAMES:
@@ -159,6 +165,8 @@ def parse_warning_map(entries: list, area: dict, *, control_datetime: str,
                         best[key] = row
     rows = []
     for r in best.values():
+        if r.get("_excluded"):
+            continue
         r.pop("_report_sort", None)
         rows.append(r)
     rows.sort(key=lambda r: (r["area_code"], r["kind_code"]))

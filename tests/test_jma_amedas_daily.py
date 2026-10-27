@@ -112,11 +112,13 @@ def test_close_daily_uploads_once_with_receipt(tmp_path, monkeypatch):
     res = c.close_daily(datetime(2026, 10, 12, 1, 10, tzinfo=JST))
     assert [d["day"] for d in res["closed"]] == ["20261011"] and res["closed"][0]["rows"] == 144
     key = "weather-obs/jma/amedas/2026/10/20261011.parquet"
-    assert s3.uploads == [key] and s3.objects[key]["StorageClass"] == "STANDARD"
+    rkey = key + ".receipt.json"
+    assert s3.uploads == [key, rkey] and s3.objects[key]["StorageClass"] == "STANDARD"
+    assert rkey in s3.objects, "missing 明細隨 sidecar 上傳"
     receipt = json.loads((c.parquet_dir / "20261011.json").read_text())
     assert receipt["sha256"] == s3.objects[key]["Metadata"]["sha256"]
     assert not (c.parquet_dir / "20261011.parquet").exists(), "上傳驗證後刪本機檔"
-    assert c.close_daily(datetime(2026, 10, 12, 1, 20, tzinfo=JST)) is None and s3.uploads == [key]
+    assert c.close_daily(datetime(2026, 10, 12, 1, 20, tzinfo=JST)) is None and s3.uploads == [key, rkey]
 
 
 def test_close_daily_first_run_sets_first_day_no_backfill(tmp_path, monkeypatch):
@@ -129,3 +131,15 @@ def test_close_daily_first_run_sets_first_day_no_backfill(tmp_path, monkeypatch)
 def test_close_daily_disabled(tmp_path, monkeypatch):
     monkeypatch.setattr(jma_amedas.config, "JAPAN_JMA_AMEDAS_DAILY_PARQUET", False)
     assert _collector(tmp_path, FakeS3()).close_daily(datetime(2026, 10, 12, 5, 0, tzinfo=JST)) is None
+
+
+def test_build_day_parquet_aborts_after_consecutive_fill_failures(tmp_path):
+    import pytest
+
+    def boom(t):
+        raise RuntimeError("upstream down")
+
+    with pytest.raises(RuntimeError, match="中止"):
+        dly.build_day_parquet("20261011", tmp_path / "x.parquet", local_base=tmp_path,
+                              fetch_slot=boom, max_consecutive_fail=3)
+    assert not (tmp_path / "x.parquet").exists()

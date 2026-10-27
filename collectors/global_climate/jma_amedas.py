@@ -202,7 +202,10 @@ class JmaAmedasCollector(BaseCollector):
                                          source_time=source_time, collected_at=collected_at)
                 records.extend({**r, "_type": "observation"} for r in hrows)
                 hourly_count = len(hrows)
-                self._hours_done.add(hour_key)
+                if hrows:
+                    self._hours_done.add(hour_key)
+                else:  # 空 map 視為缺資料，不標完成，下輪重試
+                    print(f"[{self.name}] ⚠ 整點 {hour_key} 回傳 0 站（下輪再試）")
             except JmaFetchError as e:
                 print(f"[{self.name}] ⚠ 補抓整點 {hour_key} 失敗（下輪再試）: {e}")
         # 只留最近 48 個整點，避免 set 無限長
@@ -276,7 +279,14 @@ class JmaAmedasCollector(BaseCollector):
                 raise RuntimeError(f"{key} 上傳／驗證失敗")
             receipt = {"day": day, "key": key, "sha256": sha, "storage_class": "STANDARD",
                        "verified_at": datetime.now(timezone.utc).isoformat(), **info}
+            # receipt（含 missing 明細）先以 sidecar 上傳驗證，成功才寫本機 receipt（本機 receipt 代表日結完成）
+            rcpt_local = self.parquet_dir / f"{day}.receipt.upload.json"
+            write_json_atomic(rcpt_local, receipt)
+            rkey = dly.receipt_s3_key(day)
+            if not put_verified(s3, rcpt_local, rkey, sha256_file(rcpt_local), "STANDARD", "application/json"):
+                raise RuntimeError(f"{rkey} 上傳／驗證失敗")
             write_json_atomic(self.parquet_dir / f"{day}.json", receipt)
+            rcpt_local.unlink(missing_ok=True)
             local.unlink(missing_ok=True)
             print(f"[{self.name}] ✓ 每日 Parquet {day}: {info['rows']:,} 列 {info['stations']} 站 "
                   f"本機 {info['slots_local']}/144 補抓 {info['slots_filled']} 缺 {info['slots_missing']} "

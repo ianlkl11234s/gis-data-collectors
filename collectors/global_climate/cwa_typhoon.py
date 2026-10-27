@@ -33,6 +33,7 @@ import requests
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
+from collectors.global_climate.jma_common import mount_bounded_retry
 from collectors.global_climate.typhoon_common import (
     ms_to_kt, storm_key, to_float, valid_position, valid_time,
 )
@@ -240,6 +241,7 @@ class CwaTyphoonCollector(BaseCollector):
             "User-Agent": "Mozilla/5.0 (compatible; GIS-DataCollectors/1.0; global-climate-cwa-typhoon)",
             "Accept": "application/json",
         })
+        mount_bounded_retry(self._session)
 
     def _fetch(self) -> dict:
         resp = self._session.get(

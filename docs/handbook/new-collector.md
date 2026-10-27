@@ -58,13 +58,13 @@
 ### B. data-collectors（本 repo）
 
 4. **`collectors/{name}.py`**：繼承 `BaseCollector`；TDX 來源一律用 `utils/tdx_session.py` 的 `TDXSession`（自動經過全域節流），不要自己開 `requests.Session()`。
-5. **`collectors/registry.py`**：`COLLECTOR_REGISTRY` 加一筆（class、display_name、config_prefix、`required_env`、需要時 `require_db_write`）。`required_env` 要在 registry 和 config 兩邊都宣告，否則會被靜默略過（`.claude/pitfalls/2026-07-26-required-env-silent-skip.md`）。
+5. **`collectors/registry.py`**：`COLLECTOR_REGISTRY` 加一筆（`CollectorEntry` 欄位只有 class、display_name、config_prefix、`required_env`、`persistent`）。DB 寫入失敗要讓該輪失敗的 collector，在 collector 類別覆寫 `BaseCollector.require_db_write()` 回傳 `True`（不是 registry 欄位）。`required_env` 要在 registry 和 config 兩邊都宣告，否則會被靜默略過（`.claude/pitfalls/2026-07-26-required-env-silent-skip.md`）。
 6. **`config.py`**：`_COLLECTOR_TOGGLES` 加一筆 `(prefix, enabled_default, interval_default)`；**預設 `enabled=False`**。額外變數（城市清單、API key 名稱）另外宣告。
 7. **`storage/supabase_tables.py`**：要寫 Supabase 就加 `TABLE_MAP[name]`。
 8. **`storage/supabase_writer.py`**：加 `_transform_{name}` 並註冊進 `TRANSFORMERS`。
 9. **`config/cross_layer_map.yaml`**：跑 `python3 scripts/sync_cross_layer_map.py` 自動補缺的條目，再**人工改**它填的 `enabled`／`deployment`（腳本只填 repo 預設值，不是正式環境實況）與標 `TODO(sync)` 的欄位。漏寫日報會完全不掃這個 collector。
 10. **`config/realtime_tables.yaml`**：每張 history／current／多表都要列，漏寫監控 RPC 撈不到。
-11. **`config/backup_manifest.yaml`**：會寫 JSON 進 S3 的 collector，加進 `archive_py_covered`（避免備份重複 dump）。
+11. **`config/backup_manifest.yaml`**：會寫 JSON 進 S3 的 collector，把它寫入的每張 `schema.table`（完整表名，例如 `live.xxx`，不是 collector 名）逐一加進 `archive_py_covered`（避免備份重複 dump）。
 12. **`.env.example`**：新環境變數寫上**名稱**與說明（不寫值）。
 13. **手冊**：在 `scripts/gen_handbook_catalog.py` 的 `SOURCES_DOC` 登記這個 collector 屬於哪份 `sources/*.md`，跑 `python3 scripts/gen_handbook_catalog.py` 重產 [collectors.md](collectors.md)，並在對應的 `sources/*.md` 加一段。
 14. 跑 `python3 -m pytest tests/`：`tests/test_cross_layer_sync.py` 擋 registry／config／cross_layer_map／realtime_tables 之間的 drift；`tests/test_handbook_catalog.py` 擋手冊清單沒重產或沒登記分類。

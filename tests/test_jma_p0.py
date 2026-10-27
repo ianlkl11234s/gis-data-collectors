@@ -545,3 +545,17 @@ def test_quake_seen_not_advanced_when_db_write_fails(monkeypatch, tmp_path):
     c.run()
     assert not c.state_path.exists()
     assert c.collect()["data"]
+
+
+def test_newer_release_overrides_older_active_warning_review_f024():
+    def entry(rdt, status):
+        return {"reportDatetime": rdt, "publishingOffice": "X",
+                "warning": {"class20Items": [{"areaCode": "A1", "kinds": [{"code": "10", "status": status}]}]}}
+    rows, _ = parse_warning_map([entry("2026-10-09T10:00:00+09:00", "発表"),
+                                 entry("2026-10-09T12:00:00+09:00", "解除")], {},
+                                control_datetime=CTRL, collected_at=COLLECTED, released={})
+    assert rows == []
+    rows, _ = parse_warning_map([entry("2026-10-09T12:00:00+09:00", "発表"),
+                                 entry("2026-10-09T10:00:00+09:00", "解除")], {},
+                                control_datetime=CTRL, collected_at=COLLECTED, released={})
+    assert len(rows) == 1

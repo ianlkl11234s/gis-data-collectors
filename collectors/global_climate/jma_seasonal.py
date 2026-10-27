@@ -35,6 +35,7 @@ import csv
 import io
 import json
 import re
+import time
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -721,7 +722,9 @@ class JmaSeasonalCollector(BaseCollector):
     def _get(self, url: str, *, encoding: Optional[str] = None) -> tuple[str, Optional[str]]:
         """回傳 (text, Last-Modified ISO)。"""
         last: Exception | None = None
-        for _ in range(2):
+        for attempt in range(2):
+            if attempt:
+                time.sleep(2)  # 有限 backoff（只有第二次前）
             try:
                 resp = self._session.get(url, timeout=config.REQUEST_TIMEOUT)
                 resp.raise_for_status()
@@ -765,18 +768,22 @@ class JmaSeasonalCollector(BaseCollector):
             print(f"[{self.name}] ⚠ 站點索引抓取失敗（station_no／座標本輪 NULL）: {e}")
 
         # 1) 當年 HTML
-        try:
-            for page, code in {**PHN_PAGES, **SAKURA_PAGES}.items():
-                url = f"{SAKURA_BASE}/{page}.html"
+        page_failures: dict[str, str] = {}
+        for page, code in {**PHN_PAGES, **SAKURA_PAGES}.items():
+            url = f"{SAKURA_BASE}/{page}.html"
+            try:
                 html, lm = self._get(url)
-                source_times[page] = lm
                 parser = parse_sakura_page if page.startswith("sakura") else parse_phn_page
                 rows = parser(html, code, stations, source_ref=url, source_time=lm,
                               collected_at=collected_at)
-                records.extend(rows)
-                raw["phenology_html"].append({"url": url, "last_modified": lm, "rows": len(rows), "html": html})
-        except (JmaFetchError, ValueError) as e:
-            failures["phenology_html"] = str(e)
+            except (JmaFetchError, ValueError) as e:
+                page_failures[page] = str(e)  # 單頁失敗不中斷後面頁面
+                continue
+            source_times[page] = lm
+            records.extend(rows)
+            raw["phenology_html"].append({"url": url, "last_modified": lm, "rows": len(rows), "html": html})
+        if page_failures:
+            failures["phenology_html"] = str(page_failures)
 
         # 2) XML VGSK55（只抓沒看過的電文）
         new_xml_urls: list[str] = []
@@ -784,13 +791,21 @@ class JmaSeasonalCollector(BaseCollector):
             feed, lm = self._get(URL_XML_FEED)
             source_times["xml_feed"] = lm
             known = set(state["xml_seen"])
+            xml_failures: dict[str, str] = {}
             for url in parse_feed_vgsk55(feed):
                 if url in known:
                     continue
-                xml_text, _ = self._get(url)
-                records.extend(parse_vgsk55(xml_text, stations, source_ref=url, collected_at=collected_at))
+                try:
+                    xml_text, _ = self._get(url)
+                    rows = parse_vgsk55(xml_text, stations, source_ref=url, collected_at=collected_at)
+                except (JmaFetchError, ET.ParseError) as e:
+                    xml_failures[url] = str(e)  # 失敗 URL 不進 xml_seen，下輪重試，不擋後續電文
+                    continue
+                records.extend(rows)
                 raw["phenology_xml"].append({"url": url, "xml": xml_text})
                 new_xml_urls.append(url)
+            if xml_failures:
+                failures["phenology_xml"] = str(xml_failures)
         except (JmaFetchError, ET.ParseError) as e:
             failures["phenology_xml"] = str(e)
 
@@ -803,8 +818,11 @@ class JmaSeasonalCollector(BaseCollector):
             source_times["snowcap"] = status_rows[0]["source_time"] if status_rows else None
             for r in status_rows:
                 sig = f"{r['season_year']}|{r['status_text']}|{r['status_class']}"
-                if state["snow_status"].get(r["mountain_code"]) != sig and r.get("source_time"):
-                    records.append(r)
+                if state["snow_status"].get(r["mountain_code"]) == sig:
+                    continue
+                if not r.get("source_time"):
+                    continue  # 無時間戳不送列，也不推進狀態，待下輪補
+                records.append(r)
                 snow_status_next[r["mountain_code"]] = sig
             raw["snowcap"].append({"url": URL_SNOWCAP, "html": html})
         except (JmaFetchError, ValueError) as e:

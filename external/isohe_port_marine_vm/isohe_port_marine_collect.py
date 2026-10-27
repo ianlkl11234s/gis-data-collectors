@@ -188,19 +188,30 @@ def main() -> int:
         return 1
 
     payload = {"stations": stations, "readings": readings}
+    # 進入可能被 SIGALRM 直接終止的 DB 工作前，先把 normalized batch 落地；
+    # 寫入成功才刪。行程被 deadline 殺掉時，下一輪 flush_pending 會補寫。
+    pending = save_batch(buffer_dir, "isohe_port_marine", payload, log=log)
+    if pending is None:
+        log.critical("pre-DB spool failed; a deadline kill in DB work would lose this batch")
     conn = None
     try:
         conn = connect_with_retry(lambda: psycopg2.connect(db_url, connect_timeout=15), log=log)
         # Oldest buffered data first; failure remains buffered and current batch still
         # attempts a write so a transient bad historical row cannot block recovery.
         flush_pending(conn, buffer_dir, lambda c, p: _flush_write(c, p, state_path), log=log)
+        if pending is not None and not pending.exists():
+            log.info("Current batch was already written by buffer flush")
+            return 0
         sent = write(conn, stations, readings, state_path)
         log.info("Supabase 寫入: stations=%s readings_sent=%s/%s", len(stations), sent, len(readings))
+        if pending is not None:
+            pending.unlink(missing_ok=True)
         return 0
     except Exception as exc:
         log.error("Supabase write failed: %s", exc, exc_info=True)
-        buffered = save_batch(buffer_dir, "isohe_port_marine", payload, log=log)
-        if buffered is None:
+        if pending is None:
+            pending = save_batch(buffer_dir, "isohe_port_marine", payload, log=log)
+        if pending is None:
             log.critical("DB failed and buffer save failed; this run cannot be recovered")
         # Fail closed: cron sees failure even if raw snapshot survived, while buffer
         # ensures the normalized batch is retried next run.

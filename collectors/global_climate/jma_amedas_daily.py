@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
@@ -35,6 +36,11 @@ TIME_COLS = ("observed_at", "source_time", "collected_at")
 
 def s3_key(day: str) -> str:
     return f"{S3_PREFIX}/{day[:4]}/{day[4:6]}/{day}.parquet"
+
+
+def receipt_s3_key(day: str) -> str:
+    """日結 receipt sidecar（含 missing 明細），與 parquet 同目錄。"""
+    return s3_key(day) + ".receipt.json"
 
 
 def day_slots(day: str) -> list[datetime]:
@@ -135,10 +141,13 @@ def _table(rows: list[dict], schema):
 
 def build_day_parquet(day: str, out: Path, *, local_base: Path,
                       fetch_slot: Optional[Callable[[datetime], list[dict]]] = None,
-                      max_fill: int = 144) -> dict:
+                      max_fill: int = 144, max_fill_seconds: float = 300.0,
+                      max_consecutive_fail: int = 6) -> dict:
     """組 JST 日 D 的 Parquet。fetch_slot(t) 回該時刻 current 列（上游補抓）；None＝不補。
 
     回傳 {rows, stations, slots_local, slots_filled, slots_missing, bytes}。0 列丟 RuntimeError（不產空檔）。
+    補抓有整體時限（max_fill_seconds）與連續失敗熔斷（max_consecutive_fail）；觸發時丟 RuntimeError，
+    不產檔、不寫 receipt，該日下輪可重試（上游持續掛掉時不拖長單輪）。
     """
     import pyarrow.parquet as pq
     slots = day_slots(day)
@@ -153,6 +162,9 @@ def build_day_parquet(day: str, out: Path, *, local_base: Path,
     filled, missing, stations = [], [], set()
     n_rows = 0
     fills_left = max_fill
+    deadline = time.monotonic() + max_fill_seconds
+    consec_fail = 0
+    aborted = ""
     writer = pq.ParquetWriter(tmp, schema, compression="zstd")
     try:
         for h in range(24):
@@ -162,13 +174,21 @@ def build_day_parquet(day: str, out: Path, *, local_base: Path,
                 if t in idx:
                     rows = [r for r in _current_rows(idx[t])
                             if (_parse_ts(r.get("observed_at")) or t).astimezone(JST) == t]
-                elif fetch_slot is not None and fills_left > 0:
-                    fills_left -= 1
-                    try:
-                        rows = fetch_slot(t)
-                    except Exception as e:  # noqa: BLE001
-                        print(f"[jma_amedas] ⚠ 每日 Parquet 補抓 {t.isoformat()} 失敗: {e}")
-                        rows = None
+                elif fetch_slot is not None and fills_left > 0 and not aborted:
+                    if time.monotonic() > deadline:
+                        aborted = f"補抓超過 {max_fill_seconds:.0f}s"
+                    else:
+                        fills_left -= 1
+                        try:
+                            rows = fetch_slot(t)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[jma_amedas] ⚠ 每日 Parquet 補抓 {t.isoformat()} 失敗: {e}")
+                            rows = None
+                            consec_fail += 1
+                            if consec_fail >= max_consecutive_fail:
+                                aborted = f"補抓連續失敗 {consec_fail} 次"
+                        else:
+                            consec_fail = 0
                     if rows:
                         filled.append(t.isoformat())
                 if not rows:
@@ -188,6 +208,9 @@ def build_day_parquet(day: str, out: Path, *, local_base: Path,
                 n_rows += len(hour_rows)
     finally:
         writer.close()
+    if aborted:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"jma_amedas 每日 Parquet {day}: {aborted}，中止（該日下輪重試）")
     if n_rows == 0:
         tmp.unlink(missing_ok=True)
         raise RuntimeError(f"jma_amedas 每日 Parquet {day}: 0 列（本機與上游皆無資料）")

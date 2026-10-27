@@ -574,14 +574,22 @@ class JmaOceanEnvCollector(BaseCollector):
             if self.receipt_path("uv_anal", day).exists():
                 continue
             ds = self._uv_day_state(day)
-            if vt in ds["frames"]:
+            prev = ds["frames"].get(vt)
+            if prev is not None and prev.get("status") != "partial":
                 continue
+            # 保留期內的 partial 幀（部分磚失敗）仍可重抓；日結前補齊即升級為 ok
             fr = self.fetch_uv_frame(vt)
             if fr is None:
                 out["unavailable"] += 1
                 continue
             ds["frames"][vt] = fr
             self._uv_save_day(day, ds)
+            if prev is not None:
+                # 日累積器對同一 vt 只套一次；換了網格要整日重建，T1 才不會沿用舊的 partial
+                dd = self.day_dir("uv_anal", day)
+                self._uv_acc(day).rebuild({v: dd / "grids" / f"{v}.npz" for v, f in ds["frames"].items()
+                                           if f.get("status") in ("ok", "partial")})
+                out["refetched"] = out.get("refetched", 0) + 1
             st["pending_frames"][vt] = self.uv_frame_row(vt, fr)
             out["fetched"] += 1
         # 3) 日結：該日 13 幀皆定案（抓到或 missing）

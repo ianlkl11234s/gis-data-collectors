@@ -537,6 +537,8 @@ class JmaRasterCollector(BaseCollector):
                 del grid
             else:
                 print(f"[{self.name}] ⚠ {product.name} {vt} 磚不齊／無法解碼，不產 T2 網格、不發布")
+                if not failed:
+                    failed.append("decode:mosaic_gray")  # 磚齊但 JPEG 解碼失敗：標 partial，不可回 ok
 
         sp.write_frame_tar(dd / "frames" / f"{vt}.tar", members, mtime)
         status = "ok" if not failed else "partial"
