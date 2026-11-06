@@ -716,6 +716,11 @@ class JmaOceanEnvCollector(BaseCollector):
         issued = issued.replace(second=0, microsecond=0)
         ivt = issued.strftime(VT_FMT)
         day = issued.astimezone(JST).strftime("%Y%m%d")
+        if self.receipt_path("kosa_fcst", day).exists():
+            # 該日已日結（T3 已驗證上傳、spool 已刪）：遲到重試若重建 spool，日結會用只含這一期的 tar 覆寫同一 S3 key，
+            # 丟掉當日其他期（review F002）。不重抓、視為已處理，讓 last_list_sha 推進。
+            print(f"[{self.name}] ⚠ kosa_fcst 發布日 {day} 已日結，略過遲到重試（避免覆寫封存）")
+            return {"issued": False, "skipped_closed_day": day, "failed": 0}
         items = parse_kosa_list(list_body.decode("utf-8", errors="replace"))
         members: list[tuple[str, bytes]] = [(f"kosa_fcst/{ivt}/s_jpjp_list.js", list_body)]
         entries, failed = [], []
@@ -770,6 +775,9 @@ class JmaOceanEnvCollector(BaseCollector):
 
     def close_kosa_day(self, day: str, st: dict) -> bool:
         dd = self.day_dir("kosa_fcst", day)
+        if self.receipt_path("kosa_fcst", day).exists():   # 已日結：不得用殘留 spool 覆寫已驗證的封存（review F002）
+            shutil.rmtree(dd, ignore_errors=True)
+            return True
         ds = sp.read_json(dd / "state.json", None) or {"issues": {}}
         issues = sorted(ds["issues"])
         row = self._daily_row("kosa_fcst", day, frames_expected=len(issues),
