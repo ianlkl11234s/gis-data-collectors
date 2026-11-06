@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -272,7 +273,9 @@ class JmaAmedasCollector(BaseCollector):
         done = []
         for day in todo[:max_days]:
             local = self.parquet_dir / f"{day}.parquet"
-            info = dly.build_day_parquet(day, local, local_base=self.local_base, fetch_slot=self._fetch_slot)
+            fill_cache = self.parquet_dir / f"{day}.fill"   # 補抓進度跨輪保留（review F009）
+            info = dly.build_day_parquet(day, local, local_base=self.local_base, fetch_slot=self._fetch_slot,
+                                         fill_cache_dir=fill_cache)
             sha = sha256_file(local)
             key = dly.s3_key(day)
             if not put_verified(s3, local, key, sha, "STANDARD", "application/vnd.apache.parquet"):
@@ -288,6 +291,7 @@ class JmaAmedasCollector(BaseCollector):
             write_json_atomic(self.parquet_dir / f"{day}.json", receipt)
             rcpt_local.unlink(missing_ok=True)
             local.unlink(missing_ok=True)
+            shutil.rmtree(fill_cache, ignore_errors=True)
             print(f"[{self.name}] ✓ 每日 Parquet {day}: {info['rows']:,} 列 {info['stations']} 站 "
                   f"本機 {info['slots_local']}/144 補抓 {info['slots_filled']} 缺 {info['slots_missing']} "
                   f"{info['bytes']:,}B → s3://{key}")
