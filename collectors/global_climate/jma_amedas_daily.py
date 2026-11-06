@@ -139,15 +139,32 @@ def _table(rows: list[dict], schema):
     return pa.table(cols, schema=schema)
 
 
+def _read_fill_cache(path: Path) -> Optional[list[dict]]:
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        path.unlink(missing_ok=True)   # 壞檔刪掉，下輪重抓
+        return None
+    return rows if isinstance(rows, list) else None
+
+
+def _write_fill_cache(path: Path, rows: list[dict]) -> None:
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(rows, ensure_ascii=False, default=str), encoding="utf-8")
+    tmp.replace(path)
+
+
 def build_day_parquet(day: str, out: Path, *, local_base: Path,
                       fetch_slot: Optional[Callable[[datetime], list[dict]]] = None,
                       max_fill: int = 144, max_fill_seconds: float = 300.0,
-                      max_consecutive_fail: int = 6) -> dict:
+                      max_consecutive_fail: int = 6, fill_cache_dir: Optional[Path] = None) -> dict:
     """組 JST 日 D 的 Parquet。fetch_slot(t) 回該時刻 current 列（上游補抓）；None＝不補。
 
     回傳 {rows, stations, slots_local, slots_filled, slots_missing, bytes}。0 列丟 RuntimeError（不產空檔）。
     補抓有整體時限（max_fill_seconds）與連續失敗熔斷（max_consecutive_fail）；觸發時丟 RuntimeError，
     不產檔、不寫 receipt，該日下輪可重試（上游持續掛掉時不拖長單輪）。
+    fill_cache_dir：補抓成功的時刻逐筆落盤，下輪重試直接重用（不重抓、不耗預算），讓預算不足以一輪補完時
+    可以跨輪累積進度（review F009）；呼叫端在日結成功後負責刪除該目錄。
     """
     import pyarrow.parquet as pq
     slots = day_slots(day)
@@ -165,6 +182,8 @@ def build_day_parquet(day: str, out: Path, *, local_base: Path,
     deadline = time.monotonic() + max_fill_seconds
     consec_fail = 0
     aborted = ""
+    if fill_cache_dir is not None:
+        fill_cache_dir.mkdir(parents=True, exist_ok=True)
     writer = pq.ParquetWriter(tmp, schema, compression="zstd")
     try:
         for h in range(24):
@@ -174,6 +193,11 @@ def build_day_parquet(day: str, out: Path, *, local_base: Path,
                 if t in idx:
                     rows = [r for r in _current_rows(idx[t])
                             if (_parse_ts(r.get("observed_at")) or t).astimezone(JST) == t]
+                elif fill_cache_dir is not None and (fill_cache_dir / f"{t:%H%M}.json").exists():
+                    cached = _read_fill_cache(fill_cache_dir / f"{t:%H%M}.json")
+                    rows = cached
+                    if rows:
+                        filled.append(t.isoformat())
                 elif fetch_slot is not None and fills_left > 0 and not aborted:
                     if time.monotonic() > deadline:
                         aborted = f"補抓超過 {max_fill_seconds:.0f}s"
@@ -189,6 +213,8 @@ def build_day_parquet(day: str, out: Path, *, local_base: Path,
                                 aborted = f"補抓連續失敗 {consec_fail} 次"
                         else:
                             consec_fail = 0
+                            if rows and fill_cache_dir is not None:
+                                _write_fill_cache(fill_cache_dir / f"{t:%H%M}.json", rows)
                     if rows:
                         filled.append(t.isoformat())
                 if not rows:

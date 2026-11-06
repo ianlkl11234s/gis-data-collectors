@@ -390,3 +390,33 @@ def test_kosa_list_hash_not_advanced_when_image_fetch_fails(tmp_path):
     assert out["issued"] and out["failed"] == 0 and c._load_state("kosa_fcst")["last_list_sha"]
     out = c.collect_kosa(datetime(2026, 10, 12, 2, tzinfo=timezone.utc))
     assert not out["issued"]
+
+
+def test_kosa_late_retry_after_day_close_does_not_overwrite_archive(tmp_path):
+    """review F002：發布日已日結後，遲到重試不得用只含單期的 tar 覆寫同一 S3 key。"""
+    lst = kosa_list({"fcst": ["202610130300", "202610130000"], "anly": []})
+    fail = {"on": False}
+
+    def get(url):
+        if url.endswith("s_jpjp_list.js"):
+            return 200, lst, {"Last-Modified": "Sun, 11 Oct 2026 21:00:48 GMT"}
+        t = url.rsplit("/", 1)[1][:12]
+        if fail["on"] and t == "202610130000":
+            return 500, b"", {}
+        return 200, t.encode() * 10, {}
+    s3 = FakeS3()
+    c = make_collector(tmp_path, ["kosa_fcst"], s3, get)
+    c.collect_kosa(datetime(2026, 10, 12, 0, tzinfo=timezone.utc))
+    out = c.collect_kosa(datetime(2026, 10, 12, 17, tzinfo=timezone.utc))   # 10-12 日結
+    assert "20261012" in out["days_closed"]
+    key = "weather-raw/jma/kosa_fcst/2026/10/20261012.tar"
+    before = s3.files[key]
+    # 模擬日結後的遲到重試：清單 sha 未推進
+    st = c._load_state("kosa_fcst")
+    st["last_list_sha"] = None
+    c._save_state("kosa_fcst", st)
+    out = c.collect_kosa(datetime(2026, 10, 12, 18, tzinfo=timezone.utc))
+    assert not out["issued"] and out.get("skipped_closed_day") == "20261012"
+    assert not c.day_dir("kosa_fcst", "20261012").exists()
+    assert s3.files[key] == before, "已驗證封存不得被覆寫"
+    assert c._load_state("kosa_fcst")["last_list_sha"], "略過後應推進 list sha，避免每輪重試"

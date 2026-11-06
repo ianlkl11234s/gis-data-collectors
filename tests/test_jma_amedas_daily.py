@@ -143,3 +143,33 @@ def test_build_day_parquet_aborts_after_consecutive_fill_failures(tmp_path):
         dly.build_day_parquet("20261011", tmp_path / "x.parquet", local_base=tmp_path,
                               fetch_slot=boom, max_consecutive_fail=3)
     assert not (tmp_path / "x.parquet").exists()
+
+
+def test_fill_progress_persists_across_aborts(tmp_path):
+    """review F009：補抓中途 abort 時，已補抓的時刻留在快取，下輪不重抓、可累積到補完。"""
+    import pytest
+    day = "20261011"
+    slots = dly.day_slots(day)
+    cache = tmp_path / "fill"
+    out = tmp_path / "o" / f"{day}.parquet"
+    seen = []
+
+    def flaky(t):   # 前 10 個成功，之後連續失敗 → 熔斷 abort
+        seen.append(t)
+        if len(seen) > 10:
+            raise RuntimeError("down")
+        return [_row("11001", t)]
+
+    with pytest.raises(RuntimeError, match="中止"):
+        dly.build_day_parquet(day, out, local_base=tmp_path, fetch_slot=flaky, max_consecutive_fail=3,
+                              fill_cache_dir=cache)
+    assert len(list(cache.glob("*.json"))) == 10
+    seen2 = []
+
+    def ok(t):
+        seen2.append(t)
+        return [_row("11001", t)]
+
+    info = dly.build_day_parquet(day, out, local_base=tmp_path, fetch_slot=ok, fill_cache_dir=cache)
+    assert len(seen2) == 134 and not (set(seen2) & set(slots[:10])), "快取的 10 個時刻不重抓"
+    assert info["slots_filled"] == 144 and info["slots_missing"] == 0 and info["rows"] == 144
