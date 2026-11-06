@@ -17,4 +17,6 @@
 - 政府來源頁未標示授權的資料照常收集與寫入，下游來源卡標「授權待確認」即可；collector 不需為此另設 HOLD 或停收。
 - 授權只禁止「商用」不算明確受限（個人非營利網站），照常處理，下游標示限制即可。
 - Google 定位或 Google Places 推得的座標維持現狀，不要求額外標注或改授權欄。
+- 全站站主限定／私人圖層在登出或失去權限時，一律關閉圖層並清除 module 快取與 Mapbox source，不只修單一圖層（實作沿用 owner-gate-unify）。
+- 已套用到正式 DB 的 migration 不為 review 意見回頭改成可重跑（缺 ON CONFLICT 等直接視為已決定）；新寫的 migration seed 一律帶 ON CONFLICT。
 - 正本在 gis-agent-system reports/code-review/POLICIES.md。
