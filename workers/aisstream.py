@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import config
+from utils.spool_recovery import compress_orphan_jsonl
 
 try:  # optional dependency: disabled deployments need not import websockets
     from websockets.sync.client import connect as websocket_connect
@@ -261,6 +262,8 @@ class SpoolManager:
         return gz_path
 
     def retry_pending(self) -> int:
+        # 先把非目前寫入中的孤兒 .jsonl 壓成 .gz（保留 mtime），再一併上傳
+        compress_orphan_jsonl(self.base_dir, self._path)
         uploaded = 0
         for path in sorted(self.base_dir.glob("*.jsonl.gz")):
             if self._upload(path):
@@ -485,6 +488,8 @@ class AISStreamWorker:
                     path = self.spool.rotate()
                     if path and not path.exists():
                         self.stats.s3_archives += 1
+                    # 上傳失敗留下的檔不必等到下次重啟才重試
+                    self.stats.s3_archives += self.spool.retry_pending()
                 if len(self._batch) >= config.AISSTREAM_DB_BATCH_SIZE or time.monotonic() - self._last_db_flush >= config.AISSTREAM_DB_FLUSH_SECONDS:
                     self._flush_batch()
                 if time.monotonic() - self._health_last >= config.AISSTREAM_HEALTH_INTERVAL_SECONDS:

@@ -36,6 +36,7 @@
 | I-03 | 「寫成功才標記」的批次處理要另外記 attempt | 沒有成功結果的項目下一輪又被撈出來，永遠重試（waste_match 每天固定 80 筆） | mini-taiwan-pulse `.claude/memory/INCIDENTS.md` §2026-05-09；gis-platform `migrations/075…` |
 | I-04 | 新來源和既有來源疑似重疊時，用座標 100 m 配對判定，不信編號 | >90% 重複停一邊、<30% 互補兩邊留（iot_wra 地下水 95% 重複，已停子端點） | mini-taiwan-pulse `.claude/memory/PRINCIPLES.md` §Collector 重複度檢核 |
 | I-05 | 對外部服務逐批處理（LLM 標註等）時，單批失敗只跳過該批、下一輪重送；全部批次失敗才讓整輪失敗。批內維持原子，一則不合法整批跳過 | 全有全無在積壓時幾乎每輪都碰到一批失敗：news_events 積壓 28 批、約 18% 批次失敗，加值後還卡 9 小時，且每輪重送全部積壓 | [pitfall 2026-10-21](../../.claude/pitfalls/2026-10-21-news-llm-all-or-nothing.md) |
+| I-06 | 落地檔（spool）的重試要掃描所有中間狀態（`.jsonl`、`.jsonl.gz`），不能只掃 rotate 的最終產物；補傳要保留原 mtime，分區才正確 | worker 被 kill 時正在寫的 `.jsonl` 沒經過 rotate，aisstream 80 個、ripe_ris_live 40 個孤兒檔一直沒上傳 S3 | [pitfall 2026-11-06](../../.claude/pitfalls/2026-11-06-spool-orphan-jsonl.md)；`utils/spool_recovery.py` |
 
 ## L DB 負載
 
