@@ -429,3 +429,39 @@ def test_cross_layer_map_lists_cdc_archive_prefix():
     cmap = yaml.safe_load((ROOT / "config" / "cross_layer_map.yaml").read_text(encoding="utf-8"))
     prefixes = [p["prefix"] for p in cmap["cdc_public_health_weekly"]["s3_prefixes"]]
     assert prefixes == ["cdc_public_health_weekly/archives/"]
+
+
+# 2026-11-08：03:00 archive freshness 誤報（VM 搬遷、已停用、季節性）
+def test_archive_lag_skips_disabled_vm_and_seasonal(monkeypatch):
+    task = BackupSupabaseTask.__new__(BackupSupabaseTask)
+    for prefix in ("ANIMAL_SHELTER_OUTCOMES", "IMMIGRATION_APIS_AIRPORT", "ISOHE_PORT_MARINE",
+                   "SHIP_TDX", "VD", "FOOD_PRICES"):
+        monkeypatch.setattr(config, f"{prefix}_ENABLED", False, raising=False)
+    for name in ("animal_shelter_outcomes", "immigration_apis_airport", "isohe_port_marine",
+                 "ship_tdx", "vd", "food_prices"):
+        lag, reason = task._archive_expected_lag(name)
+        assert lag is None and reason == "本機未啟用", name
+
+    # 明列者照表：VM 自行歸檔的 ship_ais 仍檢查、flight_fr24 永久略過
+    assert task._archive_expected_lag("ship_ais") == (8, None)
+    assert task._archive_expected_lag("flight_fr24") == (None, "停用")
+    # registry 查不到的 prefix 維持預設
+    assert task._archive_expected_lag("some_unknown_prefix") == (2, None)
+
+    monkeypatch.setattr(config, "JAPAN_ENV_WBGT_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "JAPAN_ENV_WBGT_SEASON_MONTHS", "4,5,6,7,8,9,10")
+    import collectors.global_climate.env_jp_wbgt as wbgt
+    monkeypatch.setattr(wbgt, "in_season", lambda now, spec: False)
+    assert task._archive_expected_lag("env_jp_wbgt") == (None, "季節外")
+    monkeypatch.setattr(wbgt, "in_season", lambda now, spec: True)
+    assert task._archive_expected_lag("env_jp_wbgt")[0] == 2
+
+
+def test_archive_lag_widens_for_long_interval(monkeypatch):
+    task = BackupSupabaseTask.__new__(BackupSupabaseTask)
+    monkeypatch.setattr(config, "ANIMAL_SHELTER_PRESSURE_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "ANIMAL_SHELTER_PRESSURE_INTERVAL", 43200, raising=False)
+    assert task._archive_expected_lag("animal_shelter_pressure") == (31, None)
+    monkeypatch.setattr(config, "YOUBIKE_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "YOUBIKE_INTERVAL", 10, raising=False)
+    assert task._archive_expected_lag("youbike") == (2, None)

@@ -963,10 +963,13 @@ class BackupSupabaseTask:
         checked = 0
         ok_count = 0
 
+        skipped: list[str] = []
         for collector in collectors:
-            expected_lag = self._ARCHIVE_LAG_BY_COLLECTOR.get(collector, self._ARCHIVE_LAG_DEFAULT_DAYS)
+            expected_lag, skip_reason = self._archive_expected_lag(collector)
             if expected_lag is None:
-                continue  # 主動跳過（如 flight_fr24 已停跑）
+                if skip_reason:
+                    skipped.append(f"{collector}({skip_reason})")
+                continue  # 主動跳過（如 flight_fr24 已停跑、本機未啟用、季節外）
             checked += 1
 
             try:
@@ -1017,7 +1020,48 @@ class BackupSupabaseTask:
                 ok_count += 1
 
         print(f"   archive freshness: {checked} collector 檢查 / {ok_count} ✅ / {critical_count} 🔴")
+        if skipped:
+            print(f"   archive freshness 略過 {len(skipped)}: {', '.join(skipped)}")
         return critical_count
+
+    def _archive_expected_lag(self, collector: str) -> tuple[int | None, str | None]:
+        """回傳 (預期最大落後天數, 略過原因)；天數 None = 不檢查。
+
+        2026-11-08：03:00 歸檔後把已搬到 HiCloud VM（*_ENABLED=false）、已停用（ship_tdx、vd）、
+        季節性停收（env_jp_wbgt）的 collector 列成 🔴 silent fail，屬誤報。規則：
+        1. _ARCHIVE_LAG_BY_COLLECTOR 明列者照表（VM 自行歸檔的 ship_ais 等仍檢查）。
+        2. registry 有登記、但本機 *_ENABLED=false → 不檢查（不是這台在收）。
+        3. 本機啟用但季節外（env_jp_wbgt）→ 不檢查。
+        4. 長週期 collector（月更、年更）預期落後放寬為 interval 天數 + 1。
+        registry 查不到的 S3 prefix 維持預設檢查。
+        """
+        if collector in self._ARCHIVE_LAG_BY_COLLECTOR:
+            lag = self._ARCHIVE_LAG_BY_COLLECTOR[collector]
+            return lag, (None if lag is not None else "停用")
+
+        try:
+            from collectors.registry import get_entry_by_name
+            entry = get_entry_by_name(collector)
+        except Exception:
+            entry = None
+        if entry is None:
+            return self._ARCHIVE_LAG_DEFAULT_DAYS, None
+
+        prefix = entry.config_prefix
+        if not getattr(config, f"{prefix}_ENABLED", False):
+            return None, "本機未啟用"
+
+        if collector == "env_jp_wbgt":
+            try:
+                from collectors.global_climate.env_jp_wbgt import in_season
+                if not in_season(datetime.now(timezone.utc), config.JAPAN_ENV_WBGT_SEASON_MONTHS):
+                    return None, "季節外"
+            except Exception:
+                pass
+
+        interval_min = int(getattr(config, f"{prefix}_INTERVAL", 0) or 0)
+        interval_days = -(-interval_min // 1440)  # ceil
+        return max(self._ARCHIVE_LAG_DEFAULT_DAYS, interval_days + 1), None
 
     def _list_archive_collectors_from_s3(self) -> list[str]:
         """掃 S3 top-level，回傳所有有 archives/ 子目錄的 collector 名稱"""
