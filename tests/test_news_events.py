@@ -33,6 +33,12 @@ from collectors.news_events import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_data_dir(monkeypatch, tmp_path):
+    """collect() 會寫待標註暫存區；測試一律導到 tmp，不碰 repo data/。"""
+    monkeypatch.setattr(config, 'LOCAL_DATA_DIR', tmp_path)
+
+
 # ============================================================
 # URL 正規化
 # ============================================================
@@ -605,3 +611,148 @@ class TestAnnotationLocationTypes:
         ann['county'] = None
         ann['township'] = ''
         NewsEventsCollector._validate_annotation(ann)
+
+
+# ============================================================
+# 待標註暫存區（LLM 失效時不丟新聞）
+# ============================================================
+
+import collectors.base as collectors_base
+from datetime import datetime, timedelta
+
+
+@pytest.fixture
+def pending_env(monkeypatch, tmp_path, gazetteer):
+    monkeypatch.setattr(config, 'LOCAL_DATA_DIR', tmp_path)
+    monkeypatch.setattr(config, 'NEWS_EVENTS_PENDING_MAX_ITEMS', 5000)
+    monkeypatch.setattr(config, 'NEWS_EVENTS_PENDING_MAX_DAYS', 3)
+    monkeypatch.setattr(config, 'NEWS_EVENTS_PENDING_REPLAY_MAX', 300)
+    monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 1)
+    monkeypatch.setattr(news_events, 'LLM_BATCH_SLEEP', 0)
+    for fn in ('notify_error', 'notify_success', 'notify_recovery'):
+        monkeypatch.setattr(collectors_base, fn, lambda *a, **k: None)
+
+    def make(feed_items, writer_ok=True):
+        c = NewsEventsCollector.__new__(NewsEventsCollector)
+        c.dry_run = False
+        c.run_count = c.error_count = c.consecutive_errors = 0
+        c.last_run = c.last_success_at = None
+        c.storage = Mock()
+        c.storage.save.return_value = None
+        c.supabase_writer = None
+        c._fetch_all_feeds = Mock(return_value=(feed_items, 1, 0))
+        c._fetch_recent_keys = Mock(return_value=(set(), []))
+        c._load_gazetteer = Mock(return_value=gazetteer)
+        c._validate_llm_config = Mock(return_value='openrouter')
+        c.written = []
+
+        def _collect_and_capture(orig=c.collect):
+            out = orig()
+            c.written.extend(out.get('data', []))
+            return out
+        c.collect = _collect_and_capture
+        return c
+
+    return make
+
+
+def _feed(n, prefix='a'):
+    return [{
+        'source': 'test', 'url': f'https://example.test/{prefix}{i}',
+        'title': f'{prefix} 新聞標題 {i} ' + '甲乙丙丁戊己庚辛壬癸'[i % 10] * (i + 3),
+        'summary': '摘要', 'published_ts': '2026-11-08T00:00:00+08:00', 'county_hint': None,
+    } for i in range(n)]
+
+
+def _pending_lines(tmp_path):
+    p = tmp_path / 'news_events' / 'pending.jsonl'
+    return [json.loads(l) for l in p.read_text(encoding='utf-8').splitlines()] if p.exists() else []
+
+
+class TestPendingSpool:
+
+    def test_llm_failure_spools_and_writes_nothing(self, pending_env, tmp_path):
+        c = pending_env(_feed(2))
+        c._validate_llm_config = Mock(side_effect=NewsAnnotationError('OPENROUTER_API_KEY unavailable'))
+
+        stats = c.run()
+
+        assert 'error' in stats and c.written == []
+        rows = _pending_lines(tmp_path)
+        assert [r['url'] for r in rows] == ['https://example.test/a0', 'https://example.test/a1']
+        assert all('_pending_since' in r and 'category' not in r for r in rows)
+
+    def test_next_round_backfills_pending_then_clears(self, pending_env, tmp_path):
+        failing = pending_env(_feed(2))
+        failing._llm_extract_batch = Mock(side_effect=RuntimeError('401'))
+        assert 'error' in failing.run()
+        assert len(_pending_lines(tmp_path)) == 2
+
+        # 下一輪：舊的兩則已從 feed 消失，只剩一則新的；LLM 恢復
+        ok = pending_env(_feed(1, prefix='b'))
+        ok._llm_extract_batch = Mock(side_effect=lambda batch, gaz: ({0: _annotation()}, _usage()))
+        stats = ok.run()
+
+        assert 'error' not in stats
+        assert [r['url'] for r in ok.written] == [
+            'https://example.test/a0', 'https://example.test/a1', 'https://example.test/b0',
+        ]
+        assert all('_pending_since' not in r for r in ok.written)
+        assert _pending_lines(tmp_path) == []
+
+    def test_partial_failure_keeps_only_unannotated(self, pending_env, tmp_path):
+        c = pending_env(_feed(2))
+        c._llm_extract_batch = Mock(side_effect=[({0: _annotation()}, _usage()), RuntimeError('timeout')])
+
+        stats = c.run()
+
+        assert 'error' not in stats
+        assert [r['url'] for r in c.written] == ['https://example.test/a0']
+        assert [r['url'] for r in _pending_lines(tmp_path)] == ['https://example.test/a1']
+
+    def test_db_write_failure_keeps_annotated_in_pending(self, pending_env, tmp_path, monkeypatch):
+        c = pending_env(_feed(1))
+        c._llm_extract_batch = Mock(return_value=({0: _annotation()}, _usage()))
+        c.supabase_writer = Mock()
+        c.supabase_writer.write.return_value = False
+        monkeypatch.setattr(NewsEventsCollector, 'require_db_write', lambda self: True)
+
+        stats = c.run()
+
+        assert 'error' in stats
+        assert [r['url'] for r in _pending_lines(tmp_path)] == ['https://example.test/a0']
+
+    def test_expired_and_cap(self, pending_env, tmp_path, monkeypatch):
+        c = pending_env([])
+        now = datetime.now(news_events.TAIPEI_TZ)
+        old = dict(_feed(1, 'old')[0], _pending_since=(now - timedelta(days=4)).isoformat())
+        new = dict(_feed(1, 'new')[0], _pending_since=(now - timedelta(hours=1)).isoformat())
+        c._save_pending([old, new], now)
+        assert [r['url'] for r in c._load_pending(now)] == ['https://example.test/new0']
+
+        monkeypatch.setattr(config, 'NEWS_EVENTS_PENDING_MAX_ITEMS', 2)
+        items = [dict(it, _pending_since=(now - timedelta(minutes=i)).isoformat())
+                 for i, it in enumerate(_feed(3))]
+        assert c._save_pending(items, now) == 2
+        assert sorted(r['url'] for r in _pending_lines(tmp_path)) == [
+            'https://example.test/a0', 'https://example.test/a1',
+        ]
+
+    def test_replay_cap_carries_rest(self, pending_env, tmp_path, monkeypatch):
+        failing = pending_env(_feed(3))
+        failing._validate_llm_config = Mock(side_effect=NewsAnnotationError('no key'))
+        failing.run()
+        monkeypatch.setattr(config, 'NEWS_EVENTS_PENDING_REPLAY_MAX', 2)
+
+        ok = pending_env([])
+        ok._llm_extract_batch = Mock(side_effect=lambda batch, gaz: ({0: _annotation()}, _usage()))
+        assert 'error' not in ok.run()
+
+        assert len(ok.written) == 2
+        assert len(_pending_lines(tmp_path)) == 1
+
+    def test_dry_run_ignores_pending(self, pending_env, tmp_path):
+        c = pending_env(_feed(1))
+        c.dry_run = True
+        c.collect()
+        assert not (tmp_path / 'news_events' / 'pending.jsonl').exists()

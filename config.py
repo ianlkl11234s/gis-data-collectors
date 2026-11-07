@@ -761,6 +761,10 @@ NEWS_EVENTS_OPENROUTER_MAX_TOKENS = int(os.getenv('NEWS_EVENTS_OPENROUTER_MAX_TO
 NEWS_EVENTS_OPENROUTER_REASONING_ENABLED = os.getenv(
     'NEWS_EVENTS_OPENROUTER_REASONING_ENABLED', 'false'
 ).lower() in ('true', '1', 'yes')
+# LLM 不可用時的待標註暫存區（{DATA_DIR}/news_events/pending.jsonl）：上限則數、過期天數、每輪最多補標則數
+NEWS_EVENTS_PENDING_MAX_ITEMS = int(os.getenv('NEWS_EVENTS_PENDING_MAX_ITEMS', '5000'))
+NEWS_EVENTS_PENDING_MAX_DAYS = float(os.getenv('NEWS_EVENTS_PENDING_MAX_DAYS', '3'))
+NEWS_EVENTS_PENDING_REPLAY_MAX = int(os.getenv('NEWS_EVENTS_PENDING_REPLAY_MAX', '300'))
 
 # Mini Taipei 每日時刻表發布
 MINI_TAIPEI_PUBLISH_ENABLED = os.getenv('MINI_TAIPEI_PUBLISH_ENABLED', 'true').lower() in ('true', '1', 'yes')

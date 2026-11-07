@@ -912,6 +912,96 @@ class NewsEventsCollector(BaseCollector):
             it.setdefault('is_event', None)
 
     # ------------------------------------------------------------
+    # 待標註暫存區（LLM 失效時不丟新聞，2026-11-08）
+    # ------------------------------------------------------------
+    # 原則不變：未標註的紀錄一律不寫 DB。LLM key 失效或整批標註失敗時，把去重後的
+    # 新項目存到 {DATA_DIR}/news_events/pending.jsonl，下一輪先補標這些再處理新的。
+    # 已寫入 DB 的項目在 run() 確認成功後移出；萬一行程中斷，下一輪的 DB 去重也會清掉。
+
+    PENDING_FIELDS = ('source', 'url', 'title', 'summary', 'published_ts', 'county_hint')
+    PENDING_SINCE_KEY = '_pending_since'
+
+    @property
+    def _pending_path(self):
+        return config.LOCAL_DATA_DIR / 'news_events' / 'pending.jsonl'
+
+    def _load_pending(self, now: datetime) -> list[dict]:
+        """讀暫存區，丟掉過期與壞行。檔案不存在 → 空清單。"""
+        path = self._pending_path
+        if not path.exists():
+            return []
+        max_age = timedelta(days=getattr(config, 'NEWS_EVENTS_PENDING_MAX_DAYS', 3))
+        items: list[dict] = []
+        expired = broken = 0
+        try:
+            with path.open(encoding='utf-8') as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        it = json.loads(line)
+                        since = datetime.fromisoformat(it[self.PENDING_SINCE_KEY])
+                        if not it.get('url') or not it.get('title'):
+                            raise ValueError('missing url/title')
+                    except (ValueError, KeyError, TypeError):
+                        broken += 1
+                        continue
+                    if now - since > max_age:
+                        expired += 1
+                        continue
+                    items.append(it)
+        except OSError as e:
+            logger.warning(f"[{self.name}] 讀取待標註暫存區失敗: {e}")
+            return []
+        if expired or broken:
+            print(f"   待標註暫存區丟棄 過期 {expired} / 壞行 {broken} 則")
+        return items
+
+    def _save_pending(self, items: list[dict], now: datetime) -> int:
+        """覆寫暫存區（原子寫入）；超過上限時保留最新的。回傳實際保存則數。"""
+        path = self._pending_path
+        cap = max(0, int(getattr(config, 'NEWS_EVENTS_PENDING_MAX_ITEMS', 5000)))
+        now_iso = now.isoformat()
+        rows: list[dict] = []
+        seen: set[str] = set()
+        for it in items:
+            key = it.get('url_norm') or normalize_url(it.get('url', ''))
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            row = {k: it.get(k) for k in self.PENDING_FIELDS}
+            row[self.PENDING_SINCE_KEY] = it.get(self.PENDING_SINCE_KEY) or now_iso
+            rows.append(row)
+        if len(rows) > cap:
+            rows.sort(key=lambda r: r[self.PENDING_SINCE_KEY], reverse=True)
+            print(f"   ⚠ 待標註暫存區超過上限 {cap}，丟棄最舊 {len(rows) - cap} 則")
+            rows = rows[:cap]
+        try:
+            if not rows:
+                path.unlink(missing_ok=True)
+                return 0
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix('.jsonl.tmp')
+            with tmp.open('w', encoding='utf-8') as fh:
+                for row in rows:
+                    fh.write(json.dumps(row, ensure_ascii=False) + '\n')
+            tmp.replace(path)
+        except OSError as e:
+            logger.warning(f"[{self.name}] 寫入待標註暫存區失敗: {e}")
+            return 0
+        return len(rows)
+
+    def run(self) -> dict:
+        self._pending_keep_after_write = None
+        stats = super().run()
+        keep = getattr(self, '_pending_keep_after_write', None)
+        # 只有整輪成功（含 DB 寫入）才把已寫入的移出暫存區
+        if keep is not None and 'error' not in stats and self.consecutive_errors == 0:
+            self._save_pending(keep, datetime.now(TAIPEI_TZ))
+        return stats
+
+    # ------------------------------------------------------------
     # Collect
     # ------------------------------------------------------------
 
@@ -922,7 +1012,16 @@ class NewsEventsCollector(BaseCollector):
         all_items, feeds_ok, feeds_failed = self._fetch_all_feeds()
         print(f"   feed 完成: {feeds_ok} 成功 / {feeds_failed} 失敗，共 {len(all_items)} 則")
 
-        fresh, dedup_stats = self._dedup(all_items)
+        use_pending = not getattr(self, 'dry_run', False)
+        pending = self._load_pending(fetch_time) if use_pending else []
+        replay_cap = max(0, int(getattr(config, 'NEWS_EVENTS_PENDING_REPLAY_MAX', 300)))
+        # 舊的先補標；超過每輪上限的原封留在暫存區，避免一輪跑太久
+        pending.sort(key=lambda it: it[self.PENDING_SINCE_KEY])
+        replay, carry = pending[:replay_cap], pending[replay_cap:]
+        if pending:
+            print(f"   待標註暫存區 {len(pending)} 則，本輪補標 {len(replay)} 則")
+
+        fresh, dedup_stats = self._dedup(replay + all_items)
         print(
             f"   去重後新項目 {len(fresh)} 則 "
             f"(url 重複 {dedup_stats['dup_url']} / simhash 重複 {dedup_stats['dup_simhash']})"
@@ -932,30 +1031,37 @@ class NewsEventsCollector(BaseCollector):
         usage = {'input': 0, 'output': 0, 'cached': 0, 'batches': 0, 'failed_batches': 0}
         llm_provider: Optional[str] = None
         llm_model: Optional[str] = None
+        unannotated: list[dict] = []
 
         if self.dry_run:
             print("   [dry-run] 跳過 LLM 地點抽取與 DB 寫入")
             self._no_location_defaults(fresh)
         elif not fresh:
             pass
-        elif gaz.is_empty():
-            raise NewsAnnotationError(
-                "township gazetteer unavailable; refusing to write unclassified news records"
-            )
         else:
-            llm_provider = self._validate_llm_config()
-            llm_model = (
-                getattr(config, 'GEMINI_MODEL', 'gemini-3.1-flash-lite-preview')
-                if llm_provider == 'gemini'
-                else getattr(config, 'NEWS_EVENTS_OPENROUTER_MODEL', 'qwen/qwen3.7-flash')
-            )
-            usage = self._annotate_items(fresh, gaz)
+            try:
+                if gaz.is_empty():
+                    raise NewsAnnotationError(
+                        "township gazetteer unavailable; refusing to write unclassified news records"
+                    )
+                llm_provider = self._validate_llm_config()
+                llm_model = (
+                    getattr(config, 'GEMINI_MODEL', 'gemini-3.1-flash-lite-preview')
+                    if llm_provider == 'gemini'
+                    else getattr(config, 'NEWS_EVENTS_OPENROUTER_MODEL', 'qwen/qwen3.7-flash')
+                )
+                usage = self._annotate_items(fresh, gaz)
+            except Exception:
+                saved = self._save_pending(fresh + carry, fetch_time)
+                print(f"   ⏸ 標註失敗，{saved} 則存入待標註暫存區（不寫 DB）")
+                raise
             if usage['failed_batches']:
                 causes = '; '.join(sorted(set(usage['failure_causes'])))
                 print(
                     f"   ⚠ LLM 標註 {usage['failed_batches']} 批失敗，跳過 {usage['skipped_items']} 則"
                     f"（下一輪重送）：{causes}"
                 )
+            unannotated = [it for it in fresh if not it.get(ANNOTATED_KEY)]
             fresh = [it for it in fresh if it.get(ANNOTATED_KEY)]
             cost_text = ""
             if llm_provider == 'gemini':
@@ -1025,6 +1131,13 @@ class NewsEventsCollector(BaseCollector):
                 else None
             ),
         }
+        if use_pending:
+            # 寫入前先把全部（含本輪已標註）留在暫存區：DB 寫入失敗或行程中斷都不丟；
+            # run() 確認寫入成功後才縮成「未標註＋未輪到」的部分。
+            self._save_pending(fresh + unannotated + carry, fetch_time)
+            self._pending_keep_after_write = unannotated + carry
+            result['pending_items'] = len(unannotated) + len(carry)
+
         # dry-run 不帶 data → base.run() 不會存檔 / 寫 DB
         if not self.dry_run:
             result['data'] = records
