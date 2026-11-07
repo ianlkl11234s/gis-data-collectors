@@ -483,8 +483,25 @@ class S3Storage:
         s3_key = f"{collector_name}/archives/{date}.tar.gz"
         return self.get_file(s3_key)
 
+    def _open_archive_stream(self, collector_name: str, date: str):
+        """回傳 tar.gz 歸檔的 S3 串流 Body；不存在或 0 byte 回 None（其他錯誤往上丟，與 get_file 相同）。"""
+        s3_key = f"{collector_name}/archives/{date}.tar.gz"
+        try:
+            response = self.s3.get_object(Bucket=self.bucket, Key=s3_key)
+            if response.get('ContentLength') == 0:
+                response['Body'].close()
+                return None
+            return response['Body']
+        except self.ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                return None
+            raise
+
     def list_archive_files(self, collector_name: str, date: str) -> list:
-        """列出 tar.gz 歸檔中的檔案清單（不下載完整內容）
+        """列出 tar.gz 歸檔中的檔案清單
+
+        以串流（tarfile mode='r|gz'）逐一讀 member header，不把整個歸檔
+        （單日可達上百 MB）讀進記憶體。
 
         Args:
             collector_name: 收集器名稱
@@ -495,25 +512,28 @@ class S3Storage:
         """
         import tarfile
 
-        archive_data = self.get_archive(collector_name, date)
-        if not archive_data:
+        body = self._open_archive_stream(collector_name, date)
+        if body is None:
             return []
 
         files = []
-        with tarfile.open(fileobj=io.BytesIO(archive_data), mode='r:gz') as tar:
-            for member in tar.getmembers():
-                if member.isfile():
-                    files.append({
-                        'filename': member.name,
-                        'size': member.size,
-                        'modified': datetime.fromtimestamp(member.mtime).isoformat(),
-                        'source': 's3_archive'
-                    })
+        with closing(body) as stream:
+            with tarfile.open(fileobj=stream, mode='r|gz') as tar:
+                for member in tar:
+                    if member.isfile():
+                        files.append({
+                            'filename': member.name,
+                            'size': member.size,
+                            'modified': datetime.fromtimestamp(member.mtime).isoformat(),
+                            'source': 's3_archive'
+                        })
 
         return sorted(files, key=lambda f: f['filename'], reverse=True)
 
     def extract_file_from_archive(self, collector_name: str, date: str, filename: str) -> bytes:
         """從 tar.gz 歸檔中提取單一檔案
+
+        串流讀取，找到檔案就停止，記憶體只留該檔內容。
 
         Args:
             collector_name: 收集器名稱
@@ -525,16 +545,17 @@ class S3Storage:
         """
         import tarfile
 
-        archive_data = self.get_archive(collector_name, date)
-        if not archive_data:
+        body = self._open_archive_stream(collector_name, date)
+        if body is None:
             return None
 
-        with tarfile.open(fileobj=io.BytesIO(archive_data), mode='r:gz') as tar:
-            for member in tar.getmembers():
-                if member.isfile() and member.name == filename:
-                    f = tar.extractfile(member)
-                    if f:
-                        return f.read()
+        with closing(body) as stream:
+            with tarfile.open(fileobj=stream, mode='r|gz') as tar:
+                for member in tar:
+                    if member.isfile() and member.name == filename:
+                        f = tar.extractfile(member)
+                        if f:
+                            return f.read()
 
         return None
 
