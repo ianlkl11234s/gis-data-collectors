@@ -21,9 +21,9 @@ Robot C — run_reconcile:
 from __future__ import annotations
 
 import gzip
-import io
 import json
 import os
+import tempfile
 import time
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
@@ -473,15 +473,9 @@ class BackupSupabaseTask:
             )
             return True
 
-        # 4. COPY → gzip → bytes
-        gz_bytes = self._copy_table_to_gzip(schema, table)
-
-        # 5. 上傳 S3
-        ok = self.s3.upload_snapshot(s3_key, gz_bytes, storage_class=storage_class)
-        if not ok:
-            raise RuntimeError(f"S3 upload_snapshot 回傳 False")
-
-        size_bytes = len(gz_bytes)
+        # 4. COPY → gzip 暫存檔（串流，不整份進記憶體）→ 5. 上傳 S3
+        gz_path = self._copy_table_to_gzip(schema, table)
+        size_bytes = self._upload_gz_file(gz_path, s3_key, storage_class)
 
         # 6. UPSERT backup_state
         self._upsert_backup_state(schema, table, fingerprint, s3_key, size_bytes, storage_class)
@@ -503,22 +497,69 @@ class BackupSupabaseTask:
         )
         return True
 
-    def _copy_table_to_gzip(self, schema: str, table: str) -> bytes:
-        """用 psycopg2 copy_expert 將整張表 COPY 成 gzip CSV bytes。
+    def _copy_table_to_gzip(self, schema: str, table: str) -> Path:
+        """用 psycopg2 copy_expert 將整張表 COPY 成 gzip CSV 暫存檔（串流寫入）。
 
+        Returns:
+            暫存檔路徑；呼叫端交給 _upload_gz_file（上傳後一定刪除）。
         Raises:
-            Exception: COPY 或壓縮失敗時往上拋出
+            Exception: COPY 或壓縮失敗時往上拋出（暫存檔已刪）
         """
-        raw_buf = io.BytesIO()
         sql = f'COPY (SELECT * FROM "{schema}"."{table}") TO STDOUT WITH CSV HEADER'
-        with self._cursor() as cur:
-            cur.copy_expert(sql, raw_buf)
-        raw_buf.seek(0)
+        return self._copy_sql_to_gzip_file(sql)
 
-        gz_buf = io.BytesIO()
-        with gzip.GzipFile(fileobj=gz_buf, mode="wb") as gz:
-            gz.write(raw_buf.read())
-        return gz_buf.getvalue()
+    @staticmethod
+    def _tmp_dir() -> Path:
+        """備份暫存目錄（DATA_DIR 底下，與容器 volume 同碟，不吃 /tmp 的 tmpfs／記憶體）。"""
+        d = Path(config.LOCAL_DATA_DIR) / "tmp" / "backup"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @classmethod
+    def _cleanup_stale_tmp(cls) -> int:
+        """清掉上一次被強制結束（逾時／OOM）留下的暫存檔；回傳刪除數。"""
+        n = 0
+        for p in cls._tmp_dir().glob("backup-*.csv.gz"):
+            try:
+                p.unlink()
+                n += 1
+            except OSError:
+                pass
+        return n
+
+    def _copy_sql_to_gzip_file(self, sql: str) -> Path:
+        """COPY ... TO STDOUT 直接串流進 GzipFile(暫存檔)；記憶體只有 COPY 的緩衝區。
+
+        gzip header 的 filename 固定為空字串，與舊版 GzipFile(fileobj=BytesIO) 的輸出格式相同。
+        """
+        fd, tmp = tempfile.mkstemp(prefix="backup-", suffix=".csv.gz", dir=self._tmp_dir())
+        path = Path(tmp)
+        try:
+            with os.fdopen(fd, "wb") as raw, \
+                    gzip.GzipFile(filename="", fileobj=raw, mode="wb") as gz:
+                with self._cursor() as cur:
+                    cur.copy_expert(sql, gz)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        return path
+
+    def _upload_gz_file(self, gz_path: Path, s3_key: str, storage_class: str) -> int:
+        """上傳 gzip 暫存檔（multipart 串流），回傳大小；不論成敗都刪暫存檔。
+
+        S3 標頭與舊版 upload_snapshot 相同：ContentType=text/csv、ContentEncoding=gzip。
+        """
+        try:
+            size_bytes = os.path.getsize(gz_path)
+            ok = self.s3.upload_path(
+                gz_path, s3_key, storage_class=storage_class,
+                content_type="text/csv", content_encoding="gzip",
+            )
+            if not ok:
+                raise RuntimeError("S3 upload_snapshot 回傳 False")
+            return size_bytes
+        finally:
+            Path(gz_path).unlink(missing_ok=True)
 
     # ──────────────────────────────────────────────
     # ROBOT B — Realtime Daily Snapshot
@@ -669,13 +710,8 @@ class BackupSupabaseTask:
             )
             return "uploaded"
 
-        gz_bytes = self._copy_table_partition_to_gzip(schema, table, time_col, day_start, day_end)
-
-        ok = self.s3.upload_snapshot(s3_key, gz_bytes, storage_class=storage_class)
-        if not ok:
-            raise RuntimeError("S3 upload_snapshot 回傳 False")
-
-        size_bytes = len(gz_bytes)
+        gz_path = self._copy_table_partition_to_gzip(schema, table, time_col, day_start, day_end)
+        size_bytes = self._upload_gz_file(gz_path, s3_key, storage_class)
         self._audit(
             run_kind="realtime_snapshot",
             schema_name=schema,
@@ -732,12 +768,8 @@ class BackupSupabaseTask:
             )
             return "uploaded"
 
-        gz_bytes = self._copy_table_to_gzip(schema, table)
-        ok = self.s3.upload_snapshot(s3_key, gz_bytes, storage_class=storage_class)
-        if not ok:
-            raise RuntimeError("S3 upload_snapshot 回傳 False")
-
-        size_bytes = len(gz_bytes)
+        gz_path = self._copy_table_to_gzip(schema, table)
+        size_bytes = self._upload_gz_file(gz_path, s3_key, storage_class)
         self._audit(
             run_kind="realtime_snapshot",
             schema_name=schema,
@@ -763,24 +795,17 @@ class BackupSupabaseTask:
         time_col: str,
         day_start: datetime,
         day_end: datetime,
-    ) -> bytes:
-        """COPY 指定時間範圍的資料列到 gzip CSV bytes。"""
+    ) -> Path:
+        """COPY 指定時間範圍的資料列到 gzip CSV 暫存檔（串流寫入）。"""
         sql_tmpl = (
             f'COPY (SELECT * FROM "{schema}"."{table}" '
             f'WHERE "{time_col}" >= %s '
             f'AND "{time_col}" < %s) '
             f'TO STDOUT WITH CSV HEADER'
         )
-        raw_buf = io.BytesIO()
         with self._cursor() as cur:
             sql = cur.mogrify(sql_tmpl, (day_start, day_end)).decode()
-            cur.copy_expert(sql, raw_buf)
-        raw_buf.seek(0)
-
-        gz_buf = io.BytesIO()
-        with gzip.GzipFile(fileobj=gz_buf, mode="wb") as gz:
-            gz.write(raw_buf.read())
-        return gz_buf.getvalue()
+        return self._copy_sql_to_gzip_file(sql)
 
     # ──────────────────────────────────────────────
     # ROBOT C — Daily Reconcile
@@ -1084,6 +1109,12 @@ class BackupSupabaseTask:
         """
         if self.dry_run:
             print("🔶 DRY_RUN=true：只記錄 log，不實際 COPY / upload")
+        try:
+            stale = self._cleanup_stale_tmp()
+            if stale:
+                print(f"   清掉上次殘留的備份暫存檔 {stale} 個")
+        except OSError as exc:
+            print(f"   ⚠ 備份暫存目錄無法清理: {exc}")
 
         print(f"\n{'=' * 60}")
         print(f"🗄️  Supabase Backup 任務啟動")

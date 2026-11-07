@@ -134,13 +134,17 @@ class S3Storage:
 
     def upload_path(self, local_path: Path, s3_key: str, *, storage_class: str = 'STANDARD',
                     metadata: dict | None = None,
-                    content_type: str = 'application/octet-stream') -> bool:
+                    content_type: str = 'application/octet-stream',
+                    content_encoding: str | None = None) -> bool:
         """串流上傳本地檔（multipart，低並發控記憶體），可指定 StorageClass 與自訂 metadata。
 
         weather_raster 用：日 tar 可達上百 MB，不可整包讀進記憶體（upload_snapshot 收 bytes）。
+        備份用 content_type='text/csv'、content_encoding='gzip'，與 upload_snapshot 對 *.csv.gz 的標頭相同。
         """
         from boto3.s3.transfer import TransferConfig
         extra = {'StorageClass': storage_class, 'ContentType': content_type}
+        if content_encoding:
+            extra['ContentEncoding'] = content_encoding
         if metadata:
             extra['Metadata'] = {str(k): str(v) for k, v in metadata.items()}
         try:
