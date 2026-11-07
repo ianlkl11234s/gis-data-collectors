@@ -6,6 +6,12 @@ Data Collectors 主程式
 支援 S3 歸檔與資料生命週期管理。
 """
 
+import os
+
+# pyarrow 預設用自帶 jemalloc 池，不受 compose 的 MALLOC_* 控制；改用系統 malloc。
+# 必須在任何模組 import pyarrow 之前設定（子行程繼承環境變數）。compose 有設時以 compose 為準。
+os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+
 import logging
 import random
 import signal
@@ -564,7 +570,15 @@ def main():
     _loop_start = time.monotonic()
     _selftest_announced = False
 
+    # 定期把 glibc arena 的空頁還給 OS（非 Linux 安靜跳過）
+    from utils.memory import malloc_trim
+    _trim_every = config.MALLOC_TRIM_INTERVAL_SEC
+    _last_trim = time.monotonic()
+
     while running:
+        if _trim_every > 0 and time.monotonic() - _last_trim >= _trim_every:
+            _last_trim = time.monotonic()
+            malloc_trim()
         if _selftest and time.monotonic() - _loop_start > 90:
             if not _selftest_announced:
                 print("🧪 WATCHDOG_SELFTEST：停止心跳，模擬主迴圈卡死…")
