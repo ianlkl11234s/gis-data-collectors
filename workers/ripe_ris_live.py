@@ -27,6 +27,7 @@ from typing import Any
 import config
 from collectors.ripe_atlas_internet_health import load_ripe_roster
 from collectors.internet_health import _iso, _source_run
+from utils.spool_recovery import compress_orphan_jsonl
 
 try:  # disabled deployments must still import without the optional runtime
     from websockets.sync.client import connect as websocket_connect
@@ -210,6 +211,8 @@ class RipeRisSpoolManager:
         return uploaded
 
     def retry_pending(self) -> int:
+        # 先把非目前寫入中的孤兒 .jsonl 壓成 .gz（保留 mtime），再一併上傳
+        compress_orphan_jsonl(self.base_dir, self._path)
         uploaded = 0
         for path in sorted(self.base_dir.glob("*.jsonl.gz")):
             if self._upload(path):
@@ -451,8 +454,11 @@ class RipeRisLiveWorker:
                         self._aggregate(envelope, received_at)
                         if self.spool.exceeds_limit():
                             raise RuntimeError("RIPE RIS local spool exceeds hard limit")
-                        if self.spool.should_rotate() and self.spool.rotate():
-                            self.stats.archives_verified += 1
+                        if self.spool.should_rotate():
+                            if self.spool.rotate():
+                                self.stats.archives_verified += 1
+                            # 上傳失敗留下的檔不必等到下次重啟才重試
+                            self.stats.archives_verified += self.spool.retry_pending()
                 if self._acked and awaiting_pong_since is None and now_mono - last_ping >= config.RIPE_RIS_PING_INTERVAL_SECONDS:
                     ws.send(json.dumps({"type": "ping", "data": None}, separators=(",", ":")))
                     last_ping = now_mono

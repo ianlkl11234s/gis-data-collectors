@@ -48,3 +48,4 @@
 | 2026-10-12 | Disk IO 第二輪：pg_stat_io 口徑、刪重複索引、trails 全量改增量 | M-01、L-05、L-06 | gis-platform `docs/research/2026-10-12-disk-io-round2.md` |
 | 2026-10-16 | Disk IO 第三輪：沒變不寫與其反例、主鍵時間開頭、熱冷分離、先 collector 後唯一索引 | L-01、L-02、L-04、I-02、S-01 | gis-platform `docs/research/2026-10-16-disk-io-round3.md` |
 | 2026-10-15 | 三輪 Disk IO 回頭看的 15 個資料工程盲點（心智模型，草稿） | — | gis-wiki `inbox/2026-10-15-gis-data-engineering-blind-spots.md` |
+| 2026-11-06 | worker 被 kill 時正在寫的 spool `.jsonl` 沒經過 rotate，變成永遠不上傳的孤兒（aisstream 80 個、ripe_ris_live 40 個） | I-06 | 本 repo `.claude/pitfalls/2026-11-06-spool-orphan-jsonl.md` |
