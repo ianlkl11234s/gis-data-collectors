@@ -1151,6 +1151,11 @@ class BackupSupabaseTask:
         return results
 
 
+def run_backup_once() -> dict:
+    """子行程入口（utils.isolated_task）：每次新建 DB／S3 連線，跑完 A→B→C。"""
+    return BackupSupabaseTask().run()
+
+
 # ────────────────────────────────────────────────────────────────
 # CLI entry point
 # ────────────────────────────────────────────────────────────────

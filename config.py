@@ -98,6 +98,8 @@ R2_BUCKET = os.getenv('R2_BUCKET', 'mini-tw-pulse')
 BACKUP_ENABLED = os.getenv('BACKUP_ENABLED', 'false').lower() == 'true'
 BACKUP_DRY_RUN = os.getenv('BACKUP_DRY_RUN', 'false').lower() == 'true'
 BACKUP_MANIFEST_PATH = Path(__file__).parent / 'config' / 'backup_manifest.yaml'
+# 備份在子行程跑（utils/isolated_task.py）；超過此秒數強制結束（排程的 1200s 只告警）
+BACKUP_KILL_TIMEOUT_SEC = int(os.getenv('BACKUP_KILL_TIMEOUT_SEC', '3600'))
 BACKUP_STATIC_STORAGE_CLASS = os.getenv('BACKUP_STATIC_STORAGE_CLASS', 'GLACIER_IR')
 BACKUP_REALTIME_STORAGE_CLASS = os.getenv('BACKUP_REALTIME_STORAGE_CLASS', 'STANDARD')
 BACKUP_STATEMENT_TIMEOUT_MS = int(os.getenv('BACKUP_STATEMENT_TIMEOUT_MS', '300000'))
@@ -111,6 +113,8 @@ TRAILS_EXPORT_ENABLED = os.getenv('TRAILS_EXPORT_ENABLED', 'false').lower() in (
 # 02:00 為容器本地時間，Dockerfile 已設 TZ=Asia/Taipei。
 # 依據：summary 表 refreshed_at 顯示每日資料 01:00~01:20 才定版，早於此會匯到半成品。
 TRAILS_EXPORT_TIME = os.getenv('TRAILS_EXPORT_TIME', '02:00')
+# 軌跡匯出在子行程跑；超過此秒數強制結束（排程的 1200s 只告警）
+TRAILS_EXPORT_KILL_TIMEOUT_SEC = int(os.getenv('TRAILS_EXPORT_KILL_TIMEOUT_SEC', '3600'))
 
 # 歸檔設定
 ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').lower() in ('true', '1', 'yes')

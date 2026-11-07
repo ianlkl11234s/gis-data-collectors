@@ -21,14 +21,15 @@ import config
 from scheduler import get_scheduler
 
 
-def _as_task(name: str, fn, timeout: int = 300):
+def _as_task(name: str, fn, timeout: int = 300, heavy: bool = False):
     """把 callable 包成「偽 collector」物件，丟進 CollectorScheduler.submit。
 
     這樣這些原本掛在主迴圈跑的 daily/buffer task 都跑在 worker thread，不會
     堵主迴圈，避免 watchdog 因主迴圈靜默 > 120s 誤殺整個進程。
     免費取得 skip-if-running、uncaught exception logging、超時 warning。
+    heavy=True → 走 scheduler 的「重任務道」，同時只跑一個（排隊等，不 skip）。
     """
-    return SimpleNamespace(name=name, run=fn, COLLECT_TIMEOUT=timeout)
+    return SimpleNamespace(name=name, run=fn, COLLECT_TIMEOUT=timeout, HEAVY_TASK=heavy)
 from collectors.registry import COLLECTOR_REGISTRY
 from tasks import (
     ArchiveTask,
@@ -257,7 +258,7 @@ def run_archive_task(daily_report_task=None):
         # 設定每日排程（worker thread，不堵主迴圈避免觸發 watchdog）
         sched = get_scheduler()
         schedule.every().day.at(config.ARCHIVE_TIME).do(
-            sched.submit, _as_task("archive", archive_with_notify, timeout=900))
+            sched.submit, _as_task("archive", archive_with_notify, timeout=900, heavy=True))
 
         return archive_task
     except Exception as e:
@@ -328,12 +329,20 @@ def run_backup_task():
         return None
 
     try:
-        backup_task = BackupSupabaseTask()
+        from utils.isolated_task import run_isolated
+
+        def backup_in_subprocess():
+            # 子行程：COPY／gzip 尖峰不墊高主程序 RSS；每次都在子行程內新建 DB／S3 連線。
+            return run_isolated(
+                "backup_supabase", "tasks.backup_supabase:run_backup_once",
+                timeout=config.BACKUP_KILL_TIMEOUT_SEC)
+
         sched = get_scheduler()
         schedule.every().day.at("03:30").do(
-            sched.submit, _as_task("backup_supabase", backup_task.run, timeout=1200))
-        print("\n✓ Supabase 備份任務已設定 (每日 03:30 台北)")
-        return backup_task
+            sched.submit,
+            _as_task("backup_supabase", backup_in_subprocess, timeout=1200, heavy=True))
+        print("\n✓ Supabase 備份任務已設定 (每日 03:30 台北，子行程)")
+        return True
     except Exception as e:
         print(f"\n✗ Supabase 備份任務初始化失敗: {e}")
         return None
@@ -359,13 +368,16 @@ def run_trails_export_task():
         return None
 
     try:
-        from scripts.export_daily_trails import export_range
+        from utils.isolated_task import run_isolated
 
         def export_with_notify():
             try:
                 # 不帶 end_date → 在「執行當下」才解析昨天。排程是啟動時註冊的，
                 # 這裡若把日期算死，之後每晚都會重匯同一天。
-                stats = export_range()
+                # 子行程跑（Arrow／整日列的尖峰不墊高主程序 RSS）。
+                stats = run_isolated(
+                    "trails_export", "scripts.export_daily_trails:export_range",
+                    timeout=config.TRAILS_EXPORT_KILL_TIMEOUT_SEC)
             except Exception as e:
                 # 整個任務中止（DB 連不上／設定缺漏）也要走同一條 Telegram 告警路徑；
                 # 靜默失敗到隔天才發現的話，bus 只有 3 天保留期，來不及補。
@@ -380,7 +392,7 @@ def run_trails_export_task():
         # 全 4 個 dataset 單日約 100MB / 3 分鐘（本機實測），timeout 抓 1200s 留餘裕
         sched = get_scheduler()
         schedule.every().day.at(config.TRAILS_EXPORT_TIME).do(
-            sched.submit, _as_task("trails_export", export_with_notify, timeout=1200))
+            sched.submit, _as_task("trails_export", export_with_notify, timeout=1200, heavy=True))
         print(f"\n✓ 軌跡凍結匯出已設定 (每日 {config.TRAILS_EXPORT_TIME} Asia/Taipei)")
         return True
     except Exception as e:
@@ -403,7 +415,8 @@ def run_gfw_hourly_publish_task():
         schedule.every().day.at(publish_time).do(
             sched.submit,
             # Child process: the fetch peak (GBs) must not OOM-kill every collector.
-            _as_task("gfw_hourly_publish", run_gfw_hourly_publish_in_subprocess, timeout=7200),
+            _as_task("gfw_hourly_publish", run_gfw_hourly_publish_in_subprocess, timeout=7200,
+                     heavy=True),
         )
         print(
             f"\n✓ GFW hourly unified publish 已設定 "
