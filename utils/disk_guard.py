@@ -25,7 +25,7 @@ import os
 import shutil
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 import config

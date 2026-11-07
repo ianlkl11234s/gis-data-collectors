@@ -39,7 +39,6 @@ def _as_task(name: str, fn, timeout: int = 300, heavy: bool = False):
 from collectors.registry import COLLECTOR_REGISTRY
 from tasks import (
     ArchiveTask,
-    BackupSupabaseTask,
     DailyReportTask,
     GFWHourlyPublishTask,
     MiniTaipeiPublishTask,
