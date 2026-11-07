@@ -235,7 +235,7 @@ schedule.every().day.at("04:00").do(
 
 **其他**：`main.py` 啟動時 `ARROW_DEFAULT_MEMORY_POOL=system`（compose 有設以 compose 為準），主迴圈每 `MALLOC_TRIM_INTERVAL_SEC`（預設 600）呼叫 glibc `malloc_trim(0)`，log 會印前後 VmRSS。compose 另設 `MALLOC_ARENA_MAX` 等 glibc env。
 
-**本機磁碟護欄**（`utils/disk_guard.py`，每 `DISK_GUARD_INTERVAL_MIN` 分）：量 `LOCAL_DATA_DIR` 總量與磁碟剩餘 %，分警告／嚴重兩級發 Telegram（等級升高、嚴重持續每 6 小時、恢復時才發）。門檻：`DISK_GUARD_DATA_WARN_GB`／`_CRIT_GB`（預設 0＝不檢查）、`DISK_GUARD_FREE_WARN_PCT`／`_CRIT_PCT`（預設 15／5）。只自動清可丟或已驗證的檔：`tmp/**` 與 `.tmp_*.tar.gz` 超過 24 小時、`.memwatch` 超過 14 天、日期目錄已刪且夠舊的 `.archive-receipts`；**未經 receipt 驗證歸檔的原始檔一律不刪**，
+**本機磁碟護欄**（`utils/disk_guard.py`，每 `DISK_GUARD_INTERVAL_MIN` 分）：量 `LOCAL_DATA_DIR` 總量與磁碟剩餘 %，分警告／嚴重兩級發 Telegram（等級升高、嚴重持續每 6 小時、恢復時才發）。門檻：`DISK_GUARD_DATA_WARN_GB`／`_CRIT_GB`（預設 0＝不檢查）、`DISK_GUARD_FREE_WARN_PCT`／`_CRIT_PCT`（預設 15／10；警告須高於嚴重，兩者至少差 5 個百分點；嚴重時暫停寫原始檔，剩餘回到 13% 才恢復）。只自動清可丟或已驗證的檔：`tmp/**` 與 `.tmp_*.tar.gz` 超過 24 小時、`.memwatch` 超過 14 天、日期目錄已刪且夠舊的 `.archive-receipts`；**未經 receipt 驗證歸檔的原始檔一律不刪**，
 
 **嚴重等級會暫停寫本機原始檔**：進入 critical 時 `disk_guard.pause_raw_writes()` 設行程內旗標，共用寫檔點 `storage/local.py` 的 `LocalStorage.save`／`save_append` 看到旗標就略過 dated 原始檔（`latest.json` 是覆寫的小檔，仍更新；`save` 回傳 `None`，只記一次 log、之後累計略過次數）。**DB 寫入、S3 上傳、spool／state／buffer（`*_spool`、`state/`、`anomaly_state.json`、`weather_raw`…）都不受影響**，因為它們是尚未上傳的狀態，不走 `LocalStorage`。恢復需回到「嚴重門檻再多 `DISK_GUARD_RESUME_MARGIN_PCT`（預設 3）個百分點」才解除（資料量門檻則需低於 97%），避免來回切換。進入暫停與恢復各發一次 Telegram（含「本機原始檔暫停寫入，DB 照寫；S3 當天歸檔會缺這段」）；狀態見 `/health` 的 `disk_guard`（`raw_writes_paused`、`since`、`skipped_writes`）。**自行繞過 `LocalStorage` 寫檔的 collector 不受此旗標管**（目前只有 `global_events` 的 raw zip 暫存，72 小時內自清；`flight_fr24` 的 PERSIST_DIR 屬 pending 狀態，不暫停）；新 collector 的原始留存檔請走 `LocalStorage`。
 

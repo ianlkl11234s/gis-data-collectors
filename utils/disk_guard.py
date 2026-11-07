@@ -47,7 +47,7 @@ class GuardConfig:
     data_warn_gb: float = 0.0       # 0＝不檢查本機資料總量
     data_crit_gb: float = 0.0
     free_warn_pct: float = 15.0     # 磁碟剩餘 < 此百分比＝警告
-    free_crit_pct: float = 5.0
+    free_crit_pct: float = 10.0
     tmp_max_age_hours: float = 24.0
     memwatch_keep_days: int = 14
     receipt_keep_days: int = 30
