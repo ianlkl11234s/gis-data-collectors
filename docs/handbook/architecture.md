@@ -150,7 +150,7 @@
 | worker | 檔案 | 要點 |
 |---|---|---|
 | AISStream | `workers/aisstream.py` | WebSocket；原始事件先寫本機 durable spool，每小時 gzip NDJSON 上 S3，大小與 sha256 驗證通過才刪本地；與 `ship_ais`、SupabaseWriter 完全分離 |
-| RIPE RIS Live | `workers/ripe_ris_live.py` | 有界訂閱清單；`replicas=1`、行程鎖、DB 與私有 S3 是啟用硬閘 |
+| RIPE RIS Live | `workers/ripe_ris_live.py` | 有界訂閱清單；`replicas=1`、行程鎖、DB 與私有 S3 是啟用硬閘；origin 比對快取 `_origin_by_peer_prefix` 為有上限的 LRU（`RIPE_ORIGIN_CACHE_MAX`，預設 500000），被淘汰的 (host, peer, prefix) 再出現時只會漏算那一次 origin change |
 
 兩者都在主執行緒先 `prepare()`，硬閘失敗就讓整個進程啟動失敗，避免「容器看起來健康、worker 其實死了」。
 
