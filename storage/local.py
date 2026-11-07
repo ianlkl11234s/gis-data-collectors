@@ -16,6 +16,7 @@ class _DatetimeEncoder(json.JSONEncoder):
         return super().default(obj)
 
 import config
+from utils import disk_guard
 
 
 class LocalStorage:
@@ -34,9 +35,18 @@ class LocalStorage:
             timestamp: 時間戳記（預設為現在）
 
         Returns:
-            Path: 儲存的檔案路徑
+            Path | None: 儲存的檔案路徑；磁碟護欄暫停寫原始檔時回傳 None（只更新 latest.json）
         """
         timestamp = timestamp or datetime.now()
+        if disk_guard.is_raw_paused():
+            # 嚴重磁碟：略過會持續長大的 dated 原始檔；latest.json 是覆寫的小檔，照寫
+            # 以免下游（如 mini_taipei_publish 讀 latest）拿到過期資料。
+            disk_guard.note_raw_skipped(collector_name)
+            latest_dir = self.base_dir / collector_name
+            latest_dir.mkdir(parents=True, exist_ok=True)
+            with open(latest_dir / 'latest.json', 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, cls=_DatetimeEncoder)
+            return None
         date_str = timestamp.strftime('%Y/%m/%d')
         time_str = timestamp.strftime('%H%M')
 
@@ -68,9 +78,12 @@ class LocalStorage:
             timestamp: 時間戳記
 
         Returns:
-            Path: 儲存的檔案路徑
+            Path | None: 儲存的檔案路徑；磁碟護欄暫停寫原始檔時回傳 None
         """
         timestamp = timestamp or datetime.now()
+        if disk_guard.is_raw_paused():
+            disk_guard.note_raw_skipped(collector_name)
+            return None
         date_str = timestamp.strftime('%Y/%m/%d')
 
         # 建立目錄

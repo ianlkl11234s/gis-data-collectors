@@ -6,6 +6,9 @@ CollectorScheduler — 取代原本的單線程 schedule 執行方式
 2. Skip-if-running：同一 collector 上一輪還沒跑完，新一輪 skip
 3. 線程名標準化：便於 log 追蹤（thread name = "collector-{name}"）
 4. Timeout 觀察：超過 COLLECT_TIMEOUT 記 warning（不強制中斷，避免資料不一致）
+5. 重任務道：HEAVY_TASK=True 的任務（每日 trails／archive／backup／GFW）同時只跑一個，
+   後到的在 worker thread 內排隊等（不 skip），避免尖峰疊加撞 cgroup 記憶體上限
+6. 排隊觀察：從 submit 到真正開始超過 QUEUE_WARN_SEC 記 warning；get_status 回 pending 數
 
 與 schedule 庫的關係：
 - schedule 庫仍負責「何時觸發」（cron-like 時間排程）
@@ -20,6 +23,9 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+# 從 submit 到開始執行超過這個秒數就記 warning（pool 滿載的訊號）
+QUEUE_WARN_SEC = 30.0
 
 
 class CollectorScheduler:
@@ -53,6 +59,10 @@ class CollectorScheduler:
         # name -> collector instance（供 get_status 用）
         self._collectors: Dict[str, object] = {}
         self._lock = threading.Lock()
+        # 重任務道：同時只跑一個重任務（見模組 docstring 第 5 點）
+        self._heavy_lane = threading.Lock()
+        # 已 submit 但還沒開始執行的數量（pool 滿載時會 > 0）
+        self._pending = 0
 
     def register(self, collector) -> None:
         """註冊 collector（供狀態查詢用，不會立即執行）"""
@@ -96,12 +106,13 @@ class CollectorScheduler:
                     )
 
             # 提交新任務
-            future = self.executor.submit(self._safe_run, collector)
+            self._pending += 1
+            future = self.executor.submit(self._safe_run, collector, time.time())
             self._running[name] = future
             self._last_submit[name] = time.time()
             return future
 
-    def _safe_run(self, collector) -> Optional[dict]:
+    def _safe_run(self, collector, submitted_at: Optional[float] = None) -> Optional[dict]:
         """在 thread pool 內的執行包裝
 
         1. 設定線程名稱為 collector-{name}，方便 log 追蹤
@@ -114,9 +125,28 @@ class CollectorScheduler:
         original_name = thread.name
         thread.name = f"collector-{collector.name}"
 
+        if submitted_at is not None:
+            with self._lock:
+                self._pending -= 1
+            queued = time.time() - submitted_at
+            if queued > QUEUE_WARN_SEC:
+                logger.warning(
+                    f"[scheduler] {collector.name} 在 pool 排隊 {queued:.1f}s 才開始"
+                    f"（max_workers={self.max_workers}）"
+                )
+
+        heavy = bool(getattr(collector, 'HEAVY_TASK', False))
         timeout = getattr(collector, 'COLLECT_TIMEOUT', 300)
-        start = time.time()
+        lane_acquired = False
         try:
+            if heavy:
+                wait_start = time.time()
+                self._heavy_lane.acquire()
+                lane_acquired = True
+                waited = time.time() - wait_start
+                if waited > 1:
+                    logger.info(f"[scheduler] {collector.name} 等重任務道 {waited:.1f}s")
+            start = time.time()
             result = collector.run()
             elapsed = time.time() - start
             if elapsed > timeout:
@@ -133,6 +163,8 @@ class CollectorScheduler:
             )
             return None
         finally:
+            if lane_acquired:
+                self._heavy_lane.release()
             # 恢復線程名（pool 會 reuse thread，避免殘留名稱誤導下次 log）
             thread.name = original_name
 
@@ -144,6 +176,7 @@ class CollectorScheduler:
             'collectors': {},
         }
         with self._lock:
+            status['pending'] = self._pending
             for name in self._collectors:
                 future = self._running.get(name)
                 is_running = future is not None and not future.done()

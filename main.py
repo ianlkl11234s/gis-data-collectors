@@ -6,6 +6,12 @@ Data Collectors 主程式
 支援 S3 歸檔與資料生命週期管理。
 """
 
+import os
+
+# pyarrow 預設用自帶 jemalloc 池，不受 compose 的 MALLOC_* 控制；改用系統 malloc。
+# 必須在任何模組 import pyarrow 之前設定（子行程繼承環境變數）。compose 有設時以 compose 為準。
+os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+
 import logging
 import random
 import signal
@@ -21,18 +27,18 @@ import config
 from scheduler import get_scheduler
 
 
-def _as_task(name: str, fn, timeout: int = 300):
+def _as_task(name: str, fn, timeout: int = 300, heavy: bool = False):
     """把 callable 包成「偽 collector」物件，丟進 CollectorScheduler.submit。
 
     這樣這些原本掛在主迴圈跑的 daily/buffer task 都跑在 worker thread，不會
     堵主迴圈，避免 watchdog 因主迴圈靜默 > 120s 誤殺整個進程。
     免費取得 skip-if-running、uncaught exception logging、超時 warning。
+    heavy=True → 走 scheduler 的「重任務道」，同時只跑一個（排隊等，不 skip）。
     """
-    return SimpleNamespace(name=name, run=fn, COLLECT_TIMEOUT=timeout)
+    return SimpleNamespace(name=name, run=fn, COLLECT_TIMEOUT=timeout, HEAVY_TASK=heavy)
 from collectors.registry import COLLECTOR_REGISTRY
 from tasks import (
     ArchiveTask,
-    BackupSupabaseTask,
     DailyReportTask,
     GFWHourlyPublishTask,
     MiniTaipeiPublishTask,
@@ -112,9 +118,17 @@ def run_collectors():
     # 每個 collector 在獨立線程執行，互不阻塞
     # Skip-if-running 保護避免同 collector 疊加
     # ============================================================
-    # max_workers 預設為 collector 數量 + 緩衝（避免所有 collector 都撞同一 tick 時排隊）
-    # +6 留給 6 個 task（archive/backup/daily_report/mini_taipei/sb_flush/trails_export）共用 pool
-    max_workers = max(10, len(collectors) + 8)
+    # max_workers：ThreadPoolExecutor 依需求長執行緒，每條執行緒都可能綁一個 glibc
+    # arena 留下碎片，所以設上限。舊公式 max(10, N+8) 在 83 個 collector 時是 91，
+    # 但 skip-if-running 讓每個 collector 同時最多佔 1 條，實際同時在跑的遠少於 N
+    # （舊主機 10 天後整個行程只有 44 條執行緒，含 Flask／長駐 worker／內層 pool）。
+    # 上限 32 的計算：≤5 分鐘的高頻 collector 23 個（registry 全數，假設全開且同時在跑）
+    # ＋ 3 個長時 collector（jma_raster 3600s、ocean_env／global_events 1800s）
+    # ＋ 7 個 task 槽（trails/archive/backup/gfw 四個重任務排隊時各佔一條，
+    #   加 daily_report/mini_taipei/sb_flush）＝ 33，取 32；collector 少時仍用 N+8。
+    # pool 滿時新工作排隊（不丟），scheduler 會記「排隊 Ns 才開始」warning，
+    # get_status()['pending'] 可看排隊數；需要時用 COLLECTOR_POOL_MAX_WORKERS 覆寫。
+    max_workers = config.COLLECTOR_POOL_MAX_WORKERS or min(max(10, len(collectors) + 8), 32)
     sched = get_scheduler(max_workers=max_workers)
 
     print("\n" + "=" * 60)
@@ -257,7 +271,7 @@ def run_archive_task(daily_report_task=None):
         # 設定每日排程（worker thread，不堵主迴圈避免觸發 watchdog）
         sched = get_scheduler()
         schedule.every().day.at(config.ARCHIVE_TIME).do(
-            sched.submit, _as_task("archive", archive_with_notify, timeout=900))
+            sched.submit, _as_task("archive", archive_with_notify, timeout=900, heavy=True))
 
         return archive_task
     except Exception as e:
@@ -328,12 +342,20 @@ def run_backup_task():
         return None
 
     try:
-        backup_task = BackupSupabaseTask()
+        from utils.isolated_task import run_isolated
+
+        def backup_in_subprocess():
+            # 子行程：COPY／gzip 尖峰不墊高主程序 RSS；每次都在子行程內新建 DB／S3 連線。
+            return run_isolated(
+                "backup_supabase", "tasks.backup_supabase:run_backup_once",
+                timeout=config.BACKUP_KILL_TIMEOUT_SEC)
+
         sched = get_scheduler()
         schedule.every().day.at("03:30").do(
-            sched.submit, _as_task("backup_supabase", backup_task.run, timeout=1200))
-        print("\n✓ Supabase 備份任務已設定 (每日 03:30 台北)")
-        return backup_task
+            sched.submit,
+            _as_task("backup_supabase", backup_in_subprocess, timeout=1200, heavy=True))
+        print("\n✓ Supabase 備份任務已設定 (每日 03:30 台北，子行程)")
+        return True
     except Exception as e:
         print(f"\n✗ Supabase 備份任務初始化失敗: {e}")
         return None
@@ -359,13 +381,16 @@ def run_trails_export_task():
         return None
 
     try:
-        from scripts.export_daily_trails import export_range
+        from utils.isolated_task import run_isolated
 
         def export_with_notify():
             try:
                 # 不帶 end_date → 在「執行當下」才解析昨天。排程是啟動時註冊的，
                 # 這裡若把日期算死，之後每晚都會重匯同一天。
-                stats = export_range()
+                # 子行程跑（Arrow／整日列的尖峰不墊高主程序 RSS）。
+                stats = run_isolated(
+                    "trails_export", "scripts.export_daily_trails:export_range",
+                    timeout=config.TRAILS_EXPORT_KILL_TIMEOUT_SEC)
             except Exception as e:
                 # 整個任務中止（DB 連不上／設定缺漏）也要走同一條 Telegram 告警路徑；
                 # 靜默失敗到隔天才發現的話，bus 只有 3 天保留期，來不及補。
@@ -380,7 +405,7 @@ def run_trails_export_task():
         # 全 4 個 dataset 單日約 100MB / 3 分鐘（本機實測），timeout 抓 1200s 留餘裕
         sched = get_scheduler()
         schedule.every().day.at(config.TRAILS_EXPORT_TIME).do(
-            sched.submit, _as_task("trails_export", export_with_notify, timeout=1200))
+            sched.submit, _as_task("trails_export", export_with_notify, timeout=1200, heavy=True))
         print(f"\n✓ 軌跡凍結匯出已設定 (每日 {config.TRAILS_EXPORT_TIME} Asia/Taipei)")
         return True
     except Exception as e:
@@ -403,7 +428,8 @@ def run_gfw_hourly_publish_task():
         schedule.every().day.at(publish_time).do(
             sched.submit,
             # Child process: the fetch peak (GBs) must not OOM-kill every collector.
-            _as_task("gfw_hourly_publish", run_gfw_hourly_publish_in_subprocess, timeout=7200),
+            _as_task("gfw_hourly_publish", run_gfw_hourly_publish_in_subprocess, timeout=7200,
+                     heavy=True),
         )
         print(
             f"\n✓ GFW hourly unified publish 已設定 "
@@ -470,6 +496,16 @@ def main():
 
     # GFW AIS grid/tracks + SAR unmatched 共用單一 root manifest；僅固定每日排程。
     gfw_hourly_task = run_gfw_hourly_publish_task()
+
+    # 本機磁碟護欄：量用量、清可丟的輔助檔、分兩級告警（不刪未歸檔原始檔）
+    if config.DISK_GUARD_ENABLED and config.DISK_GUARD_INTERVAL_MIN > 0:
+        from utils.disk_guard import DiskGuard
+        disk_guard = DiskGuard()
+        sched = get_scheduler()
+        schedule.every(config.DISK_GUARD_INTERVAL_MIN).minutes.do(
+            sched.submit, _as_task("disk_guard", disk_guard.run, timeout=300))
+        sched.submit(_as_task("disk_guard", disk_guard.run, timeout=300))
+        print(f"\n✓ 本機磁碟護欄 (每 {config.DISK_GUARD_INTERVAL_MIN} 分鐘)")
 
     # Supabase buffer flush 排程
     if config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:
@@ -543,7 +579,15 @@ def main():
     _loop_start = time.monotonic()
     _selftest_announced = False
 
+    # 定期把 glibc arena 的空頁還給 OS（非 Linux 安靜跳過）
+    from utils.memory import malloc_trim
+    _trim_every = config.MALLOC_TRIM_INTERVAL_SEC
+    _last_trim = time.monotonic()
+
     while running:
+        if _trim_every > 0 and time.monotonic() - _last_trim >= _trim_every:
+            _last_trim = time.monotonic()
+            malloc_trim()
         if _selftest and time.monotonic() - _loop_start > 90:
             if not _selftest_announced:
                 print("🧪 WATCHDOG_SELFTEST：停止心跳，模擬主迴圈卡死…")

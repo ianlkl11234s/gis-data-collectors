@@ -99,7 +99,10 @@ class BaseCollector(ABC):
             if 'data' in result:
                 if self.should_persist_local():
                     filepath = self.storage.save(self.name, result, timestamp)
-                    print(f"[{self.name}] ✓ 已儲存: {filepath}")
+                    if filepath is None:
+                        print(f"[{self.name}] ⏸ 磁碟嚴重，本機原始檔暫停寫入（DB 照寫）")
+                    else:
+                        print(f"[{self.name}] ✓ 已儲存: {filepath}")
 
                 # 旁路寫入 Supabase（不影響本地儲存流程）
                 if self.supabase_writer:
