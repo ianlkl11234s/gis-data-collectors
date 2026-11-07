@@ -342,19 +342,32 @@ def run_backup_task():
         return None
 
     try:
+        from tasks import backup_watch
         from utils.isolated_task import run_isolated
 
         def backup_in_subprocess():
             # 子行程：COPY／gzip 尖峰不墊高主程序 RSS；每次都在子行程內新建 DB／S3 連線。
-            return run_isolated(
-                "backup_supabase", "tasks.backup_supabase:run_backup_once",
-                timeout=config.BACKUP_KILL_TIMEOUT_SEC)
+            # 成敗由 backup_watch 判斷並記錄（DB／S3 沒連上也算失敗），失敗發 Telegram。
+            backup_watch.mark_started()
+            try:
+                result = run_isolated(
+                    "backup_supabase", "tasks.backup_supabase:run_backup_once",
+                    timeout=config.BACKUP_KILL_TIMEOUT_SEC)
+            except Exception as exc:
+                backup_watch.record_run(error=f"{type(exc).__name__}: {exc}")
+                raise
+            backup_watch.record_run(result)
+            return result
 
         sched = get_scheduler()
         schedule.every().day.at("03:30").do(
             sched.submit,
             _as_task("backup_supabase", backup_in_subprocess, timeout=1200, heavy=True))
-        print("\n✓ Supabase 備份任務已設定 (每日 03:30 台北，子行程)")
+        # 「今天沒成功」檢查：沒跑、卡在重任務佇列、或失敗都會在這個時間告警（同日只發一次）
+        schedule.every().day.at(config.BACKUP_WATCHDOG_TIME).do(
+            sched.submit, _as_task("backup_watchdog", backup_watch.check_today, timeout=120))
+        print(f"\n✓ Supabase 備份任務已設定 (每日 03:30 台北，子行程；"
+              f"{config.BACKUP_WATCHDOG_TIME} 檢查今日是否成功)")
         return True
     except Exception as e:
         print(f"\n✗ Supabase 備份任務初始化失敗: {e}")

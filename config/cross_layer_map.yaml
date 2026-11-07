@@ -605,9 +605,11 @@ cdc_public_health_weekly:
   deployment: hicloud_vm        # 跑在 HiCloud VM，週四 11:00 一次
   expected_interval_min: 10080  # 一週
   supabase_tables: [live.public_health_weekly]
-  s3_prefixes: []               # 無 S3 archive，直接寫 SB
+  s3_prefixes:
+    # 2026-11-07 起 VM 每日 03:20 歸檔（只有週四有資料）；VM 手動部署前 S3 停在 2026-06-16
+    - {prefix: cdc_public_health_weekly/archives/, expected_daily: false}
   critical: false
-  notes: CDC 開放資料每週更新，僅週四 11:00 抓一次寫 SB
+  notes: CDC 開放資料每週更新，僅週四 11:00 抓一次寫 SB；完整快照隔天由 VM archive 上 S3
 
 waste_match:
   enabled: false

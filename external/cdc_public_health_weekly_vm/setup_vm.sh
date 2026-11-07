@@ -18,16 +18,18 @@ sudo chown -R "$USER":"$USER" "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
 
 echo ">>> 拷貝檔案到 $APP_DIR"
 cp "$(dirname "$0")"/cdc_public_health_weekly_collect.py "$APP_DIR/"
+cp "$(dirname "$0")"/archive_cdc_public_health_weekly.py "$APP_DIR/"
 [ -f "$(dirname "$0")"/.env ] && cp "$(dirname "$0")"/.env "$APP_DIR/" || \
-  { cp "$(dirname "$0")"/.env.example "$APP_DIR/.env"; echo "!! 請編輯 $APP_DIR/.env 填入 SUPABASE_DB_URL"; }
+  { cp "$(dirname "$0")"/.env.example "$APP_DIR/.env"; chmod 600 "$APP_DIR/.env"; echo "!! 請編輯 $APP_DIR/.env 填入 SUPABASE_DB_URL、S3_ACCESS_KEY、S3_SECRET_KEY"; }
 
 echo ">>> 建立 venv + 安裝 Python 套件"
 python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
-"$APP_DIR/venv/bin/pip" install --quiet psycopg2-binary requests urllib3 python-dotenv
+"$APP_DIR/venv/bin/pip" install --quiet psycopg2-binary requests urllib3 python-dotenv boto3
 
 echo ">>> 完成。執行測試："
 echo "    $APP_DIR/venv/bin/python $APP_DIR/cdc_public_health_weekly_collect.py"
+echo "    $APP_DIR/venv/bin/python $APP_DIR/archive_cdc_public_health_weekly.py   # 歸檔（無歷史檔就只會 noop）"
 echo
 echo ">>> 安裝 cron："
 echo "    bash $(dirname "$0")/setup_cron.sh"

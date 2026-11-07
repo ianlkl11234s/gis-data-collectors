@@ -21,11 +21,40 @@
 
 每週四 11:00（CDC 約 10:00 發布上週資料，補 1 小時 buffer）。
 
+## S3 歸檔（2026-11-07 起）
+
+- collector 快照存完整 `data`（以前只存 50 列 sample），路徑 `<DATA_DIR>/cdc_public_health_weekly/YYYY/MM/DD/*.json`
+- `archive_cdc_public_health_weekly.py` 每日 03:20 把「昨天以前」的日期目錄打包上
+  `s3://migu-gis-data-collector/cdc_public_health_weekly/archives/YYYY-MM-DD.tar.gz`（接續 2026-06-16 停掉的同一前綴），
+  上傳後 `head_object` 比對大小一致才刪本地；每次往回掃 30 天補漏
+- `.env` 需要 `S3_BUCKET`、`S3_REGION`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`（同其他 VM）
+- 主 repo Robot B 仍每日備份 `live.public_health_weekly`；確認 VM 歸檔穩定後，再決定要不要把表移進 `config/backup_manifest.yaml` 的 `archive_py_covered`
+
+### 既有 VM 升級步驟（不重裝）
+
+```bash
+# 0. 先 diff VM 現行檔（principles D-04：VM 手動部署，git push 不會生效）
+ssh <vm> 'sudo cp /opt/cdc-public-health/cdc_public_health_weekly_collect.py{,.bak_$(date +%Y%m%d)}'
+scp cdc_public_health_weekly_collect.py archive_cdc_public_health_weekly.py setup_cron.sh <vm>:~/cdc-vm/
+ssh <vm>
+diff ~/cdc-vm/cdc_public_health_weekly_collect.py /opt/cdc-public-health/cdc_public_health_weekly_collect.py
+cp ~/cdc-vm/cdc_public_health_weekly_collect.py ~/cdc-vm/archive_cdc_public_health_weekly.py /opt/cdc-public-health/
+/opt/cdc-public-health/venv/bin/pip install --quiet boto3
+# 1. .env 補 S3_BUCKET／S3_REGION／S3_ACCESS_KEY／S3_SECRET_KEY（只填值，不要 cat 出來）
+sudo vim /opt/cdc-public-health/.env
+# 2. 手動跑一次歸檔（目前本地只有 sample 快照的舊目錄也會上傳；之後的週四才是完整資料）
+/opt/cdc-public-health/venv/bin/python /opt/cdc-public-health/archive_cdc_public_health_weekly.py
+# 3. 重裝 cron（會加上 03:20 歸檔行）
+bash ~/cdc-vm/setup_cron.sh
+# 4. 驗證
+aws s3 ls s3://migu-gis-data-collector/cdc_public_health_weekly/archives/ | tail -3
+```
+
 ## Deploy 流程（在新 VM）
 
 ```bash
-# 1. scp 4 個檔到 VM 同一目錄
-scp cdc_public_health_weekly_collect.py setup_vm.sh setup_cron.sh .env.example \
+# 1. scp 5 個檔到 VM 同一目錄
+scp cdc_public_health_weekly_collect.py archive_cdc_public_health_weekly.py setup_vm.sh setup_cron.sh .env.example \
     user@hicloud-vm:~/cdc-vm/
 
 # 2. SSH 進 VM
