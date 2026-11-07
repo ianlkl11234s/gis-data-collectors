@@ -56,9 +56,10 @@
 |---|---|---|
 | 觸發 | `main.py::_schedule_collector` | 預設 `schedule.every(interval).minutes`，首次觸發加 0～min(間隔, 5 分) 的隨機偏移；collector 設了 `fixed_minutes` 就改成每小時固定分鐘（例：海象避開 DB cron 的 :14／:15／:40） |
 | 首輪 | `main.py::run_collectors` | 啟動時每個 collector 立即提交一次，彼此間隔 1–3 秒，避免連線尖峰 |
-| 執行 | `scheduler.py::CollectorScheduler` | `ThreadPoolExecutor`，`max_workers = max(10, collector 數 + 8)`；同一 collector 上一輪沒跑完就 skip 這一輪並記 warning |
+| 執行 | `scheduler.py::CollectorScheduler` | `ThreadPoolExecutor`，`max_workers = min(max(10, collector 數 + 8), 32)`（`COLLECTOR_POOL_MAX_WORKERS` 可覆寫，計算依據見 `main.py`）；同一 collector 上一輪沒跑完就 skip 這一輪並記 warning；排隊超過 30 秒記 warning，`get_status()['pending']` 是排隊數 |
 | 逾時 | `BaseCollector.COLLECT_TIMEOUT`（預設 300 秒） | **只記 warning，不中斷**。Python 執行緒無法強制停止，真正的保護是各 HTTP 呼叫自己的 timeout |
 | 每日 task | `main.py::_as_task` | archive、backup、daily_report 等包成假 collector 丟進同一個排程器，避免堵主迴圈觸發 watchdog |
+| 重任務道 | `_as_task(..., heavy=True)` → `HEAVY_TASK` | trails_export、archive、backup_supabase、gfw_hourly_publish 同時只跑一個；後到的在執行緒內排隊等（不 skip）。60 分鐘級的網格 collector 刻意不加入，避免被 2 小時的 GFW 擋住而缺小時資料 |
 
 ## 3. BaseCollector.run()：一輪做什麼
 
@@ -208,6 +209,33 @@ VM 沒有主容器的 Telegram 通知與 in-memory 心跳；每日由 `external/
 | `/health`＋Docker HEALTHCHECK | `api/server.py`、`healthcheck.py`、`Dockerfile` | 心跳過期回 503；DB 狀態只當資訊、**不**因 DB 斷線回 503（重啟救不了外部 DB，還可能重啟迴圈）；探針不做任何 fallback，否則等於關掉 watchdog |
 
 `HEALTH_WATCHDOG_ENABLED` 預設開啟。`WATCHDOG_SELFTEST=true` 會在啟動 90 秒後故意停止心跳，只用於驗證平台會重啟，測完要移除。
+
+## 8a. 記憶體與磁碟：重任務、大檔、本機護欄
+
+主程序是長駐、多執行緒的 Python；glibc 在尖峰後不把 arena 空頁還給 OS，RSS 會一階一階往上墊。對策分三層：
+
+**重任務放子行程**（`utils/isolated_task.py::run_isolated`）：每日 trails 匯出、Supabase 備份、GFW 發布在子行程跑，結束即把記憶體還給 OS；子行程啟動時把 `/proc/self/oom_score_adj` 設成 1000，cgroup OOM 先砍它而不是主程序；超過 kill timeout（`TRAILS_EXPORT_KILL_TIMEOUT_SEC`、`BACKUP_KILL_TIMEOUT_SEC`，預設 3600）整個 process group SIGKILL。子行程仍在同一個容器 cgroup，尖峰還是算在 mem_limit 內，所以重任務另外走「重任務道」不互相疊加。
+
+新增**低頻**重任務的接法：
+
+```python
+from utils.isolated_task import run_isolated
+
+def my_job():
+    # target 是 "module:function"，在子行程內自己建 DB／S3 連線；回傳值要能 JSON 序列化
+    return run_isolated("my_job", "tasks.my_heavy:run_once", timeout=3600)
+
+schedule.every().day.at("04:00").do(
+    sched.submit, _as_task("my_job", my_job, timeout=1200, heavy=True))
+```
+
+高頻 collector（每輪幾分鐘）**不要**用子行程：每次啟動 Python＋import 約數秒、上百 MB。高頻 collector 的原則是固定成本不累積：`requests.Session` 建在 `__init__` 重用、重量級套件延遲 import 一次即可、每輪產生的物件不要掛在全域 list／dict，快取一定要有上限（例：AISStream 靜態快取 LRU，`AISSTREAM_STATIC_CACHE_MAX`）。
+
+**大檔 collector**：下載一律用 `utils/streaming.py::download_to_file`（`stream=True`＋`iter_content` 寫暫存檔、`max_bytes` 上限、失敗不留檔、回傳 sha256），不要用 `resp.content`／`resp.json()`。解析也盡量串流（`ijson`、`csv.reader`、`tarfile` 的 `'r|gz'`），上傳用 `S3Storage.upload_path`（multipart）。暫存檔放 `LOCAL_DATA_DIR/tmp/<來源>/`。只有「解析／轉檔」尖峰大時，才把整個任務包進 `run_isolated`。範例：備份（COPY 直接串流進 gzip 暫存檔）、API 讀歸檔（`tarfile 'r|gz'` 找到檔就停）。
+
+**其他**：`main.py` 啟動時 `ARROW_DEFAULT_MEMORY_POOL=system`（compose 有設以 compose 為準），主迴圈每 `MALLOC_TRIM_INTERVAL_SEC`（預設 600）呼叫 glibc `malloc_trim(0)`，log 會印前後 VmRSS。compose 另設 `MALLOC_ARENA_MAX` 等 glibc env。
+
+**本機磁碟護欄**（`utils/disk_guard.py`，每 `DISK_GUARD_INTERVAL_MIN` 分）：量 `LOCAL_DATA_DIR` 總量與磁碟剩餘 %，分警告／嚴重兩級發 Telegram（等級升高、嚴重持續每 6 小時、恢復時才發）。門檻：`DISK_GUARD_DATA_WARN_GB`／`_CRIT_GB`（預設 0＝不檢查）、`DISK_GUARD_FREE_WARN_PCT`／`_CRIT_PCT`（預設 15／5）。只自動清可丟或已驗證的檔：`tmp/**` 與 `.tmp_*.tar.gz` 超過 24 小時、`.memwatch` 超過 14 天、日期目錄已刪且夠舊的 `.archive-receipts`；**未經 receipt 驗證歸檔的原始檔一律不刪**，超過嚴重門檻只告警。
 
 ## 相關文件
 
