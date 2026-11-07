@@ -1,4 +1,4 @@
-# moa_opendata on HiCloud VM（農業部開放資料 7 個 collector）
+# moa_opendata on HiCloud VM（農業部開放資料 7 個 collector＋矯正署 1 個）
 
 > VM 位址與登入帳號不放在公開 repo：`<VM_HOST>`、`<帳號>` 見私人筆記。
 
@@ -6,6 +6,10 @@
 
 2026-10-21～23 起 `data.moa.gov.tw` 擋 Zeabur 出口（JP IP → TCP ConnectTimeout；`www.moa.gov.tw` 仍可連），
 HiCloud VM（台灣 IP）實測 200／2.3s。受影響的 7 個 collector 全部移到這台 VM：
+
+> 2026-11-07 起另加 `correctional_daily_snapshot`（法務部矯正署每日收容動態，`prisonmuseum.moj.gov.tw`）：collector 主機搬到 Linode（pulse-host）後該站拒絕連線，VM 實測 200。沿用本 runner，每日 00:53 `--all-due` 一起跑；Zeabur／pulse-host 的 `CORRECTIONAL_DAILY_SNAPSHOT_ENABLED` 要設 false。
+>
+> **2026-11-07 暫停**：上游 `today.xml` 自 2026-05-15 起沒有更新（Last-Modified 2026-05-15，data.gov.tw 101185 仍登記同一網址），runner 的 `COLLECTORS` 已把這一行註解掉。上游恢復更新時取消註解並重新部署即可；deploy.sh 仍帶上 collector 檔。
 
 | collector | 主 repo 模組 | interval |
 |---|---|---|

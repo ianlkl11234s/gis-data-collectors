@@ -25,6 +25,7 @@
 | `cdc_public_health_weekly` | 疾管署 `od.cdc.gov.tw` | 同上 VM：`/opt/cdc-public-health/`，cron 每週四 11:00（`/var/log/cdc-public-health/collect.log`），2026-10-24 驗證在跑；Zeabur 版 `CDC_PUBLIC_HEALTH_WEEKLY_ENABLED=false`（Zeabur IP 連不到 od.cdc）。B235 修正：任一疾病 HTTP 非 2xx／空檔／欄位缺失即標 `error` 並以 exit 1 告警（其他疾病好資料照寫），不再記 0 筆；登革熱上游已下架（UDI-0001，`Weekly_Age_County_Gender_061.csv` 404），VM `.env` 設 `CDC_PUBLIC_HEALTH_WEEKLY_DISABLED=dengue`（2026-10-24），`live.public_health_weekly` 的 dengue 停在最後成功日 | [`external/cdc_public_health_weekly_vm/`](../external/cdc_public_health_weekly_vm/) |
 | `isohe_port_marine` | ISOHE 商港 Wave/Current/Tide/Wind | 同上 VM（部署前需 Taiwan egress smoke） | [`external/isohe_port_marine_vm/`](../external/isohe_port_marine_vm/) |
 | `food_prices`、`animal_adoption`、`animal_shelter_outcomes`、`animal_shelter_pressure`、`animal_veterinary_clinics`、`animal_licensed_pet_businesses`、`animal_protection_offices` | 農業部 `data.moa.gov.tw` | 同上 VM（2026-10-23 起）；**不重寫**，runner 直接跑主 repo 的 collector class | [`external/moa_opendata_vm/`](../external/moa_opendata_vm/) |
+| `correctional_daily_snapshot` | 法務部矯正署 `prisonmuseum.moj.gov.tw` | 同上 VM（2026-11-07 起，借用 moa_opendata runner）；Linode 主機連線被拒。**2026-11-07 暫停**：上游自 2026-05-15 未更新，runner 內已註解 | [`external/moa_opendata_vm/`](../external/moa_opendata_vm/) |
 
 主 repo 對應 collector 的 `*_ENABLED` 環境變數**必須在 Zeabur 上設為 `false`**（避免雙跑、避免無意義的 timeout 錯誤刷 log）。
 
