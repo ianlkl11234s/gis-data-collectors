@@ -498,6 +498,16 @@ def main():
     # GFW AIS grid/tracks + SAR unmatched 共用單一 root manifest；僅固定每日排程。
     gfw_hourly_task = run_gfw_hourly_publish_task()
 
+    # 本機磁碟護欄：量用量、清可丟的輔助檔、分兩級告警（不刪未歸檔原始檔）
+    if config.DISK_GUARD_ENABLED and config.DISK_GUARD_INTERVAL_MIN > 0:
+        from utils.disk_guard import DiskGuard
+        disk_guard = DiskGuard()
+        sched = get_scheduler()
+        schedule.every(config.DISK_GUARD_INTERVAL_MIN).minutes.do(
+            sched.submit, _as_task("disk_guard", disk_guard.run, timeout=300))
+        sched.submit(_as_task("disk_guard", disk_guard.run, timeout=300))
+        print(f"\n✓ 本機磁碟護欄 (每 {config.DISK_GUARD_INTERVAL_MIN} 分鐘)")
+
     # Supabase buffer flush 排程
     if config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:
         from collectors.base import get_supabase_writer
