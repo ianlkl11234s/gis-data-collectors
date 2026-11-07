@@ -10,7 +10,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 OUT_DIR=${1:-/tmp}
 HERE="$REPO_ROOT/external/moa_opendata_vm"
 
-# 主 repo 程式：只帶這 7 個 collector 的 import closure。
+# 主 repo 程式：只帶這 8 個 collector（農業部 7＋矯正署 1）的 import closure。
 # collectors/__init__.py、tasks/__init__.py 刻意不帶（重量級 registry；runner 另以空殼 package 載入）。
 REPO_FILES=(
   config.py
@@ -19,6 +19,7 @@ REPO_FILES=(
   collectors/animal_adoption.py
   collectors/animal_shelter_outcomes.py
   collectors/animal_welfare_points.py
+  collectors/correctional_daily_snapshot.py
   storage/__init__.py
   storage/local.py
   storage/s3.py

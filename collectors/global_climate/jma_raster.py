@@ -16,8 +16,8 @@
   T2 溫  S3 weather-grid/jma/{product}/{YYYYMMDD}/{HH}.npz          每幀網格每小時一檔，永久（lifecycle 90 天轉 GLACIER_IR）
   T1 熱  S3 weather-daily/jma/{product}/{YYYY}/{YYYYMMDD}.npz       STANDARD，永久
 
-中斷補抓：每輪對每產品列出「上游保留期內、首跑 epoch 之後」所有 validtime，oldest-first 補抓
-  spool 沒有的幀（每輪有上限）；超出保留期仍沒抓到才定案 missing。
+中斷補抓：每輪對每產品列出「上游保留期內、首跑 epoch 之後」所有 validtime，補抓 spool 沒有的幀（每輪有上限）：
+  先救快到期的洞、再抓最新一輪的幀（前端不必等舊洞補完）、其餘 oldest-first；超出保留期仍沒抓到才定案 missing。
 DB：frame／daily 列先存 product state 的 pending，DB 寫入成功（require_db_write）才清掉（照 jma_quake）。
 
 第二批（2026-10-11，gis-platform migration 438）：
@@ -247,6 +247,19 @@ def expected_vts(product: Product, start: datetime, end: datetime) -> list[str]:
             out.append(fmt_vt(t))
         t += step
     return out
+
+
+def fetch_order(todo: list[str], head: int, urgent_before: datetime) -> list[str]:
+    """待抓幀（舊→新）的抓取順序。
+
+    1. 再兩輪內就會超出上游保留期的洞（validtime < urgent_before）：oldest-first，避免永久缺幀；
+    2. 最新 head 幀：中斷恢復（主機搬家、停機）後先讓前端拿到最新畫面，不必等舊洞補完；
+    3. 其餘：oldest-first 補洞。
+    """
+    urgent = [v for v in todo if parse_vt(v) < urgent_before]
+    rest = [v for v in todo if parse_vt(v) >= urgent_before]
+    newest = rest[-head:] if head > 0 else []
+    return urgent + newest + rest[:len(rest) - len(newest)]
 
 
 def is_blank_bytes(data: bytes, fmt: str) -> bool:
@@ -803,18 +816,24 @@ class JmaRasterCollector(BaseCollector):
                 missing_new += 1
             st["finalized_until"] = fmt_vt(window_start)
 
-        # 2) 保留期內補抓（oldest-first、每輪上限）
+        # 2) 保留期內補抓（每輪上限）。順序見 fetch_order：快到期的洞 → 最新幾幀 → 其餘 oldest-first
         fetched = unavailable = requests = 0
         day_cache: dict[str, dict] = {}
+        todo = []
         for vt in ([] if off_season else expected_vts(product, window_start, latest_t)):
             day = jst_date(vt)
             if self._day_closed(product, day, closed):
                 continue
             ds = day_cache.setdefault(day, self._day_state(product, day))
-            if vt in ds["frames"]:
-                continue
+            if vt not in ds["frames"]:
+                todo.append(vt)
+        head = max(1, self.interval_minutes // product.cadence_min) + 1
+        urgent_before = window_start + timedelta(minutes=2 * self.interval_minutes)
+        for vt in fetch_order(todo, head, urgent_before):
             if fetched >= budget_frames:
                 break
+            day = jst_date(vt)
+            ds = day_cache[day]
             fr = self.fetch_frame(product, vt)
             if fr is None:
                 unavailable += 1
