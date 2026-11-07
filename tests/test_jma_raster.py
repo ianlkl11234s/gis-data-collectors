@@ -341,6 +341,38 @@ def test_missing_finalized_only_after_retention(tmp_path, monkeypatch):
     assert res2["missing_finalized"] >= 4
 
 
+def test_fetch_order_urgent_then_newest_then_oldest():
+    todo = [f"20261107{h:02d}0000" for h in range(0, 12)]
+    urgent_before = datetime(2026, 11, 7, 2, 0, tzinfo=timezone.utc)
+    assert jr.fetch_order(todo, 3, urgent_before) == [
+        "20261107000000", "20261107010000",                      # 快到期的洞先救
+        "20261107090000", "20261107100000", "20261107110000",    # 再抓最新 head 幀
+        "20261107020000", "20261107030000", "20261107040000",    # 其餘 oldest-first
+        "20261107050000", "20261107060000", "20261107070000", "20261107080000"]
+    assert sorted(jr.fetch_order(todo, 3, urgent_before)) == todo, "不重複、不遺漏"
+    assert jr.fetch_order(todo[5:7], 3, urgent_before) == todo[5:7]
+    assert jr.fetch_order([], 3, urgent_before) == []
+
+
+def test_resume_after_gap_fetches_newest_before_old_holes(tmp_path, monkeypatch):
+    """2026-11-07 搬主機：spool 有 10 小時的洞時，舊版每輪 oldest-first 用完額度，前端一直拿不到最新幀。"""
+    latest = "20261009160000"
+    monkeypatch.setattr("collectors.global_climate.jma_common.fetch", lambda s, path, **k: snow_tt(latest))
+    c = make_collector(tmp_path, ["snow_depth"], None, lambda url: (200, png_blank()), lookback_min=600)
+    now = datetime(2026, 10, 9, 16, 5, tzinfo=timezone.utc)
+    res = c.fetch_product(jr.PRODUCTS["snow_depth"], now, budget_frames=5)
+    # 待抓 06..16 時共 11 幀；head = 60//60+1 = 2；urgent = window_start(06:00)+2h 之前
+    assert res["fetched"] == 5
+    assert set(c._load_state("snow_depth")["pending_frames"]) == {
+        "20261009060000", "20261009070000", "20261009150000", "20261009160000", "20261009080000"}
+    # 下一輪：洞從兩端往中間縮（剩 09..14：先 13、14，再 09）
+    res2 = c.fetch_product(jr.PRODUCTS["snow_depth"], now, budget_frames=3)
+    assert res2["fetched"] == 3
+    got = set(c._load_state("snow_depth")["pending_frames"])
+    assert {"20261009130000", "20261009140000", "20261009090000"} <= got
+    assert not {"20261009100000", "20261009110000", "20261009120000"} & got
+
+
 def test_radar_descends_top15_within_budget(tmp_path, monkeypatch):
     latest = "20261009000000"
     monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
