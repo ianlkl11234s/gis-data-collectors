@@ -113,9 +113,17 @@ def run_collectors():
     # 每個 collector 在獨立線程執行，互不阻塞
     # Skip-if-running 保護避免同 collector 疊加
     # ============================================================
-    # max_workers 預設為 collector 數量 + 緩衝（避免所有 collector 都撞同一 tick 時排隊）
-    # +6 留給 6 個 task（archive/backup/daily_report/mini_taipei/sb_flush/trails_export）共用 pool
-    max_workers = max(10, len(collectors) + 8)
+    # max_workers：ThreadPoolExecutor 依需求長執行緒，每條執行緒都可能綁一個 glibc
+    # arena 留下碎片，所以設上限。舊公式 max(10, N+8) 在 83 個 collector 時是 91，
+    # 但 skip-if-running 讓每個 collector 同時最多佔 1 條，實際同時在跑的遠少於 N
+    # （舊主機 10 天後整個行程只有 44 條執行緒，含 Flask／長駐 worker／內層 pool）。
+    # 上限 32 的計算：≤5 分鐘的高頻 collector 23 個（registry 全數，假設全開且同時在跑）
+    # ＋ 3 個長時 collector（jma_raster 3600s、ocean_env／global_events 1800s）
+    # ＋ 7 個 task 槽（trails/archive/backup/gfw 四個重任務排隊時各佔一條，
+    #   加 daily_report/mini_taipei/sb_flush）＝ 33，取 32；collector 少時仍用 N+8。
+    # pool 滿時新工作排隊（不丟），scheduler 會記「排隊 Ns 才開始」warning，
+    # get_status()['pending'] 可看排隊數；需要時用 COLLECTOR_POOL_MAX_WORKERS 覆寫。
+    max_workers = config.COLLECTOR_POOL_MAX_WORKERS or min(max(10, len(collectors) + 8), 32)
     sched = get_scheduler(max_workers=max_workers)
 
     print("\n" + "=" * 60)

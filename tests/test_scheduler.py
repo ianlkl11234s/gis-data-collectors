@@ -328,3 +328,74 @@ def test_submit_auto_registers_collector():
         assert 'auto_reg' in status['collectors']
     finally:
         sched.shutdown(wait=True)
+
+
+# ============================================================
+# 重任務道與排隊觀察（記憶體改造 B）
+# ============================================================
+
+class HeavyCollector(FakeCollector):
+    HEAVY_TASK = True
+
+    def __init__(self, name, sleep_sec, active, peak):
+        super().__init__(name=name, sleep_sec=sleep_sec)
+        self._active = active
+        self._peak = peak
+
+    def run(self):
+        with self._active["lock"]:
+            self._active["n"] += 1
+            self._peak.append(self._active["n"])
+        try:
+            time.sleep(self.sleep_sec)
+        finally:
+            with self._active["lock"]:
+                self._active["n"] -= 1
+        self.run_count += 1
+        return {"ok": True}
+
+
+def test_heavy_tasks_run_one_at_a_time_and_none_is_skipped():
+    sched = CollectorScheduler(max_workers=6)
+    active = {"n": 0, "lock": threading.Lock()}
+    peak = []
+    heavy = [HeavyCollector(f"heavy{i}", 0.2, active, peak) for i in range(3)]
+    light = FakeCollector(name="light", sleep_sec=0.0)
+    futures = [sched.submit(c) for c in heavy]
+    light_future = sched.submit(light)
+    # 一般 collector 不必等重任務道
+    assert light_future.result(timeout=0.5) == {"ok": True, "run_count": 1}
+    assert not all(f.done() for f in futures)
+    assert all(f is not None for f in futures)
+    for f in futures:
+        f.result(timeout=5)
+    assert max(peak) == 1
+    assert all(c.run_count == 1 for c in heavy)
+    sched.shutdown()
+
+
+def test_heavy_lane_released_after_exception():
+    sched = CollectorScheduler(max_workers=2)
+
+    class Boom(FakeCollector):
+        HEAVY_TASK = True
+
+    boom = Boom(name="boom", raise_exc=RuntimeError("x"))
+    sched.submit(boom).result(timeout=2)
+    active = {"n": 0, "lock": threading.Lock()}
+    after = HeavyCollector("after", 0.0, active, [])
+    sched.submit(after).result(timeout=2)
+    assert after.run_count == 1
+    sched.shutdown()
+
+
+def test_pending_counts_queued_work_and_returns_to_zero():
+    sched = CollectorScheduler(max_workers=1)
+    slow = FakeCollector(name="slow", sleep_sec=0.3)
+    quick = FakeCollector(name="quick", sleep_sec=0.0)
+    sched.submit(slow)
+    f = sched.submit(quick)
+    assert sched.get_status()["pending"] >= 1
+    f.result(timeout=2)
+    assert sched.get_status()["pending"] == 0
+    sched.shutdown()

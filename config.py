@@ -100,6 +100,8 @@ BACKUP_DRY_RUN = os.getenv('BACKUP_DRY_RUN', 'false').lower() == 'true'
 BACKUP_MANIFEST_PATH = Path(__file__).parent / 'config' / 'backup_manifest.yaml'
 # 備份在子行程跑（utils/isolated_task.py）；超過此秒數強制結束（排程的 1200s 只告警）
 BACKUP_KILL_TIMEOUT_SEC = int(os.getenv('BACKUP_KILL_TIMEOUT_SEC', '3600'))
+# collector thread pool 上限；0＝用 main.py 的預設公式 min(max(10, N+8), 32)
+COLLECTOR_POOL_MAX_WORKERS = int(os.getenv('COLLECTOR_POOL_MAX_WORKERS', '0'))
 BACKUP_STATIC_STORAGE_CLASS = os.getenv('BACKUP_STATIC_STORAGE_CLASS', 'GLACIER_IR')
 BACKUP_REALTIME_STORAGE_CLASS = os.getenv('BACKUP_REALTIME_STORAGE_CLASS', 'STANDARD')
 BACKUP_STATEMENT_TIMEOUT_MS = int(os.getenv('BACKUP_STATEMENT_TIMEOUT_MS', '300000'))
