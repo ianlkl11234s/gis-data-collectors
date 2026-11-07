@@ -11,6 +11,58 @@ defaults:
     storage_class: STANDARD       # lifecycle transitions to GLACIER after 90d
     skip_if_archive_py_covered: true
 
+# 沒有時間欄的 live.* 表（Robot B 以前一律 skipped_no_time_column，2026-11-07 盤點 41 張）
+# → 整表快照，依「資料大小」（pg_table_size：heap＋TOAST，不含索引）分兩級：
+#   ≤ daily_max_bytes 每日一份；超過則每 large_interval_days 天一份。
+#   N 天的表看 metadata.backup_state 上次成功時間決定是否到期（漏跑會在下一次補上），
+#   Robot C 也依同一規則盤點（tasks/backup_supabase.py::_plan_realtime_table）。
+# 單表可在 overrides 用 `cadence: full_table` ＋ `frequency: daily|weekly` 強制；
+# 不想備份的表放 exclude 或 archive_py_covered。
+# 2026-11-07 實測：≤50MB 的 36 張合計約 254MB（每日）、>50MB 的 5 張合計約 1.18GB
+#（satellite_tle_history 512MB、ship_trails_daily 312MB、bus_trails_daily 173MB、
+#  youbike_h3_daily 126MB、news_events_daily 51MB；每週）。
+# *_trails_daily／*_days_summary／*_watermark 是滾動視窗，trails_export 已凍結到 S3 trails/，
+# 這裡的整表快照與其重複；若要省空間，改列進 archive_py_covered 即可（設定改動，不需改程式）。
+no_time_column:
+  action: full_table            # full_table | skip（skip＝回到舊行為）
+  daily_max_bytes: 52428800     # 50 MiB
+  large_interval_days: 7
+
+# auth 帳號對照（Robot D）：Supabase 專案遺失時，用 email／provider_id 對回原本的 UUID，
+# public.profiles（tier 等）才接得回帳號。含個資，只取重建必要欄位：
+# 密碼雜湊（encrypted_password）與所有 *token* 欄一律不匯出（程式另有黑名單防誤列）。
+# 每日一份帶日期的檔：s3://<bucket>/<s3_prefix>/<YYYY-MM-DD>/auth.users.csv.gz
+auth_export:
+  enabled: true
+  s3_prefix: supabase-snapshots/auth
+  storage_class: GLACIER_IR
+  tables:
+    auth.users:
+      - id
+      - aud
+      - role
+      - email
+      - email_confirmed_at
+      - confirmed_at
+      - last_sign_in_at
+      - raw_app_meta_data       # provider／providers（Google OAuth 等）
+      - raw_user_meta_data      # 名稱、頭像網址、email_verified
+      - is_sso_user
+      - is_anonymous
+      - banned_until
+      - deleted_at
+      - created_at
+      - updated_at
+    auth.identities:
+      - id
+      - user_id
+      - provider                # google / email
+      - provider_id             # Google sub；重新登入時用它對回 user_id
+      - email
+      - last_sign_in_at
+      - created_at
+      - updated_at
+
 # Per-table configuration overrides (optional)
 # realtime（live.*）表目前只讀 storage_class 與 cadence: full_table；
 # cadence: daily_yesterday 是預設行為，寫出來只為說明。
@@ -28,7 +80,7 @@ overrides:
   live.gfw_hourly_publish_runs:
     cadence: daily_yesterday
     storage_class: GLACIER_IR
-    notes: "Unified GFW v2 小型 publish metadata；GeoJSON 在 S3/CDN，DB cleanup 與 S3 retention 分離"
+    notes: "Unified GFW v2 小型 publish metadata；GeoJSON 在 S3/CDN，DB cleanup 與 S3 retention 分離。表沒有候選時間欄（只有 started_at），實際走 no_time_column 整表快照（約 26MB，每日）"
 
   reference.foursquare_poi:
     fingerprint_strategy: row_count_only
@@ -218,6 +270,14 @@ classification:
     - safety           # hospitals, shelters
     - medical          # AED, long-term care
     - analytics        # daily/monthly summaries
+    # 2026-11-07 補（S3 缺口盤點 #2、#10：以前完全沒有備份）
+    - intel            # intel 牆 cards／boards／edges、選舉、global_event_*（人工策展／LLM 產出，不可重算）
+    - tourism          # 景點、旅宿、遊客統計
+    - urban_open_space # 行道樹、樹穴
+    - civic_facilities # 郵局、圖書館、社福中心等
+    - agriculture      # 畜牧場、屠宰場
+    - air_tickets      # fare_offers 票價歷史（SerpAPI 時價，不可重算）
+    - cross_refs       # 即時設施別名對照
 
   realtime_schemas:
     - live

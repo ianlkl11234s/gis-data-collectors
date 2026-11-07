@@ -15,6 +15,8 @@
   - rods-enteroviral-infection   RODS_EnteroviralInfection.csv         腸病毒急診
 
 排程：每週四 11:00 抓一次（CDC 約 10:00 發布上週資料）。
+歸檔：快照存完整 data，archive_cdc_public_health_weekly.py 每日 03:20 把隔天以前的
+      日期目錄打包上 S3 cdc_public_health_weekly/archives/YYYY-MM-DD.tar.gz。
 過濾：只保留近 2 年（KEEP_YEARS=2）。
 DB 寫入失敗 → 存 <DATA_DIR>/buffer/*.json，下輪開頭自動補寫（vm_buffer.py；
 週跑型 → buffer 保留 30 天，預設 3 天必過期）。
@@ -220,13 +222,16 @@ def fetch_dataset(ds: dict, cutoff_year: int, log: logging.Logger) -> list[dict]
 # Snapshot + Supabase write
 # ────────────────────────────────────────────────────────────────────
 def save_snapshot(result: dict, ts: datetime) -> Path:
+    """存完整快照（含全部 data）；archive_cdc_public_health_weekly.py 隔天打包上 S3。
+
+    2026-11-07 前只存 50 列 sample，S3 等於沒有這張表的原始資料（缺口盤點 #9）。
+    全量約 1.3 萬列、數 MB，每週一份。
+    """
     date_dir = DATA_DIR / "cdc_public_health_weekly" / ts.strftime("%Y/%m/%d")
     date_dir.mkdir(parents=True, exist_ok=True)
     fp = date_dir / f"cdc_public_health_weekly_{ts.strftime('%H%M')}.json"
-    summary = {**result, "data_sample": result.get("data", [])[:50]}
-    summary.pop("data", None)
     with open(fp, "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, default=str)
+        json.dump(result, f, ensure_ascii=False, default=str)
     return fp
 
 

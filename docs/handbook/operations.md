@@ -11,6 +11,7 @@
 | collector 即時告警 | 每輪 | `collectors/base.py`、`utils/notify.py` | 連續失敗達 `CONSECUTIVE_ERROR_THRESHOLD`（預設 3）發通知，恢復時再發一則 |
 | DB 寫入告警 | 每次寫入 | `storage/supabase_writer.py` | 同一 collector DB 寫入連續失敗 3 次發通知；借不到連線不洗版 |
 | 進程存活 | 每秒 | `health.py`、`/health` | 主迴圈心跳超過 120 秒 → watchdog 重啟進程（見 [architecture.md](architecture.md) §8） |
+| 備份告警 | 備份結束時＋`BACKUP_WATCHDOG_TIME`（預設 06:30 台北） | `tasks/backup_watch.py`、`/health` 的 `backup` | Supabase 每日備份失敗（含 DB／S3 沒連上、有表失敗）或當天沒有成功紀錄 → Telegram；同一天只發一次，之後成功發一則恢復。最後成功日期看 `/health` 的 `backup.last_success_date`。只在 `BACKUP_ENABLED=true` 的實例生效 |
 | 每日日報 | `DAILY_REPORT_TIME`（預設 08:00，容器時間＝台北） | `tasks/daily_report.py`、`tasks/monitoring.py` | 三層健康（collector／Supabase／S3）＋跨層一致＋VM＋異常趨勢＋成本＋今日 Action，見 §2 |
 | 日報附帶檢查 | 同上 | `_check_silence()`、`_check_disk_usage()` | collector 超過 2 倍間隔沒跑；本地檔案總量與共用檔案系統壓力（80% 警告、90% 嚴重） |
 | DB 死人開關 | pg_cron 每 15 分 | gis-platform `migrations/255_collector_freshness_alert.sql` `metadata.check_collector_freshness(30)` | **所有** enabled collector 的 `MAX(last_success_at)` 超過 30 分鐘 → 用 pg_net 發 Telegram。用途是「整個 collector 進程死掉」，抓不到單一 collector 停擺（盲點 1） |
@@ -31,7 +32,7 @@
 | Supabase realtime 寫入 | 各表新鮮度 | RPC `public.health_snapshot()` |
 | GFW 發布健康 | GFW 每日發布 | 發布 metadata |
 | S3 archives 心跳 | archive task 靜默失敗（曾有 flight_fr24 落後 32 天沒人發現） | 掃 `*/archives/*.tar.gz` |
-| Supabase 備份健康 | 備份三機器人 | 備份狀態表 |
+| Supabase 備份健康 | 備份四機器人（成敗即時告警另見 §1「備份告警」） | 備份狀態表 |
 | Retention 覆蓋 | 沒登記保留期的表 | `metadata.check_retention_coverage()`（有盲區，見 [principles R-10](principles.md)） |
 | 跨層一致性 | 「DB 有在寫但 S3 歸檔卡住」這類斷層 | collector × DB × S3 三向交叉 |
 | HiCloud VM 健康 | VM 掛掉或 IP 又被擋 | S3 `_external_vm_health/` |
