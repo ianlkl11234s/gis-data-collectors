@@ -201,7 +201,11 @@ cp .env.example .env
 python3 main.py
 ```
 
-### 部署到 Zeabur
+### 新主機（GHCR + docker compose）
+
+映像由 `.github/workflows/publish-image.yml` 在 push main 時建置並推到 `ghcr.io/ianlkl11234s/pulse-collector`（tag：commit sha 與 `latest`，私有套件），新主機用 `docker compose pull` 取得。
+
+### 部署到 Zeabur（舊）
 
 Push 到 main 自動部署。需設定的環境變數見 [`.env.example`](.env.example) 與下方「環境變數」。
 
