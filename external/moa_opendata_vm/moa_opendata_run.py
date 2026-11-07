@@ -49,6 +49,8 @@ COLLECTORS: dict[str, tuple[str, str]] = {
     "animal_veterinary_clinics": ("collectors.animal_welfare_points", "AnimalVeterinaryClinicsCollector"),
     "animal_licensed_pet_businesses": ("collectors.animal_welfare_points", "AnimalLicensedPetBusinessesCollector"),
     "animal_protection_offices": ("collectors.animal_welfare_points", "AnimalProtectionOfficesCollector"),
+    # 2026-11-07：法務部 prisonmuseum.moj.gov.tw 拒絕 Linode（pulse-host）IP，借用本 runner 在台灣 VM 跑
+    "correctional_daily_snapshot": ("collectors.correctional_daily_snapshot", "CorrectionalDailySnapshotCollector"),
 }
 
 # 允許 cron 漂移／前一輪執行時間：elapsed ≥ interval × 0.9 即視為到期。
