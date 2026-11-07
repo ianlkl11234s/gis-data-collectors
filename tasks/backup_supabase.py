@@ -9,9 +9,19 @@ Robot A — run_static_snapshot:
 Robot B — run_realtime_snapshot:
     昨日即時表資料 dump；跳過 archive.py 已覆蓋的表。
 
+    沒有時間欄的表依 manifest `no_time_column` 政策改做整表快照
+    （小表每日、大表每 N 天；_plan_realtime_table 是 B 與 C 共用的判斷）。
+
 Robot C — run_reconcile:
     每日盤點：比對 information_schema、backup_state、S3 物件，
     輸出 missing / orphan / new_table 告警，批次寫入 backup_audit_log。
+
+Robot D — run_auth_snapshot:
+    auth.users／auth.identities 只取 manifest `auth_export` 列出的欄位
+    （不含密碼雜湊與任何 token），每日傳到獨立前綴 supabase-snapshots/auth/<日期>/。
+
+run() 的回傳值帶 db_connected／s3_ready 與各機器人統計，
+由 tasks/backup_watch.py 判斷成敗並發告警。
 
 使用方式：
     python3 -m tasks.backup_supabase
@@ -384,7 +394,7 @@ class BackupSupabaseTask:
         with self._cursor() as cur:
             cur.execute(
                 """
-                SELECT last_fingerprint, last_s3_key, last_size_bytes
+                SELECT last_fingerprint, last_s3_key, last_size_bytes, last_backup_at
                 FROM   metadata.backup_state
                 WHERE  schema_name = %s AND table_name = %s
                 """,
@@ -393,7 +403,10 @@ class BackupSupabaseTask:
             row = cur.fetchone()
         if row is None:
             return None
-        return {"last_fingerprint": row[0], "last_s3_key": row[1], "last_size_bytes": row[2]}
+        return {
+            "last_fingerprint": row[0], "last_s3_key": row[1],
+            "last_size_bytes": row[2], "last_backup_at": row[3],
+        }
 
     def _upsert_backup_state(
         self,
@@ -405,7 +418,7 @@ class BackupSupabaseTask:
         storage_class: str,
     ) -> None:
         """UPSERT metadata.backup_state（autocommit 模式，無需額外 commit）。"""
-        if self.dry_run:
+        if self.dry_run or not getattr(self, "db_conn", None):
             return
         with self.db_conn.cursor() as cur:
             cur.execute(
@@ -642,13 +655,25 @@ class BackupSupabaseTask:
         qualified = f"{schema}.{table}"
         date_str = target_date.strftime("%Y-%m-%d")
 
-        # 0. manifest override cadence: full_table → 整表快照（給沒有時間欄、
-        #    但重建成本高的小型名冊表，例：live.ship_last_seen）
-        if self._overrides.get(qualified, {}).get("cadence") == "full_table":
-            return self._process_realtime_full_table(schema, table, target_date)
+        # 0. 備份方式（與 Robot C 共用同一個判斷）：
+        #    full_table → 整表快照（override 指定，或沒有時間欄時依 no_time_column 政策）
+        plan = self._plan_realtime_table(schema, table)
+        if plan["mode"] == "full_table":
+            if not self._full_table_due(schema, table, plan["interval_days"]):
+                self._audit(
+                    run_kind="realtime_snapshot",
+                    schema_name=schema,
+                    table_name=table,
+                    severity="info",
+                    code="skipped_unchanged",  # DB CHECK 只允許既有代碼；訊息寫明是「未到期」
+                    message=f"整表快照每 {plan['interval_days']} 天一次，尚未到期",
+                    details={"cadence": "full_table", "interval_days": plan["interval_days"]},
+                )
+                return "skipped"
+            return self._process_realtime_full_table(schema, table, target_date, plan)
 
         # 1. 找時間欄位
-        time_col = self._find_time_column(schema, table)
+        time_col = plan.get("time_col")
         if time_col is None:
             self._audit(
                 run_kind="realtime_snapshot",
@@ -656,7 +681,7 @@ class BackupSupabaseTask:
                 table_name=table,
                 severity="warn",
                 code="skipped_no_time_column",
-                message="找不到時間欄位，跳過（請在 manifest 排除或補充時間欄位）",
+                message="找不到時間欄位，跳過（no_time_column 政策未啟用；請在 manifest 設定）",
             )
             return "skipped"
 
@@ -730,12 +755,97 @@ class BackupSupabaseTask:
         )
         return "uploaded"
 
-    def _process_realtime_full_table(self, schema: str, table: str, target_date: date) -> str:
+    # ── 備份方式判斷（Robot B 與 Robot C 共用）──────────────
+
+    def _no_time_policy(self) -> dict:
+        return self.manifest.get("no_time_column") or {}
+
+    def _table_data_bytes(self, schema: str, table: str) -> int:
+        """表的資料大小（pg_table_size：heap＋TOAST，不含索引；分區表加總子表）。"""
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT coalesce(sum(pg_table_size(c.oid)), 0)
+                FROM   pg_class c
+                WHERE  c.oid = to_regclass(%s)
+                   OR  c.oid IN (SELECT inhrelid FROM pg_inherits
+                                 WHERE inhparent = to_regclass(%s))
+                """,
+                (f'"{schema}"."{table}"', f'"{schema}"."{table}"'),
+            )
+            row = cur.fetchone()
+        return int(row[0] or 0) if row else 0
+
+    def _full_table_interval(self, size_bytes: int | None, frequency: str | None) -> int:
+        policy = self._no_time_policy()
+        weekly = int(policy.get("large_interval_days", 7))
+        if frequency == "daily":
+            return 1
+        if frequency == "weekly":
+            return weekly
+        if size_bytes is None:
+            return 1
+        return 1 if size_bytes <= int(policy.get("daily_max_bytes", 50 * 1024 * 1024)) else weekly
+
+    def _plan_realtime_table(self, schema: str, table: str) -> dict:
+        """決定即時表怎麼備份。
+
+        Returns:
+            {"mode": "full_table", "interval_days": N, "source": "override"|"no_time_column", ...}
+            {"mode": "daily", "time_col": col}
+            {"mode": "skip"}（沒有時間欄、政策也沒啟用）
+        """
+        qualified = f"{schema}.{table}"
+        override = self._overrides.get(qualified, {})
+        if override.get("cadence") == "full_table":
+            # override 預設每日；frequency: weekly 改為每 N 天
+            return {
+                "mode": "full_table",
+                "interval_days": self._full_table_interval(None, override.get("frequency", "daily")),
+                "source": "override",
+            }
+
+        time_col = self._find_time_column(schema, table)
+        if time_col:
+            return {"mode": "daily", "time_col": time_col}
+
+        policy = self._no_time_policy()
+        if policy.get("action") != "full_table":
+            return {"mode": "skip"}
+        size = self._table_data_bytes(schema, table)
+        return {
+            "mode": "full_table",
+            "interval_days": self._full_table_interval(size, override.get("frequency")),
+            "source": "no_time_column",
+            "size_bytes": size,
+        }
+
+    @staticmethod
+    def _as_aware(ts: datetime | None) -> datetime | None:
+        if ts is None:
+            return None
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+    def _full_table_due(self, schema: str, table: str, interval_days: int) -> bool:
+        """每日表一律到期；N 天表看 backup_state 上次成功時間（漏跑的週會在下一次補上）。"""
+        if interval_days <= 1:
+            return True
+        state = self._get_backup_state(schema, table)
+        last = self._as_aware(state.get("last_backup_at")) if state else None
+        if last is None:
+            return True
+        # 留半天緩衝：排程時間每天略有前後，避免剛好差幾分鐘就延到下一輪
+        return datetime.now(timezone.utc) - last >= timedelta(days=interval_days) - timedelta(hours=12)
+
+    def _process_realtime_full_table(
+        self, schema: str, table: str, target_date: date, plan: dict | None = None,
+    ) -> str:
         """cadence: full_table：整表 COPY 到與每日 dump 相同的 S3 key。
 
-        內容是「備份執行當下」的整表狀態，key 沿用 target_date（昨日），
-        所以 Robot C 的 missing_s3 檢查不需特例。
+        內容是「備份執行當下」的整表狀態，key 沿用 target_date（昨日）。
+        上傳後寫 backup_state，Robot C 依「上次整表快照距今幾天」盤點（每 N 天的表不會被誤報）。
         """
+        plan = plan or {"interval_days": 1}
         qualified = f"{schema}.{table}"
         date_str = target_date.strftime("%Y-%m-%d")
 
@@ -770,6 +880,8 @@ class BackupSupabaseTask:
 
         gz_path = self._copy_table_to_gzip(schema, table)
         size_bytes = self._upload_gz_file(gz_path, s3_key, storage_class)
+        self._upsert_backup_state(
+            schema, table, f"full_table:rc:{row_count}", s3_key, size_bytes, storage_class)
         self._audit(
             run_kind="realtime_snapshot",
             schema_name=schema,
@@ -780,6 +892,7 @@ class BackupSupabaseTask:
             details={
                 "target_date": date_str,
                 "cadence": "full_table",
+                "interval_days": plan.get("interval_days", 1),
                 "row_count": row_count,
                 "size_bytes": size_bytes,
                 "storage_class": storage_class,
@@ -982,6 +1095,27 @@ class BackupSupabaseTask:
                     severity_counts["ok"] += 1
 
             elif is_realtime:
+                plan = self._plan_realtime_table(schema, table)
+                if plan["mode"] == "full_table":
+                    # 整表快照：看 backup_state 上次成功時間（每 N 天的表不看昨日 key）
+                    if self._full_table_fresh(schema, table, plan["interval_days"]):
+                        severity_counts["ok"] += 1
+                    else:
+                        msg = (f"即時表 {qualified} 整表快照超過 {plan['interval_days'] + 1} 天沒有成功"
+                               f"（每 {plan['interval_days']} 天一次）")
+                        print(f"   ❌ {msg}")
+                        self._audit(
+                            run_kind="reconcile",
+                            schema_name=schema,
+                            table_name=table,
+                            severity="critical",
+                            code="missing_s3",
+                            message=msg,
+                            details={"cadence": "full_table", "interval_days": plan["interval_days"]},
+                        )
+                        severity_counts["critical"] += 1
+                    continue
+
                 # 即時表：S3 昨日 key 必須存在
                 s3_key_schema = _S3_KEY_SCHEMA_ALIAS.get(schema, schema)
                 s3_key = f"{_S3_REALTIME_PREFIX}/{date_str}/{s3_key_schema}.{table}.csv.gz"
@@ -1062,6 +1196,102 @@ class BackupSupabaseTask:
 
         return severity_counts
 
+    def _full_table_fresh(self, schema: str, table: str, interval_days: int) -> bool:
+        """整表快照是否在 interval_days＋1 天內成功過（多 1 天給排程延遲）。"""
+        state = self._get_backup_state(schema, table)
+        last = self._as_aware(state.get("last_backup_at")) if state else None
+        if last is None:
+            return False
+        return datetime.now(timezone.utc) - last <= timedelta(days=interval_days + 1)
+
+    # ──────────────────────────────────────────────
+    # ROBOT D — auth 帳號對照（個資：只取 manifest 列出的欄位）
+    # ──────────────────────────────────────────────
+
+    def _existing_columns(self, schema: str, table: str) -> list[str]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE  table_schema = %s AND table_name = %s
+                ORDER BY ordinal_position
+                """,
+                (schema, table),
+            )
+            return [r[0] for r in cur.fetchall()]
+
+    @staticmethod
+    def _is_forbidden_auth_column(col: str) -> bool:
+        """密碼雜湊與任何 token 一律不匯出（manifest 誤列也擋下）。"""
+        c = col.lower()
+        return "password" in c or "token" in c or c.endswith("_secret")
+
+    def run_auth_snapshot(self, run_date: date | None = None) -> dict:
+        """Robot D：auth 帳號對照（重建帳號必要欄位）→ S3 獨立前綴，每日一份帶日期的檔。
+
+        Returns:
+            dict: {'enabled': bool, 'uploaded': int, 'failed': int}
+        """
+        cfg = self.manifest.get("auth_export") or {}
+        stats = {"enabled": bool(cfg.get("enabled")), "uploaded": 0, "failed": 0}
+        if not stats["enabled"]:
+            return stats
+        if not self.db_conn or not self.s3:
+            print("⚠️  [Robot D] DB 或 S3 未就緒，跳過")
+            stats["failed"] = len(cfg.get("tables") or {})
+            return stats
+
+        run_date = run_date or _now_taipei().date()
+        date_str = run_date.strftime("%Y-%m-%d")
+        prefix = str(cfg.get("s3_prefix", "supabase-snapshots/auth")).rstrip("/")
+        storage_class = cfg.get("storage_class", self.static_storage_class)
+        print(f"\n🔐 [Robot D] auth 帳號對照 ({date_str})")
+
+        for qualified, wanted in (cfg.get("tables") or {}).items():
+            schema, table = qualified.split(".", 1)
+            try:
+                existing = set(self._existing_columns(schema, table))
+                cols = [c for c in wanted if c in existing and not self._is_forbidden_auth_column(c)]
+                missing = [c for c in wanted if c not in existing]
+                if "id" not in cols:
+                    raise RuntimeError(f"{qualified} 找不到 id 欄，不匯出")
+                s3_key = f"{prefix}/{date_str}/{schema}.{table}.csv.gz"
+                if self.dry_run:
+                    print(f"   [DRY_RUN] {qualified} {len(cols)} 欄 → {s3_key}")
+                    stats["uploaded"] += 1
+                    continue
+                col_sql = ", ".join(f'"{c}"' for c in cols)
+                gz_path = self._copy_sql_to_gzip_file(
+                    f'COPY (SELECT {col_sql} FROM "{schema}"."{table}" ORDER BY "id") '
+                    f"TO STDOUT WITH CSV HEADER")
+                size_bytes = self._upload_gz_file(gz_path, s3_key, storage_class)
+                stats["uploaded"] += 1
+                print(f"   ✓ {qualified} {len(cols)} 欄 {_human_size(size_bytes)}")
+                self._audit(
+                    run_kind="auth_snapshot",
+                    schema_name=schema,
+                    table_name=table,
+                    severity="warn" if missing else "ok",
+                    code="snapshot_uploaded",
+                    message=f"{len(cols)} 欄, {_human_size(size_bytes)} → s3:{s3_key}",
+                    details={"columns": cols, "missing_columns": missing,
+                             "size_bytes": size_bytes, "s3_key": s3_key},
+                )
+            except Exception as exc:
+                stats["failed"] += 1
+                print(f"   ✗ {qualified}: {exc}")
+                self._audit(
+                    run_kind="auth_snapshot",
+                    schema_name=schema,
+                    table_name=table,
+                    severity="critical",
+                    code="upload_failed",
+                    message=str(exc)[:500],
+                )
+
+        self._flush_audit()
+        return stats
+
     def _realtime_day_is_empty(self, schema: str, table: str, target_date: date) -> bool:
         """檢查即時表指定日期是否無資料列。
 
@@ -1124,7 +1354,13 @@ class BackupSupabaseTask:
         print(f"   DB:      {'已連線' if self.db_conn else '(未連線)'}")
         print(f"   DRY_RUN: {self.dry_run}")
 
-        results: dict[str, Any] = {}
+        results: dict[str, Any] = {
+            "started_at": _now_taipei().isoformat(),
+            "run_date": _now_taipei().date().isoformat(),
+            "db_connected": self.db_conn is not None,
+            "s3_ready": self.s3 is not None,
+            "dry_run": self.dry_run,
+        }
 
         # ── Robot A ──────────────────────────────
         try:
@@ -1146,6 +1382,13 @@ class BackupSupabaseTask:
         except Exception as exc:
             print(f"\n✗ [Robot C] 未預期例外: {exc}")
             results["reconcile"] = {"error": str(exc)}
+
+        # ── Robot D（auth 帳號對照）─────────────────
+        try:
+            results["auth"] = self.run_auth_snapshot()
+        except Exception as exc:
+            print(f"\n✗ [Robot D] 未預期例外: {exc}")
+            results["auth"] = {"error": str(exc)}
 
         # ── 最終摘要 ─────────────────────────────
         print(f"\n{'=' * 60}")
@@ -1170,7 +1413,11 @@ class BackupSupabaseTask:
               f"info={c.get('info', '?')} | "
               f"warn={c.get('warn', '?')} | "
               f"critical={c.get('critical', '?')}")
+        d = results.get("auth", {})
+        print(f"   [Robot D] auth 對照: "
+              f"上傳 {d.get('uploaded', '?')} | 失敗 {d.get('failed', '?')}")
         print(f"{'=' * 60}")
+        results["finished_at"] = _now_taipei().isoformat()
 
         # 關閉 DB 連線
         if self.db_conn:

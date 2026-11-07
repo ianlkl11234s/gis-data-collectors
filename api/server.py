@@ -161,6 +161,13 @@ def create_app():
             'note': 'Data automatically retrieved from S3 if not available locally'
         })
 
+    def _backup_status():
+        try:
+            from tasks import backup_watch
+            return backup_watch.health_status()
+        except Exception as e:  # 狀態檔壞掉不影響 /health
+            return {'error': type(e).__name__}
+
     @app.route('/health')
     def health():
         """健康檢查 - 不需要認證
@@ -198,6 +205,7 @@ def create_app():
             },
             'db': db_info,  # info only — 不影響 healthy 判定
             'disk_guard': disk_guard.pause_status(),  # info only：本機原始檔是否因磁碟嚴重而暫停
+            'backup': _backup_status(),  # info only：Supabase 每日備份最後成功日期
             'data_dir': str(config.LOCAL_DATA_DIR),
             'data_dir_exists': config.LOCAL_DATA_DIR.exists(),
         }), (200 if healthy else 503)
