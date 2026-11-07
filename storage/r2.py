@@ -63,6 +63,33 @@ class R2Storage:
             CacheControl=cache_control,
         )
 
+    def get_json(self, key: str):
+        """讀 JSON 物件；不存在回 None，其他錯誤 raise。"""
+        import json
+        from botocore.exceptions import ClientError
+
+        try:
+            obj = self.s3.get_object(Bucket=self.bucket, Key=key)
+        except ClientError as e:
+            code = (e.response or {}).get('Error', {}).get('Code')
+            if code in ('NoSuchKey', '404', 'NotFound'):
+                return None
+            raise
+        return json.loads(obj['Body'].read())
+
+    def put_json(self, key: str, payload, cache_control: str) -> None:
+        """寫 JSON 物件（UTF-8、緊湊格式）。失敗會 raise。"""
+        import json
+
+        body = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        self.s3.put_object(
+            Bucket=self.bucket,
+            Key=key,
+            Body=body,
+            ContentType='application/json; charset=utf-8',
+            CacheControl=cache_control,
+        )
+
     def head(self, key: str):
         """物件存在回 {'ContentLength', 'LastModified'}；不存在回 None；其他錯誤 raise。"""
         from botocore.exceptions import ClientError

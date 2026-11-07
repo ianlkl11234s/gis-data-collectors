@@ -23,6 +23,7 @@ import requests
 import config
 from collectors.base import BaseCollector
 from storage.r2 import get_r2_storage
+from storage.imagery_manifest import frame_entry, publish_frames
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
@@ -40,6 +41,11 @@ _EXT_BY_MIME = {
 def _ext_from_mime(mime_type: str) -> str:
     """由 MIME 判定副檔名（png），未知回 'bin'。"""
     return _EXT_BY_MIME.get((mime_type or '').lower(), 'bin')
+
+
+# airtw 色階圖固定涵蓋全台；與 RPC get_aqi_imagery_frames_batch 硬編的範圍一致
+# (lon_min, lat_min, lon_max, lat_max)
+AQI_IMAGERY_BBOX = (120.00, 21.90, 122.00, 25.30)
 
 
 def imagery_r2_key(product_type: str, observed_at, mime_type: str) -> str:
@@ -143,6 +149,7 @@ class AirQualityImageryCollector(BaseCollector):
 
         frames: list[dict] = []
         total_bytes = 0
+        manifest_entries: list[dict] = []
 
         for product in self.products:
             url = self._build_url(product, target)
@@ -163,11 +170,19 @@ class AirQualityImageryCollector(BaseCollector):
             }
             # R2 雙寫（best-effort，需在 observed_at 轉字串前算 key）
             frame["image_key"] = self._upload_to_r2(frame, png)
+            if frame["image_key"]:
+                manifest_entries.append(frame_entry(
+                    product, observed_at, frame["image_key"], frame["mime_type"], len(png),
+                    AQI_IMAGERY_BBOX,
+                ))
             frame["observed_at"] = observed_at.isoformat()
 
             frames.append(frame)
             total_bytes += len(png)
             print(f"[{self.name}]   ✓ {product:5s} {len(png)/1024:5.1f} KB")
+
+        # R2 每日幀清單（前端讀這份，不再經 DB RPC；best-effort）
+        publish_frames(self._r2, "aqi", manifest_entries, log_prefix=f"[{self.name}]   ")
 
         return {
             "fetch_time": fetch_time.isoformat(),
