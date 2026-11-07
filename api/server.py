@@ -17,6 +17,7 @@ from datetime import datetime
 from flask import Flask, jsonify, request, send_file, abort, Response
 
 import config
+from utils import disk_guard
 
 
 # S3 儲存實例（延遲初始化）
@@ -196,6 +197,7 @@ def create_app():
                 'max_silence': config.HEALTH_MAX_LOOP_SILENCE,
             },
             'db': db_info,  # info only — 不影響 healthy 判定
+            'disk_guard': disk_guard.pause_status(),  # info only：本機原始檔是否因磁碟嚴重而暫停
             'data_dir': str(config.LOCAL_DATA_DIR),
             'data_dir_exists': config.LOCAL_DATA_DIR.exists(),
         }), (200 if healthy else 503)

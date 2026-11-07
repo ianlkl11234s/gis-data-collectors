@@ -104,3 +104,100 @@ def test_dir_sizes(tmp_path):
     _touch(tmp_path / "b.txt", b"x" * 5)
     total, per = dg.dir_sizes(tmp_path)
     assert total == 15 and per == {"a": 10, "b.txt": 5}
+
+
+# ── 嚴重時暫停寫本機原始檔 ──────────────────────────────────────────────
+
+def _crit_cfg(**kw):
+    return dg.GuardConfig(free_warn_pct=20, free_crit_pct=10, resume_margin_pct=3, **kw)
+
+
+def test_recovered_needs_margin_below_critical():
+    c = _crit_cfg()
+    assert not dg.recovered(0, 12.9, c)   # 剛好高於門檻但未達緩衝
+    assert dg.recovered(0, 13.0, c)
+    c2 = _crit_cfg(data_crit_gb=100)
+    assert not dg.recovered(int(98 * dg._GB), 50, c2)  # 98 ≥ 100*(1-3%)
+    assert dg.recovered(int(96 * dg._GB), 50, c2)
+
+
+def test_pause_resume_notifies_once_each(tmp_path, monkeypatch):
+    sent = []
+    c = _crit_cfg()
+    g = dg.DiskGuard(tmp_path, c, notify=sent.append)
+    free = {"pct": 4.0}
+
+    def fake_check(data_dir, cfg, now_ts=None):
+        level, reasons = dg.evaluate(0, free["pct"], cfg)
+        return dg.DiskStatus(level=level, data_bytes=0, free_pct=free["pct"],
+                             free_bytes=1, reasons=reasons)
+    monkeypatch.setattr(dg, "check", fake_check)
+
+    assert g.run(NOW)["raw_writes_paused"] and dg.is_raw_paused()
+    assert len(sent) == 1 and "本機原始檔暫停寫入，DB 照寫；S3 當天歸檔會缺這段" in sent[0]
+    g.run(NOW + 60)
+    assert len(sent) == 1                       # 持續暫停不重發
+    free["pct"] = 11.0                           # 脫離 critical 但未達緩衝（13）
+    g.run(NOW + 120)
+    assert dg.is_raw_paused() and len(sent) == 1
+    free["pct"] = 14.0                           # 達緩衝 → 恢復（warn 等級也要發恢復）
+    assert not g.run(NOW + 180)["raw_writes_paused"]
+    assert len(sent) == 2 and "已恢復寫入" in sent[-1]
+    g.run(NOW + 240)
+    assert len(sent) == 2
+
+
+def test_local_storage_skips_raw_but_not_latest_or_spool(tmp_path, caplog):
+    from storage.local import LocalStorage
+    ls = LocalStorage(tmp_path)
+    spool = tmp_path / "aisstream_spool" / "a.jsonl"
+    state = tmp_path / "state" / "x.json"
+
+    dg.pause_raw_writes(["test"])
+    with caplog.at_level("WARNING"):
+        assert ls.save("bus", {"data": [1]}) is None
+        assert ls.save("bus", {"data": [2]}) is None
+        assert ls.save_append("bus", [{"a": 1}]) is None
+    assert [p for p in tmp_path.rglob("bus_*.json*")] == []
+    assert ls.get_latest("bus") == {"data": [2]}          # latest.json 照更新
+    assert sum("略過本機原始檔寫入" in r.message for r in caplog.records) == 1  # 只記一次
+    assert dg.pause_status()["skipped_writes"] == 3
+
+    # spool／state 不走 LocalStorage，不受旗標影響
+    _touch(spool, b"keep")
+    _touch(state, b"{}")
+    assert spool.read_bytes() == b"keep" and state.exists()
+
+    dg.resume_raw_writes()
+    p = ls.save("bus", {"data": [3]})
+    assert p is not None and p.exists()
+
+
+def test_collector_run_skips_raw_but_still_writes_db(tmp_path):
+    from unittest.mock import MagicMock
+    from collectors.base import BaseCollector
+    from storage.local import LocalStorage
+
+    class C(BaseCollector):
+        name = "dummy_pause"
+        interval_minutes = 1
+
+        def __init__(self):
+            self.storage = LocalStorage(tmp_path)
+            self.supabase_writer = MagicMock()
+            self.supabase_writer.write.return_value = True
+            self.last_run = self.last_success_at = None
+            self.run_count = self.error_count = self.consecutive_errors = 0
+
+        def collect(self):
+            return {"total": 1, "data": [{"x": 1}]}
+
+    c = C()
+    dg.pause_raw_writes(["test"])
+    assert c.run()["total"] == 1
+    assert c.supabase_writer.write.call_count == 1       # DB 照寫
+    assert list(tmp_path.rglob("dummy_pause_*.json")) == []  # 原始檔沒寫
+    dg.resume_raw_writes()
+    c.run()
+    assert c.supabase_writer.write.call_count == 2
+    assert len(list(tmp_path.rglob("dummy_pause_*.json"))) == 1

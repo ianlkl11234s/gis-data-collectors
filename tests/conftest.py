@@ -198,3 +198,12 @@ def fake_gfw_pmtiles(monkeypatch):
 
     monkeypatch.setattr(gfw_hourly_browser_assets, "_pmtiles", build)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def _reset_disk_guard_pause():
+    """磁碟護欄的暫停旗標是行程內全域；每個測試前後都還原，避免互相污染。"""
+    from utils import disk_guard
+    disk_guard.resume_raw_writes()
+    yield
+    disk_guard.resume_raw_writes()

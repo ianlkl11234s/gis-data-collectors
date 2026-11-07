@@ -14,8 +14,13 @@
   決定可否刪除）；目錄被刪之後沒有任何程式再讀它。即使日後同日期目錄重新出現，
   archive 也會因 members 不符而重新向 S3 驗證，與 receipt 不存在時的路徑相同。
 
-**絕不自動刪除尚未有 receipt 驗證的原始資料**。超過嚴重門檻時只告警（附最大的目錄），
-後續處置（暫停寫原始檔等）由人決定。
+**絕不自動刪除尚未有 receipt 驗證的原始資料**。
+
+**嚴重等級時暫停寫本機原始檔**（只擋 storage.local.LocalStorage 的 dated 原始資料檔，
+DB 寫入、S3 上傳、spool／state／buffer、latest.json 不受影響）：進入嚴重等級即暫停，
+回復到「低於嚴重門檻再多 resume_margin_pct 個百分點」才恢復，避免在門檻附近來回切換。
+暫停狀態是行程內的全域旗標（本模組的 is_raw_paused()），每 30 分鐘由 DiskGuard.run 重新評估；
+暫停期間 S3 當天歸檔會缺這段時間的原始檔。
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -46,6 +52,7 @@ class GuardConfig:
     memwatch_keep_days: int = 14
     receipt_keep_days: int = 30
     realert_hours: float = 6.0
+    resume_margin_pct: float = 3.0  # 恢復寫入需比嚴重門檻多這麼多百分點（資料量門檻則需低於 (100-此值)%）
 
     @classmethod
     def from_config(cls) -> "GuardConfig":
@@ -58,6 +65,7 @@ class GuardConfig:
             memwatch_keep_days=config.DISK_GUARD_MEMWATCH_KEEP_DAYS,
             receipt_keep_days=config.DISK_GUARD_RECEIPT_KEEP_DAYS,
             realert_hours=config.DISK_GUARD_REALERT_HOURS,
+            resume_margin_pct=config.DISK_GUARD_RESUME_MARGIN_PCT,
         )
 
 
@@ -70,6 +78,68 @@ class DiskStatus:
     reasons: list[str] = field(default_factory=list)
     top_dirs: list[tuple[str, int]] = field(default_factory=list)
     cleaned: dict = field(default_factory=dict)
+
+
+# ── 原始檔寫入暫停旗標（行程內全域；LocalStorage 在寫 dated 原始檔前查詢）──────────
+_pause_lock = threading.Lock()
+_pause: dict = {"paused": False, "since": None, "reason": [], "skipped": 0, "logged": False}
+
+
+def is_raw_paused() -> bool:
+    return _pause["paused"]
+
+
+def pause_raw_writes(reasons: list[str] | None = None, now_ts: float | None = None) -> bool:
+    """進入暫停；回傳是否為新進入（已暫停則 False）。"""
+    with _pause_lock:
+        if _pause["paused"]:
+            _pause["reason"] = list(reasons or _pause["reason"])
+            return False
+        _pause.update(paused=True, since=time.time() if now_ts is None else now_ts,
+                      reason=list(reasons or []), skipped=0, logged=False)
+    logger.warning("disk guard：磁碟嚴重，暫停寫本機原始檔（DB／S3／spool 照常）：%s", reasons)
+    return True
+
+
+def resume_raw_writes() -> bool:
+    """解除暫停；回傳是否真的由暫停恢復。"""
+    with _pause_lock:
+        if not _pause["paused"]:
+            return False
+        skipped = _pause["skipped"]
+        _pause.update(paused=False, since=None, reason=[], skipped=0, logged=False)
+    logger.warning("disk guard：恢復寫本機原始檔（暫停期間略過 %d 次寫入）", skipped)
+    return True
+
+
+def note_raw_skipped(collector_name: str) -> None:
+    """LocalStorage 略過一次寫檔時呼叫：累計次數，每個暫停期間只記一次 log。"""
+    with _pause_lock:
+        _pause["skipped"] += 1
+        first = not _pause["logged"]
+        _pause["logged"] = True
+    if first:
+        logger.warning("disk guard 暫停中：略過本機原始檔寫入（首見 %s；之後不再逐筆記錄）", collector_name)
+
+
+def pause_status() -> dict:
+    with _pause_lock:
+        return {
+            "raw_writes_paused": _pause["paused"],
+            "since": datetime.fromtimestamp(_pause["since"]).isoformat() if _pause["since"] else None,
+            "reasons": list(_pause["reason"]),
+            "skipped_writes": _pause["skipped"],
+        }
+
+
+def recovered(data_bytes: int, free_pct: float, cfg: GuardConfig) -> bool:
+    """暫停中是否已回復到可恢復寫入：低於嚴重門檻並留 resume_margin_pct 緩衝。"""
+    m = cfg.resume_margin_pct
+    if cfg.free_crit_pct > 0 and free_pct < cfg.free_crit_pct + m:
+        return False
+    if cfg.data_crit_gb > 0 and data_bytes / _GB >= cfg.data_crit_gb * (1 - m / 100):
+        return False
+    return True
 
 
 def dir_sizes(data_dir: Path) -> tuple[int, dict[str, int]]:
@@ -242,6 +312,11 @@ class DiskGuard:
         self.last_status = st
         if any(st.cleaned.values()):
             logger.info("disk guard 清理：%s", st.cleaned)
+        paused_now = resumed_now = False
+        if st.level == "critical":
+            paused_now = pause_raw_writes(st.reasons, now_ts)
+        elif is_raw_paused() and recovered(st.data_bytes, st.free_pct, self.cfg):
+            resumed_now = resume_raw_writes()
         prev = self.last_level
         rank, prev_rank = LEVELS.index(st.level), LEVELS.index(prev)
         should = (
@@ -251,16 +326,20 @@ class DiskGuard:
             or (st.level == "ok" and prev != "ok")
         )
         if should:
-            self._send(self._format(st))
+            self._send(self._format(st, paused=is_raw_paused(), resumed=resumed_now))
             self._last_alert_ts = now_ts
+        elif paused_now or resumed_now:
+            # 暫停／恢復各發一次；與等級告警同輪時已併入上面那則，不重複發
+            self._send(self._format(st, paused=is_raw_paused(), resumed=resumed_now))
         self.last_level = st.level
         return {
             "level": st.level, "data_gb": round(st.data_bytes / _GB, 2),
             "free_pct": round(st.free_pct, 1), "cleaned": st.cleaned, "alerted": should,
+            "raw_writes_paused": is_raw_paused(),
         }
 
     @staticmethod
-    def _format(st: DiskStatus) -> str:
+    def _format(st: DiskStatus, paused: bool = False, resumed: bool = False) -> str:
         icon = {"ok": "✅", "warn": "⚠️", "critical": "🚨"}[st.level]
         title = {"ok": "本機磁碟恢復正常", "warn": "本機磁碟警告", "critical": "本機磁碟嚴重"}[st.level]
         lines = [f"{icon} *{title}*{{tag}}\n",
@@ -272,4 +351,9 @@ class DiskGuard:
             lines += [f"• {name.replace('_', chr(92) + '_')}: {size / _GB:.2f} GB"
                       for name, size in st.top_dirs]
             lines.append("\n未歸檔的原始檔不會自動刪除；請檢查 S3 歸檔是否失敗。")
+        if paused:
+            lines.append("\n⏸ 本機原始檔暫停寫入，DB 照寫；S3 當天歸檔會缺這段。"
+                         "（spool／state 不受影響；磁碟回復後自動恢復）")
+        elif resumed:
+            lines.append("\n▶ 本機原始檔已恢復寫入；暫停期間 S3 當天歸檔缺少該段原始檔。")
         return "\n".join(lines)
