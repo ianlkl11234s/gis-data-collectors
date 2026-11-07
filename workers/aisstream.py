@@ -25,6 +25,7 @@ import signal
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -353,6 +354,31 @@ class SpoolManager:
             return False
 
 
+class _BoundedLRU(OrderedDict):
+    """有上限的 LRU dict：get／寫入都會把 key 移到最新，超過上限丟最舊的。
+
+    被擠掉的船下次出現時只會暫時缺靜態欄位（船名等），收到下一則 ShipStaticData 就補回，
+    與 worker 剛啟動時的行為相同。
+    """
+
+    def __init__(self, maxsize: int):
+        super().__init__()
+        self.maxsize = max(1, int(maxsize))
+
+    def get(self, key, default=None):
+        if key in self:
+            self.move_to_end(key)
+            return super().__getitem__(key)
+        return default
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        while len(self) > self.maxsize:
+            self.popitem(last=False)
+
+
 class AISStreamWorker:
     """單一連線、多 bbox、可重連的 AISStream worker。"""
 
@@ -369,7 +395,7 @@ class AISStreamWorker:
         from collectors.base import get_supabase_writer
         self._writer = get_supabase_writer() if config.SUPABASE_ENABLED and self.db_url else None
         self._batch: list[tuple[dict, str]] = []
-        self._static_cache: dict[str, dict] = {}
+        self._static_cache: dict[str, dict] = _BoundedLRU(config.AISSTREAM_STATIC_CACHE_MAX)
         self._last_db_flush = time.monotonic()
         self._health_last = 0.0
         self._started = _utc_now()

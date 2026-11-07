@@ -1780,6 +1780,9 @@ def _child_main(argv: list[str]) -> int:
         format="%(asctime)s [gfw-child] %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    from utils.isolated_task import set_oom_score_adj
+
+    set_oom_score_adj(1000)
     result = GFWHourlyPublishTask().run()
     _atomic_json(args.result_file, json.loads(json.dumps(result, default=str)))
     return 0

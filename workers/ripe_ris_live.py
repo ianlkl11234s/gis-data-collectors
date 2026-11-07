@@ -18,6 +18,7 @@ import random
 import signal
 import threading
 import time
+from collections import OrderedDict
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -318,7 +319,13 @@ class RipeRisLiveWorker:
         self._lock_file = None
         start = _window_start(self._now())
         self._window = WindowState(start=start, end=start + timedelta(seconds=WINDOW_SECONDS), gap=True, gap_reasons=["startup_partial"])
-        self._origin_by_peer_prefix: dict[tuple[str, str, str], int] = {}
+        # (host, peer, prefix) → 最近一次的 origin ASN，用來算 origin_changes。
+        # 有上限的 LRU：讀到就 move_to_end，超過上限淘汰最久沒出現的 key。
+        # 規模估算：正常是「roster 前綴數 × 有看到這些前綴的 RRC 觀測點(peer)數」，
+        # 無法精確估算時預設 500000（遠大於正常規模，只擋住無限成長）。
+        # 被淘汰的 key 之後再出現，只會漏算那一次 origin change。
+        self._origin_by_peer_prefix: OrderedDict[tuple[str, str, str], int] = OrderedDict()
+        self._origin_cache_max = max(1, int(getattr(config, "RIPE_ORIGIN_CACHE_MAX", 500000)))
 
     def preflight(self) -> None:
         if config.RIPE_RIS_REPLICA_COUNT != 1:
@@ -560,7 +567,14 @@ class RipeRisLiveWorker:
                 prior = self._origin_by_peer_prefix.get(key)
                 if prior is not None and prior != origin_asn:
                     self._window.origin_changes[network.version] += 1
-                self._origin_by_peer_prefix[key] = origin_asn
+                self._remember_origin(key, origin_asn)
+
+    def _remember_origin(self, key: tuple[str, str, str], origin_asn: int) -> None:
+        cache = self._origin_by_peer_prefix
+        cache[key] = origin_asn
+        cache.move_to_end(key)
+        while len(cache) > self._origin_cache_max:
+            cache.popitem(last=False)
 
     def _flush_window(self, window: WindowState) -> None:
         assert self._roster is not None

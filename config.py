@@ -98,6 +98,24 @@ R2_BUCKET = os.getenv('R2_BUCKET', 'mini-tw-pulse')
 BACKUP_ENABLED = os.getenv('BACKUP_ENABLED', 'false').lower() == 'true'
 BACKUP_DRY_RUN = os.getenv('BACKUP_DRY_RUN', 'false').lower() == 'true'
 BACKUP_MANIFEST_PATH = Path(__file__).parent / 'config' / 'backup_manifest.yaml'
+# 備份在子行程跑（utils/isolated_task.py）；超過此秒數強制結束（排程的 1200s 只告警）
+BACKUP_KILL_TIMEOUT_SEC = int(os.getenv('BACKUP_KILL_TIMEOUT_SEC', '3600'))
+# collector thread pool 上限；0＝用 main.py 的預設公式 min(max(10, N+8), 32)
+COLLECTOR_POOL_MAX_WORKERS = int(os.getenv('COLLECTOR_POOL_MAX_WORKERS', '0'))
+# 主迴圈每隔幾秒呼叫一次 glibc malloc_trim(0)；0＝停用
+MALLOC_TRIM_INTERVAL_SEC = int(os.getenv('MALLOC_TRIM_INTERVAL_SEC', '600'))
+# 本機磁碟護欄（utils/disk_guard.py）：分警告／嚴重兩級 Telegram 告警，只自動清可丟的輔助檔
+DISK_GUARD_ENABLED = os.getenv('DISK_GUARD_ENABLED', 'true').lower() in ('true', '1', 'yes')
+DISK_GUARD_INTERVAL_MIN = int(os.getenv('DISK_GUARD_INTERVAL_MIN', '30'))
+DISK_GUARD_DATA_WARN_GB = float(os.getenv('DISK_GUARD_DATA_WARN_GB', '0'))   # 0＝不檢查總量
+DISK_GUARD_DATA_CRIT_GB = float(os.getenv('DISK_GUARD_DATA_CRIT_GB', '0'))
+DISK_GUARD_FREE_WARN_PCT = float(os.getenv('DISK_GUARD_FREE_WARN_PCT', '15'))
+DISK_GUARD_FREE_CRIT_PCT = float(os.getenv('DISK_GUARD_FREE_CRIT_PCT', '10'))
+DISK_GUARD_TMP_MAX_AGE_HOURS = float(os.getenv('DISK_GUARD_TMP_MAX_AGE_HOURS', '24'))
+DISK_GUARD_MEMWATCH_KEEP_DAYS = int(os.getenv('DISK_GUARD_MEMWATCH_KEEP_DAYS', '14'))
+DISK_GUARD_RECEIPT_KEEP_DAYS = int(os.getenv('DISK_GUARD_RECEIPT_KEEP_DAYS', '30'))
+DISK_GUARD_REALERT_HOURS = float(os.getenv('DISK_GUARD_REALERT_HOURS', '6'))
+DISK_GUARD_RESUME_MARGIN_PCT = float(os.getenv('DISK_GUARD_RESUME_MARGIN_PCT', '3'))  # 嚴重時暫停寫原始檔；需回復到門檻再多此百分點才恢復
 BACKUP_STATIC_STORAGE_CLASS = os.getenv('BACKUP_STATIC_STORAGE_CLASS', 'GLACIER_IR')
 BACKUP_REALTIME_STORAGE_CLASS = os.getenv('BACKUP_REALTIME_STORAGE_CLASS', 'STANDARD')
 BACKUP_STATEMENT_TIMEOUT_MS = int(os.getenv('BACKUP_STATEMENT_TIMEOUT_MS', '300000'))
@@ -111,6 +129,8 @@ TRAILS_EXPORT_ENABLED = os.getenv('TRAILS_EXPORT_ENABLED', 'false').lower() in (
 # 02:00 為容器本地時間，Dockerfile 已設 TZ=Asia/Taipei。
 # 依據：summary 表 refreshed_at 顯示每日資料 01:00~01:20 才定版，早於此會匯到半成品。
 TRAILS_EXPORT_TIME = os.getenv('TRAILS_EXPORT_TIME', '02:00')
+# 軌跡匯出在子行程跑；超過此秒數強制結束（排程的 1200s 只告警）
+TRAILS_EXPORT_KILL_TIMEOUT_SEC = int(os.getenv('TRAILS_EXPORT_KILL_TIMEOUT_SEC', '3600'))
 
 # 歸檔設定
 ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').lower() in ('true', '1', 'yes')
@@ -493,6 +513,7 @@ RIPE_RIS_PING_INTERVAL_SECONDS = float(os.getenv('RIPE_RIS_PING_INTERVAL_SECONDS
 RIPE_RIS_PONG_TIMEOUT_SECONDS = float(os.getenv('RIPE_RIS_PONG_TIMEOUT_SECONDS', '15'))
 RIPE_RIS_IDLE_TIMEOUT_SECONDS = float(os.getenv('RIPE_RIS_IDLE_TIMEOUT_SECONDS', '120'))
 RIPE_RIS_SPOOL_ROTATE_MINUTES = int(os.getenv('RIPE_RIS_SPOOL_ROTATE_MINUTES', '15'))
+RIPE_ORIGIN_CACHE_MAX = int(os.getenv('RIPE_ORIGIN_CACHE_MAX', '500000'))  # origin_changes 比對快取(LRU)上限
 RIPE_RIS_SPOOL_MAX_MB = int(os.getenv('RIPE_RIS_SPOOL_MAX_MB', '10240'))
 RIPE_RIS_S3_STORAGE_CLASS = os.getenv('RIPE_RIS_S3_STORAGE_CLASS', 'GLACIER_IR')
 RIPE_RIS_S3_PREFIX = os.getenv('RIPE_RIS_S3_PREFIX', 'ripe_ris_live/raw/v1')
@@ -510,6 +531,8 @@ AISSTREAM_SPOOL_ROTATE_MINUTES = int(os.getenv('AISSTREAM_SPOOL_ROTATE_MINUTES',
 AISSTREAM_SPOOL_MAX_MB = int(os.getenv('AISSTREAM_SPOOL_MAX_MB', '10240'))
 AISSTREAM_DB_BATCH_SIZE = int(os.getenv('AISSTREAM_DB_BATCH_SIZE', '100'))
 AISSTREAM_DB_FLUSH_SECONDS = float(os.getenv('AISSTREAM_DB_FLUSH_SECONDS', '5'))
+# 船舶靜態資料（船名、IMO…）快取上限（LRU，依 MMSI）；約 1KB／筆
+AISSTREAM_STATIC_CACHE_MAX = int(os.getenv('AISSTREAM_STATIC_CACHE_MAX', '50000'))
 AISSTREAM_S3_STORAGE_CLASS = os.getenv('AISSTREAM_S3_STORAGE_CLASS', 'GLACIER_IR')
 AISSTREAM_S3_PREFIX = os.getenv('AISSTREAM_S3_PREFIX', 'aisstream/raw/v1')
 AISSTREAM_HEALTH_INTERVAL_SECONDS = int(os.getenv('AISSTREAM_HEALTH_INTERVAL_SECONDS', '60'))

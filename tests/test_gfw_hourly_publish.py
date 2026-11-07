@@ -565,9 +565,14 @@ def test_child_main_runs_one_publish_and_writes_result(tmp_path, monkeypatch):
             return {"run_id": "r2", "finished_at": datetime(2026, 9, 27, tzinfo=timezone.utc)}
 
     monkeypatch.setattr(module, "GFWHourlyPublishTask", _Task)
+    oom = tmp_path / "oom_score_adj"
+    oom.write_text("0")
+    monkeypatch.setenv("ISOLATED_TASK_OOM_ADJ_PATH", str(oom))
     out = tmp_path / "result.json"
     assert module._child_main(["--result-file", str(out)]) == 0
     assert json.loads(out.read_text()) == {"run_id": "r2", "finished_at": "2026-09-27 00:00:00+00:00"}
+    # 子行程自己設成 OOM 優先犧牲對象（主程序不受影響）
+    assert oom.read_text() == "1000"
 
 
 # --- streaming AIS report parse (OOM fix) ---------------------------------

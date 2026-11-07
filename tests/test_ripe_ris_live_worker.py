@@ -273,3 +273,18 @@ def test_inventory_keeps_ripe_repo_default_disabled_and_documents_archive_contra
     assert zeabur["RIPE_RIS_LIVE_ENABLED"]["default"] == "false"
     assert zeabur["RIPE_RIS_REPLICA_COUNT"]["default"] == "0"
     assert "live.internet_health_source_runs" in backup["archive_py_covered"]
+
+
+def test_origin_cache_is_a_bounded_lru(monkeypatch):
+    monkeypatch.setattr(config, "RIPE_ORIGIN_CACHE_MAX", 3)
+    worker = RipeRisLiveWorker(writer=_Writer(), s3_storage=_FakeS3(), connect_factory=lambda *_a, **_k: None)
+    keys = [("rrc00", "p", f"10.0.{i}.0/24") for i in range(4)]
+    for k in keys[:3]:
+        worker._remember_origin(k, 64500)
+    worker._remember_origin(keys[0], 64501)      # 近期用過 → 移到最新
+    worker._remember_origin(keys[3], 64500)      # 超過上限 → 淘汰最舊的 keys[1]
+    cache = worker._origin_by_peer_prefix
+    assert len(cache) == 3
+    assert keys[1] not in cache
+    assert keys[0] in cache and keys[2] in cache and keys[3] in cache
+    assert cache[keys[0]] == 64501
