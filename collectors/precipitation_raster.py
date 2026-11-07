@@ -32,7 +32,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import requests
@@ -40,6 +40,8 @@ import urllib3
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
+from storage.imagery_manifest import frame_entry, publish_frames
+from storage.r2 import get_r2_storage
 
 # 政府憑證缺 SKI（同 USWG / NHI ER 坑）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -51,6 +53,31 @@ TOKEN_TTL_SEC = 25 * 60   # 30min 官方，提前 5min 刷新
 # 預設抓哪些 cumulativeHours（多筆累積時長）
 # 1/3/6 對應 CWA 短時/中時/長時雨量分析；24 累積給 24h 強降雨判定
 DEFAULT_CH_LIST = [1, 3, 6, 24]
+
+
+def imagery_r2_key(cumulative_hours: int, observed_at) -> str:
+    """R2 object key 規約：imagery/precip/ch{N}/{YYYYMMDD}/{HHMMSS}.png（時間取 UTC，naive 視為 UTC）。
+
+    與 cwa / aqi 的 imagery_r2_key 同一套規則。
+    """
+    if isinstance(observed_at, str):
+        observed_at = datetime.fromisoformat(observed_at)
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    utc = observed_at.astimezone(timezone.utc)
+    return (
+        f"imagery/precip/ch{int(cumulative_hours)}/"
+        f"{utc.strftime('%Y%m%d')}/{utc.strftime('%H%M%S')}.png"
+    )
+
+
+def frame_bbox(frame: dict) -> Optional[tuple[float, float, float, float]]:
+    """ul/br 角點 → (lon_min, lat_min, lon_max, lat_max)；缺值回 None。"""
+    vals = [frame.get(k) for k in ("ul_lat", "ul_lng", "br_lat", "br_lng")]
+    if any(v is None for v in vals):
+        return None
+    ul_lat, ul_lng, br_lat, br_lng = (float(v) for v in vals)
+    return (min(ul_lng, br_lng), min(ul_lat, br_lat), max(ul_lng, br_lng), max(ul_lat, br_lat))
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
@@ -110,6 +137,21 @@ class PrecipitationRasterCollector(BaseCollector):
                 self.ch_list = DEFAULT_CH_LIST
         else:
             self.ch_list = DEFAULT_CH_LIST
+
+        # R2 寫入（影像本體＋每日 manifest，前端改讀 R2）：憑證未設 → None → 跳過（DB 照寫）
+        self._r2 = get_r2_storage()
+
+    def _upload_to_r2(self, frame: dict) -> Optional[str]:
+        """上傳非空影像到 R2，回傳 object key。best-effort：未設定或失敗回 None。"""
+        if self._r2 is None or frame.get("is_empty") or not frame.get("image_bytes_b64"):
+            return None
+        key = imagery_r2_key(frame["cumulative_hours"], frame["observed_at"])
+        try:
+            self._r2.upload_image(key, base64.b64decode(frame["image_bytes_b64"]), "image/png")
+            return key
+        except Exception as e:
+            print(f"[precipitation_raster]   ⚠️ R2 上傳失敗 {key}: {e}")
+            return None
 
     # ------------------------------------------------------------
     # OAuth2 token
@@ -205,11 +247,20 @@ class PrecipitationRasterCollector(BaseCollector):
         frames: list[dict] = []
         total_bytes = 0
         errors: list[str] = []
+        manifest_entries: list[dict] = []
 
         for ch in self.ch_list:
             try:
                 frame = self._fetch_raster(ch)
                 if frame:
+                    # 只記在 local JSON，DB 表沒有 image_key 欄（transformer 不送這欄）
+                    frame["image_key"] = self._upload_to_r2(frame)
+                    bbox = frame_bbox(frame)
+                    if frame["image_key"] and bbox:
+                        manifest_entries.append(frame_entry(
+                            f"ch{ch}", frame["observed_at"], frame["image_key"], "image/png",
+                            frame.get("image_size"), bbox,
+                        ))
                     frames.append(frame)
                     total_bytes += frame.get("image_size", 0) or 0
                     ts_short = frame["observed_at"][11:16]
@@ -223,6 +274,9 @@ class PrecipitationRasterCollector(BaseCollector):
                 err = f"ch={ch}: {e}"
                 errors.append(err)
                 print(f"[precipitation_raster]   ✗ {err}")
+
+        # R2 每日幀清單（前端讀這份，不再經 DB RPC；best-effort）
+        publish_frames(self._r2, "precip", manifest_entries, log_prefix="[precipitation_raster]   ")
 
         return {
             "data":          frames,

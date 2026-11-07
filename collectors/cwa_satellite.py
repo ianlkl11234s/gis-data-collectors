@@ -28,6 +28,7 @@ import requests
 import config
 from collectors.base import BaseCollector
 from storage.r2 import get_r2_storage
+from storage.imagery_manifest import frame_entry, publish_frames
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
@@ -228,6 +229,7 @@ class CWASatelliteCollector(BaseCollector):
         fetch_time = datetime.now(TAIPEI_TZ)
         frames: list[dict] = []
         total_bytes = 0
+        manifest_entries: list[dict] = []
 
         for dataset_id in self.datasets:
             try:
@@ -246,6 +248,11 @@ class CWASatelliteCollector(BaseCollector):
 
             # R2 雙寫（best-effort，需在 observed_at 轉字串前算 key）
             frame["image_key"] = self._upload_to_r2(frame, png)
+            if frame["image_key"]:
+                manifest_entries.append(frame_entry(
+                    dataset_id, frame["observed_at"], frame["image_key"], frame["mime_type"], len(png),
+                    (frame["lon_min"], frame["lat_min"], frame["lon_max"], frame["lat_max"]),
+                ))
 
             # JSON-safe：image_b64 給 local storage / supabase transformer 使用
             # observed_at 也要轉 ISO string（datetime 不可 JSON 序列化）
@@ -258,6 +265,9 @@ class CWASatelliteCollector(BaseCollector):
                 f"[{self.name}]   ✓ {dataset_id} @ {frame['observed_at'][11:16]} "
                 f"({len(png) / 1024:.0f} KB)"
             )
+
+        # R2 每日幀清單（前端讀這份，不再經 DB RPC；best-effort）
+        publish_frames(self._r2, "cwa", manifest_entries, log_prefix=f"[{self.name}]   ")
 
         return {
             "fetch_time": fetch_time.strftime("%Y-%m-%dT%H:%M:%S"),
