@@ -61,7 +61,7 @@ def test_derive_deployment_reproduces_convention():
     assert derive_deployment("waste_positions", True) == "hicloud_vm"
     assert derive_deployment("cdc_public_health_weekly", True) == "hicloud_vm"
     # enabled → zeabur，未 enabled → disabled
-    assert derive_deployment("youbike", True) == "zeabur"
+    assert derive_deployment("youbike", True) == "pulse_host"
     assert derive_deployment("flight_fr24", False) == "disabled"
 
 

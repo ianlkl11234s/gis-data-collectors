@@ -7,7 +7,7 @@
 ## 架構圖
 
 ```
-                         ┌──────────────── Zeabur 主容器（main.py，一個進程）────────────────┐
+                         ┌────────────── pulse-host 主容器（main.py，一個進程）──────────────┐
                          │                                                                   │
  collectors/registry.py ─┼─► 初始化（ENABLED？required_env？）                                │
  config.py 開關／間隔    │        │                                                          │
@@ -102,7 +102,7 @@
 | 項目 | 值（以程式與部署 env 為準） | 出處 |
 |---|---|---|
 | 池 | `psycopg2` `ThreadedConnectionPool` 外包一層 `SupabaseConnectionPool` | `storage/db.py` |
-| 大小 | `SUPABASE_POOL_MIN` 預設 2、`SUPABASE_POOL_MAX` 預設 15；`config.py:215-219` 註解記載主站 env 覆寫為 30（2026-07-05）。正式值**待確認**：collector 經 Supavisor 連線，`pg_stat_activity` 只看得到 pooler，無法從 DB 端反推。查法：Zeabur 主控台 data-collectors-gomn → Variables 看 `SUPABASE_POOL_MAX`（不要用 `zeabur variable list`，會印出祕密值） | `config.py` |
+| 大小 | `SUPABASE_POOL_MIN` 預設 2、`SUPABASE_POOL_MAX` 預設 15；`config.py:215-219` 註解記載主站 env 覆寫為 30（2026-07-05）。正式值**待確認**：collector 經 Supavisor 連線，`pg_stat_activity` 只看得到 pooler，無法從 DB 端反推。查法：pulse-host 上 `sudo grep -c ^SUPABASE_POOL_MAX= /opt/pulse-host/env/collector.env` 確認有無覆寫（只看 key，不印值） | `config.py` |
 | 借用逾時 | `SUPABASE_BORROW_TIMEOUT_SEC` 預設 5 秒；借不到 raise `PoolBorrowTimeout`，呼叫端進 buffer | `storage/db.py` |
 | 斷路器 | 建線連續失敗時指數退避，冷卻 15 秒起、上限 300 秒；冷卻中 raise `PoolBreakerOpen` | `storage/db.py` |
 | 死連線 | 借出前 pre-ping，失敗就關掉換一條；with 區塊出錯時歸還並關閉該連線 | `storage/db.py` |

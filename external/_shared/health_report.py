@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""VM health snapshot — 每天 07:00 跑，把本機健康度推 S3 給 Zeabur daily_report 撈。
+"""VM health snapshot — 每天 07:00 跑，把本機健康度推 S3 給 pulse-host daily_report 撈。
 
 設計目標：
   - VM 自己看自己，產 JSON 推 s3://<BUCKET>/_external_vm_health/<HOST>/YYYY-MM-DD.json
-  - Zeabur 端 tasks/daily_report.py 的 _section_external_vm_health 撈這份 JSON
-  - 若 VM 死透無法 push，Zeabur 端用 snapshot age > 26h 反推「VM 失聯」
+  - pulse-host 端 tasks/daily_report.py 的 _section_external_vm_health 撈這份 JSON
+  - 若 VM 死透無法 push，pulse-host 端用 snapshot age > 26h 反推「VM 失聯」
 
 統計範圍：
   - 各 collector log 過去 24h: runs / success / last_success / last_count
@@ -17,7 +17,7 @@
 
 部署：
   - 程式位置 : /opt/external-health/health_report.py
-  - cron     : 0 7 * * * 跑（早 1 小時於 Zeabur daily_report，08:00 撈得到）
+  - cron     : 0 7 * * * 跑（早 1 小時於 pulse-host daily_report，08:00 撈得到）
   - .env     : 共用 /opt/ship-ais/.env 的 S3 key（或自己一份）
 
 可由 ENV `EXTERNAL_VM_HEALTH_CONFIG` 指定 yaml 自訂監測 collector 清單；

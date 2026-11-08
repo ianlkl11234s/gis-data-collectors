@@ -112,7 +112,7 @@ SOURCES_DOC = {
     "gfw_hourly_publish": "marine-air-space",
 }
 
-DEPLOYMENT_LABEL = {"zeabur": "Zeabur", "hicloud_vm": "VM", "disabled": "停用"}
+DEPLOYMENT_LABEL = {"pulse_host": "pulse-host", "hicloud_vm": "VM", "disabled": "停用"}
 
 # clm 監控門檻與 repo 預設間隔差到這個倍數以上，就在備註標出來（兩者語意不同，不默選一個）
 INTERVAL_MISMATCH_FACTOR = 3
@@ -319,7 +319,7 @@ def build_rows() -> tuple[list[dict], list[str]]:
         enabled = bool(c.get("enabled"))
         deployment = c.get("deployment", "")
         if not enabled:
-            where = "停用" if deployment in ("disabled", "zeabur") else f"停用（{DEPLOYMENT_LABEL.get(deployment, deployment)}）"
+            where = "停用" if deployment in ("disabled", "pulse_host") else f"停用（{DEPLOYMENT_LABEL.get(deployment, deployment)}）"
         else:
             where = DEPLOYMENT_LABEL.get(deployment, deployment)
         flags = []
@@ -390,7 +390,7 @@ def render(rows: list[dict], footnotes: list[str]) -> str:
         "欄位說明：",
         "",
         "- **頻率**：`config.py` 的 repo 預設間隔。production 可用 `<PREFIX>_INTERVAL` 環境變數覆寫，"
-        "實際值以 Zeabur／VM 設定為準；監控門檻（cross_layer_map 的 `expected_interval_min`）和預設差 3 倍以上時寫在備註。",
+        "實際值以 pulse-host／VM 設定為準；監控門檻（cross_layer_map 的 `expected_interval_min`）和預設差 3 倍以上時寫在備註。",
         "- **執行位置**：取自 cross_layer_map 的 `enabled`／`deployment`（反映 production，不是 repo 預設）。"
         "VM 的部署方式見 [`docs/EXTERNAL_COLLECTORS.md`](../EXTERNAL_COLLECTORS.md)。",
         "- **資料層**：依表名推測（current＝最新狀態表、history＝歷史表、ledger＝執行紀錄表），僅供導覽。",

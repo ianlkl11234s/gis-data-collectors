@@ -18,7 +18,9 @@ except ImportError:
 # 環境偵測
 # ============================================================
 
-IS_PRODUCTION = os.getenv('ZEABUR') or os.getenv('PRODUCTION')
+# 正式環境＝PULSE_ENV=production（pulse-host image 內建）
+IS_PRODUCTION = os.getenv('PULSE_ENV', '').lower() == 'production' \
+    or os.getenv('ZEABUR') or os.getenv('PRODUCTION')  # 2026-11 過渡，主機 env 改名後移除 ZEABUR／PRODUCTION
 IS_DEBUG = os.getenv('DEBUG', '').lower() in ('true', '1', 'yes')
 
 # 實例名稱（用於多實例部署時辨識來源）
@@ -203,11 +205,11 @@ GLOBAL_EVENTS_STANDARD_INDEX = os.getenv('GLOBAL_EVENTS_STANDARD_INDEX', 'https:
 GLOBAL_EVENTS_TRANSLATION_INDEX = os.getenv('GLOBAL_EVENTS_TRANSLATION_INDEX', 'https://data.gdeltproject.org/gdeltv2/masterfilelist-translation.txt')
 
 # 本地儲存路徑
-# Zeabur Volume 掛載在 /data，優先使用環境變數 DATA_DIR
+# pulse-host 把 /srv/pulse/collector 掛載在 /data，優先使用環境變數 DATA_DIR
 if os.getenv('DATA_DIR'):
     LOCAL_DATA_DIR = Path(os.getenv('DATA_DIR'))
 elif IS_PRODUCTION:
-    LOCAL_DATA_DIR = Path('/data')  # Zeabur Volume 掛載點
+    LOCAL_DATA_DIR = Path('/data')  # pulse-host 容器掛載點
 else:
     LOCAL_DATA_DIR = Path(__file__).parent / 'data'
 

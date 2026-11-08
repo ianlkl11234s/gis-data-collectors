@@ -10,9 +10,9 @@
 #
 # 欄位定義：
 #   enabled               : 該 collector 是否「應該在跑」（不論部署在哪）
-#                           ⚠️ 反映 production 實況（Zeabur env 覆寫），非 config.py repo 預設
+#                           ⚠️ 反映 production 實況（pulse-host env 覆寫），非 config.py repo 預設
 #                           （2026-07-08 依主站實際 env 校正 22 筆 AR-05 回填時誤標 disabled 的 collector）
-#   deployment            : zeabur | hicloud_vm | disabled
+#   deployment            : pulse_host | hicloud_vm | disabled（pulse_host 2026-11 前叫 zeabur）
 #   expected_interval_min : 期望抓取間隔（分鐘，給 staleness 判斷用）
 #   supabase_tables       : 該 collector 寫的所有 Supabase 表（含 history / current / 多表）
 #   s3_prefixes           : 該 collector 在 S3 上的歸檔路徑（用於檢查 daily tar.gz 是否健康）
@@ -24,7 +24,7 @@
 # ─────────────────────────────────────────────────────────
 youbike:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.youbike_snapshots, live.youbike_current]
   s3_prefixes:
@@ -33,7 +33,7 @@ youbike:
 
 bus:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 2
   supabase_tables: [live.bus_positions, live.bus_current]
   s3_prefixes:
@@ -42,7 +42,7 @@ bus:
 
 bus_intercity:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 2
   supabase_tables: [live.bus_intercity_positions, live.bus_intercity_current]
   s3_prefixes:
@@ -60,7 +60,7 @@ vd:
 
 freeway_vd:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables:
     - live.freeway_sections
@@ -72,7 +72,7 @@ freeway_vd:
 
 parking:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.parking_segments_availability, live.parking_segments_current]
   s3_prefixes:
@@ -82,7 +82,7 @@ parking:
 
 tra_train:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 2
   supabase_tables: [live.train_positions]
   s3_prefixes:
@@ -91,7 +91,7 @@ tra_train:
 
 tra_static:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: []  # reference data，不寫即時表
   s3_prefixes:
@@ -100,7 +100,7 @@ tra_static:
 
 rail_timetable:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 240
   supabase_tables: [reference.daily_schedules]
   s3_prefixes:
@@ -128,7 +128,7 @@ ship_ais:
 
 cwa_marine_observation:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [reference.marine_observation_stations, live.marine_observation_readings, live.marine_observation_current, live.marine_observation_quarantine]
   s3_prefixes:
@@ -148,7 +148,7 @@ isohe_port_marine:
 
 aisstream:
   enabled: true  # 2026-10-16 校正：無同名 collector_status，但 aisstream_position_observations／ingest_health 數分鐘內、archive manifests 當天
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1
   supabase_tables:
     - live.aisstream_ingest_runs
@@ -180,7 +180,7 @@ gfw_vessel_presence:
 
 gfw_hourly_publish:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables:
     - live.gfw_hourly_publish_runs
@@ -208,7 +208,7 @@ flight_fr24:
 
 flight_fr24_zone:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables: [live.flight_positions]
   s3_prefixes:
@@ -217,7 +217,7 @@ flight_fr24_zone:
 
 flight_opensky:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables: [live.flight_positions]
   s3_prefixes:
@@ -229,7 +229,7 @@ flight_opensky:
 # ─────────────────────────────────────────────────────────
 weather:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.weather_observations, live.weather_current]
   s3_prefixes:
@@ -238,7 +238,7 @@ weather:
 
 temperature:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.temperature_grids]
   s3_prefixes:
@@ -247,7 +247,7 @@ temperature:
 
 cwa_satellite:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables: [live.cwa_imagery_frames]
   s3_prefixes:
@@ -256,7 +256,7 @@ cwa_satellite:
 
 earthquake:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.earthquake_events, live.earthquake_station_obs, live.tsunami_alerts]
   s3_prefixes:
@@ -311,7 +311,7 @@ earthquake_moment_tensor:
 
 ncdr_alerts:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.disaster_alerts]
   s3_prefixes:
@@ -320,7 +320,7 @@ ncdr_alerts:
 
 cloudflare_radar:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs
@@ -341,7 +341,7 @@ cloudflare_radar:
 
 ioda_internet_health:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs
@@ -360,7 +360,7 @@ ioda_internet_health:
 
 ripe_atlas_internet_health:
   enabled: true  # 2026-10-16 依 metadata.collector_status 校正（is_enabled=t、last_success 數分鐘內）
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs
@@ -381,7 +381,7 @@ ripe_atlas_internet_health:
 
 ripe_ris_live:
   enabled: true  # 2026-10-16 依 metadata.collector_status 校正（is_enabled=t、last_success 數分鐘內）
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables:
     - live.internet_health_source_runs
@@ -406,7 +406,7 @@ ripe_ris_live:
 
 news_events:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 20
   supabase_tables: [live.news_events]
   s3_prefixes:
@@ -416,7 +416,7 @@ news_events:
 
 global_events:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables:
     - intel.global_event_collector_batches
@@ -437,7 +437,7 @@ global_events:
 # ─────────────────────────────────────────────────────────
 satellite:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 120
   supabase_tables:
     - live.satellite_positions
@@ -450,7 +450,7 @@ satellite:
 
 launch:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.launches, live.launch_events, live.launch_pads]
   # launches 每輪 poll upsert（upcoming 清單恆有資料）→ interval 15 不會誤報；
@@ -464,7 +464,7 @@ launch:
 # ─────────────────────────────────────────────────────────
 air_quality:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.air_quality_observations, live.air_quality_current]
   s3_prefixes:
@@ -473,7 +473,7 @@ air_quality:
 
 air_quality_imagery:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.aqi_imagery_frames]
   s3_prefixes:
@@ -482,7 +482,7 @@ air_quality_imagery:
 
 air_quality_microsensors:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables: [live.micro_sensor_readings]
   s3_prefixes:
@@ -494,7 +494,7 @@ air_quality_microsensors:
 # ─────────────────────────────────────────────────────────
 water_reservoir:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.reservoir_status]
   s3_prefixes:
@@ -503,7 +503,7 @@ water_reservoir:
 
 water_reservoir_daily_ops:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.reservoir_daily_ops]
   s3_prefixes:
@@ -513,7 +513,7 @@ water_reservoir_daily_ops:
 
 river_water_level:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables: [live.river_water_level]
   s3_prefixes:
@@ -522,7 +522,7 @@ river_water_level:
 
 rain_gauge_realtime:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables: [live.rain_gauge_readings]
   s3_prefixes:
@@ -531,7 +531,7 @@ rain_gauge_realtime:
 
 groundwater_level:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.groundwater_level_readings]
   s3_prefixes:
@@ -540,7 +540,7 @@ groundwater_level:
 
 wra_drought_alert:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   # 事件驅動：上游不定期公告（實測 18 天未變屬常態，hash 未變即整批不寫）。
   # interval 比照 foursquare_poi 放寬 43200（B 層 max_time 視窗 90 天），
   # 用 collector 實際輪詢值 1440 會天天誤報跨層斷層。
@@ -553,7 +553,7 @@ wra_drought_alert:
 
 iot_wra:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10  # 正式 env IOT_WRA_INTERVAL=10（repo 預設 60）；2026-10-16 依 collected_at 每 10 分一批校正
   supabase_tables: [live.iot_wra_measurements]
   s3_prefixes:
@@ -562,7 +562,7 @@ iot_wra:
 
 uswg:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables: [live.uswg_measurements]
   s3_prefixes:
@@ -574,7 +574,7 @@ uswg:
 # ─────────────────────────────────────────────────────────
 road_event_live:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables: [live.road_events, live.road_events_current]
   s3_prefixes:
@@ -583,7 +583,7 @@ road_event_live:
 
 road_event_planned:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 720
   supabase_tables: [live.road_events, live.road_events_current]
   s3_prefixes:
@@ -622,7 +622,7 @@ waste_match:
 
 er_hospital_realtime:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.er_hospital_status, live.er_hospital_current]
   s3_prefixes:
@@ -631,7 +631,7 @@ er_hospital_realtime:
 
 power_taipower:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables:
     - live.power_system_status
@@ -665,7 +665,7 @@ foursquare_poi:
 
 correctional_daily_snapshot:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.prison_population_daily]
   s3_prefixes:
@@ -758,7 +758,7 @@ animal_protection_offices:
 
 global_climate_bake:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 360
   supabase_tables: []  # 烤圖 job 只讀 live.global_climate_grids（挑最新 cycle），不寫 DB
   s3_prefixes:
@@ -768,7 +768,7 @@ global_climate_bake:
 
 global_climate_cams:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.global_climate_grids]
   s3_prefixes:
@@ -778,7 +778,7 @@ global_climate_cams:
 
 global_climate_cmems:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.global_climate_grids]
   s3_prefixes:
@@ -788,7 +788,7 @@ global_climate_cmems:
 
 global_climate_jma_typhoon:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.typhoon_positions]
   s3_prefixes:
@@ -798,7 +798,7 @@ global_climate_jma_typhoon:
 
 global_climate_jtwc:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.typhoon_positions]
   s3_prefixes:
@@ -808,7 +808,7 @@ global_climate_jtwc:
 
 global_climate_noaa_gfs:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.global_climate_grids]
   s3_prefixes:
@@ -818,7 +818,7 @@ global_climate_noaa_gfs:
 
 global_climate_usgs_earthquake:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.earthquakes_global]
   s3_prefixes:
@@ -838,7 +838,7 @@ immigration_apis_airport:
 
 lightning_events:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.lightning_events]
   s3_prefixes:
@@ -848,7 +848,7 @@ lightning_events:
 
 npa_traffic_accident_a1:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 720
   supabase_tables: [live.traffic_accidents_a1]
   s3_prefixes:
@@ -858,7 +858,7 @@ npa_traffic_accident_a1:
 
 nuclear_radiation:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.nuclear_radiation_measurements, live.nuclear_radiation_stations]
   s3_prefixes:
@@ -868,7 +868,7 @@ nuclear_radiation:
 
 parking_offstreet:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.parking_lots_availability, live.parking_lots_current]
   s3_prefixes:
@@ -878,7 +878,7 @@ parking_offstreet:
 
 parking_ref:
   enabled: false
-  deployment: disabled        # 半靜態月更，目前手動觸發（比照 foursquare_poi 低頻慣例）；TDX 國際可打，要排程可移 zeabur
+  deployment: disabled        # 半靜態月更，目前手動觸發（比照 foursquare_poi 低頻慣例）；TDX 國際可打，要排程可移 pulse_host
   expected_interval_min: 43200  # 每 30 天
   supabase_tables: [spatial.parking_segments_ref, spatial.parking_lots_ref]
   s3_prefixes: []               # 直接 SQL 寫 spatial.*_ref，不走 supabase_writer / 無 S3 archive
@@ -887,7 +887,7 @@ parking_ref:
 
 pla_activity_daily:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.pla_activity_daily]
   s3_prefixes:
@@ -897,7 +897,7 @@ pla_activity_daily:
 
 pla_tracks_vectorize:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [spatial.pla_tracks, live.pla_activity_items, spatial.pla_tracks_runs]
   s3_prefixes:
@@ -911,7 +911,7 @@ pla_tracks_vectorize:
 
 precipitation_raster:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 120
   supabase_tables: [live.precipitation_raster_frames]
   s3_prefixes:
@@ -921,7 +921,7 @@ precipitation_raster:
 
 road_congestion:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables: [live.road_sections_live, live.road_sections_current]
   s3_prefixes:
@@ -931,7 +931,7 @@ road_congestion:
 
 satellite_passes_daily:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: []  # 直接 SQL 寫 live.satellite_passes / satellite_passes_daily（不走 supabase_writer TABLE_MAP）→ B 層跳過，TODO 補表級監控設計
   s3_prefixes:
@@ -941,7 +941,7 @@ satellite_passes_daily:
 
 tourist_shuttle:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 2
   supabase_tables: [live.tourist_shuttle_positions, live.tourist_shuttle_current]
   s3_prefixes:
@@ -951,7 +951,7 @@ tourist_shuttle:
 
 twse_market_index:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.market_index_tick, live.market_index_current]
   s3_prefixes:
@@ -961,7 +961,7 @@ twse_market_index:
 
 wic_evacuate:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables: [live.taipei_evacuate_status]
   s3_prefixes:
@@ -971,7 +971,7 @@ wic_evacuate:
 
 wic_pumb:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables: [live.taipei_pumb_status]
   s3_prefixes:
@@ -981,7 +981,7 @@ wic_pumb:
 
 wic_sewer:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables: [live.taipei_sewer_measurements]
   s3_prefixes:
@@ -991,7 +991,7 @@ wic_sewer:
 
 yt_live_video_resolver:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables: [live.yt_live_history, live.yt_live_current]
   s3_prefixes:
@@ -1001,7 +1001,7 @@ yt_live_video_resolver:
 
 tpml_seat:
   enabled: true  # 2026-07-16 上線（migration 290 已 apply + Zeabur TPML_SEAT_ENABLED=true）
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables: [live.tpml_seat_status, live.tpml_seat_current]
   s3_prefixes:
@@ -1024,7 +1024,7 @@ food_prices:
 
 lightning_cwa:
   enabled: true
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 5
   supabase_tables: [live.lightning_events]
   s3_prefixes:
@@ -1037,10 +1037,10 @@ lightning_cwa:
     ⚠️ 事件驅動：無雷雨時 0 筆屬正常，兩源的新鮮度要一起看而非各自判死。
 
 # ── 環境即時測站 wave2（2026-10-02；gis-platform migrations 419–422 已 apply）──
-# merge 到 main 由 Zeabur git 部署後，需設 *_ENABLED=true + restart 才實際運行
+# merge 到 main 並部署到 pulse-host 後，需設 *_ENABLED=true + restart 才實際運行
 nusc_gamma_radiation:
   enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.nusc_gamma_measurements, live.nusc_gamma_stations]
   s3_prefixes:
@@ -1050,7 +1050,7 @@ nusc_gamma_radiation:
 
 water_effluent_monitoring:
   enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.water_effluent_readings, live.water_effluent_current]
   s3_prefixes:
@@ -1060,7 +1060,7 @@ water_effluent_monitoring:
 
 cems_stack_monitoring:
   enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.cems_stack_readings, live.cems_stack_current]
   s3_prefixes:
@@ -1070,7 +1070,7 @@ cems_stack_monitoring:
 
 cwa_uv_daily:
   enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 720
   supabase_tables: [live.cwa_uv_daily]
   s3_prefixes:
@@ -1080,7 +1080,7 @@ cwa_uv_daily:
 
 jma_amedas:
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_AMEDAS_ENABLED=true + restart 生效
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 10
   supabase_tables: [live.jma_amedas_current, live.jma_amedas_observations]
   s3_prefixes:
@@ -1091,7 +1091,7 @@ jma_amedas:
 
 jma_warnings:
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_WARNINGS_ENABLED=true + restart 生效
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 720
   supabase_tables: [live.jma_warning_events]
   s3_prefixes:
@@ -1101,7 +1101,7 @@ jma_warnings:
 
 jma_quake:
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_QUAKE_ENABLED=true + restart 生效
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.jma_quake_reports, live.jma_tsunami_reports, live.jma_volcano_warnings]
   s3_prefixes:
@@ -1112,7 +1112,7 @@ jma_quake:
 
 jma_seasonal:
   enabled: true  # 2026-10-12 Zeabur env JAPAN_JMA_SEASONAL_ENABLED=true 已啟用
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.jma_phenology_observations, live.jma_snowcap, live.jma_snowcap_status, live.jma_rainy_season]
   s3_prefixes:
@@ -1122,7 +1122,7 @@ jma_seasonal:
 
 jma_raster:
   enabled: true  # 2026-10-10 上線（Zeabur JAPAN_JMA_RASTER_ENABLED=true）；T2 weather-grid/ 永久（依全桶規則轉 IA/GIR）
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.weather_raster_frames, live.weather_raster_daily]
   s3_prefixes:
@@ -1138,7 +1138,7 @@ jma_raster:
 
 jma_ocean_env:
   enabled: true  # 2026-10-12 Zeabur env JAPAN_JMA_OCEAN_ENV_ENABLED=true 已啟用
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.weather_raster_frames, live.weather_raster_daily]
   s3_prefixes:
@@ -1161,7 +1161,7 @@ jma_ocean_env:
 
 jma_lightning:
   enabled: true  # 2026-10-12 Zeabur env JAPAN_JMA_LIGHTNING_ENABLED=true 已啟用
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.lightning_events]
   s3_prefixes:
@@ -1171,7 +1171,7 @@ jma_lightning:
 
 jma_forecast:
   enabled: true  # 2026-10-12 Zeabur env JAPAN_JMA_FORECAST_ENABLED=true 已啟用
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 720
   supabase_tables: [live.jma_forecasts, live.jma_forecast_probabilities]
   s3_prefixes:
@@ -1181,7 +1181,7 @@ jma_forecast:
 
 env_jp_wbgt:
   enabled: true  # 2026-10-12 Zeabur env JAPAN_ENV_WBGT_ENABLED=true 已啟用
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 120
   supabase_tables: [live.env_jp_wbgt_observations, live.env_jp_wbgt_forecasts]
   s3_prefixes:
@@ -1191,7 +1191,7 @@ env_jp_wbgt:
 
 global_climate_cwa_typhoon:
   enabled: true  # 2026-10-17 部署（#158）＋Zeabur GLOBAL_CLIMATE_CWA_TYPHOON_ENABLED=true；19:59Z 首輪成功寫入
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.typhoon_positions]
   s3_prefixes:
@@ -1201,7 +1201,7 @@ global_climate_cwa_typhoon:
 
 global_climate_ncdr_typhoon_routes:
   enabled: true  # 2026-10-17 部署（#158）＋Zeabur GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES_ENABLED=true；19:59Z 首輪成功寫入
-  deployment: zeabur
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.typhoon_agency_forecasts]
   s3_prefixes:

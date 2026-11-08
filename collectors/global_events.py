@@ -1400,8 +1400,6 @@ def collector_version() -> tuple[str, str]:
     the running build. Without the label a receipt cannot say which it is.
     """
     for name in (
-        "ZEABUR_GIT_COMMIT_SHA",
-        "ZEABUR_COMMIT_SHA",
         "GIT_COMMIT_SHA",
         "SOURCE_COMMIT",
     ):

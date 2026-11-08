@@ -337,14 +337,18 @@ def test_monitor_and_archive_registries_cover_both_provider_jobs():
     }
     for collector_name in ("cloudflare_radar", "ioda_internet_health"):
         assert cross_layer[collector_name]["enabled"] is True
-        assert cross_layer[collector_name]["deployment"] == "zeabur"
+        assert cross_layer[collector_name]["deployment"] == "pulse_host"
         assert set(cross_layer[collector_name]["supabase_tables"]) == expected
     monitored = {f"{row['schema']}.{row['table']}" for row in realtime}
     assert expected <= monitored
     assert "live.internet_health_current" in backup["exclude"]
     assert expected - {"live.internet_health_current"} <= set(backup["archive_py_covered"])
-    zeabur_env = json.loads((repo_dir / "zeabur.json").read_text(encoding="utf-8"))["env"]
-    assert "CLOUDFLARE_RADAR_API_TOKEN" in zeabur_env
-    assert zeabur_env["CLOUDFLARE_RADAR_ENABLED"]["default"] == "false"
-    assert zeabur_env["IODA_INTERNET_HEALTH_ENABLED"]["default"] == "false"
-    assert zeabur_env["IODA_ALERTS_ENABLED"]["default"] == "false"
+    # repo 預設關閉：config._COLLECTOR_TOGGLES 與 .env.example（2026-11 起取代 zeabur.json）
+    toggles = {prefix: enabled for prefix, enabled, _ in config._COLLECTOR_TOGGLES}
+    assert toggles["CLOUDFLARE_RADAR"] is False
+    assert toggles["IODA_INTERNET_HEALTH"] is False
+    env_example = (repo_dir / ".env.example").read_text(encoding="utf-8").splitlines()
+    assert "# CLOUDFLARE_RADAR_API_TOKEN=your_cloudflare_radar_token" in env_example
+    assert "CLOUDFLARE_RADAR_ENABLED=false" in env_example
+    assert "IODA_INTERNET_HEALTH_ENABLED=false" in env_example
+    assert "IODA_ALERTS_ENABLED=false" in env_example
