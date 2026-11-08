@@ -641,6 +641,8 @@ power_taipower:
     - {prefix: power_taipower/archives/, expected_daily: false}
   critical: false
 
+# ⚠️ 不可再打開：目標表 reference.foursquare_poi 已於 2026-11-07 刪除（gis-platform mig 510），
+#    冷存於 S3 supabase-export/reference.foursquare_poi/full-20261107.csv.gz
 foursquare_poi:
   enabled: false
   deployment: disabled
