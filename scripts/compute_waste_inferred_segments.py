@@ -1,23 +1,26 @@
 """
 compute_waste_inferred_segments.py
 ===================================
-對 A 類 hwms flat schedule routes（COUNT(DISTINCT arrival_sec)=1）跑 OSRM /route
+對 A 類 hwms flat schedule routes（COUNT(DISTINCT arrival_sec)=1）跑 Valhalla /route
 取 stop-to-stop 沿馬路距離，寫進 spatial.waste_route_inferred_segments。
 
-對應 BL-22 OSRM 升級。RPC migration 085 LEFT JOIN 此表使用。
+對應 BL-22 路網距離升級。
+（2026-11：Zeabur OSRM 停運不搬，改用自架 Valhalla https://valhalla.itsmigu.com；
+  需環境變數 VALHALLA_TOKEN，VALHALLA_URL 可覆寫。輸出：distance_m 公尺、duration_s 秒，與舊 OSRM 版同義。）
+RPC migration 085 LEFT JOIN 此表使用。
 
 流程：
 1. 拿 A 類 routes 的 stops（按 city, route_id, seq 排序，dedup 同 coord）
-2. 對每 route 內相鄰 (seq i-1, seq i) 兩 stop 呼叫 OSRM
-   GET {OSRM_URL}/route/v1/driving/{lng1},{lat1};{lng2},{lat2}?overview=false
-3. 解析 distance + duration
+2. 對每 route 內相鄰 (seq i-1, seq i) 兩 stop 呼叫 Valhalla
+   POST {VALHALLA_URL}/route  {"locations":[{lat,lon},{lat,lon}],"costing":"auto"}
+3. 解析 trip.summary.length（km→m）+ trip.summary.time（秒）
 4. UPSERT 進 spatial.waste_route_inferred_segments
 
 用法：
   python3 compute_waste_inferred_segments.py             # dry-run
   python3 compute_waste_inferred_segments.py --commit    # 實際寫入
 
-OSRM 速率限制：~10-20 req/s（osrm-proxy 不限但 osrm-taiwan 可能會吃 CPU），加 0.05s sleep
+速率：Valhalla 跑在 4GB 小主機，預設 sleep 50ms 避免打滿 CPU
 """
 from __future__ import annotations
 
@@ -31,10 +34,10 @@ from typing import Any
 import requests
 import psycopg2
 
-OSRM_URL = "https://osrm-proxy-gis.zeabur.app"
-OSRM_TOKEN = os.getenv("OSRM_TOKEN", "").strip()  # 從環境變數讀取，不寫死在程式碼
-if not OSRM_TOKEN:
-    sys.exit("OSRM_TOKEN 未設定：先執行 set -a; source data-collectors/.env; set +a")
+VALHALLA_URL = os.getenv("VALHALLA_URL", "https://valhalla.itsmigu.com").strip().rstrip("/")
+VALHALLA_TOKEN = os.getenv("VALHALLA_TOKEN", "").strip()  # 從環境變數讀取，不寫死在程式碼
+if not VALHALLA_TOKEN:
+    sys.exit("VALHALLA_TOKEN 未設定：請先 export VALHALLA_TOKEN=...（Bearer token，見 SETUP-INVENTORY.md）")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -85,28 +88,31 @@ def fetch_route_stops(conn, city: str, route_id: str) -> list[tuple[int, float, 
     return [(seq, float(lng), float(lat)) for seq, lng, lat in rows]
 
 
-def osrm_route(lng1: float, lat1: float, lng2: float, lat2: float, session: requests.Session, retries: int = 3) -> tuple[float, int] | None:
-    """呼叫 OSRM /route 取 distance(m) + duration(s)。失敗回 None。網路斷線 retry。"""
-    url = f"{OSRM_URL}/route/v1/driving/{lng1:.6f},{lat1:.6f};{lng2:.6f},{lat2:.6f}"
-    params = {"overview": "false"}
-    headers = {"Authorization": f"Bearer {OSRM_TOKEN}"}
+def valhalla_route(lng1: float, lat1: float, lng2: float, lat2: float, session: requests.Session, retries: int = 3) -> tuple[float, int] | None:
+    """呼叫 Valhalla /route（costing=auto）取 distance(m) + duration(s)。失敗回 None。網路斷線 retry。"""
+    url = f"{VALHALLA_URL}/route"
+    payload = {
+        "locations": [{"lat": lat1, "lon": lng1}, {"lat": lat2, "lon": lng2}],
+        "costing": "auto",
+        "directions_options": {"units": "kilometers"},
+    }
+    headers = {"Authorization": f"Bearer {VALHALLA_TOKEN}"}
     for attempt in range(retries):
         try:
-            resp = session.get(url, params=params, headers=headers, timeout=15)
+            resp = session.post(url, json=payload, headers=headers, timeout=15)
+            if resp.status_code == 400:
+                return None  # 找不到路徑／附近無道路（Valhalla 以 400 回報），不 retry
             resp.raise_for_status()
-            data = resp.json()
-            if data.get("code") != "Ok":
-                return None
-            route = data["routes"][0]
-            return float(route["distance"]), int(route["duration"])
+            summary = resp.json()["trip"]["summary"]
+            return float(summary["length"]) * 1000.0, int(summary["time"])  # length 為 km
         except (requests.ConnectionError, requests.Timeout) as e:
             if attempt < retries - 1:
                 time.sleep(2 * (attempt + 1))
                 continue
-            print(f"[ERR] OSRM after {retries} retries: {e}", file=sys.stderr)
+            print(f"[ERR] Valhalla after {retries} retries: {e}", file=sys.stderr)
             return None
         except Exception as e:
-            print(f"[ERR] OSRM {lng1:.5f},{lat1:.5f}→{lng2:.5f},{lat2:.5f}: {e}", file=sys.stderr)
+            print(f"[ERR] Valhalla {lng1:.5f},{lat1:.5f}→{lng2:.5f},{lat2:.5f}: {e}", file=sys.stderr)
             return None
     return None
 
@@ -116,7 +122,7 @@ def upsert_segment(conn, city: str, route_id: str, seq: int, distance_m: float, 
     cur.execute("""
         INSERT INTO spatial.waste_route_inferred_segments
             (city, route_id, seq, distance_m, osrm_duration_s, source, computed_at)
-        VALUES (%s, %s, %s, %s, %s, 'osrm', NOW())
+        VALUES (%s, %s, %s, %s, %s, 'valhalla', NOW())
         ON CONFLICT (city, route_id, seq) DO UPDATE SET
             distance_m      = EXCLUDED.distance_m,
             osrm_duration_s = EXCLUDED.osrm_duration_s,
@@ -130,7 +136,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--commit", action="store_true", help="實際寫入 DB（預設 dry-run）")
     ap.add_argument("--limit-routes", type=int, default=None, help="限制處理前 N 個 route")
-    ap.add_argument("--sleep-ms", type=int, default=50, help="每 call 之間 sleep（ms，避免打死 OSRM）")
+    ap.add_argument("--sleep-ms", type=int, default=50, help="每 call 之間 sleep（ms，避免打死 Valhalla）")
     args = ap.parse_args()
 
     conn = psycopg2.connect(_load_db_url())
@@ -162,12 +168,12 @@ def main():
             upsert_segment(conn, city, route_id, first_seq, 0.0, 0)
         seq_1_inserted += 1
 
-        # 對相鄰 stops 呼叫 OSRM
+        # 對相鄰 stops 呼叫 Valhalla
         for i in range(1, len(stops)):
             prev_seq, prev_lng, prev_lat = stops[i - 1]
             curr_seq, curr_lng, curr_lat = stops[i]
 
-            result = osrm_route(prev_lng, prev_lat, curr_lng, curr_lat, session)
+            result = valhalla_route(prev_lng, prev_lat, curr_lng, curr_lat, session)
             total_calls += 1
             if result is None:
                 total_failed += 1
@@ -183,7 +189,7 @@ def main():
         if args.commit and r_idx % 20 == 0:
             conn.commit()
             elapsed = time.time() - t_start
-            print(f"[2] {r_idx}/{len(routes)} routes done · {total_calls} OSRM calls · "
+            print(f"[2] {r_idx}/{len(routes)} routes done · {total_calls} Valhalla calls · "
                   f"{total_failed} fail · {elapsed:.1f}s elapsed · "
                   f"ETA {(elapsed / r_idx) * (len(routes) - r_idx):.0f}s")
 
@@ -193,8 +199,8 @@ def main():
     elapsed = time.time() - t_start
     print(f"\n[總計]")
     print(f"  routes processed:  {len(routes):,}")
-    print(f"  OSRM calls total:  {total_calls:,}")
-    print(f"  OSRM calls failed: {total_failed:,}")
+    print(f"  Valhalla calls total:  {total_calls:,}")
+    print(f"  Valhalla calls failed: {total_failed:,}")
     print(f"  seq=1 (起點 0):    {seq_1_inserted:,}")
     print(f"  elapsed:           {elapsed:.1f}s")
     if args.commit:
