@@ -13,7 +13,7 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 |------|------|------|
 | **taipei-gis-analytics** | `../taipei-gis-analytics/` | 探索開放資料、開發清洗 pipeline、catalog 治理 |
 | **gis-platform** | `../gis-platform/` | Supabase（含 schema migrations）+ 前端 + 資料清冊 |
-| **data-collectors**（本專案） | `.` | Zeabur + HiCloud VM 上 24/7 收集，寫入共用 Supabase |
+| **data-collectors**（本專案） | `.` | pulse-host + HiCloud VM 上 24/7 收集，寫入共用 Supabase、每日歸檔 S3 |
 
 **資料清冊唯一真相**：[`../gis-platform/docs/data-inventory.md`](../gis-platform/docs/data-inventory.md)
 
@@ -23,9 +23,11 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 ## 部署位置
 
+> 2026-11-07 起主程式從 Zeabur 搬到 Akamai Linode「pulse-host」（docker compose＋Cloudflare Tunnel，單一實例）。系統架構、Supabase／R2／S3／本機暫存各自的職責與保留期限、新增收集器跑在哪的決策樹，正本是 GIS 工作區 `.gis-agent-system/decisions/0026-pulse-architecture-and-data-placement.md`（ADR-0026）。
+
 | 位置 | 跑什麼 | 為什麼 |
 |---|---|---|
-| **Zeabur（主力）** | 絕大多數 collector（`deployment: zeabur`）+ `tasks/daily_report.py` + `tasks/archive.py` | PaaS 24/7 託管，與 Supabase / S3 同生態圈 |
+| **pulse-host（主力）** | 絕大多數 collector（`cross_layer_map.yaml` 的 `deployment` 欄沿用舊值 `zeabur`）+ `tasks/daily_report.py` + `tasks/archive.py` | GHCR image（`publish-image.yml` 在 main 每次 push 發 `pulse-collector:<完整 SHA>`），在主機上用 `sudo -u deploy bash /opt/pulse-host/ops/collector-deploy.sh [SHA]` 部署／回滾；本機資料只是暫存（原始檔留 2 天），正本在 S3 |
 | **HiCloud VM（HiNet IP）** | 需 Taiwan IP 的 collector（`deployment: hicloud_vm`）：`ship_ais`、`waste_positions`、`cdc_public_health_weekly` | 來源 API（航港局 / 高雄市府 / 台南市府 / 疾管署）對國際雲段 IP 封鎖或 timeout。詳見 [docs/EXTERNAL_COLLECTORS.md](docs/EXTERNAL_COLLECTORS.md) |
 
 > 各位置實際跑哪些 collector 以 [`config/cross_layer_map.yaml`](config/cross_layer_map.yaml) 的 `deployment` 欄位為準（勿在本文件寫死數字）。

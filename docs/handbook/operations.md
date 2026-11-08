@@ -142,10 +142,12 @@ from pg_stat_io group by 1 order by 2 desc nulls last;
 
 ## 5. 部署與日常操作
 
-### 5.1 Zeabur（主容器）
+### 5.1 pulse-host（主容器，2026-11-07 起）
 
-- push 到 `main` 會觸發 Zeabur 從 GitHub 重建並部署，注意衝擊範圍。
-- **env 改完要 restart**；程式改了要 **redeploy**，restart 拿不到新程式。`git commit --allow-empty` 不會觸發 build。
+> 主機設定（compose、ops 腳本）在 GIS 工作區 `.gis-agent-system/projects/2026-10-zeabur-migration/host/`，部署入口與架構正本見 ADR-0026 §8。下面 Zeabur 時期的條目（CLI 印祕密值等）留作歷史，Zeabur 舊服務已停用。
+
+- push 到 `main` 只會由 `publish-image.yml` 發 GHCR image，**不會自動部署**。部署／回滾：`ssh pulse-host` → `sudo -u deploy bash /opt/pulse-host/ops/collector-deploy.sh [SHA]`（版本記在 `/opt/pulse-host/.env` 的 `COLLECTOR_TAG`，舊值在 `.env.collector-history`；5 分鐘內沒 healthy 會印回滾指令）。
+- **env 在 `/opt/pulse-host/env/collector.env`**，改完要 `docker compose --profile collector up -d collector` 重建容器才生效。collector 是單一實例，不可在別處同時跑。
 - `*_ENABLED=true` 卻沒資料：先看啟動 log 的 ⚠ 行（`required_env` 缺漏會 silent skip），再查 image 有沒有裝相依套件（缺套件時 lazy import 靜默失敗）。
 - 判斷部署生效：看只有新版才會產生的內容特徵，或進容器確認新程式已載入；不要看 `updated_at`，`deployment list` 的 RUNNING 標籤也會滯後。
 - **Zeabur CLI 會印出祕密值**：`zeabur variable env`、`variable create`（寫入後回顯全部變數）都用表格印出值，遮蔽規則抓不到。寫入一律把輸出導向 `/dev/null`，查詢時只列 key 名稱。跨 service 的變數參照（`${…}`）用 dashboard 設，CLI 的參數解析會弄壞它。

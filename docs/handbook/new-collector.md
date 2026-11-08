@@ -27,7 +27,8 @@
 
 另外三題是本 repo 特有、上線前也要先答：
 
-- **來源擋不擋雲端 IP？** 本機 curl 正常、Zeabur 連線逾時，多半是 IP 被封鎖 → 走 VM 分支（§4）。
+- **來源擋不擋雲端 IP？** 本機 curl 正常、pulse-host（Akamai Linode 東京）連線逾時，多半是 IP 被封鎖 → 走 VM 分支（§4，範本 `external/_vm_template/`）。
+- **結果該寫哪？** 要伺服器端依時間／範圍查詢才進 Supabase；每個人看都一樣的快照、影像寫 R2；不論哪種都要每日歸檔到 S3（正本）。決策樹正本：GIS 工作區 `.gis-agent-system/decisions/0026-pulse-architecture-and-data-placement.md`（ADR-0026）§5.2。
 - **上游會不會「凍結但仍回 200」？** 要能比對資料內的來源時間，不能只看 HTTP 狀態（見 [principles.md](principles.md)）。
 - **缺值怎麼存？** 一律 NULL，不可當 0（休市字串、-99、缺幀都踩過）。
 
@@ -45,14 +46,15 @@
    - **保留期**：在 `metadata.retention_policies` **INSERT 一列**（gis-platform mig 282 起的唯一正本）。
      - 分區表：`kind='partition'`，由 `cleanup_expired_partitions()` 自動讀註冊表清理。
      - 非分區表：`kind='delete'`＋`time_column`，另排一支 pg_cron 呼叫 `cleanup_rows_batched` procedure（schema 經過 live 遷移，以 gis-platform 現行 migration 為準，例如 mig 313）。
-     - 刻意永久保留：明寫 `retention_days = NULL` 並在 note 說明原因。
+     - **上限 180 天**（ADR-0026：Supabase 每表最長 6 個月）。刻意永久保留：明寫 `retention_days = NULL`、在 note 說明原因，並經使用者同意。
+     - **同時寫明 S3 正本路徑**：collector 歸檔前綴（`<name>/archives/`）或 `config/backup_manifest.yaml` 的備份項；沒有正本的表不能上線。
      - **不要**再 `CREATE OR REPLACE` 清理函式、不要改「硬編碼清單」——那是 mig 282 之前的舊做法，mig 220–222 就是因此漏掉 4 張表、DB 長到 52 GB。
      - 天數怎麼定：至少是前端／RPC 實際回看的窗口再加 margin（例：急診 14 天卡片要留 30 天）。手冊不抄天數，查 `metadata.retention_policies` 或對應 migration。
    - **RLS**：建在 API 暴露 schema（live／reference／spatial…）的表，同一支 migration 就要 `ENABLE ROW LEVEL SECURITY`＋anon／authenticated 的 SELECT policy（範本 gis-platform `migrations/418_funeral_enable_rls.sql`）。漏開會收到 Supabase `rls_disabled_in_public` 告警。
    - **schema**：新即時表建在 `live`，RPC 建在 `public`（ADR-0010）。
    - **自然鍵／唯一索引**：如果要加唯一索引去重，**先部署 collector 的冪等寫入（`ON CONFLICT DO NOTHING`），再建唯一索引**；反過來 collector 會撞唯一鍵整批失敗（Disk IO 第三輪 §6）。
    - migration 取號：當天 `git fetch` 後再定號，避免撞號。
-2. **`docs/data-inventory.md`**：資料清冊加一列（含「部署位置」欄：Zeabur／HiCloud VM／Disabled）。
+2. **`docs/data-inventory.md`**：資料清冊加一列（含「部署位置」欄：pulse-host（舊稱 Zeabur）／HiCloud VM／Disabled）。
 3. **`docs/data-safety-inventory.md`**：加進動態或靜態表清單，標 S3 archive 起始日與健康度。
 
 ### B. data-collectors（本 repo）
@@ -79,8 +81,8 @@
 
 ### E. 部署
 
-17. 開 PR → CI 綠 → 合併（Zeabur 自動部署）。
-18. 在 Zeabur 設 `{PREFIX}_ENABLED=true`（必要時 `{PREFIX}_INTERVAL`），接著做 §3 驗收。環境變數在**執行中的容器**上改，要 restart 才生效。
+17. 開 PR → CI 綠 → 合併；`publish-image.yml` 發 GHCR image（`pulse-collector:<完整 SHA>`）。
+18. 在 pulse-host 的 `/opt/pulse-host/env/collector.env` 設 `{PREFIX}_ENABLED=true`（必要時 `{PREFIX}_INTERVAL`），再 `sudo -u deploy bash /opt/pulse-host/ops/collector-deploy.sh <SHA>`（重建容器，env 才生效），接著做 §3 驗收。避開整點與 03:00 歸檔。
 
 
 ---
@@ -91,7 +93,7 @@
 
 | # | 要證明的事 | 怎麼看 | 常見假象 |
 |---|---|---|---|
-| 1 | **有跑**：正式環境載入了新程式與新設定 | `zeabur service exec` 進容器讀 `config.{PREFIX}_ENABLED`，並確認 `COLLECTOR_REGISTRY` 裡有這個 prefix（驗證是新 image）；重依賴也在容器內 import 一次 | dashboard 顯示已設定，但容器沒 restart，實際還是 `False`；容器缺套件時 collector 靜默失效 |
+| 1 | **有跑**：正式環境載入了新程式與新設定 | 在 pulse-host 用 `docker exec pulse-host-collector-1 python3 -c …` 讀 `config.{PREFIX}_ENABLED`，並確認 `COLLECTOR_REGISTRY` 裡有這個 prefix、`printenv GIT_COMMIT_SHA` 是新 SHA（驗證是新 image）；重依賴也在容器內 import 一次 | env 檔已改，但容器沒重建，實際還是 `False`；容器缺套件時 collector 靜默失效 |
 | 2 | **解析成功** | collector log 有成功訊息；`metadata.collector_status` 的 `last_success_at` 更新、`last_error` 為空 | `write()` 失敗只回 False，非 `require_db_write` 的 collector 這輪仍算成功；零筆時直接 return、不寫心跳 |
 | 3 | **有新資料** | 直接查 DB：`select count(*) from live.{table} where <時間欄> > now() - interval '1 hour'`（一定要有 LIMIT 或有界聚合） | 判斷部署是否生效，要看「只有新版才會產生的內容特徵」，不看 `updated_at` |
 | 4 | **表級監控有涵蓋** | 日報的跨層對照列出這個 collector（靠 `cross_layer_map.yaml`）；寫入新鮮度有這張表（靠 `realtime_tables.yaml`）；`select * from metadata.check_retention_coverage()` 沒列出新表 | 共用表時，A 源壞掉會被 B 源的新鮮度蓋過去；`check_retention_coverage()` 本身有盲區（mig 385 擴大後仍有） |
