@@ -1,0 +1,8 @@
+# ─── <name> cron BEGIN ───
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# 收集：分鐘挑沒人用的（現況 waste */2、ship */10、isohe :08/:18/…、immigration :07、moa 00:53）
+13 * * * * cd /opt/<app> && /usr/bin/timeout -k 30 900 /usr/bin/python3 ./collect_<name>.py >> /var/log/<app>/collect.log 2>&1
+# 歸檔：03:00–03:30 之間錯開既有（ship 03:00、waste 03:05、isohe 03:10、immigration 03:15、cdc 03:20、moa 03:21）
+25 3 * * * cd /opt/<app> && /usr/bin/python3 ./archive_<name>.py >> /var/log/<app>/archive.log 2>&1
+# ─── <name> cron END ───

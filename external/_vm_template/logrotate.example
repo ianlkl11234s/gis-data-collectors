@@ -1,0 +1,19 @@
+# 實際檔案：/etc/logrotate.d/pulse-collectors（所有 VM 收集器共用一份，新 app 把路徑加進第一段）
+/var/log/ship-ais/*.log
+/var/log/waste-positions/*.log
+/var/log/isohe-port-marine/*.log
+/var/log/immigration-apis-airport/*.log
+/var/log/moa-opendata/*.log
+/var/log/cdc-public-health/*.log
+/var/log/external-health/*.log
+/var/log/pulse-detect/*.log
+/var/log/<app>/*.log
+{
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

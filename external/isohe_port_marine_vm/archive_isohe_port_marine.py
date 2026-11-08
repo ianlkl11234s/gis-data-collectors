@@ -23,6 +23,26 @@ RETENTION_DAYS = int(os.environ.get("ARCHIVE_RETENTION_DAYS", "3"))
 TZ = timezone(timedelta(hours=8))
 
 
+def local_due_dates(collector_dir: Path, today: datetime, keep_days: int) -> list[datetime]:
+    """本機所有 YYYY/MM/DD 日期目錄中，日期 <= today - keep_days 者（舊到新）。
+
+    不再只回掃最近 30 天：VM 停機或 S3 失敗超過一個月的日期也會被補處理，
+    不會永遠卡在本機（2026-11-08 清出 ship_ais／waste_positions 8/23–8/27 共約 1.8GB）。
+    """
+    cutoff = today - timedelta(days=keep_days)
+    out = []
+    for day_dir in collector_dir.glob("[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]"):
+        if not day_dir.is_dir():
+            continue
+        try:
+            day = datetime.strptime("/".join(day_dir.parts[-3:]), "%Y/%m/%d").replace(tzinfo=today.tzinfo)
+        except ValueError:
+            continue
+        if day <= cutoff:
+            out.append(day)
+    return sorted(out)
+
+
 def s3_client():
     return boto3.client(
         "s3",
@@ -72,9 +92,9 @@ def main() -> int:
     client = s3_client()
     today = datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     failed = False
-    for delta in range(RETENTION_DAYS, RETENTION_DAYS + 30):
+    for target in local_due_dates(DATA_DIR / "isohe_port_marine", today, RETENTION_DAYS):
         try:
-            print(archive_day(client, today - timedelta(days=delta)))
+            print(archive_day(client, target))
         except Exception as exc:
             failed = True
             print(f"archive failed: {exc}", file=sys.stderr)

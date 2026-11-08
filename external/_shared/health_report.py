@@ -11,6 +11,9 @@
   - VM uptime / load avg / disk usage / data dir 各子目錄大小
   - Outbound 健檢：對 ship_ais / waste_positions 的來源 API 各 ping 一次
     （提早發現「IP 又被擋」這種大事）
+  - 告警檢查（2026-11-08 加，結果放 snapshot["alerts"]，daily_report 會在 Telegram 日報標 🔴）：
+      · 根目錄磁碟使用率 > DISK_ALERT_PCT（80%）
+      · 有日期目錄超過「保留天數 + 2 天」仍留在本機（歸檔卡住）
 
 部署：
   - 程式位置 : /opt/external-health/health_report.py
@@ -89,6 +92,79 @@ DEFAULT_TARGETS: list[dict] = [
         "expected_interval_min": 10,
     },
 ]
+
+
+DISK_ALERT_PCT = int(os.environ.get("VM_DISK_ALERT_PCT", "80"))
+STALE_GRACE_DAYS = 2
+
+# 歸檔滯留檢查：每支 app 的資料根目錄、保留天數來源（app .env 的 ARCHIVE_RETENTION_DAYS）
+# keep_extra：archive 腳本實際多留的天數（immigration 保留 N+1 天）
+ARCHIVE_TARGETS: list[dict] = [
+    {"app": "ship-ais", "root": "/var/lib/ship-ais/data", "collectors": ["ship_ais"], "default_retention": 7},
+    {"app": "waste-positions", "root": "/var/lib/waste-positions/data", "collectors": ["waste_positions"], "default_retention": 7},
+    {"app": "isohe-port-marine", "root": "/var/lib/isohe-port-marine/data", "collectors": ["isohe_port_marine"], "default_retention": 3},
+    {"app": "immigration-apis-airport", "root": "/var/lib/immigration-apis-airport/data",
+     "collectors": ["immigration_apis_airport"], "default_retention": 7, "keep_extra": 1},
+    {"app": "cdc-public-health", "root": "/var/lib/cdc-public-health/data",
+     "collectors": ["cdc_public_health_weekly"], "default_retention": 1},
+    # moa-opendata：data/ 底下每個子目錄都是一支 collector（buffer、.archive-receipts 除外）
+    {"app": "moa-opendata", "root": "/var/lib/moa-opendata/data", "collectors": "*", "default_retention": 7},
+]
+_NON_COLLECTOR_DIRS = {"buffer", "state", ".archive-receipts", "weather_raw"}
+
+
+def app_retention_days(app: str, default: int) -> int:
+    env_file = Path(f"/opt/{app}/.env")
+    try:
+        from dotenv import dotenv_values
+        value = dotenv_values(env_file).get("ARCHIVE_RETENTION_DAYS") if env_file.exists() else None
+        return int(value) if value else default
+    except (ValueError, OSError):
+        return default
+
+
+def stale_date_dirs(collector_dir: Path, keep_days: int, today: datetime) -> list[str]:
+    """回傳超過 keep_days + STALE_GRACE_DAYS 天仍在本機的日期（YYYY-MM-DD，舊到新）。"""
+    out = []
+    for day_dir in collector_dir.glob("[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]"):
+        if not day_dir.is_dir():
+            continue
+        try:
+            day = datetime.strptime("/".join(day_dir.parts[-3:]), "%Y/%m/%d").date()
+        except ValueError:
+            continue
+        if (today.date() - day).days > keep_days + STALE_GRACE_DAYS:
+            out.append(day.isoformat())
+    return sorted(out)
+
+
+def run_checks(system: dict, targets: list[dict] | None = None, today: datetime | None = None) -> tuple[dict, list[str]]:
+    """磁碟與歸檔滯留檢查；回傳 (checks 明細, alerts 文字清單)。"""
+    today = today or datetime.now(TAIPEI_TZ)
+    alerts: list[str] = []
+    disk = system.get("disk_used_pct")
+    if disk is None:
+        alerts.append("無法讀取磁碟使用率")
+    elif disk > DISK_ALERT_PCT:
+        alerts.append(f"磁碟使用率 {disk}% > {DISK_ALERT_PCT}%（剩 {system.get('disk_avail')}）")
+
+    stale: dict[str, dict] = {}
+    for t in targets if targets is not None else ARCHIVE_TARGETS:
+        root = Path(t["root"])
+        if not root.exists():
+            continue
+        keep = app_retention_days(t["app"], t["default_retention"]) + t.get("keep_extra", 0)
+        if t["collectors"] == "*":
+            names = sorted(p.name for p in root.iterdir() if p.is_dir() and p.name not in _NON_COLLECTOR_DIRS)
+        else:
+            names = t["collectors"]
+        for name in names:
+            dates = stale_date_dirs(root / name, keep, today)
+            if dates:
+                stale[name] = {"keep_days": keep, "dates": dates}
+                shown = ", ".join(dates[:5]) + (f" …共 {len(dates)} 天" if len(dates) > 5 else "")
+                alerts.append(f"{name} 有日期目錄超過保留 {keep}+{STALE_GRACE_DAYS} 天未清：{shown}")
+    return {"disk_alert_pct": DISK_ALERT_PCT, "stale_date_dirs": stale}, alerts
 
 
 def load_targets() -> list[dict]:
@@ -244,13 +320,17 @@ def build_snapshot() -> dict:
             label = ob.get("label", ob["host"])
             outbound_report[label] = check_outbound(ob["host"], ob.get("path", "/"))
 
+    system = system_metrics()
+    checks, alerts = run_checks(system)
     return {
         "host": os.environ.get("VM_HOSTNAME") or socket.gethostname(),
         "generated_at": datetime.now(TAIPEI_TZ).isoformat(),
         "egress_ip": egress_ip(),
-        "system": system_metrics(),
+        "system": system,
         "collectors": collectors_report,
         "outbound_health": outbound_report,
+        "checks": checks,
+        "alerts": alerts,
     }
 
 
@@ -272,6 +352,10 @@ def upload_snapshot(snapshot: dict) -> str:
 def main() -> int:
     snapshot = build_snapshot()
     print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+    for alert in snapshot["alerts"]:
+        print(f"⚠️ ALERT: {alert}")
+    if not snapshot["alerts"]:
+        print("✓ checks: 磁碟與歸檔滯留皆正常")
     try:
         s3_path = upload_snapshot(snapshot)
         print(f"\n✓ uploaded → {s3_path}")

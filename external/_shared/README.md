@@ -26,12 +26,14 @@
      ├─ 系統指標 (uptime / loadavg / disk%)
      ├─ Outbound 健檢（對每個 collector 來源各 ping 一次 — 提早發現 IP 又被擋）
      ├─ 列出 data dir 各子目錄大小
+     ├─ 告警檢查（alerts）：磁碟 >80%、日期目錄超過保留天數+2 天未清（ARCHIVE_TARGETS）
      └─ 上傳 s3://migu-gis-data-collector/_external_vm_health/<HOST>/YYYY-MM-DD.json
 
 [每天 08:00] Zeabur daily_report
   → tasks/monitoring.list_vm_health_snapshots() 撈 _external_vm_health/ 下所有 host 最新 JSON
   → _section_external_vm_health 把結果格式化進 Telegram 日報
   → snapshot age > 26h → 標 VM 失聯 🔴
+  → snapshot.alerts 非空 → host 標 🔴 並逐條列出
 ```
 
 ## 部署（新加裝 / 災害復原）
