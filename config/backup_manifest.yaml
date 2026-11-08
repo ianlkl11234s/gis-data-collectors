@@ -82,10 +82,6 @@ overrides:
     storage_class: GLACIER_IR
     notes: "Unified GFW v2 小型 publish metadata；GeoJSON 在 S3/CDN，DB cleanup 與 S3 retention 分離。表沒有候選時間欄（只有 started_at），實際走 no_time_column 整表快照（約 26MB，每日）"
 
-  reference.foursquare_poi:
-    fingerprint_strategy: row_count_only
-    notes: "Huge table (420k rows, 161MB); HuggingFace gated dataset; monthly collector update"
-
   spatial.statistical_areas:
     storage_class: STANDARD
     notes: "21M GeoJSON source; 11,490 rows; critical for demographic analysis"
@@ -121,7 +117,6 @@ exclude:
   # Metadata ephemeral tables
   - metadata.collector_status       # heartbeat ephemeral; reconstructible from logs
   - metadata.import_history         # audit trail; reconstructible
-  - opendata.catalog                # catalog only; low value
   - opendata.sync_runs              # sync metadata; ephemeral
 
   # Realtime rolling views (not partitioned, reconstructible from snapshots)
@@ -299,7 +294,7 @@ statistics:
     - "Total static schemas: 12 (reference, spatial, admin, rail, maritime, demographics, fire, energy, public, safety, medical, analytics)"
     - "Total realtime schema: 1 (live)"
     - "Realtime targets for daily S3 backup: 83 - 16 (archive_py_covered) = 67 tables"
-    - "Critical static tables: foursquare_poi, statistical_areas, village_demographics_yearly, power_facilities/units, villages"
+    - "Critical static tables: statistical_areas, village_demographics_yearly, power_facilities/units, villages"
 
 strategy:
   archive_py_covered:
