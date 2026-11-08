@@ -45,7 +45,7 @@ Keycloak 回應判讀（`raise_for_status()` 會吞掉 body；2026-08-30 起 `ut
 - token 端點錯誤帶完整 body（`utils/auth.py`）。
 - 全域 token 失敗 backoff：所有 `TDXAuth` 共用 class-level backoff（60 s 起、倍增、上限 600 s；429 帶 `Retry-After` 時照伺服器要求），backoff 期間直接 fail fast，止住 retry storm。
 - 資料 API 回 401 時自動作廢 token、重取、重新取號後重試一次（`utils/tdx_session.py`），不再抱著被撤銷的 token 空轉到本地過期。
-- 告警指數收斂（`utils/notify.py`）：連續錯誤只在第 3、6、12、24… 次發 Telegram，恢復時發一則。
+- 告警（`utils/alerting.py`）：連續 3 次且持續 ≥15 分才算壞，critical 的送 🔴 一則、恢復一則；金鑰失效讓多支 TDX collector 同時壞時合成一則（規則見 [operations.md](../operations.md) §1）。
 - 測試：`tests/test_auth.py`、`tests/test_notify.py`。事故長文：[2026-08-30 TDX secret 被重置](../../../.claude/pitfalls/2026-08-30-tdx-secret-reset-401.md)（16 支 collector 連續 15.4 小時 401）。
 
 ### 上游資料的共通怪癖（細節在 analytics `tdx/gotchas.md`）

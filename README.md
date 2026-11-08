@@ -150,7 +150,7 @@ data-collectors/
 │
 ├── tasks/
 │   ├── archive.py                  # 每日 03:00 S3 歸檔
-│   ├── daily_report.py             # Telegram 日報（12 段）
+│   ├── daily_report.py             # Telegram 日報（一則；長版寫 S3）
 │   ├── monitoring.py               # ⭐ 監控 helper（yaml + RPC + S3 + anomaly state）
 │   └── mini_taipei_publish.py
 │
@@ -174,7 +174,8 @@ data-collectors/
 │
 ├── utils/
 │   ├── auth.py                     # TDX / CWA 認證
-│   └── notify.py                   # Telegram / Webhook
+│   ├── alerting.py                 # 告警分級狀態機（🔴 即時／🟡 日報）
+│   └── notify.py                   # Telegram 送出
 │
 ├── tests/                          # pytest 單元測試
 │
