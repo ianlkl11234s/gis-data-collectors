@@ -1180,13 +1180,13 @@ class DailyReportTask:
         rows.sort(key=lambda x: x[1] / max(x[2], 1), reverse=True)
         return rows, critical_dead
 
-    def _routine_line(self, snap: dict) -> str:
+    def _routine_line(self, snap: dict, now: datetime) -> str:
         bits = []
         try:
             from tasks import backup_watch
             b = backup_watch.health_status()
             if b.get("enabled"):
-                today = datetime.now(TAIPEI_TZ).date().isoformat()
+                today = now.date().isoformat()
                 bits.append("備份 ✅" if b.get("last_success_date") == today else "備份 ❌")
         except Exception:
             pass
@@ -1302,7 +1302,7 @@ class DailyReportTask:
         problem = bool(broken or resolved or stale)
         if problem:
             lines.append("")
-        lines.append(self._routine_line(snap))
+        lines.append(self._routine_line(snap, now))
         if problem and errors:
             lines.append(f"🔇 收集器小錯誤 {errors} 次（未達告警門檻、都自動恢復，不用處理）")
         if problem and detail_key:

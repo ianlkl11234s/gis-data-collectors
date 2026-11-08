@@ -850,8 +850,6 @@ def print_config():
     print(f"   S3:  {'✓ ' + S3_BUCKET if S3_BUCKET else '✗ (使用本地儲存)'}")
     print(f"   Supabase: {'✓' if SUPABASE_ENABLED and SUPABASE_DB_URL else '✗ (未啟用)'}")
     print(f"   API: {'✓ Port ' + str(API_PORT) if API_KEY else '✗ (未設定 API_KEY)'}")
-    print(f"   通知: {'✓ Telegram' if TELEGRAM_BOT_TOKEN else '✗'}")
-    if TELEGRAM_BOT_TOKEN:
-        print(f"   Telegram: ✓ (日報 {DAILY_REPORT_TIME})")
+    print(f"   通知: {f'✓ Telegram (日報 {DAILY_REPORT_TIME})' if TELEGRAM_BOT_TOKEN else '✗'}")
     print(f"   資料目錄: {LOCAL_DATA_DIR}")
     print("=" * 50)

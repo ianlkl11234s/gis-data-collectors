@@ -201,3 +201,24 @@ def test_collector_run_skips_raw_but_still_writes_db(tmp_path):
     c.run()
     assert c.supabase_writer.write.call_count == 2
     assert len(list(tmp_path.rglob("dummy_pause_*.json"))) == 1
+
+
+def test_production_path_uses_alerting_red_once_and_recovery(tmp_path, monkeypatch):
+    """notify=None（主機實際走的路）：嚴重 🔴 一則、持續不重送、警告只進日報、恢復一則。"""
+    from utils import alerting
+    sent = []
+    monkeypatch.setattr(alerting, "_sender", lambda text: sent.append(text) or True)
+    c = dg.GuardConfig(data_warn_gb=1e-9, data_crit_gb=1, free_warn_pct=0, free_crit_pct=0,
+                       realert_hours=6)
+    g = dg.DiskGuard(tmp_path, c)
+    _touch(tmp_path / "bus" / "a.json", b"x" * 100)
+    assert g.run(NOW)["level"] == "warn"
+    assert sent == []  # 🟡 不送
+    c.data_crit_gb = 1e-9
+    g.run(NOW + 120)
+    g.run(NOW + 3600)
+    g.run(NOW + 6 * 3600)
+    assert len(sent) == 1 and sent[0].startswith("🔴") and "本機磁碟嚴重" in sent[0]
+    c.data_warn_gb = c.data_crit_gb = 0
+    assert g.run(NOW + 7 * 3600)["level"] == "ok"
+    assert len(sent) == 2 and sent[1].startswith("✅")
