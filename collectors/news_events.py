@@ -43,6 +43,7 @@ import logging
 import re
 import time
 import urllib.parse
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -238,6 +239,198 @@ def hamming_distance(a: int, b: int) -> int:
 
 
 SIMHASH_DUP_THRESHOLD = 3  # hamming distance <= 3 視為跨媒體重複
+
+
+# ============================================================
+# Location evidence POC（純 contract；尚未接 production DB）
+# ============================================================
+
+LOCATION_EVIDENCE_METHOD_VERSION = 'news-location-evidence-poc/v1'
+LOCATION_SCOPES = ('taiwan_local', 'taiwan_multi', 'taiwan_national', 'foreign', 'unknown')
+LOCATION_STATUSES = ('accepted', 'ambiguous', 'unresolved', 'rejected')
+LOCATION_PRECISIONS = (
+    'address', 'poi', 'intersection', 'road_segment', 'village', 'township',
+    'county', 'country', 'none',
+)
+LOCATION_ROLES = (
+    'event_site', 'affected_area', 'reporting_location', 'organization_location', 'background',
+)
+
+# 這是 POC 的小型明示詞表，不是完整 gazetteer，也不應取代既有 DB 白名單。
+_TAIWAN_COUNTIES = (
+    '臺北市', '新北市', '桃園市', '臺中市', '臺南市', '高雄市', '基隆市', '新竹市', '嘉義市',
+    '新竹縣', '苗栗縣', '彰化縣', '南投縣', '雲林縣', '嘉義縣', '屏東縣', '宜蘭縣', '花蓮縣',
+    '臺東縣', '澎湖縣', '金門縣', '連江縣',
+)
+_TOWNSHIP_COUNTY_HINTS = {
+    # 鹿草是此 POC 必須保護的反例：Google News 的雲林 hint 不得覆寫文內地點。
+    '鹿草鄉': '嘉義縣',
+    '鹿草': '嘉義縣',
+}
+_FOREIGN_COUNTRIES = ('日本', '美國', '中國', '韓國', '南韓', '北韓', '香港', '澳洲', '英國', '法國')
+_NATIONAL_MARKERS = ('全國', '全臺', '各縣市')
+
+
+@dataclass(frozen=True)
+class LocationEvidence:
+    """新聞地點 evidence 的可序列化 POC contract。
+
+    county_hint 僅作候選線索；規則明確命中文內地點時，resolved_county 必以文內結果為準。
+    此 contract 是純函式輸出，尚未加入 live.news_events 寫入 payload。
+    """
+
+    location_scope: str
+    location_status: str
+    location_precision: str
+    evidence_text: str
+    evidence_field: str
+    location_role: str
+    resolver: str
+    method_version: str
+    resolved_county: Optional[str] = None
+    county_hint: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ArticleRelationCandidate:
+    """尚未寫入 DB 的 simhash 同稿候選；供後續人工或 resolver 判讀。"""
+
+    left_article_key: str
+    right_article_key: str
+    relation_type: str
+    hamming_distance: int
+    resolver: str = 'simhash64-title-2gram'
+    method_version: str = 'news-article-relation-poc/v1'
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _norm_taiwan_name(text: str) -> str:
+    return (text or '').replace('台', '臺')
+
+
+def _first_text_match(title: str, summary: str, candidates: tuple[str, ...]) -> tuple[str, str]:
+    """依 title 優先回傳 (matched text, source field)。"""
+    for field, text in (('title', title), ('summary', summary)):
+        for candidate in candidates:
+            if candidate in text:
+                return candidate, field
+    return '', ''
+
+
+def build_location_evidence(article: dict) -> LocationEvidence:
+    """以文章明示文字建立 location evidence，完全離線且不修改輸入 article。
+
+    這是保守 POC：未命中文內地點時，不將 feed 的 county_hint 升格為已接受位置。
+    """
+    title = _norm_taiwan_name(str(article.get('title') or ''))
+    summary = _norm_taiwan_name(str(article.get('summary') or ''))
+    county_hint = _norm_taiwan_name(str(article.get('county_hint') or '')) or None
+    corpus = f'{title} {summary}'
+
+    foreign, foreign_field = _first_text_match(title, summary, _FOREIGN_COUNTRIES)
+    matched_township, township_field = _first_text_match(
+        title, summary, tuple(_TOWNSHIP_COUNTY_HINTS)
+    )
+    matched_counties = []
+    county_field = ''
+    for county in _TAIWAN_COUNTIES:
+        if county in corpus:
+            matched_counties.append(county)
+            if not county_field:
+                county_field = 'title' if county in title else 'summary'
+
+    # 文內台灣地點的證據優先於國外背景詞（例如「日本旅客在嘉義縣…」）。
+    if matched_township:
+        county = _TOWNSHIP_COUNTY_HINTS[matched_township]
+        return LocationEvidence(
+            'taiwan_local', 'accepted', 'township', matched_township, township_field,
+            'event_site', 'news_location_rules', LOCATION_EVIDENCE_METHOD_VERSION,
+            county, county_hint,
+        )
+
+    if matched_counties:
+        unique_counties = tuple(dict.fromkeys(matched_counties))
+        if len(unique_counties) > 1:
+            return LocationEvidence(
+                'taiwan_multi', 'accepted', 'county', '、'.join(unique_counties), county_field,
+                'affected_area', 'news_location_rules', LOCATION_EVIDENCE_METHOD_VERSION,
+                None, county_hint,
+            )
+        return LocationEvidence(
+            'taiwan_local', 'accepted', 'county', unique_counties[0], county_field,
+            'event_site', 'news_location_rules', LOCATION_EVIDENCE_METHOD_VERSION,
+            unique_counties[0], county_hint,
+        )
+
+    national, national_field = _first_text_match(title, summary, _NATIONAL_MARKERS)
+    if national:
+        return LocationEvidence(
+            'taiwan_national', 'accepted', 'none', national, national_field,
+            'affected_area', 'news_location_rules', LOCATION_EVIDENCE_METHOD_VERSION,
+            None, county_hint,
+        )
+    if foreign:
+        return LocationEvidence(
+            'foreign', 'accepted', 'country', foreign, foreign_field,
+            'event_site', 'news_location_rules', LOCATION_EVIDENCE_METHOD_VERSION,
+            None, county_hint,
+        )
+    if county_hint:
+        return LocationEvidence(
+            'unknown', 'unresolved', 'none', county_hint, 'county_hint',
+            'background', 'news_location_rules', LOCATION_EVIDENCE_METHOD_VERSION,
+            None, county_hint,
+        )
+    return LocationEvidence(
+        'unknown', 'unresolved', 'none', '', '', 'background',
+        'news_location_rules', LOCATION_EVIDENCE_METHOD_VERSION, None, None,
+    )
+
+
+def location_evidence_json(article: dict) -> str:
+    """供 fixture / downstream contract test 使用的穩定 JSON 表示。"""
+    return json.dumps(build_location_evidence(article).to_dict(), ensure_ascii=False, sort_keys=True)
+
+
+def _article_relation_key(article: dict, index: int) -> str:
+    return str(article.get('article_id') or article.get('url_norm') or article.get('url') or index)
+
+
+def build_article_relation_candidates(
+        articles: list[dict], threshold: int = SIMHASH_DUP_THRESHOLD) -> list[ArticleRelationCandidate]:
+    """列出 simhash 相近稿候選，不做捨棄、不寫入 production DB。"""
+    candidates = []
+    hashes = [
+        to_unsigned_64(int(article['title_simhash']))
+        if article.get('title_simhash') is not None
+        else simhash64(clean_title(str(article.get('title') or '')))
+        for article in articles
+    ]
+    article_keys = [_article_relation_key(article, index) for index, article in enumerate(articles)]
+    for left in range(len(articles)):
+        for right in range(left + 1, len(articles)):
+            # 相同穩定身份表示輸入集重複同一篇文章，不是可供審查的文章間關聯。
+            if article_keys[left] == article_keys[right]:
+                continue
+            distance = hamming_distance(hashes[left], hashes[right])
+            if distance <= threshold:
+                candidates.append(ArticleRelationCandidate(
+                    article_keys[left], article_keys[right],
+                    'same_story_candidate', distance,
+                ))
+    return candidates
+
+
+def article_relation_candidates_json(articles: list[dict]) -> str:
+    return json.dumps(
+        [candidate.to_dict() for candidate in build_article_relation_candidates(articles)],
+        ensure_ascii=False, sort_keys=True,
+    )
 
 
 # ============================================================
