@@ -3,6 +3,7 @@
 > 需要台灣 IP 的收集器放 HiCloud VM（其他放 pulse-host）。新增一支時複製本目錄成
 > `external/<name>_vm/`，把 `<name>`、`<app>` 換掉。VM 位址與帳號見私人筆記，不寫進 repo。
 > 2026-11-08 整理 VM 時定下的標準（起因：舊歸檔只回掃 30 天，卡住約 1.8GB 舊檔；日誌沒輪替）。
+> VM 本機只是暫存，S3 才是正本；何時該放 VM、各儲存的職責與保留上限見 GIS 工作區 `.gis-agent-system/decisions/0026-pulse-architecture-and-data-placement.md`（ADR-0026）§5.2。
 
 ## 標準流程
 

@@ -2,6 +2,8 @@
 
 一句話：資料先熱後冷——Supabase 只放網站和分析要用的近期資料，本地 JSON 每天打包上 S3 當永久冷備份，網站要大量讀的檔案另外發布到 R2／CDN；保留期一律以 `metadata.retention_policies` 和 migration 為準，文件不抄天數。
 
+> 跨系統的儲存分工與保留上限（Supabase 每表最長 6 個月、R2 只放不常變的發布檔、S3 是所有收集資料的唯一永久正本、collector 本機只是暫存）正本是 GIS 工作區 `.gis-agent-system/decisions/0026-pulse-architecture-and-data-placement.md`（ADR-0026）；本文件只寫 collector 這一段怎麼落實。
+
 ## 1. 四層總覽
 
 | 層 | 放在哪 | 放什麼 | 誰寫 | 保留期去哪查 |

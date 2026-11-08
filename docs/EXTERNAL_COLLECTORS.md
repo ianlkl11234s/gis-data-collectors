@@ -2,7 +2,7 @@
 
 > VM 位址與登入帳號不放在公開 repo：文中的 `<VM_HOST>`、`<帳號>` 請見私人筆記。
 
-> 此文件記錄**因網路限制無法在 Zeabur 跑、必須在台灣 ISP 機房跑**的 collector 們，
+> 此文件記錄**因網路限制無法在主機（2026-11-07 起 pulse-host／Akamai Linode 東京，之前是 Zeabur）跑、必須在台灣 ISP 機房跑**的 collector 們，
 > 以及未來新增此類 collector 的標準流程。
 
 ## TL;DR
@@ -27,7 +27,7 @@
 | `food_prices`、`animal_adoption`、`animal_shelter_outcomes`、`animal_shelter_pressure`、`animal_veterinary_clinics`、`animal_licensed_pet_businesses`、`animal_protection_offices` | 農業部 `data.moa.gov.tw` | 同上 VM（2026-10-23 起）；**不重寫**，runner 直接跑主 repo 的 collector class | [`external/moa_opendata_vm/`](../external/moa_opendata_vm/) |
 | `correctional_daily_snapshot` | 法務部矯正署 `prisonmuseum.moj.gov.tw` | 同上 VM（2026-11-07 起，借用 moa_opendata runner）；Linode 主機連線被拒。**2026-11-07 暫停**：上游自 2026-05-15 未更新，runner 內已註解 | [`external/moa_opendata_vm/`](../external/moa_opendata_vm/) |
 
-主 repo 對應 collector 的 `*_ENABLED` 環境變數**必須在 Zeabur 上設為 `false`**（避免雙跑、避免無意義的 timeout 錯誤刷 log）。
+主 repo 對應 collector 的 `*_ENABLED` 環境變數**必須在 pulse-host 的 `/opt/pulse-host/env/collector.env` 設為 `false`**（避免雙跑、避免無意義的 timeout 錯誤刷 log）。新增 VM 收集器照 [`external/_vm_template/`](../external/_vm_template/README.md)。
 
 ---
 
@@ -59,7 +59,7 @@
 | `data.gov.tw` | 低（國際 IP 多半 OK） |
 | `tdx.transportdata.tw` | 低（明確開放 API 給開發者） |
 
-**對策**：新增 collector 第一次部署到 Zeabur 後，先觀察 24 小時錯誤率，若是這類 timeout pattern 就切外部。
+**對策**：新增 collector 第一次部署到 pulse-host 後，先觀察 24 小時錯誤率，若是這類 timeout pattern 就切外部。
 
 ---
 
