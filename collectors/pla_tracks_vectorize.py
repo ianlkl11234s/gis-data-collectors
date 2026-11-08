@@ -36,7 +36,7 @@ import urllib3
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
 from storage.db import connect_supabase
-from utils.notify import notify_error
+from utils import alerting
 
 # ⚠ collectors.pla_tracks 只在 _process_day() 內 import（lazy）。
 #   它依賴 scipy / scikit-image，而 registry.py 會 import 每一支 collector ——
@@ -226,11 +226,14 @@ class PlaTracksVectorizeCollector(BaseCollector):
         # 版型不認得是**靜默失敗**：ledger 照樣有列（心跳正常）但一個形狀都產不出來，
         # 光靠 realtime_tables.yaml 的新鮮度監控看不出來 → 主動告警。
         # 不 raise：raise 會讓這一輪的 ledger 也寫不進去，反而失去「哪天壞了」的紀錄。
+        # 🟡：開始時記一次，之後在日報「現在還壞的」列到修好為止
         if bad_plate:
-            notify_error(
-                self.name,
-                f"{bad_plate}/{processed} 天的航跡圖版型不認得（已知只支援 720×1040）—— "
+            alerting.raise_alert(
+                "pla_tracks_plate", alerting.YELLOW,
+                f"共軍航跡圖 {bad_plate}/{processed} 天版型不認得（已知只支援 720×1040）—— "
                 f"國防部可能改版，需更新 collectors/pla_tracks/georef.py 的 PLATE_SIZE 與 GEOREF")
+        elif processed:
+            alerting.clear_alert("pla_tracks_plate")
 
         return {
             'data': records,

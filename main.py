@@ -520,6 +520,12 @@ def main():
         sched.submit(_as_task("disk_guard", disk_guard.run, timeout=300))
         print(f"\n✓ 本機磁碟護欄 (每 {config.DISK_GUARD_INTERVAL_MIN} 分鐘)")
 
+    # 告警 pending 送出（collector 🔴 開始／恢復先排隊，窗內同時壞 ≥5 支合成一則）
+    from utils import alerting
+    sched = get_scheduler()
+    schedule.every(1).minutes.do(
+        sched.submit, _as_task("alert_flush", alerting.flush, timeout=60))
+
     # Supabase buffer flush 排程
     if config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:
         from collectors.base import get_supabase_writer
@@ -577,9 +583,16 @@ def main():
             msg = (f"主迴圈 {since:.0f}s 無心跳（>{config.HEALTH_MAX_LOOP_SILENCE}s），"
                    f"watchdog 強制重啟進程")
             _logging.error(msg)
+            # 單次自癒 🟡（進日報）；1 小時內第 2 次以上才 🔴。後面緊接 os._exit，
+            # 所以同步寫狀態／送出，不走 pending flush。
             try:
-                from utils.notify import send_telegram, _instance_tag
-                send_telegram(f"🔁 *Watchdog 重啟進程*{_instance_tag()}\n\n{msg}")
+                from utils import alerting
+                now = datetime.now(alerting.TAIPEI_TZ)
+                recent = alerting.recent_events("watchdog", now - timedelta(hours=1))
+                level = alerting.RED if recent else alerting.YELLOW
+                text = (f"Watchdog 1 小時內第 {len(recent) + 1} 次重啟進程：{msg}"
+                        if recent else f"Watchdog 重啟進程：{msg}")
+                alerting.event("watchdog", level, text, now=now)
             except Exception:
                 pass
         health.start_watchdog(config.HEALTH_MAX_LOOP_SILENCE, on_trigger=_on_hang)

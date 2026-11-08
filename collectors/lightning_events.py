@@ -49,7 +49,7 @@ import urllib3
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
 from storage.db import connect_supabase
-from utils.notify import send_telegram
+from utils import alerting
 
 URL_LIGHTNING = "https://service.taipower.com.tw/data/opendata/apply/file/d546005/001.csv"
 
@@ -142,10 +142,12 @@ class LightningEventsCollector(BaseCollector):
             return  # 只是一般雷雨，不是斷供後恢復
 
         when = "DB 無任何台電歷史" if last is None else f"上一筆是 {last.astimezone(TAIPEI_TZ):%Y-%m-%d %H:%M}"
-        send_telegram(
-            "⚡ *台電落雷資料源恢復供資*\n\n"
-            f"本輪抓到 *{n_events}* 筆（{when}）。\n\n"
-            "⚠️ 請立刻把 Zeabur 的 `LIGHTNING_EVENTS_INTERVAL` 調回 `1` 並 restart —— "
+        # 🔴 單次事件：要動手（調回 1 分鐘），稀少
+        alerting.event(
+            "lightning_upstream", alerting.RED,
+            "台電落雷資料源恢復供資\n"
+            f"本輪抓到 {n_events} 筆（{when}）。\n"
+            "請把主機 collector env 的 LIGHTNING_EVENTS_INTERVAL 調回 1 並重啟 —— "
             "上游是 1 分鐘整檔覆寫，每批落雷只在檔案裡存在 60 秒，"
             "目前的 30 分鐘設定會漏掉 29/30。"
         )

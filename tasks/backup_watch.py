@@ -71,10 +71,19 @@ def _redact(text: str) -> str:
 
 
 def _default_notify(text: str) -> None:
+    """正式路徑：交給 utils.alerting（key=backup，🔴 開始一次、恢復一次、24h 仍未恢復補一次）。
+
+    本模組的「每天只告警一次」去重仍保留在自己的狀態檔；alerting 再擋掉跨日重送。
+    """
     try:
-        from utils.notify import _instance_tag, send_telegram
-        # 純文字送出：錯誤訊息可能含 Markdown 特殊字元
-        send_telegram(text.replace("{tag}", _instance_tag()), parse_mode=None)
+        from utils import alerting
+        lines = text.replace("{tag}", "").split("\n")
+        title = lines[0].lstrip("🚨⚠️✅ ").strip()
+        body = "\n".join([title] + lines[1:])
+        if text.startswith("✅"):
+            alerting.clear_alert("backup", "Supabase 每日備份")
+        else:
+            alerting.raise_alert("backup", alerting.RED, body)
     except Exception as exc:  # 通知失敗不影響主程序
         log.warning("backup watch 通知失敗: %s", exc)
 

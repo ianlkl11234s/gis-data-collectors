@@ -286,7 +286,11 @@ def check(data_dir: Path, cfg: GuardConfig, now_ts: float | None = None) -> Disk
 
 
 class DiskGuard:
-    """定期執行（排程 task）；只在等級升高、嚴重持續超過 realert_hours、或恢復時發通知。"""
+    """定期執行（排程 task）。
+
+    正式路徑（notify=None）走 utils.alerting：嚴重 🔴、警告 🟡（只進日報）、恢復僅在送過 🔴 時通知。
+    notify=callable（測試／舊介面）：維持原本「等級升高、嚴重持續 realert_hours、恢復」才呼叫。
+    """
 
     def __init__(self, data_dir: Path | None = None, cfg: GuardConfig | None = None, notify=None):
         self.data_dir = Path(data_dir or config.LOCAL_DATA_DIR)
@@ -297,12 +301,9 @@ class DiskGuard:
         self.last_status: DiskStatus | None = None
 
     def _send(self, text: str) -> None:
-        if self._notify is not None:
-            self._notify(text)
-            return
+        # 只有注入 notify 時會走到（正式路徑在 _run_alerting）
         try:
-            from utils.notify import send_telegram, _instance_tag
-            send_telegram(text.replace("{tag}", _instance_tag()))
+            self._notify(text)
         except Exception as exc:  # 通知失敗不影響 collector
             logger.warning("disk guard 通知失敗: %s", exc)
 
@@ -317,6 +318,8 @@ class DiskGuard:
             paused_now = pause_raw_writes(st.reasons, now_ts)
         elif is_raw_paused() and recovered(st.data_bytes, st.free_pct, self.cfg):
             resumed_now = resume_raw_writes()
+        if self._notify is None:
+            return self._run_alerting(st, now_ts)
         prev = self.last_level
         rank, prev_rank = LEVELS.index(st.level), LEVELS.index(prev)
         should = (
@@ -336,6 +339,30 @@ class DiskGuard:
             "level": st.level, "data_gb": round(st.data_bytes / _GB, 2),
             "free_pct": round(st.free_pct, 1), "cleaned": st.cleaned, "alerted": should,
             "raw_writes_paused": is_raw_paused(),
+        }
+
+    def _run_alerting(self, st: DiskStatus, now_ts: float) -> dict:
+        """正式路徑：嚴重 🔴（開始一次、恢復一次、24h 仍未恢復補一次）；警告 🟡 只進日報。"""
+        from datetime import datetime
+        from utils import alerting
+        now = datetime.fromtimestamp(now_ts, alerting.TAIPEI_TZ)
+        text = self._format(st, paused=is_raw_paused()).replace("{tag}", "")
+        # 第一行是「✅/⚠️/🚨 *標題*」，alerting 自己加 🔴／✅
+        body = "\n".join(text.split("\n")[1:]).strip()
+        try:
+            if st.level == "critical":
+                alerting.raise_alert("disk", alerting.RED, f"本機磁碟嚴重\n{body}", now=now)
+            elif st.level == "warn":
+                alerting.raise_alert("disk", alerting.YELLOW, f"本機磁碟警告：{', '.join(st.reasons)}", now=now)
+            else:
+                alerting.clear_alert("disk", "本機磁碟", now=now)
+        except Exception as exc:  # 通知失敗不影響 collector
+            logger.warning("disk guard alerting 失敗: %s", exc)
+        self.last_level = st.level
+        return {
+            "level": st.level, "data_gb": round(st.data_bytes / _GB, 2),
+            "free_pct": round(st.free_pct, 1), "cleaned": st.cleaned,
+            "alerted": st.level != "ok", "raw_writes_paused": is_raw_paused(),
         }
 
     @staticmethod

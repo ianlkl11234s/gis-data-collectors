@@ -16,7 +16,8 @@ TAIPEI_TZ = timezone(timedelta(hours=8))
 
 import config
 from storage import get_storage
-from utils.notify import notify_error, notify_success, notify_recovery
+from utils import alerting
+from utils.notify import notify_error, notify_success
 from utils.redact import redact_secrets
 
 
@@ -71,6 +72,8 @@ class BaseCollector(ABC):
         self.run_count: int = 0
         self.error_count: int = 0
         self.consecutive_errors: int = 0
+        # 告警門檻依實際執行間隔（含 env 覆寫）分高頻／每日類；DB writer 失敗時也查得到
+        alerting.register_collector(self.name, self.interval_minutes)
 
     @abstractmethod
     def collect(self) -> dict:
@@ -136,10 +139,8 @@ class BaseCollector(ABC):
 
             self.last_run = timestamp
             self.last_success_at = timestamp
-            if self.consecutive_errors >= config.CONSECUTIVE_ERROR_THRESHOLD:
-                # 先前已達連續錯誤告警門檻，這次恢復成功要主動通知
-                notify_recovery(self.name, self.consecutive_errors)
             self.consecutive_errors = 0  # 成功則重置連續錯誤
+            # 恢復與否由 alerting 狀態機判斷（只有送過 🔴 的才送恢復）
             notify_success(self.name, stats)
 
             return stats
@@ -150,7 +151,8 @@ class BaseCollector(ABC):
             # requests 例外訊息含完整 URL（可能帶 Authorization/api_key），先脫敏再 print／通知／寫心跳
             error_msg = redact_secrets(e)
             print(f"[{self.name}] ✗ 錯誤: {error_msg}")
-            notify_error(self.name, error_msg, self.consecutive_errors)
+            notify_error(self.name, error_msg, self.consecutive_errors,
+                         interval_minutes=self.interval_minutes)
             # collect() 本身失敗時 writer 不會被呼叫，collector_status 原本完全不知道
             # （2026-10-21 news_events 連續失敗 4 天，表上仍是 consecutive_errors=0）。
             if self.supabase_writer and not writer_reported:

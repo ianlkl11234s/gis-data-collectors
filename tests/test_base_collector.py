@@ -168,69 +168,45 @@ def test_consecutive_errors_reset_on_success(_mock_err, _mock_ok):
 
 
 # ============================================================
-# notify_recovery：連續錯誤達門檻後成功恢復要主動通知
+# 告警：失敗／成功交給 utils.alerting（恢復通知由狀態機決定，base 不再自己判斷）
 # ============================================================
 
-@patch('collectors.base.notify_recovery')
 @patch('collectors.base.notify_success')
 @patch('collectors.base.notify_error')
-def test_notify_recovery_sent_when_prior_consecutive_errors_reached_threshold(
-    _mock_err, _mock_ok, mock_recovery, monkeypatch
-):
-    """原 consecutive_errors >= threshold 時，成功後應發恢復通知"""
-    monkeypatch.setattr(config, 'CONSECUTIVE_ERROR_THRESHOLD', 3)
+def test_failure_reports_interval_to_alerting(mock_err, _mock_ok):
+    def boom():
+        raise RuntimeError("fail")
 
-    state = {'should_fail': True}
-
-    def maybe_fail():
-        if state['should_fail']:
-            raise RuntimeError("fail")
-        return {'total': 1, 'data': [{'x': 1}]}
-
-    collector = DummyCollector(collect_impl=maybe_fail)
-
-    # 連續 3 次失敗，達到門檻
+    collector = DummyCollector(collect_impl=boom)
     collector.run()
-    collector.run()
-    collector.run()
-    assert collector.consecutive_errors == 3
-
-    # 第 4 次成功
-    state['should_fail'] = False
-    collector.run()
-
-    mock_recovery.assert_called_once_with('dummy', 3)
-    assert collector.consecutive_errors == 0
+    mock_err.assert_called_once_with('dummy', 'fail', 1, interval_minutes=1)
 
 
-@patch('collectors.base.notify_recovery')
-@patch('collectors.base.notify_success')
-@patch('collectors.base.notify_error')
-def test_notify_recovery_not_sent_when_prior_consecutive_errors_below_threshold(
-    _mock_err, _mock_ok, mock_recovery, monkeypatch
-):
-    """原 consecutive_errors < threshold 時，成功後不應發恢復通知"""
-    monkeypatch.setattr(config, 'CONSECUTIVE_ERROR_THRESHOLD', 3)
+def test_transient_failures_then_success_leave_no_alert_state():
+    """未達門檻就恢復：alert_state 沒有殘留、什麼都不送（舊版會送 2 則「收集器錯誤」）。"""
+    from utils import alerting
 
-    state = {'should_fail': True}
+    sent = []
+    alerting.set_sender(lambda text: sent.append(text) or True)
+    try:
+        state = {'should_fail': True}
 
-    def maybe_fail():
-        if state['should_fail']:
-            raise RuntimeError("fail")
-        return {'total': 1, 'data': [{'x': 1}]}
+        def maybe_fail():
+            if state['should_fail']:
+                raise RuntimeError("fail")
+            return {'total': 1, 'data': [{'x': 1}]}
 
-    collector = DummyCollector(collect_impl=maybe_fail)
-
-    # 只失敗 2 次，未達門檻
-    collector.run()
-    collector.run()
-    assert collector.consecutive_errors == 2
-
-    state['should_fail'] = False
-    collector.run()
-
-    mock_recovery.assert_not_called()
-    assert collector.consecutive_errors == 0
+        collector = DummyCollector(collect_impl=maybe_fail)
+        collector.run()
+        collector.run()
+        assert alerting.load_state()['entries']['collector:dummy']['reasons']['collect']['count'] == 2
+        state['should_fail'] = False
+        collector.run()
+        assert alerting.load_state()['entries'] == {}
+        assert collector.consecutive_errors == 0
+        assert sent == []
+    finally:
+        alerting.set_sender(None)
 
 
 # ============================================================
