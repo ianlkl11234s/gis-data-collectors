@@ -2,6 +2,9 @@
 
 資料來源：opdadm.moi.gov.tw（data.gov.tw nid 57023）
   端點：GET https://opdadm.moi.gov.tw/api/v1/no-auth/resource/api/dataset/{ds}/resource/{rid}/download
+  ⚠ resource id 會被上游換掉（2026-06 舊 id A3C4A73F… 停在「115年06月22日」不再更新，
+     新 id BEE474FF… 才有後續資料）→ 每次先查 data.gov.tw v2 dataset API 取目前的
+     resourceDownloadUrl，查不到才退回寫死的網址。
   回傳：{success, result:{total, 資料提供日期, 事故類別, records:[...]}}
 
   ⚠ 累積快照 — 每日全年累積（截至「資料提供日期」），不是 event push。
@@ -28,10 +31,13 @@ from collectors.base import BaseCollector, TAIPEI_TZ
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+DATASET_NID = 57023
+DATASET_META_URL = f"https://data.gov.tw/api/v2/rest/dataset/{DATASET_NID}"
+# 退路：2026-11-08 data.gov.tw 登錄的 resource（舊的 A3C4A73F… 已凍結）
 A1_URL = (
     "https://opdadm.moi.gov.tw/api/v1/no-auth/resource/"
     "api/dataset/F4077949-50CC-4640-8114-79958CC8BBEA/"
-    "resource/A3C4A73F-3119-41F9-AFF3-5E128847B68C/download"
+    "resource/BEE474FF-E550-46AF-B812-A007D60B2558/download"
 )
 
 LON_MIN, LON_MAX = 118.0, 122.5
@@ -64,6 +70,17 @@ def _parse_datetime(date_str: str, time_str: str) -> Optional[datetime]:
         return None
 
 
+def _pick_download_url(meta: dict) -> Optional[str]:
+    """data.gov.tw v2 dataset 回應 → JSON 格式 resource 的下載網址（只收 opdadm.moi.gov.tw）"""
+    dist = (meta.get("result") or {}).get("distribution") or []
+    for d in dist:
+        url = str(d.get("resourceDownloadUrl") or "").strip()
+        fmt = str(d.get("resourceFormat") or "").strip().upper()
+        if fmt == "JSON" and url.startswith("https://opdadm.moi.gov.tw/"):
+            return url
+    return None
+
+
 def _hash(date: str, time: str, location: str, party_order: str) -> str:
     s = f"{date}|{time}|{location}|{party_order}"
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:32]
@@ -84,8 +101,20 @@ class NpaTrafficAccidentA1Collector(BaseCollector):
         })
         self._session.verify = False
 
+    def _resolve_url(self) -> str:
+        try:
+            resp = self._session.get(DATASET_META_URL, timeout=config.REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            url = _pick_download_url(resp.json())
+            if url:
+                return url
+            print(f"[{self.name}] ⚠ data.gov.tw {DATASET_NID} 沒有 JSON resource，退回寫死網址")
+        except (requests.RequestException, ValueError) as exc:
+            print(f"[{self.name}] ⚠ data.gov.tw {DATASET_NID} 查詢失敗（{exc}），退回寫死網址")
+        return A1_URL
+
     def _fetch(self) -> dict:
-        resp = self._session.get(A1_URL, timeout=config.REQUEST_TIMEOUT)
+        resp = self._session.get(self._resolve_url(), timeout=config.REQUEST_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
