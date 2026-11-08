@@ -13,13 +13,13 @@ SSOT 與各欄位怎麼推導
 - 「有哪些 collector」 → ``config._COLLECTOR_TOGGLES``（prefix + repo 預設 enabled / interval）
 - prefix → yaml key（collector ``name``）與 required_env → ``collectors/registry.py``
 - ``supabase_tables`` → ``storage/supabase_tables.py`` 的 ``TABLE_MAP``（history + current）
-- ``deployment`` → 已知 3 個跑在 HiCloud VM 的例外；其餘 enabled→zeabur / disabled→disabled
+- ``deployment`` → 已知 3 個跑在 HiCloud VM 的例外；其餘 enabled→pulse_host / disabled→disabled
   （這條規則可 100% 重現既有 41 筆 entry 的 deployment 值，故 sync 不會與人工值打架）
 
 enabled 語意（重要）
 ---------------------
 - **新補回**的 entry：``enabled`` 取自 ``config.py`` 的 **repo 預設**。
-  Zeabur / VM 的環境變數（``{PREFIX}_ENABLED``）可在 runtime override，此處只記錄 repo 預設。
+  pulse-host / VM 的環境變數（``{PREFIX}_ENABLED``）可在 runtime override，此處只記錄 repo 預設。
 - **既有** entry 的 ``enabled`` 是人工維護的「production 應在跑」語意
   （例如 ship_ais / waste_positions repo 預設 false、但 production 開著 → yaml 記 true）。
   **本腳本不覆蓋既有 entry 的任何欄位**，只負責把「缺的 collector」補回來。
@@ -57,7 +57,7 @@ from storage.supabase_tables import TABLE_MAP  # noqa: E402
 
 CROSS_LAYER_YAML = _REPO_ROOT / "config" / "cross_layer_map.yaml"
 
-# 已知跑在 HiCloud VM 的 collector（name）— 需 Taiwan IP，Zeabur 端強制關閉
+# 已知跑在 HiCloud VM 的 collector（name）— 需 Taiwan IP，pulse-host 端強制關閉
 HICLOUD_VM_COLLECTORS = frozenset({
     "ship_ais", "waste_positions", "cdc_public_health_weekly",
     # 2026-10-23 data.moa.gov.tw 擋 Zeabur → external/moa_opendata_vm/
@@ -77,7 +77,7 @@ _AUTO_SECTION_HEADER = f"""
 {_AUTO_SECTION_MARKER}
 # 以下 entry 由 config._COLLECTOR_TOGGLES + collectors/registry.py
 # + storage/supabase_tables.py TABLE_MAP 推導自動補回。
-# enabled 為 config.py 的 repo 預設（Zeabur/VM env 可 override）。
+# enabled 為 config.py 的 repo 預設（pulse-host/VM env 可 override）。
 # 標 TODO(sync) 的欄位無法機器推導，請人工複核後移除註解。
 # 複核後可把 entry 搬進上方對應主題分區並手動微調 —
 # sync 只補「缺的 collector」，不會再覆蓋既有 entry。
@@ -144,13 +144,13 @@ def compute_drift() -> tuple[list[str], list[str]]:
 # 欄位推導
 # ────────────────────────────────────────────────────────────────────
 def derive_deployment(name: str, enabled: bool) -> str:
-    """hicloud_vm（HICLOUD_VM_COLLECTORS 例外）/ zeabur（enabled）/ disabled（未 enabled）。
+    """hicloud_vm（HICLOUD_VM_COLLECTORS 例外）/ pulse_host（enabled）/ disabled（未 enabled）。
 
     此規則可 100% 重現既有 41 筆 entry 的 deployment 值。
     """
     if name in HICLOUD_VM_COLLECTORS:
         return "hicloud_vm"
-    return "zeabur" if enabled else "disabled"
+    return "pulse_host" if enabled else "disabled"
 
 
 def derive_tables(name: str) -> list[str] | None:

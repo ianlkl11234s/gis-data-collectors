@@ -116,7 +116,7 @@
 
 | 步驟 | VM collector 要多做／改做的事 |
 |---|---|
-| 6 `config.py` | `_COLLECTOR_TOGGLES` 預設 `enabled=False`；**Zeabur 上對應的 `*_ENABLED` 一律維持 `false`**，否則雙跑，append-only 表會被重複寫入 |
+| 6 `config.py` | `_COLLECTOR_TOGGLES` 預設 `enabled=False`；**pulse-host 上對應的 `*_ENABLED` 一律維持 `false`**，否則雙跑，append-only 表會被重複寫入 |
 | 9 `cross_layer_map.yaml` | `deployment: hicloud_vm`，`enabled` 依正式環境實況填 |
 | 實作 | 主 repo 的 `collectors/{name}.py` 保留完整實作（schema 正本）；另建 `external/{name}_vm/` 單檔鏡像版，共用 `external/vm_common/`（DB 失敗時的本地 buffer）與 `external/_shared/`（VM health snapshot） |
 | 部署 | 手動：從本機 `scp` 檔案到 `<VM_HOST>` → 跑 `setup_vm.sh` → 填 `.env` → 跑 cron 安裝腳本。**`git push` 不會部署到 VM**，改了 VM 版程式要再 scp 一次。各 collector 的步驟在 `external/{name}_vm/README.md` |
@@ -128,7 +128,7 @@ VM 位址與登入帳號不放在本 repo（PUBLIC），見私人筆記。
 
 - VM collector 可用環境變數 `QUIET_HOURS` 讓 collector 在指定時段自己 skip（目前 waste_positions 設 `01-06`，因為垃圾車夜間不跑）。
 - 要對 VM collector 寫入的表做維護（刪重複、建唯一索引、VACUUM FULL）時，排在它的 quiet hours 內，並先確認 log 出現 skip（Disk IO 第三輪 mig 458 就是這樣做）。
-- Zeabur 端也有類似機制：公車夜間 00:00–04:59 只留 5 都（`docs/BUS_NIGHT_PAUSE.md`）。
+- pulse-host 端也有類似機制：公車夜間 00:00–04:59 只留 5 都（`docs/BUS_NIGHT_PAUSE.md`）。
 
 ---
 

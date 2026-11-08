@@ -260,18 +260,21 @@ def test_inventory_keeps_ripe_repo_default_disabled_and_documents_archive_contra
     repo = Path(__file__).resolve().parent.parent
     cross = yaml.safe_load((repo / "config" / "cross_layer_map.yaml").read_text(encoding="utf-8"))
     backup = yaml.safe_load((repo / "config" / "backup_manifest.yaml").read_text(encoding="utf-8"))
-    zeabur = json.loads((repo / "zeabur.json").read_text(encoding="utf-8"))["env"]
+    toggles = {prefix: enabled for prefix, enabled, _ in config._COLLECTOR_TOGGLES}
+    env_example = (repo / ".env.example").read_text(encoding="utf-8").splitlines()
     # cross_layer_map 反映 production 實況（2026-08-31 起已啟用，2026-10-16 依 collector_status 校正）；
-    # repo 預設關閉由下方 zeabur.json default 守住。
+    # repo 預設關閉由下方 config._COLLECTOR_TOGGLES 與 .env.example 守住。
     for name in ("ripe_atlas_internet_health", "ripe_ris_live"):
         assert cross[name]["enabled"] is True
-        assert cross[name]["deployment"] == "zeabur"
+        assert cross[name]["deployment"] == "pulse_host"
         assert cross[name]["critical"] is False
     assert cross["ripe_atlas_internet_health"]["s3_prefixes"][0]["expected_daily"] is False
     assert cross["ripe_ris_live"]["s3_prefixes"][0]["prefix"] == "ripe_ris_live/raw/v1/"
-    assert zeabur["RIPE_ATLAS_INTERNET_HEALTH_ENABLED"]["default"] == "false"
-    assert zeabur["RIPE_RIS_LIVE_ENABLED"]["default"] == "false"
-    assert zeabur["RIPE_RIS_REPLICA_COUNT"]["default"] == "0"
+    assert toggles["RIPE_ATLAS_INTERNET_HEALTH"] is False
+    assert toggles["RIPE_RIS_LIVE"] is False
+    assert "RIPE_ATLAS_INTERNET_HEALTH_ENABLED=false" in env_example
+    assert "RIPE_RIS_LIVE_ENABLED=false" in env_example
+    assert "RIPE_RIS_REPLICA_COUNT=0" in env_example
     assert "live.internet_health_source_runs" in backup["archive_py_covered"]
 
 

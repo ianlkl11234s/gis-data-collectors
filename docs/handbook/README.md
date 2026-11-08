@@ -35,7 +35,7 @@
 | [sources/gov-misc.md](sources/gov-misc.md) | 其他政府資料：急診、台電、新聞、全球事件、股市、共機、疾管署、移民署、矯正署、交通事故、動保、農產品價格、北市圖 |
 | [new-collector.md](new-collector.md) | 設計前 12 題、跨 repo 上線步驟（唯一正本）、驗收「證明它真的在跑」、VM 分支 |
 | [principles.md](principles.md) | 一行一條的設計原則，每條附為什麼與出處 |
-| [operations.md](operations.md) | 監控與日報、健康三件事與三大盲點、量測口徑、Zeabur／VM 操作、事故第一步 |
+| [operations.md](operations.md) | 監控與日報、健康三件事與三大盲點、量測口徑、pulse-host／VM 操作、事故第一步 |
 | [pitfalls.md](pitfalls.md) | 事故索引：日期｜一句教訓｜長文連結（含其他 repo 的相關事故） |
 | [history.md](history.md) | 迭代歷程時間線、Disk IO 三輪、事故轉折表 |
 | [maintenance.md](maintenance.md) | 什麼事件更新什麼、守門機制、PUBLIC repo 守則、踩到新雷時的步驟 |

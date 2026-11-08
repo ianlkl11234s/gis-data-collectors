@@ -7,7 +7,7 @@ GIS 基礎設施的**持續收集層**：Zeabur（主力）與 HiCloud VM 上 24
 ## 硬規則
 
 1. **新增 collector 一律照 [handbook/new-collector.md](../docs/handbook/new-collector.md) 全部步驟走**：跨 repo 多步是刻意設計，不算過度流程；漏一步就斷鏈且多半默默漏報。
-2. 新 collector 在 `_COLLECTOR_TOGGLES` **預設 `enabled=False`**；跑在 HiCloud VM 的 collector，Zeabur 上對應 `*_ENABLED` **一律 `false`**（雙跑會重複寫入）。
+2. 新 collector 在 `_COLLECTOR_TOGGLES` **預設 `enabled=False`**；跑在 HiCloud VM 的 collector，pulse-host 上對應 `*_ENABLED` **一律 `false`**（雙跑會重複寫入）。
 3. **保留期只在 `metadata.retention_policies` 登記一列**（gis-platform mig 282 起），不要改清理函式、不要找「硬編碼清單」。天數不寫進文件，去註冊表或 migration 查。
 4. 新表建在 `live`，**同一支 migration 就 ENABLE RLS**＋anon／authenticated SELECT policy（範本 gis-platform `418_funeral_enable_rls.sql`）。
 5. 走 Supavisor transaction pool（6543）**禁止 session 級 SET**（含 `set_session`），只用交易內 `SET LOCAL`。

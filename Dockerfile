@@ -48,11 +48,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 複製程式碼（.dockerignore 會排除 .env 等敏感檔案）
 COPY . .
 
-# 建立資料目錄（Zeabur Volume 會掛載到 /data）
+# 建立資料目錄（pulse-host compose 會掛載到 /data）
 RUN mkdir -p /data
 
 # 設定環境變數
-ENV ZEABUR=true
+ENV PULSE_ENV=production
 ENV PYTHONUNBUFFERED=1
 
 # 開放 API 端口（預設 8080）

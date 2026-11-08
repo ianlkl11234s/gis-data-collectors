@@ -27,7 +27,7 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 | 位置 | 跑什麼 | 為什麼 |
 |---|---|---|
-| **pulse-host（主力）** | 絕大多數 collector（`cross_layer_map.yaml` 的 `deployment` 欄沿用舊值 `zeabur`）+ `tasks/daily_report.py` + `tasks/archive.py` | GHCR image（`publish-image.yml` 在 main 每次 push 發 `pulse-collector:<完整 SHA>`），在主機上用 `sudo -u deploy bash /opt/pulse-host/ops/collector-deploy.sh [SHA]` 部署／回滾；本機資料只是暫存（原始檔留 2 天），正本在 S3 |
+| **pulse-host（主力）** | 絕大多數 collector（`cross_layer_map.yaml` 的 `deployment` 欄為 `pulse_host`）+ `tasks/daily_report.py` + `tasks/archive.py` | GHCR image（`publish-image.yml` 在 main 每次 push 發 `pulse-collector:<完整 SHA>`），在主機上用 `sudo -u deploy bash /opt/pulse-host/ops/collector-deploy.sh [SHA]` 部署／回滾；本機資料只是暫存（原始檔留 2 天），正本在 S3 |
 | **HiCloud VM（HiNet IP）** | 需 Taiwan IP 的 collector（`deployment: hicloud_vm`）：`ship_ais`、`waste_positions`、`cdc_public_health_weekly` | 來源 API（航港局 / 高雄市府 / 台南市府 / 疾管署）對國際雲段 IP 封鎖或 timeout。詳見 [docs/EXTERNAL_COLLECTORS.md](docs/EXTERNAL_COLLECTORS.md) |
 
 > 各位置實際跑哪些 collector 以 [`config/cross_layer_map.yaml`](config/cross_layer_map.yaml) 的 `deployment` 欄位為準（勿在本文件寫死數字）。
@@ -43,19 +43,19 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 | 類別 | 代表 collector | 部署 |
 |---|---|---|
-| 交通 | YouBike / Bus / TRA / Freeway VD / Road Event | Zeabur |
+| 交通 | YouBike / Bus / TRA / Freeway VD / Road Event | pulse-host |
 | 航運 | **Ship AIS** | **HiCloud VM** |
-| 航空 | FR24 / FR24 Zone / OpenSky | Zeabur |
-| 氣象 | CWA Weather / Temperature / CWA Satellite | Zeabur |
-| 地震 / 災害 | Earthquake / NCDR Alerts | Zeabur |
-| 新聞 | News Events（RSS ×29 + Gemini Flash-Lite 地名抽取，LLM 不吐座標） | Zeabur |
-| 太空 | Satellite / Launch | Zeabur |
-| 環境 | Air Quality / Micro Sensors / AQI Imagery | Zeabur |
-| 水利 | Reservoir / River / Rain Gauge / Groundwater / IoT WRA / USWG | Zeabur |
-| 環境衛生 | **Waste Positions** / Waste Match | **HiCloud VM** / Zeabur |
-| 急診 / 電力 | ER Hospital / Power Taipower | Zeabur |
-| 文化 | TPML 圖書館座位 | Zeabur |
-| POI | Foursquare | Zeabur |
+| 航空 | FR24 / FR24 Zone / OpenSky | pulse-host |
+| 氣象 | CWA Weather / Temperature / CWA Satellite | pulse-host |
+| 地震 / 災害 | Earthquake / NCDR Alerts | pulse-host |
+| 新聞 | News Events（RSS ×29 + Gemini Flash-Lite 地名抽取，LLM 不吐座標） | pulse-host |
+| 太空 | Satellite / Launch | pulse-host |
+| 環境 | Air Quality / Micro Sensors / AQI Imagery | pulse-host |
+| 水利 | Reservoir / River / Rain Gauge / Groundwater / IoT WRA / USWG | pulse-host |
+| 環境衛生 | **Waste Positions** / Waste Match | **HiCloud VM** / pulse-host |
+| 急診 / 電力 | ER Hospital / Power Taipower | pulse-host |
+| 文化 | TPML 圖書館座位 | pulse-host |
+| POI | Foursquare | pulse-host |
 
 ⚠️ 粗體 = 跑在 HiCloud VM（[`external/ship_ais_vm/`](external/ship_ais_vm/) + [`external/waste_positions_vm/`](external/waste_positions_vm/)）。
 
@@ -65,7 +65,7 @@ taipei-gis-analytics  →  gis-platform  ←  data-collectors
 
 ---
 
-## 執行架構（Zeabur 端）
+## 執行架構（pulse-host 端）
 
 ### CollectorScheduler
 
@@ -127,11 +127,10 @@ S3 設 lifecycle：30 天 → IA、90 天 → Glacier IR（見 [docs/AWS_INVENTO
 data-collectors/
 ├── README.md                       # ← 你正在看
 ├── requirements.txt
-├── Dockerfile                      # Zeabur 用
-├── zeabur.json
+├── Dockerfile                      # pulse-host image（GHCR）
 ├── .env.example
 │
-├── main.py                         # Zeabur 主入口（scheduler 啟動）
+├── main.py                         # 主入口（scheduler 啟動）
 ├── scheduler.py                    # CollectorScheduler（ThreadPoolExecutor）
 ├── config.py                       # _COLLECTOR_TOGGLES + 環境變數
 │
@@ -208,9 +207,9 @@ python3 main.py
 
 映像由 `.github/workflows/publish-image.yml` 在 push main 時建置並推到 `ghcr.io/ianlkl11234s/pulse-collector`（tag：commit sha 與 `latest`，私有套件），新主機用 `docker compose pull` 取得。
 
-### 部署到 Zeabur（舊）
+### 正式環境設定
 
-Push 到 main 自動部署。需設定的環境變數見 [`.env.example`](.env.example) 與下方「環境變數」。
+需設定的環境變數見 [`.env.example`](.env.example)；正式環境在 pulse-host 的 `/opt/pulse-host/env/collector.env`，image 內建 `PULSE_ENV=production`。（2026-11 前的 Zeabur 部署與 `zeabur.json` 已移除。）
 
 ### 部署外部 VM collector
 
@@ -268,7 +267,7 @@ psql "$SUPABASE_DB_URL" -f ../gis-platform/migrations/NNN_xxx.sql
 
 `<NAME>_ENABLED=true|false` 啟停、`<NAME>_INTERVAL=N` 改頻率。預設見 `config.py` 的 `_COLLECTOR_TOGGLES`。
 
-> **HiCloud VM collector** (`SHIP_AIS_ENABLED` / `WASTE_POSITIONS_ENABLED`) **必須在 Zeabur 維持 `false`**，否則會與 VM 雙跑 → append-only 表雙 INSERT 污染資料。
+> **HiCloud VM collector** (`SHIP_AIS_ENABLED` / `WASTE_POSITIONS_ENABLED`) **必須在 pulse-host 維持 `false`**，否則會與 VM 雙跑 → append-only 表雙 INSERT 污染資料。
 
 ---
 
@@ -284,13 +283,13 @@ psql "$SUPABASE_DB_URL" -f ../gis-platform/migrations/NNN_xxx.sql
 
 ```bash
 # 健康檢查
-curl https://<your-app>.zeabur.app/health
+curl https://<collector-host>/health
 
 # 列出 collector
-curl -H "X-API-Key: $API_KEY" https://<your-app>.zeabur.app/api/collectors
+curl -H "X-API-Key: $API_KEY" https://<collector-host>/api/collectors
 
 # 取最新資料
-curl -H "X-API-Key: $API_KEY" "https://<your-app>.zeabur.app/api/data/youbike?date=latest"
+curl -H "X-API-Key: $API_KEY" "https://<collector-host>/api/data/youbike?date=latest"
 ```
 
 ---

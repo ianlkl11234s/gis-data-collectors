@@ -51,7 +51,7 @@
 
 | 檔 | 用途 |
 |---|---|
-| `config/cross_layer_map.yaml` | 每個 collector 的 `enabled`、`deployment`（`zeabur`／`hicloud_vm`／`disabled`）、`expected_interval_min`、`supabase_tables`、`s3_prefixes`（`expected_daily: false` 表示事件驅動不檢查）、`critical`、`notes`。跨層檢查的真相來源 |
+| `config/cross_layer_map.yaml` | 每個 collector 的 `enabled`、`deployment`（`pulse_host`／`hicloud_vm`／`disabled`；`pulse_host` 2026-11 前叫 `zeabur`）、`expected_interval_min`、`supabase_tables`、`s3_prefixes`（`expected_daily: false` 表示事件驅動不檢查）、`critical`、`notes`。跨層檢查的真相來源 |
 | `config/realtime_tables.yaml` | 要查新鮮度的表清單：`schema`、`table`、`time_column`、`owner_collector`、`expected_interval_min`、`critical`。張數以檔案為準（舊文件寫的「50 張」早已過時） |
 
 漏改時日報會默默漏報；CI 的 `tests/test_cross_layer_sync.py` 會擋一部分。`time_column` 必須有以它開頭的索引，否則健康查詢會全表掃描（[principles L-08](principles.md)）。

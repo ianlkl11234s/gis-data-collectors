@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""本機 GIS 三 repo 健康度 + 推 S3，給 Zeabur daily_report 撈。
+"""本機 GIS 三 repo 健康度 + 推 S3，給 pulse-host daily_report 撈。
 
 用同樣的 _external_vm_health/<host>/YYYY-MM-DD.json 格式，
 讓 daily_report 的 _section_external_vm_health 自動涵蓋本機，不必另寫 section。
@@ -12,7 +12,7 @@
 執行：
   python3 scripts/local_audit_push.py
 
-  推 S3 用本機 ~/.config/.gis-audit-env 的 key（與 Zeabur 同一組）。
+  推 S3 用本機 ~/.config/.gis-audit-env 的 key（與 pulse-host 同一組）。
   fallback 環境變數 S3_ACCESS_KEY / S3_SECRET_KEY / S3_BUCKET。
 
 launchd 範本見 scripts/com.gis.local_audit.plist。

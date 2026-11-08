@@ -1932,14 +1932,14 @@ def datetime_epoch() -> float:
 
 
 def test_collector_version_prefers_deploy_env_then_configured_sha(monkeypatch):
-    """R8：Zeabur image 不一定帶 .git，git rev-parse 會永遠回 unknown。"""
+    """R8：部署 image 不帶 .git，git rev-parse 會永遠回 unknown。"""
     import config
     from collectors.global_events import collector_version
 
-    monkeypatch.setenv("ZEABUR_GIT_COMMIT_SHA", "b" * 40)
-    assert collector_version() == ("b" * 40, "env:ZEABUR_GIT_COMMIT_SHA")
-    monkeypatch.delenv("ZEABUR_GIT_COMMIT_SHA")
-    for name in ("ZEABUR_COMMIT_SHA", "GIT_COMMIT_SHA", "SOURCE_COMMIT"):
+    monkeypatch.setenv("GIT_COMMIT_SHA", "b" * 40)
+    assert collector_version() == ("b" * 40, "env:GIT_COMMIT_SHA")
+    monkeypatch.delenv("GIT_COMMIT_SHA")
+    for name in ("SOURCE_COMMIT",):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(config, "GLOBAL_EVENTS_PRODUCER_GIT_COMMIT", "c" * 40)
     version, source = collector_version()
@@ -1953,7 +1953,7 @@ def test_run_receipt_carries_collector_version(monkeypatch, tmp_path):
     payload = _zip([_row("one.example", "Major earthquake kills dozens")])
     collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
     monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
-    monkeypatch.setenv("ZEABUR_GIT_COMMIT_SHA", "d" * 40)
+    monkeypatch.setenv("GIT_COMMIT_SHA", "d" * 40)
     monkeypatch.setattr(
         collector,
         "_request_stage1",
@@ -1965,7 +1965,7 @@ def test_run_receipt_carries_collector_version(monkeypatch, tmp_path):
     assert run_receipt["receipt"]["collector_version"] == "d" * 40
     assert batch_receipt["receipt"]["collector_version"] == "d" * 40
     assert run_receipt["receipt"]["collector_version_source"] == (
-        "env:ZEABUR_GIT_COMMIT_SHA"
+        "env:GIT_COMMIT_SHA"
     )
 
 
