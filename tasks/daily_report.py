@@ -1,8 +1,11 @@
 """
 每日報告任務
 
-每天早上發送 Telegram 訊息，彙整昨日資料收集狀態、檔案統計、歸檔結果與系統資訊。
-同時執行靜默檢測與磁碟空間檢查。
+每天早上發「一則」Telegram 日報（手機一屏）：整體結論、現在還壞的、昨天壞過已恢復、
+資料停更前 5、例行任務、昨天的小錯誤數。全綠時 3 行內。
+舊的長版日報（81 支 collector 逐一列、127 張表新鮮度、S3、成本…）不再送 Telegram，
+改寫到 S3 `_daily_report/<YYYY-MM-DD>.md`。送出後 ping HC_DAILY_REPORT_PING_URL（死人開關）。
+分級規則見 utils/alerting.py 與 docs/handbook/operations.md §1。
 """
 
 from datetime import datetime, timedelta, timezone
@@ -10,12 +13,7 @@ from pathlib import Path
 import shutil
 
 import config
-from utils.notify import (
-    send_telegram,
-    send_telegram_long,
-    notify_disk_alert,
-    notify_silence_alert,
-)
+from utils.notify import send_telegram
 
 # 與 collectors/base.py 保持一致的 Taipei 時區
 # 避免和 tz-aware 的 last_run 比較時爆出 offset-naive/aware 錯誤
@@ -53,59 +51,58 @@ class DailyReportTask:
         self._start_time = datetime.now()
 
     def run(self):
-        """產生並發送每日報告"""
+        """產生並發送每日日報（一則），長版寫到 S3。"""
         print(f"\n{'=' * 60}")
         print(f"📊 產生每日報告 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
         print(f"   collectors: {len(self.collectors)} 個")
-        print(f"   archive_task: {'有' if self.archive_task else '無'}")
-        print(f"   last_archive_result: {'有' if self.last_archive_result else '無'}")
         print(f"{'=' * 60}")
 
-        # 組報告 — 每個區塊都有獨立防護，不應該整個掛掉
+        detail_key = None
         try:
-            report = self._build_report()
+            detail_key = self._upload_full_report()
+        except Exception as e:
+            print(f"⚠️ 長版日報寫 S3 失敗（不影響 Telegram 日報）: {e}")
+
+        try:
+            message = self._build_compact_report(detail_key=detail_key)
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
-            print(f"❌ _build_report 失敗: {e}\n{tb}")
-            # 用純文字回報失敗，不帶 parse_mode 避免 Markdown 再出錯
-            send_telegram(
-                f"🚨 每日報告產生失敗\n\n{type(e).__name__}: {e}\n\n{tb[-500:]}",
-                parse_mode=None,
-            )
-            report = None
+            print(f"❌ 日報產生失敗: {e}\n{tb}")
+            message = (f"⚠️ Pulse 日報產生失敗{self._tag()}\n"
+                       f"{type(e).__name__}: {str(e)[:300]}\n請看 collector log。")
 
-        if report:
-            print(f"   報告長度: {len(report)} 字元")
-            # 先發 3 行速報，讓手機通知列就能掃完狀態（成功與否不影響主報）
-            try:
-                digest = self._build_speed_digest()
-                if digest:
-                    send_telegram(digest)
-                    print("✓ 速報已發送")
-            except Exception as e:
-                print(f"⚠️ 速報發送失敗（不影響主報）: {e}")
-            # 用 long 版本：超過 4096 自動分段，避免 collectors 多的實例（如「主站」）整則失敗
-            ok = send_telegram_long(report)
-            if ok:
-                print("✓ 每日報告已發送到 Telegram")
-            else:
-                print("❌ Telegram Markdown 發送失敗，嘗試純文字...")
-                ok2 = send_telegram_long(report, parse_mode=None)
-                if ok2:
-                    print("✓ 每日報告已以純文字發送")
-                else:
-                    print("❌ 每日報告純文字發送也失敗")
+        ok = send_telegram(message, parse_mode=None)
+        print("✓ 每日日報已發送" if ok else "❌ 每日日報發送失敗")
+        if ok:
+            self._ping_healthcheck()
 
-        # 健康檢查不能被日報失敗擋住
+    @staticmethod
+    def _tag() -> str:
+        return f" [{config.INSTANCE_NAME}]" if config.INSTANCE_NAME else ""
+
+    def _ping_healthcheck(self) -> None:
+        url = getattr(config, "HC_DAILY_REPORT_PING_URL", "")
+        if not url:
+            return
         try:
-            self._check_silence()
-        except Exception as e:
-            print(f"⚠️ _check_silence 失敗: {e}")
-        try:
-            self._check_disk_usage()
-        except Exception as e:
-            print(f"⚠️ _check_disk_usage 失敗: {e}")
+            import requests
+            requests.get(url, timeout=10)
+        except Exception as e:  # ping 失敗不影響日報
+            print(f"⚠️ HC ping 失敗: {type(e).__name__}")
+
+    def _upload_full_report(self) -> str | None:
+        """舊長版日報寫到 S3 _daily_report/<date>.md；回傳 key（S3 未設定回 None）。"""
+        if not config.S3_BUCKET:
+            return None
+        report = self._build_report()
+        key = f"_daily_report/{datetime.now(TAIPEI_TZ):%Y-%m-%d}.md"
+        from storage.s3 import S3Storage
+        s3 = S3Storage()
+        s3.s3.put_object(Bucket=s3.bucket, Key=key, Body=report.encode("utf-8"),
+                         ContentType="text/markdown; charset=utf-8")
+        print(f"✓ 長版日報已寫入 s3://{s3.bucket}/{key}")
+        return key
 
     def _build_report(self) -> str:
         """組裝報告訊息（每個區塊獨立 try/except，避免一個掛全掛）"""
@@ -150,119 +147,6 @@ class DailyReportTask:
                 lines.append(f"\n⚠️ *{name}*\n  產生失敗: {e}")
 
         return '\n'.join(lines)
-
-    def _build_speed_digest(self) -> str:
-        """3-5 行精簡速報，獨立發送，給 Telegram 通知列 5 秒掃完用。
-
-        判定標準與 _section_health_summary 一致，但格式更壓縮。
-        """
-        from tasks import monitoring
-
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        tag = f" [{config.INSTANCE_NAME}]" if config.INSTANCE_NAME else ""
-
-        # 收集器
-        total = len(self.collectors)
-        col_err = sum(1 for c in self.collectors if c.get_status().get("error_count", 0) > 0)
-        col_ok = total - col_err
-
-        # SB
-        sb_dead = sb_stale = sb_never = sb_err = sb_total = 0
-        sb_critical_bad = False
-        try:
-            rt_tables = monitoring.load_realtime_tables()
-            rt_meta = {(t["schema"], t["table"]): t for t in rt_tables}
-            for r in monitoring.query_realtime_health(rt_tables) if rt_tables else []:
-                sb_total += 1
-                t = rt_meta.get((r["schema"], r["table"]), {})
-                if r.get("error"):
-                    sb_err += 1
-                    continue
-                status, _ = monitoring.classify_freshness(r["max_time"], t.get("expected_interval_min", 60))
-                if status == "DEAD":
-                    sb_dead += 1
-                    # 只有 critical 表 DEAD（>12x interval）才算「嚴重」
-                    # STALE/NEVER 不觸發 🔴，避免重啟期暫時舊資料造成假嚴重
-                    if t.get("critical"): sb_critical_bad = True
-                elif status == "STALE":
-                    sb_stale += 1
-                elif status == "NEVER":
-                    sb_never += 1
-            sb_bad = sb_dead + sb_stale + sb_never + sb_err
-            sb_ok = sb_total - sb_bad
-        except Exception:
-            sb_ok, sb_total, sb_bad = 0, 0, 0
-
-        # S3
-        s3_stale = s3_total = 0
-        s3_critical_severe = False
-        try:
-            cmap = monitoring.load_cross_layer_map()
-            s3_dates = monitoring.list_archive_dates_per_collector()
-            now_tw = datetime.now(TAIPEI_TZ)
-            for name, cfg in cmap.items():
-                if not cfg.get("enabled"):
-                    continue
-                for sp in cfg.get("s3_prefixes", []):
-                    if not sp.get("expected_daily"):
-                        continue
-                    s3_total += 1
-                    last = s3_dates.get(name)
-                    expected = _expected_archive_date(cfg, now_tw)
-                    if last is None or last < expected:
-                        s3_stale += 1
-                        if last and cfg.get("critical"):
-                            days = (
-                                datetime.strptime(expected, "%Y-%m-%d")
-                                - datetime.strptime(last, "%Y-%m-%d")
-                            ).days
-                            if days >= 3:
-                                s3_critical_severe = True
-                    break
-            s3_ok = s3_total - s3_stale
-        except Exception:
-            s3_ok, s3_total, s3_stale = 0, 0, 0
-
-        # VM
-        vm_lost = vm_total = 0
-        try:
-            for entry in monitoring.list_vm_health_snapshots(max_age_hours=26):
-                vm_total += 1
-                if entry["is_lost"] or entry["snapshot"] is None:
-                    vm_lost += 1
-            vm_ok = vm_total - vm_lost
-        except Exception:
-            vm_ok, vm_total, vm_lost = 0, 0, 0
-
-        disk_severity, disk_message = self._filesystem_pressure_state()
-
-        # verdict
-        if sb_critical_bad or s3_critical_severe or vm_lost > 0 or disk_severity == "critical":
-            verdict, emoji = "嚴重", "🔴"
-        elif sb_bad or s3_stale or col_err or disk_severity in {"warning", "unknown"}:
-            verdict, emoji = "有問題", "🟡"
-        else:
-            verdict, emoji = "正常", "🟢"
-
-        lines = [
-            f"⚡ *速報*{tag} — {yesterday}",
-            f"{emoji} *{verdict}*",
-            f"收集 {col_ok}/{total} · SB {sb_ok}/{sb_total} · S3 {s3_ok}/{s3_total} · VM {vm_ok}/{vm_total}",
-        ]
-        # 有狀況才補一行細節
-        if verdict != "正常":
-            bits = []
-            if sb_dead: bits.append(f"SB DEAD {sb_dead}")
-            if sb_stale: bits.append(f"STALE {sb_stale}")
-            if sb_err: bits.append(f"ERR {sb_err}")
-            if s3_stale: bits.append(f"S3 落後 {s3_stale}")
-            if vm_lost: bits.append(f"VM 失聯 {vm_lost}")
-            if col_err: bits.append(f"collector 錯誤 {col_err}")
-            if disk_message: bits.append(disk_message)
-            if bits:
-                lines.append("  " + " · ".join(bits))
-        lines.append("⏬ 詳細日報接續")
-        return "\n".join(lines)
 
     def _section_health_summary(self) -> str:
         """整份日報跑完前先給結論：昨日是『正常 / 有問題 / 嚴重』。
@@ -335,7 +219,8 @@ class DailyReportTask:
         except Exception:
             pass
 
-        collector_err = sum(1 for c in self.collectors if c.get_status().get("error_count", 0) > 0)
+        errors_y = self._errors_yesterday()
+        collector_err = sum(1 for c in self.collectors if errors_y.get(c.name, 0) > 0)
         disk_severity, disk_message = self._filesystem_pressure_state()
 
         cross_break = 0
@@ -398,7 +283,7 @@ class DailyReportTask:
         parts.append(
             f"  S3 落後: {s3_stale} | 跨層斷層: {cross_break} | VM 失聯: {vm_lost}"
         )
-        parts.append(f"  Collector 有錯誤: {collector_err} 個")
+        parts.append(f"  Collector 昨天有錯誤: {collector_err} 個")
         if disk_message:
             parts.append(f"  檔案系統: {disk_message}")
         parts.append("  詳情見下方各區塊；待辦見「今日 Action」")
@@ -412,12 +297,15 @@ class DailyReportTask:
 
         # 使用 tz-aware now，因 collector.last_run 是 tz-aware（Asia/Taipei）
         now = datetime.now(TAIPEI_TZ)
+        # 錯誤數用「昨天」（alert_state.json，台北日界線），不再用進程啟動以來的累計，
+        # 否則有錯過的 collector 會一直掛在日報上
+        errors_y = self._errors_yesterday()
 
         for c in self.collectors:
             status = c.get_status()
             name = status['name']
             run_count = status['run_count']
-            error_count = status['error_count']
+            error_count = errors_y.get(name, 0)
             last_run = status['last_run']
 
             # 檢查是否靜默（超過預期間隔 2 倍）
@@ -432,8 +320,7 @@ class DailyReportTask:
                 last_str = datetime.fromisoformat(last_run).strftime('%m-%d %H:%M')
                 silent.append(f"  `{name}`: 最後執行 {last_str}")
             elif error_count > 0:
-                rate = (error_count / run_count * 100) if run_count > 0 else 0
-                has_errors.append(f"  `{name}`: {run_count}次, {error_count}次錯誤 ({rate:.1f}%)")
+                has_errors.append(f"  `{name}`: 昨天 {error_count} 次錯誤（進程啟動以來共跑 {run_count} 次）")
             else:
                 normal.append(f"`{name}` {run_count}次")
 
@@ -446,7 +333,7 @@ class DailyReportTask:
             parts.append(f"  {' | '.join(normal)}")
 
         if has_errors:
-            parts.append(f"\n⚠️ *有錯誤* ({len(has_errors)}/{total})")
+            parts.append(f"\n⚠️ *昨天有錯誤* ({len(has_errors)}/{total})")
             parts.extend(has_errors)
 
         if silent:
@@ -1215,42 +1102,6 @@ class DailyReportTask:
             return "\n🎯 *今日 Action*\n  ✅ 沒有需要立即處理的事，安心睡覺"
         return "\n🎯 *今日 Action*\n" + "\n".join(f"  {i+1}. {a}" for i, a in enumerate(actions[:3]))
 
-    def _check_silence(self):
-        """檢查收集器是否靜默（即時告警）"""
-        # tz-aware now，對齊 collector.last_run
-        now = datetime.now(TAIPEI_TZ)
-
-        for c in self.collectors:
-            status = c.get_status()
-            last_run = status['last_run']
-
-            if not last_run:
-                continue
-
-            last_dt = datetime.fromisoformat(last_run)
-            silence_threshold = timedelta(minutes=c.interval_minutes * 2)
-
-            if now - last_dt > silence_threshold:
-                last_str = last_dt.strftime('%m-%d %H:%M')
-                notify_silence_alert(c.name, last_str, c.interval_minutes)
-
-    def _check_disk_usage(self):
-        """檢查 collector 資料量與所在檔案系統的可用容量。"""
-        data_dir = config.LOCAL_DATA_DIR
-        if not data_dir.exists():
-            return
-
-        # 保留原本所有本地檔案的 35GB 門檻，不只計 JSON 或重用過期快取。
-        used_bytes = sum(f.stat().st_size for f in data_dir.glob('**/*') if f.is_file())
-        used_mb = used_bytes / (1024 * 1024)
-
-        if used_mb > config.DISK_ALERT_THRESHOLD_MB:
-            notify_disk_alert(used_mb, config.DISK_ALERT_THRESHOLD_MB)
-
-        pressure = self._filesystem_pressure()
-        if pressure:
-            print(pressure)
-
     def _filesystem_pressure_state(self) -> tuple[str, str]:
         """Return severity and message for shared filesystem capacity."""
         try:
@@ -1271,3 +1122,205 @@ class DailyReportTask:
     def _filesystem_pressure(self) -> str:
         """Shared filesystem pressure, independently labelled from collector bytes."""
         return self._filesystem_pressure_state()[1]
+
+    # ─────────────────────────────────────────────────────────
+    # 一則式日報（Telegram）
+    # ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _errors_yesterday() -> dict:
+        try:
+            from utils import alerting
+            return alerting.snapshot()["errors_yesterday"]
+        except Exception as e:
+            print(f"⚠️ 讀 alert_state 失敗: {e}")
+            return {}
+
+    def _silent_collectors(self, now: datetime) -> list[tuple[str, str, int]]:
+        """超過 2 倍間隔沒跑的 collector：(name, 最後執行, 間隔分鐘)。只給日報，不另送。"""
+        out = []
+        for c in self.collectors:
+            last_run = c.get_status().get("last_run")
+            if not last_run:
+                continue
+            last_dt = datetime.fromisoformat(last_run)
+            if now - last_dt > timedelta(minutes=c.interval_minutes * 2):
+                out.append((c.name, _human_minutes(int((now - last_dt).total_seconds() // 60)),
+                            c.interval_minutes))
+        return out
+
+    def _collector_data_mb(self) -> float:
+        data_dir = config.LOCAL_DATA_DIR
+        if not data_dir.exists():
+            return 0.0
+        return sum(f.stat().st_size for f in data_dir.glob('**/*') if f.is_file()) / (1024 * 1024)
+
+    def _stale_tables(self, now: datetime) -> tuple[list[tuple[str, int, int]], bool]:
+        """STALE／DEAD 的表，依「落後倍數」排序。回傳 ([(表, 落後分, 應每分)], 有 critical DEAD)。
+
+        季節性與事件驅動表在 realtime_tables.yaml 已放寬 expected_interval_min（1440／43200），
+        所以颱風季外、無震、無雷時不會上榜。
+        """
+        from tasks import monitoring
+        tables = monitoring.load_realtime_tables()
+        if not tables:
+            return [], False
+        meta = {(t["schema"], t["table"]): t for t in tables}
+        rows, critical_dead = [], False
+        for r in monitoring.query_realtime_health(tables):
+            if r.get("error"):
+                continue
+            t = meta.get((r["schema"], r["table"]), {})
+            interval = t.get("expected_interval_min", 60)
+            status, age = monitoring.classify_freshness(r["max_time"], interval, now)
+            if status in ("STALE", "DEAD"):
+                rows.append((f"{r['schema']}.{r['table']}", age, interval))
+                if status == "DEAD" and t.get("critical"):
+                    critical_dead = True
+        rows.sort(key=lambda x: x[1] / max(x[2], 1), reverse=True)
+        return rows, critical_dead
+
+    def _routine_line(self, snap: dict) -> str:
+        bits = []
+        try:
+            from tasks import backup_watch
+            b = backup_watch.health_status()
+            if b.get("enabled"):
+                today = datetime.now(TAIPEI_TZ).date().isoformat()
+                bits.append("備份 ✅" if b.get("last_success_date") == today else "備份 ❌")
+        except Exception:
+            pass
+        names = {"archive": "歸檔", "trails_export": "軌跡匯出"}
+        for key, label in names.items():
+            r = snap.get("routines", {}).get(key)
+            if not r:
+                continue
+            bits.append(f"{label} {'✅' if r.get('ok') else '❌'} {r.get('summary', '')}".rstrip())
+        try:
+            disk = shutil.disk_usage(config.LOCAL_DATA_DIR)
+            pct = disk.used * 100 / (disk.used + disk.free)
+            bits.append(f"主機磁碟 {pct:.0f}%")
+        except (OSError, ZeroDivisionError):
+            bits.append("主機磁碟 ?")
+        try:
+            used_mb = self._collector_data_mb()
+            if used_mb > config.DISK_ALERT_THRESHOLD_MB:
+                bits.append(f"本機資料 {used_mb / 1024:.0f}GB（超過 {config.DISK_ALERT_THRESHOLD_MB / 1024:.0f}GB 門檻）")
+        except OSError:
+            pass
+        return "🗄 例行：" + "  ".join(bits)
+
+    def _build_compact_report(self, detail_key: str | None = None,
+                              now: datetime | None = None) -> str:
+        """手機一屏的日報。全綠 3 行內；有事時依「現在還壞的 → 昨天壞過 → 資料停更 → 例行」。"""
+        from tasks import monitoring
+        from utils import alerting
+
+        now = now or datetime.now(TAIPEI_TZ)
+        snap = alerting.snapshot(now)
+        weekday = "一二三四五六日"[now.weekday()]
+        header = f"☀️ Pulse 日報 {now:%m/%d}（週{weekday}）{self._tag()}"
+
+        broken: list[str] = []
+        red = False
+        for a in snap["active"]:
+            red = red or a["level"] == alerting.RED
+            dot = "🔴" if a["level"] == alerting.RED else "🟡"
+            if a["key"].startswith("collector:"):
+                broken.append(f"{dot} 收集器 {a['name']} 壞 {a['duration']}（{_clip(a['text'], 50)}）")
+            else:
+                broken.append(f"{dot} {_clip(a['text'], 70)}（{a['duration']}）")
+        active_names = {a["name"] for a in snap["active"]}
+        for name, ago, interval in self._silent_collectors(now):
+            if name not in active_names:
+                broken.append(f"🟡 收集器 {name} {ago}沒執行（應每 {_human_minutes(interval)}）")
+        try:
+            for entry in monitoring.list_vm_health_snapshots(max_age_hours=26):
+                if entry["is_lost"] or entry["snapshot"] is None:
+                    red = True
+                    broken.append(f"🔴 HiCloud VM {entry['host']} 失聯 {entry.get('age_hours') or 0:.0f} 小時")
+        except Exception as e:
+            print(f"⚠️ 日報 VM 檢查失敗: {e}")
+        severity, message = self._filesystem_pressure_state()
+        if severity in ("critical", "warning") and "disk" not in {a["key"] for a in snap["active"]}:
+            red = red or severity == "critical"
+            broken.append(("🔴 " if severity == "critical" else "🟡 ")
+                          + message.lstrip("🚨⚠️ "))
+        try:
+            cmap = monitoring.load_cross_layer_map()
+            s3_dates = monitoring.list_archive_dates_per_collector()
+            for name, cfg in cmap.items():
+                if not (cfg.get("enabled") and cfg.get("critical")):
+                    continue
+                if not any(p.get("expected_daily") for p in cfg.get("s3_prefixes", [])):
+                    continue
+                last, expected = s3_dates.get(name), _expected_archive_date(cfg, now)
+                if last and last < expected:
+                    days = (datetime.strptime(expected, "%Y-%m-%d") - datetime.strptime(last, "%Y-%m-%d")).days
+                    if days >= 2:
+                        red = red or days >= 3
+                        broken.append(f"{'🔴' if days >= 3 else '🟡'} {name} 歸檔 {days} 天沒上 S3（最新 {last}）")
+        except Exception as e:
+            print(f"⚠️ 日報 S3 檢查失敗: {e}")
+
+        try:
+            stale, critical_dead = self._stale_tables(now)
+        except Exception as e:
+            print(f"⚠️ 日報新鮮度檢查失敗: {e}")
+            stale, critical_dead = [], False
+        red = red or critical_dead
+
+        resolved = [f"• {_clip(r.get('text') or r['name'], 60)}（中斷 {r['duration']}）"
+                    for r in snap["resolved"]]
+        resolved += [f"• {_clip(ev['text'], 70)}" for ev in snap["events"]
+                     if ev.get("level") == alerting.YELLOW]
+
+        errors = snap["error_total_yesterday"]
+        if broken:
+            verdict = f"{'🔴' if red else '🟡'} 有 {len(broken)} 件要處理"
+        elif stale:
+            verdict = f"{'🔴' if red else '🟡'} {len(stale)} 張表停更"
+        else:
+            verdict = "✅ 一切正常"
+            if errors:
+                verdict += f"（收集器小錯誤 {errors} 次，都已自動恢復）"
+        lines = [header, f"整體：{verdict}"]
+        broken.sort(key=lambda b: not b.startswith("🔴"))  # 🔴 在前（同級維持持續時間長在前）
+        if broken:
+            lines += ["", f"🔧 現在還壞的（{len(broken)}）"]
+            lines += [f"• {b}" for b in broken[:8]]
+            if len(broken) > 8:
+                lines.append(f"• …另 {len(broken) - 8} 件")
+        if resolved:
+            lines += ["", f"🟠 昨天壞過、已恢復（{len(resolved)}）"] + resolved[:5]
+        if stale:
+            lines += ["", "📉 資料停更前 5"]
+            lines += [f"{i}. {t} 落後 {_human_minutes(age)}（應每 {_human_minutes(iv)}）"
+                      for i, (t, age, iv) in enumerate(stale[:5], 1)]
+            if len(stale) > 5:
+                lines.append(f"…另 {len(stale) - 5} 張")
+        problem = bool(broken or resolved or stale)
+        if problem:
+            lines.append("")
+        lines.append(self._routine_line(snap))
+        if problem and errors:
+            lines.append(f"🔇 收集器小錯誤 {errors} 次（未達告警門檻、都自動恢復，不用處理）")
+        if problem and detail_key:
+            lines.append(f"詳細：S3 {detail_key}")
+        return "\n".join(lines)
+
+
+def _human_minutes(minutes: int | None) -> str:
+    if minutes is None:
+        return "?"
+    if minutes < 60:
+        return f"{minutes} 分"
+    if minutes < 1440 * 2:
+        h, m = divmod(minutes, 60)
+        return f"{h} 小時" + (f" {m} 分" if m and h < 6 else "")
+    return f"{minutes // 1440} 天"
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
