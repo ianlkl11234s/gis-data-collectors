@@ -465,3 +465,17 @@ def test_archive_lag_widens_for_long_interval(monkeypatch):
     monkeypatch.setattr(config, "YOUBIKE_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "YOUBIKE_INTERVAL", 10, raising=False)
     assert task._archive_expected_lag("youbike") == (2, None)
+
+
+def test_production_notify_routes_through_alerting(watch_env, monkeypatch):
+    """notify=None（主機實際走的路）：失敗 🔴 一則、隔天仍失敗不重送、成功 ✅ 一則。"""
+    from utils import alerting
+    sent = []
+    monkeypatch.setattr(alerting, "_sender", lambda text: sent.append(text) or True)
+    t1 = datetime(2026, 11, 8, 3, 40, tzinfo=TPE)
+    backup_watch.record_run(_ok_result(db_connected=False), now=t1)
+    backup_watch.check_today(now=t1.replace(hour=6, minute=30))
+    backup_watch.record_run(_ok_result(s3_ready=False), now=t1 + timedelta(days=1))
+    assert len(sent) == 1 and sent[0].startswith("🔴") and "Supabase 每日備份失敗" in sent[0]
+    backup_watch.record_run(_ok_result(), now=t1 + timedelta(days=2))
+    assert len(sent) == 2 and sent[1].startswith("✅")

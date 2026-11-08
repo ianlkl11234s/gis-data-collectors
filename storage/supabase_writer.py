@@ -27,7 +27,7 @@ import config
 from storage.db import SupabaseConnectionPool, PoolBorrowTimeout, PoolBreakerOpen
 from storage.supabase_tables import TABLE_MAP
 from storage import marine_write
-from utils.notify import send_telegram, _escape_md, _instance_tag
+from utils import alerting
 from tasks.mini_taipei_publish import (
     build_track_index,
     convert_tra_timetable,
@@ -173,7 +173,6 @@ class SupabaseWriter:
 
     # DB 寫入連續錯誤追蹤（跨 collector 共用）
     _db_consecutive_errors: dict[str, int] = {}
-    _DB_ERROR_ALERT_THRESHOLD = 3  # 連續 N 次失敗才告警（避免瞬時錯誤洗版）
 
     # History dedup 的每日 heartbeat：collector_name -> 上次全量寫入 history 的
     # 台北日期。同一台北日只需第一輪全量，其餘走正常 dedup；跨到新的一天
@@ -287,17 +286,15 @@ class SupabaseWriter:
                 # 例外在 _report_heartbeat 內吞掉（best-effort 語義不變）。
                 self._report_heartbeat(collector_name, True, len(records), conn=conn)
 
-            # 連續錯誤計數重置 + 恢復通知
+            # 連續錯誤計數重置；恢復通知由 alerting 決定（與收集失敗共用 collector:<name>）
             with self._err_lock:
                 prev_errors = self._db_consecutive_errors.get(collector_name, 0)
                 self._db_consecutive_errors[collector_name] = 0
-            if prev_errors >= self._DB_ERROR_ALERT_THRESHOLD:
-                tag = _instance_tag()
-                send_telegram(
-                    f"✅ *DB 寫入恢復*{tag}\n\n"
-                    f"收集器: `{collector_name}`\n"
-                    f"之前連續失敗: {prev_errors} 次"
-                )
+            if prev_errors:
+                try:
+                    alerting.collector_succeeded(collector_name, reason='db')
+                except Exception as alert_err:
+                    logger.warning(f"[{collector_name}] alerting 記錄失敗: {alert_err}")
             return True
 
         except MojibakeWriteRejected:
@@ -334,19 +331,19 @@ class SupabaseWriter:
         return collector_name != 'gfw_vessel_presence' or config.GFW_RAW_ARCHIVE_ENABLED
 
     def _record_db_error(self, collector_name: str, err: Exception) -> None:
-        """累計連續錯誤，到達閾值才發 Telegram（避免洗版）。"""
+        """累計連續錯誤，交給 alerting（reason='db'，與收集失敗共用 collector:<name>）。
+
+        門檻與收集失敗相同（高頻：連續 N 次且持續 ≥15 分；每日類：N=2），
+        所以同一支 collector 不會同時收到「收集失敗」與「DB 寫入失敗」兩種告警。
+        池滿／斷路器也走這裡：短暫的不會到門檻，只計入日報小錯誤。
+        """
         with self._err_lock:
             self._db_consecutive_errors[collector_name] = self._db_consecutive_errors.get(collector_name, 0) + 1
-            count = self._db_consecutive_errors[collector_name]
-        if count == self._DB_ERROR_ALERT_THRESHOLD:
-            tag = _instance_tag()
-            send_telegram(
-                f"🗄️ *DB 寫入連續失敗*{tag}\n\n"
-                f"收集器: `{collector_name}`\n"
-                f"連續失敗: *{count} 次*\n"
-                f"錯誤: {_escape_md(str(err)[:200])}\n\n"
-                f"資料已暫存 buffer，待問題修復後自動補回"
-            )
+        try:
+            alerting.collector_failed(
+                collector_name, f"DB 寫入失敗（已暫存 buffer）：{str(err)[:200]}", reason='db')
+        except Exception as alert_err:
+            logger.warning(f"[{collector_name}] alerting 記錄失敗: {alert_err}")
 
     def flush_buffer(self):
         """重試 buffer 中的資料。一次借一條連線跑完整批，期間其他 collector 用別條 conn 不受影響。"""

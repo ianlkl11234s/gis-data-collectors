@@ -1,6 +1,6 @@
 # 監控與營運
 
-一句話：每天一份 Telegram 日報看整體，DB 端另有一個「整條管線停寫」的死人開關；但心跳不等於健康，判斷一個 collector 好不好要分開看「有沒有跑、有沒有解析成功、有沒有新資料」三件事。動正式環境時逐項套用、每項後做健康檢查，出事時先切斷最大的來源。
+一句話：每天一則 Telegram 日報看整體，平常只有「現在不處理就會丟資料或正式站不能用」的 🔴 才即時送，DB 端另有一個「整條管線停寫」的死人開關；但心跳不等於健康，判斷一個 collector 好不好要分開看「有沒有跑、有沒有解析成功、有沒有新資料」三件事。動正式環境時逐項套用、每項後做健康檢查，出事時先切斷最大的來源。
 
 本文件合併了舊的 `docs/MONITORING.md` 與 `docs/MONITORING_GREEN_FIRST.md`（兩檔現在只剩指標）。
 
@@ -8,14 +8,18 @@
 
 | 層 | 什麼時候 | 在哪 | 看什麼 |
 |---|---|---|---|
-| collector 即時告警 | 每輪 | `collectors/base.py`、`utils/notify.py` | 連續失敗達 `CONSECUTIVE_ERROR_THRESHOLD`（預設 3）發通知，恢復時再發一則 |
-| DB 寫入告警 | 每次寫入 | `storage/supabase_writer.py` | 同一 collector DB 寫入連續失敗 3 次發通知；借不到連線不洗版 |
-| 進程存活 | 每秒 | `health.py`、`/health` | 主迴圈心跳超過 120 秒 → watchdog 重啟進程（見 [architecture.md](architecture.md) §8） |
-| 備份告警 | 備份結束時＋`BACKUP_WATCHDOG_TIME`（預設 06:30 台北） | `tasks/backup_watch.py`、`/health` 的 `backup` | Supabase 每日備份失敗（含 DB／S3 沒連上、有表失敗）或當天沒有成功紀錄 → Telegram；同一天只發一次，之後成功發一則恢復。最後成功日期看 `/health` 的 `backup.last_success_date`。只在 `BACKUP_ENABLED=true` 的實例生效 |
-| 每日日報 | `DAILY_REPORT_TIME`（預設 08:00，容器時間＝台北） | `tasks/daily_report.py`、`tasks/monitoring.py` | 三層健康（collector／Supabase／S3）＋跨層一致＋VM＋異常趨勢＋成本＋今日 Action，見 §2 |
-| 日報附帶檢查 | 同上 | `_check_silence()`、`_check_disk_usage()` | collector 超過 2 倍間隔沒跑；本地檔案總量與共用檔案系統壓力（80% 警告、90% 嚴重） |
+| collector 告警 | 每輪 | `collectors/base.py` → `utils/notify.py` → `utils/alerting.py` | 單次失敗**不送**（只計入日報「小錯誤」）。間隔 < 6 小時：連續 `CONSECUTIVE_ERROR_THRESHOLD`（3）次**且**第一次失敗至今 ≥ `ALERT_MIN_DURATION_MIN`（15）分才算壞；間隔 ≥ `ALERT_DAILY_INTERVAL_MIN`（360）分的每日類：連續 `ALERT_DAILY_N`（2）次就算壞。常瞬斷上游另放寬（`ALERT_OVERRIDES`，預設 news_events 6 次／60 分、twse_market_index 5 次／30 分）。壞了以後 `config/cross_layer_map.yaml` 的 `critical: true` → 🔴 即時一則；否則 🟡 只進日報。持續中不重送，超過 `ALERT_STILL_DOWN_HOURS`（24）小時補送一次「仍未恢復」；恢復只對送過 🔴 的送一則 |
+| 同時大量失敗 | 每分鐘 `alert_flush` | `utils/alerting.py::flush` | `ALERT_BURST_WINDOW_SEC`（300）秒內 ≥ `ALERT_BURST_MERGE`（5）支 collector 進入「壞了」→ 合成一則（列共同錯誤與名單）；之後 `ALERT_BURST_HOLD_MIN`（60）分鐘內再壞的併入，不另送；全部恢復時合成一則 |
+| DB 寫入告警 | 每次寫入 | `storage/supabase_writer.py` → `utils/alerting.py` | 與收集失敗共用同一個 key（`collector:<name>`）與門檻，同一支 collector 不會收到兩種告警；收集成功不會把 DB 寫入的失敗清掉，兩者都好了才算恢復。池滿／斷路器短暫的不會到門檻 |
+| 進程存活 | 每秒 | `health.py`、`/health` | 主迴圈心跳超過 120 秒 → watchdog 重啟進程（見 [architecture.md](architecture.md) §8）。單次重啟 🟡（進日報）；1 小時內第 2 次以上 🔴 |
+| 備份告警 | 備份結束時＋`BACKUP_WATCHDOG_TIME`（預設 06:30 台北） | `tasks/backup_watch.py`、`/health` 的 `backup` | Supabase 每日備份失敗（含 DB／S3 沒連上、有表失敗）或當天沒有成功紀錄 → 🔴 一則；持續失敗不每天重送（24 小時補一次「仍未恢復」），之後成功發一則恢復。最後成功日期看 `/health` 的 `backup.last_success_date`。只在 `BACKUP_ENABLED=true` 的實例生效 |
+| 本機磁碟護欄 | 每 `DISK_GUARD_INTERVAL_MIN` 分 | `utils/disk_guard.py` | 嚴重 🔴（含暫停寫原始檔）、警告 🟡 只進日報、恢復僅在送過 🔴 時送 |
+| 例行任務 | 02:00 軌跡匯出、03:00 歸檔 | `main.py`、`utils/notify.py` | 成功**不送**，結果列在日報「例行」行；有失敗 🔴（bus 軌跡只留 3 天，要在期限內補跑） |
+| 每日日報 | `DAILY_REPORT_TIME`（預設 08:00，容器時間＝台北） | `tasks/daily_report.py`、`tasks/monitoring.py` | **一則**：整體、現在還壞的、昨天壞過已恢復、資料停更前 5、例行、昨天小錯誤數；全綠 3 行內。長版（三層健康、跨層、VM、成本…）寫 S3 `_daily_report/<YYYY-MM-DD>.md`。送出成功後 ping `HC_DAILY_REPORT_PING_URL`（healthchecks.io 死人開關，空值跳過）。見 §2 |
+| 日報附帶檢查 | 同上 | `DailyReportTask._silent_collectors()`、`_filesystem_pressure_state()` | collector 超過 2 倍間隔沒跑、共用檔案系統 80% 警告／90% 嚴重、本機資料超過 `DISK_ALERT_THRESHOLD_MB`：只列在日報，不另送 |
+| 告警狀態 | — | `LOCAL_DATA_DIR/alert_state.json` | 每個告警的 state／level／first_seen／reasons、待送出的 pending、近 3 天每支 collector 的錯誤數（日報「昨天」用）。想重置就刪檔 |
 | DB 死人開關 | pg_cron 每 15 分 | gis-platform `migrations/255_collector_freshness_alert.sql` `metadata.check_collector_freshness(30)` | **所有** enabled collector 的 `MAX(last_success_at)` 超過 30 分鐘 → 用 pg_net 發 Telegram。用途是「整個 collector 進程死掉」，抓不到單一 collector 停擺（盲點 1） |
-| VM 健康 | VM cron 每日 | `external/_shared/health_report.py` | 推 `s3://<BUCKET>/_external_vm_health/<host>/YYYY-MM-DD.json`，日報讀取 |
+| VM 健康 | VM cron 每日 | `external/_shared/health_report.py` | 推 `s3://<BUCKET>/_external_vm_health/<host>/YYYY-MM-DD.json`，日報讀取。VM 子行程不發 Telegram（VM 的 `TELEGRAM_BOT_TOKEN` 為空），失聯在日報「現在還壞的」列 🔴 |
 | 本機稽核 | macOS launchd 每日 | `scripts/local_audit_push.py` | 三個 GIS repo 的 git 狀態與 analytics 資料目錄稽核，推同一個 S3 前綴（`local-<hostname>`）；Mac 沒開機當天就沒有 |
 | 外部巡檢（Hermes） | 30 分鐘／4 小時 | 不在本 repo | 唯讀巡檢 Supabase 新鮮度、S3 metadata 與 VM health，發 Discord。**現在是否仍在執行待確認**（查法見 §2.5） |
 
@@ -41,7 +45,7 @@
 | 今日 Action | 不用自己解讀 | 規則式推出最多 3 件事 |
 | 歸檔結果、系統資訊 | 昨日 ArchiveTask、容器資源 | 有設定才顯示 |
 
-另外會發一則 3–5 行的精簡速報（`_build_speed_digest`）。每個區塊各自 try/except，一個失敗不會讓整份日報失敗。
+以上是**長版**，2026-11 起不再送 Telegram，改寫 S3 `_daily_report/<YYYY-MM-DD>.md`。Telegram 只送 `_build_compact_report` 一則（§1「每日日報」），「資料停更前 5」依落後倍數排序，季節性與事件驅動表的門檻已在清冊放寬（1440／43200 分），所以颱風季外、無震、無雷時不會上榜。每個區塊各自 try/except，一個失敗不會讓整份日報失敗。
 
 ### 2.2 清冊 yaml（新增或改 collector 必改）
 

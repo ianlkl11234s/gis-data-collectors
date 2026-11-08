@@ -333,9 +333,13 @@ def test_flush_buffer_skips_when_pool_unavailable(writer_with_mock_pool, tmp_pat
 
 
 def test_consecutive_error_alert_threshold(writer_with_mock_pool, tmp_path):
-    """連續失敗達 _DB_ERROR_ALERT_THRESHOLD 次才送 Telegram，避免洗版。"""
+    """DB 寫入失敗交給 alerting（reason='db'，與收集失敗共用 collector:<name>），本身不送 Telegram。
+
+    門檻（高頻連續 3 次且 ≥15 分、每日類 2 次）與送訊規則在 tests/test_alerting.py 驗。
+    """
     writer, mock_pool = writer_with_mock_pool
     from storage.db import PoolBreakerOpen
+    from utils import alerting
 
     mock_pool.borrow.side_effect = lambda timeout=None: (_ for _ in ()).throw(
         PoolBreakerOpen("breaker open")
@@ -345,17 +349,16 @@ def test_consecutive_error_alert_threshold(writer_with_mock_pool, tmp_path):
                         'AvailableRentBikes': 0, 'AvailableReturnBikes': 0}]}
     ts = datetime(2026, 6, 26, 12, 0, 0)
 
-    with patch('storage.supabase_writer.send_telegram') as tg:
-        # 1, 2 次：不該 alert
-        writer.write('youbike', result, ts)
-        writer.write('youbike', result, ts)
-        assert tg.call_count == 0
-        # 第 3 次：剛好達閾值，alert 一次
-        writer.write('youbike', result, ts)
-        assert tg.call_count == 1
-        # 第 4 次：已經 alert 過，不再重複
-        writer.write('youbike', result, ts)
-        assert tg.call_count == 1
+    sent = []
+    with patch.object(alerting, '_sender', lambda text: sent.append(text) or True):
+        for _ in range(4):
+            writer.write('youbike', result, ts)
+    entry = alerting.load_state()['entries']['collector:youbike']
+    assert entry['reasons']['db']['count'] == 4
+    assert 'DB 寫入失敗' in entry['last_text']
+    assert writer._db_consecutive_errors['youbike'] == 4
+    # 4 次都在同一分鐘內：未達「持續 ≥15 分」→ 還沒進 alerting、也沒送任何東西
+    assert entry['state'] == 'failing' and sent == []
 
 
 def test_do_nothing_upsert_is_targetless(writer_with_mock_pool, monkeypatch):
@@ -550,7 +553,9 @@ def test_write_heartbeat_failure_does_not_affect_main_write(writer_with_mock_poo
 
     mock_pool.borrow.side_effect = borrow_heartbeat_broken
 
-    with patch('storage.supabase_writer.send_telegram') as tg:
+    from utils import alerting
+    sent = []
+    with patch.object(alerting, '_sender', lambda text: sent.append(text) or True):
         # 不該 raise
         writer.write('youbike', _youbike_result(), datetime(2026, 7, 7, 12, 0, 0))
 
@@ -558,7 +563,7 @@ def test_write_heartbeat_failure_does_not_affect_main_write(writer_with_mock_poo
     buffer_dir = tmp_path / 'buffer'
     assert list(buffer_dir.glob('*.json')) == []
     assert writer._db_consecutive_errors.get('youbike', 0) == 0
-    assert tg.call_count == 0
+    assert sent == [] and alerting.load_state()['entries'] == {}
     # 心跳併入主連線後仍只 borrow 一次
     assert mock_pool.borrow.call_count == 1
 

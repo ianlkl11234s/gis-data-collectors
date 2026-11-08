@@ -126,7 +126,7 @@ S3 規則（正本 [AWS_INVENTORY.md](../AWS_INVENTORY.md)）：不設 expiratio
 
 **範圍**（`classification.static_schemas`）：2026-11-07 補進 `intel`（策展與 LLM 產出，不可重算）、`tourism`、`urban_open_space`、`civic_facilities`、`agriculture`、`air_tickets`（票價歷史不可重算）、`cross_refs`。`metadata`、`opendata` 刻意排除。
 
-**成敗告警**（`tasks/backup_watch.py`）：子行程結束後判斷成敗——DB 或 S3 沒連上、任一機器人例外、A／B／D 有表失敗都算失敗（C 的 critical 是盤點結果，不算）——失敗發 Telegram；`BACKUP_WATCHDOG_TIME`（預設 06:30）檢查今天有沒有成功紀錄，沒有就再告警（排程沒觸發、行程重啟、卡在重任務佇列都會被抓到）。同一天只發一次，之後成功發恢復通知。狀態存 `LOCAL_DATA_DIR/backup_watch_state.json`，`/health` 的 `backup` 欄可看最後成功日期；新主機沒有狀態檔時，watchdog 改查 `metadata.backup_audit_log` 今天有無即時快照紀錄。注意：Robot B 只傾印「昨天」，漏跑的那天目前不會自動補跑。
+**成敗告警**（`tasks/backup_watch.py`）：子行程結束後判斷成敗——DB 或 S3 沒連上、任一機器人例外、A／B／D 有表失敗都算失敗（C 的 critical 是盤點結果，不算）——失敗發 Telegram；`BACKUP_WATCHDOG_TIME`（預設 06:30）檢查今天有沒有成功紀錄，沒有就再告警（排程沒觸發、行程重啟、卡在重任務佇列都會被抓到）。告警走 `utils/alerting.py`（key `backup`）：🔴 開始一次、持續失敗不每天重送（24 小時補一次「仍未恢復」）、之後成功發恢復通知。狀態存 `LOCAL_DATA_DIR/backup_watch_state.json`，`/health` 的 `backup` 欄可看最後成功日期；新主機沒有狀態檔時，watchdog 改查 `metadata.backup_audit_log` 今天有無即時快照紀錄。注意：Robot B 只傾印「昨天」，漏跑的那天目前不會自動補跑。
 
 表的完整清冊與備份三層：gis-platform `docs/data-safety-inventory.md`、`docs/data-inventory.md`（手冊不重抄數量）。
 

@@ -629,7 +629,7 @@ def pending_env(monkeypatch, tmp_path, gazetteer):
     monkeypatch.setattr(config, 'NEWS_EVENTS_PENDING_REPLAY_MAX', 300)
     monkeypatch.setattr(news_events, 'LLM_BATCH_SIZE', 1)
     monkeypatch.setattr(news_events, 'LLM_BATCH_SLEEP', 0)
-    for fn in ('notify_error', 'notify_success', 'notify_recovery'):
+    for fn in ('notify_error', 'notify_success'):
         monkeypatch.setattr(collectors_base, fn, lambda *a, **k: None)
 
     def make(feed_items, writer_ok=True):

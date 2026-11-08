@@ -302,12 +302,6 @@
       "description": "Failed local spool bounded retention；當次失敗不刪",
       "default": "7"
     },
-    "WEBHOOK_URL": {
-      "description": "通知 Webhook URL"
-    },
-    "LINE_TOKEN": {
-      "description": "LINE Notify Token"
-    },
     "WATER_RESERVOIR_ENABLED": {
       "description": "水庫水情收集器（WRA 水利署，無需 API Key）；AIS 專屬實例設 false，其他實例設 true",
       "default": "false"

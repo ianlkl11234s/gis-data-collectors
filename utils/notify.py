@@ -1,7 +1,8 @@
 """
-通知模組
+通知模組（只走 Telegram）
 
-支援 Webhook、LINE Notify 和 Telegram Bot。
+送不送、送幾則由 utils/alerting.py 的分級狀態機決定；這裡只放送出函式與
+collector／排程任務呼叫的薄介面。WEBHOOK_URL／LINE Notify 路徑已移除（2026-11）。
 """
 
 import requests
@@ -13,41 +14,6 @@ def _instance_tag() -> str:
     if config.INSTANCE_NAME:
         return f" [{config.INSTANCE_NAME}]"
     return ""
-
-
-def send_webhook(event: str, data: dict = None):
-    """發送 Webhook 通知"""
-    if not config.WEBHOOK_URL:
-        return
-
-    try:
-        payload = {'event': event}
-        if data:
-            payload.update(data)
-
-        requests.post(
-            config.WEBHOOK_URL,
-            json=payload,
-            timeout=10
-        )
-    except Exception as e:
-        print(f"⚠️  Webhook 發送失敗: {e}")
-
-
-def send_line_notify(message: str):
-    """發送 LINE Notify 通知"""
-    if not config.LINE_TOKEN:
-        return
-
-    try:
-        requests.post(
-            'https://notify-api.line.me/api/notify',
-            headers={'Authorization': f'Bearer {config.LINE_TOKEN}'},
-            data={'message': message},
-            timeout=10
-        )
-    except Exception as e:
-        print(f"⚠️  LINE Notify 發送失敗: {e}")
 
 
 def send_telegram(message: str, parse_mode: str = 'Markdown') -> bool:
@@ -145,164 +111,60 @@ def send_telegram_long(message: str, parse_mode: str = 'Markdown') -> bool:
     return all_ok
 
 
-def _should_alert(count: int, threshold: int) -> bool:
-    """判斷連續錯誤數是否達到告警時機（指數收斂）
+def notify_error(collector_name: str, error: str, consecutive_errors: int = 0,
+                 interval_minutes: int | None = None):
+    """collector 一次失敗：交給告警狀態機（單次瞬斷不送，達門檻才進 alerting）。
 
-    只在 count == threshold * 2**k（k=0,1,2,…）時回傳 True，
-    例如 threshold=3 → 3, 6, 12, 24, 48, 96, 192, 384…
-    避免 `>= threshold` 那樣每次失敗都重複發送同一則告警。
-
-    Args:
-        count: 目前連續錯誤次數
-        threshold: 告警門檻（config.CONSECUTIVE_ERROR_THRESHOLD）
-
-    Returns:
-        True 代表這次應該發送告警
+    consecutive_errors 保留給舊呼叫端相容；連續次數改由 alert_state.json 持久化計算
+    （watchdog 重啟後不會歸零）。
     """
-    if threshold <= 0 or count < threshold:
-        return False
-    quotient, remainder = divmod(count, threshold)
-    if remainder != 0:
-        return False
-    # quotient 必須是 2 的冪（1, 2, 4, 8, …），對應 threshold 的每次倍增
-    return quotient & (quotient - 1) == 0
+    from utils import alerting
+    try:
+        alerting.collector_failed(collector_name, error, interval_minutes=interval_minutes)
+    except Exception as e:  # 告警失敗不能讓收集掛掉
+        print(f"⚠️  alerting 記錄失敗 [{collector_name}]: {e}")
 
 
-def notify_error(collector_name: str, error: str, consecutive_errors: int = 0):
-    """通知錯誤
-
-    Args:
-        collector_name: 收集器名稱
-        error: 錯誤訊息
-        consecutive_errors: 連續錯誤次數
-    """
-    tag = _instance_tag()
-    message = f"❌{tag} [{collector_name}] 錯誤: {error}"
-    send_webhook('error', {'collector': collector_name, 'error': error})
-    send_line_notify(message)
-
-    # Telegram 即時錯誤通知
-    if consecutive_errors >= config.CONSECUTIVE_ERROR_THRESHOLD:
-        # 連續錯誤告警指數收斂：只在門檻的 2^k 倍時發送，其餘次數靜默
-        # （webhook/LINE 仍照常發送，這裡只收斂 Telegram 的重複告警）
-        if _should_alert(consecutive_errors, config.CONSECUTIVE_ERROR_THRESHOLD):
-            tg_msg = (
-                f"🚨 *收集器連續錯誤告警*{tag}\n\n"
-                f"收集器: `{collector_name}`\n"
-                f"連續錯誤: *{consecutive_errors} 次*\n"
-                f"錯誤: {_escape_md(error)}"
-            )
-            send_telegram(tg_msg)
-    else:
-        tg_msg = (
-            f"❌ *收集器錯誤*{tag}\n\n"
-            f"收集器: `{collector_name}`\n"
-            f"錯誤: {_escape_md(error)}"
-        )
-        send_telegram(tg_msg)
-
-
-def notify_success(collector_name: str, stats: dict):
-    """通知成功"""
-    send_webhook('success', {'collector': collector_name, **stats})
-
-
-def notify_recovery(collector_name: str, consecutive_errors: int):
-    """通知收集器恢復正常（先前已達連續錯誤告警門檻，這次執行成功）
-
-    Args:
-        collector_name: 收集器名稱
-        consecutive_errors: 恢復前的連續錯誤次數
-    """
-    tag = _instance_tag()
-    tg_msg = (
-        f"✅ *收集器恢復*{tag}\n\n"
-        f"收集器: `{collector_name}`\n"
-        f"中斷了 {consecutive_errors} 次，本次執行成功"
-    )
-    send_telegram(tg_msg)
+def notify_success(collector_name: str, stats: dict | None = None):
+    """collector 一次成功：清掉收集失敗；曾送過 🔴 的會在 flush 時送恢復。"""
+    from utils import alerting
+    try:
+        alerting.collector_succeeded(collector_name)
+    except Exception as e:
+        print(f"⚠️  alerting 記錄失敗 [{collector_name}]: {e}")
 
 
 def notify_archive_complete(stats: dict):
-    """通知歸檔完成"""
-    tag = _instance_tag()
-    archive = stats.get('archive', {})
-    cleanup = stats.get('cleanup', {})
-
-    uploaded = archive.get('uploaded', 0)
-    skipped = archive.get('skipped', 0)
+    """03:00 歸檔結果：成功不送（列在日報「例行」行），有失敗才 🔴。"""
+    from utils import alerting
+    archive = stats.get('archive', {}) if isinstance(stats, dict) else {}
     failed = archive.get('failed', 0)
-    deleted = cleanup.get('deleted', 0)
-
-    icon = "⚠️" if failed > 0 else "📦"
-
-    tg_msg = (
-        f"{icon} *歸檔任務完成*{tag}\n\n"
-        f"上傳: {uploaded} 個 tar.gz\n"
-        f"跳過: {skipped} 個（已存在）\n"
-        f"失敗: {failed} 個\n"
-        f"清理: 刪除 {deleted} 個本地目錄"
-    )
-    send_telegram(tg_msg)
+    alerting.record_routine('archive', not failed,
+                            f"{archive.get('uploaded', 0)} 檔" + (f"，失敗 {failed}" if failed else ""))
+    if failed:
+        alerting.raise_alert(
+            'archive', alerting.RED,
+            f"S3 歸檔有 {failed} 個失敗（上傳 {archive.get('uploaded', 0)}、跳過 {archive.get('skipped', 0)}）；"
+            "本機原始檔不會被清，請查 S3 權限或網路",
+        )
+    else:
+        alerting.clear_alert('archive', "S3 歸檔")
 
 
 def notify_trails_export(stats: dict):
-    """通知每日軌跡凍結匯出結果（scripts/export_daily_trails.py 的 export_range 回傳值）
-
-    失敗要顯眼：trails 是滾動視窗資料（bus 只有 3 天），漏掉一晚就永久遺失，
-    所以有任何失敗都換成 🚨 並列出失敗清單，而不是只記 log。
-    """
-    tag = _instance_tag()
-    ok = stats.get('ok', 0)
+    """02:00 軌跡凍結匯出結果：成功不送；失敗 🔴（bus 只留 3 天，漏一晚就永久遺失）。"""
+    from utils import alerting
     failed = stats.get('failed', 0)
-    dates = stats.get('dates') or []
-    if not dates:
-        span = '-'
-    elif len(dates) == 1:
-        span = dates[0]
-    else:
-        span = f"{dates[0]} ~ {dates[-1]}"
-
-    icon = "🚨" if failed else "🧊"
-    lines = [
-        f"{icon} *軌跡凍結匯出*{tag}\n",
-        f"日期: `{span}`",
-        f"成功: {ok} 個 dataset-day",
-        f"失敗: {failed} 個",
-        f"筆數: {stats.get('rows', 0):,}",
-        f"大小: {stats.get('bytes', 0) / 1024 / 1024:.1f} MB",
-    ]
+    alerting.record_routine('trails_export', not failed,
+                            f"{stats.get('ok', 0)} 個" + (f"，失敗 {failed}" if failed else ""))
     if failed:
-        lines.append("\n失敗清單:")
-        for f in stats.get('failures', [])[:10]:
-            lines.append(f"• {_escape_md(str(f)[:200])}")
-
-    send_telegram("\n".join(lines))
-
-
-def notify_disk_alert(used_mb: float, threshold_mb: int):
-    """磁碟空間告警"""
-    tag = _instance_tag()
-    tg_msg = (
-        f"💾 *磁碟空間警告*{tag}\n\n"
-        f"本地資料已使用: *{used_mb:.0f} MB*\n"
-        f"警告門檻: {threshold_mb} MB\n\n"
-        f"請確認歸檔是否正常運作"
-    )
-    send_telegram(tg_msg)
-
-
-def notify_silence_alert(collector_name: str, last_run_str: str, expected_minutes: int):
-    """收集器靜默告警（超過預期間隔仍未執行）"""
-    tag = _instance_tag()
-    tg_msg = (
-        f"🔇 *收集器靜默告警*{tag}\n\n"
-        f"收集器: `{collector_name}`\n"
-        f"最後執行: {last_run_str}\n"
-        f"預期間隔: {expected_minutes} 分鐘\n"
-        f"已超過預期間隔 2 倍未更新"
-    )
-    send_telegram(tg_msg)
+        failures = "；".join(str(f)[:120] for f in (stats.get('failures') or [])[:5])
+        alerting.raise_alert(
+            'trails_export', alerting.RED,
+            f"軌跡凍結匯出失敗 {failed} 個 dataset-day（bus 只留 3 天，要在期限內補跑）：{failures}",
+        )
+    else:
+        alerting.clear_alert('trails_export', "軌跡凍結匯出")
 
 
 def _escape_md(text: str) -> str:

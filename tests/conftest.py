@@ -207,3 +207,18 @@ def _reset_disk_guard_pause():
     disk_guard.resume_raw_writes()
     yield
     disk_guard.resume_raw_writes()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_alert_state(tmp_path_factory, monkeypatch):
+    """告警狀態檔（alert_state.json）一律寫到測試專屬暫存目錄，critical 名單預設空。
+
+    沒有這層的話，任何走到 BaseCollector.run() 失敗路徑的測試都會寫進 ./data 或 /data。
+    """
+    from utils import alerting
+    path = tmp_path_factory.mktemp("alert_state") / "alert_state.json"
+    monkeypatch.setattr(alerting, "state_path", lambda: path)
+    monkeypatch.setattr(alerting, "_critical_cache", {})
+    monkeypatch.setattr(alerting, "_sender", None)
+    monkeypatch.setattr(alerting, "_INTERVALS", {})
+    yield path

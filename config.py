@@ -258,8 +258,8 @@ API_PORT = int(os.getenv('API_PORT', '8080'))
 # 通知設定
 # ============================================================
 
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-LINE_TOKEN = os.getenv('LINE_TOKEN')
+# 2026-11 起只走 Telegram：主機 collector.env 沒有 WEBHOOK_URL／LINE_TOKEN，
+# webhook 與 LINE Notify 路徑已移除（LINE Notify 服務本身也已於 2025-03 終止）。
 SLACK_WEBHOOK = os.getenv('SLACK_WEBHOOK')
 
 # Telegram Bot
@@ -270,8 +270,27 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 DAILY_REPORT_ENABLED = os.getenv('DAILY_REPORT_ENABLED', 'true').lower() in ('true', '1', 'yes')
 DAILY_REPORT_TIME = os.getenv('DAILY_REPORT_TIME', '08:00')  # 每日報告時間 (HH:MM)
 
-# 連續錯誤告警門檻
+# 連續錯誤告警門檻（間隔 < ALERT_DAILY_INTERVAL_MIN 的 collector 用這個 N）
 CONSECUTIVE_ERROR_THRESHOLD = int(os.getenv('CONSECUTIVE_ERROR_THRESHOLD', '3'))
+
+# 告警分級（utils/alerting.py；規則見 docs/handbook/operations.md §1）
+# 高頻 collector：連續 N 次且第一次失敗至今 ≥ 這麼多分鐘才進 alerting（濾掉瞬斷）
+ALERT_MIN_DURATION_MIN = int(os.getenv('ALERT_MIN_DURATION_MIN', '15'))
+# 間隔 ≥ 這麼多分鐘算「每日類」：改用 ALERT_DAILY_N，不加時間條件（否則要壞好幾天才告警）
+ALERT_DAILY_INTERVAL_MIN = int(os.getenv('ALERT_DAILY_INTERVAL_MIN', '360'))
+ALERT_DAILY_N = int(os.getenv('ALERT_DAILY_N', '2'))
+# 🔴 進 alerting 後超過這麼多小時仍未恢復，補送一次「仍未恢復」，之後只在日報出現
+ALERT_STILL_DOWN_HOURS = float(os.getenv('ALERT_STILL_DOWN_HOURS', '24'))
+# 同一段時間（ALERT_BURST_WINDOW_SEC）內 ≥ 這麼多支 collector 進 alerting → 合成一則
+ALERT_BURST_MERGE = int(os.getenv('ALERT_BURST_MERGE', '5'))
+ALERT_BURST_WINDOW_SEC = int(os.getenv('ALERT_BURST_WINDOW_SEC', '300'))
+# 合併告警送出後，這段時間內再壞的 collector 併入同一件事，不另送
+ALERT_BURST_HOLD_MIN = int(os.getenv('ALERT_BURST_HOLD_MIN', '60'))
+# 已知常瞬斷上游的放寬門檻：「name:N:分鐘」，逗號分隔
+#   news_events：RSS＋LLM（OpenRouter）常 429／逾時；twse_market_index：1 分鐘輪詢偶發逾時
+ALERT_OVERRIDES = os.getenv('ALERT_OVERRIDES', 'news_events:6:60,twse_market_index:5:30')
+# 日報送出後 ping（healthchecks.io 死人開關）；空值跳過
+HC_DAILY_REPORT_PING_URL = os.getenv('HC_DAILY_REPORT_PING_URL', '')
 
 # 磁碟空間告警門檻（MB）
 DISK_ALERT_THRESHOLD_MB = int(os.getenv('DISK_ALERT_THRESHOLD_MB', '35000'))  # 預設 35GB
@@ -831,8 +850,6 @@ def print_config():
     print(f"   S3:  {'✓ ' + S3_BUCKET if S3_BUCKET else '✗ (使用本地儲存)'}")
     print(f"   Supabase: {'✓' if SUPABASE_ENABLED and SUPABASE_DB_URL else '✗ (未啟用)'}")
     print(f"   API: {'✓ Port ' + str(API_PORT) if API_KEY else '✗ (未設定 API_KEY)'}")
-    print(f"   通知: {'✓' if WEBHOOK_URL or LINE_TOKEN or TELEGRAM_BOT_TOKEN else '✗'}")
-    if TELEGRAM_BOT_TOKEN:
-        print(f"   Telegram: ✓ (日報 {DAILY_REPORT_TIME})")
+    print(f"   通知: {f'✓ Telegram (日報 {DAILY_REPORT_TIME})' if TELEGRAM_BOT_TOKEN else '✗'}")
     print(f"   資料目錄: {LOCAL_DATA_DIR}")
     print("=" * 50)
