@@ -816,9 +816,13 @@ class DailyReportTask:
             load = sys_.get("load_avg_1m")
             up = sys_.get("uptime_days")
             egress = snap.get("egress_ip", "?")
+            alerts = snap.get("alerts") or []
             parts.append(
-                f"  🟢 `{host}` ({egress}) up {up}d / load {load} / disk {disk}%"
+                f"  {'🔴' if alerts else '🟢'} `{host}` ({egress}) up {up}d / load {load} / disk {disk}%"
             )
+            # VM 端告警（health_report.run_checks：磁碟 >80%、歸檔滯留）
+            for alert in alerts:
+                parts.append(f"    🔴 {alert}")
 
             for cname, c in (snap.get("collectors") or {}).items():
                 if "error" in c:

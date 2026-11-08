@@ -9,7 +9,7 @@
   - 上傳成功（head_object 驗證大小一致）才刪本地
 
 collector 每週四跑一次，所以只有週四有日期目錄；預設 ARCHIVE_RETENTION_DAYS=1
-＝隔天（D+1）就上傳。每次往回掃 30 天，補處理之前失敗或漏跑的日期。
+＝隔天（D+1）就上傳。每次掃本機所有日期目錄，補處理之前失敗或漏跑的日期。
 
 排程：每天 03:20（台北）由 cron 觸發（setup_cron.sh）。
 """
@@ -36,9 +36,28 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/var/lib/cdc-public-health/data"))
 BUCKET = os.environ.get("S3_BUCKET")
 REGION = os.environ.get("S3_REGION", "ap-southeast-2")
 RETENTION_DAYS = max(1, int(os.environ.get("ARCHIVE_RETENTION_DAYS", "1")))  # 1＝隔天上傳
-SCAN_DAYS = 30
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
+
+
+def local_due_dates(collector_dir: Path, today: datetime, keep_days: int) -> list[datetime]:
+    """本機所有 YYYY/MM/DD 日期目錄中，日期 <= today - keep_days 者（舊到新）。
+
+    不再只回掃最近 30 天：VM 停機或 S3 失敗超過一個月的日期也會被補處理，
+    不會永遠卡在本機（2026-11-08 清出 ship_ais／waste_positions 8/23–8/27 共約 1.8GB）。
+    """
+    cutoff = today - timedelta(days=keep_days)
+    out = []
+    for day_dir in collector_dir.glob("[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]"):
+        if not day_dir.is_dir():
+            continue
+        try:
+            day = datetime.strptime("/".join(day_dir.parts[-3:]), "%Y/%m/%d").replace(tzinfo=today.tzinfo)
+        except ValueError:
+            continue
+        if day <= cutoff:
+            out.append(day)
+    return sorted(out)
 
 
 def s3_client():
@@ -110,8 +129,7 @@ def main() -> int:
     today = datetime.now(TAIPEI_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
 
     failed = 0
-    for delta in range(RETENTION_DAYS, RETENTION_DAYS + SCAN_DAYS):
-        target = today - timedelta(days=delta)
+    for target in local_due_dates(DATA_DIR / COLLECTOR, today, RETENTION_DAYS):
         try:
             log.info(archive_one_day(s3, target))
         except Exception as exc:
