@@ -23,6 +23,13 @@ pla_tracks 分不出「那天沒共機」與「那天沒跑」。ledger 讓兩�
 
 ledger 有成功列的日子不重跑；失敗列（error 非空）每天重試一次。
 形狀寫入前先 DELETE 該日 —— 重跑抽出較少形狀時，舊的多餘形狀不會殘留。
+
+例外：國防部原圖回 404 且通報日已超過 GIVE_UP_404_DAYS 天 → 視為永久失敗不再重試
+（2026-10-14 的圖網址一直 404，原本會在回看窗內每天重試、每天失敗）。
+ledger 該列的 error 保留 404 原文當作放棄原因。
+
+⚠ plate_ok=False（版型不認得）的列 error 是 NULL，不會自動重跑 ——
+  新增版型後要用 scripts/backfill_pla_tracks.py 從 S3 原圖補算。
 """
 from __future__ import annotations
 
@@ -48,18 +55,25 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 S3_PREFIX = "pla/track_charts"
 
-# 待處理日期：有航跡圖、在回看窗內、且 ledger 沒有成功列
+# 下載失敗訊息含這段 = 原圖網址 404（requests 的 HTTPError 字樣）
+ERROR_404_MARK = "404 Client Error"
+
+# 待處理日期：有航跡圖、在回看窗內、且 ledger 沒有成功列，
+# 也沒有「已放棄的 404」（通報日超過 N 天仍 404 → 國防部不會再補圖）
 PENDING_SQL = """
 SELECT d.report_date::text, d.track_chart_url
 FROM live.pla_activity_daily d
 WHERE d.track_chart_url IS NOT NULL
-  AND d.report_date >= (now() AT TIME ZONE 'Asia/Taipei')::date - %s::int
+  AND d.report_date >= (now() AT TIME ZONE 'Asia/Taipei')::date - %(lookback)s::int
   AND NOT EXISTS (
       SELECT 1 FROM spatial.pla_tracks_runs r
-      WHERE r.report_date = d.report_date AND r.error IS NULL
+      WHERE r.report_date = d.report_date
+        AND (r.error IS NULL
+             OR (strpos(r.error, %(mark_404)s) > 0
+                 AND r.report_date < (now() AT TIME ZONE 'Asia/Taipei')::date - %(give_up)s::int))
   )
 ORDER BY d.report_date DESC
-LIMIT %s::int
+LIMIT %(limit)s::int
 """
 
 
@@ -76,6 +90,8 @@ class PlaTracksVectorizeCollector(BaseCollector):
     LOOKBACK_DAYS = 30
     # 單輪上限：擋住「第一次上線把 30 天全跑掉」拖垮這一輪
     MAX_DAYS_PER_RUN = 10
+    # 原圖 404 的日子，通報日超過這麼多天就不再重試（見模組 docstring）
+    GIVE_UP_404_DAYS = 3
 
     def __init__(self):
         super().__init__()
@@ -103,7 +119,10 @@ class PlaTracksVectorizeCollector(BaseCollector):
         conn = connect_supabase(autocommit=True, statement_timeout_ms=60_000)
         try:
             with conn.cursor() as cur:
-                cur.execute(PENDING_SQL, (self.LOOKBACK_DAYS, self.MAX_DAYS_PER_RUN))
+                cur.execute(PENDING_SQL, {
+                    'lookback': self.LOOKBACK_DAYS, 'limit': self.MAX_DAYS_PER_RUN,
+                    'mark_404': ERROR_404_MARK, 'give_up': self.GIVE_UP_404_DAYS,
+                })
                 return [(r[0], r[1]) for r in cur.fetchall()]
         finally:
             conn.close()
@@ -135,10 +154,19 @@ class PlaTracksVectorizeCollector(BaseCollector):
 
     # ── 單日處理 ────────────────────────────────────────────
     def _process_day(self, report_date: str, url: str, img_dir: str) -> list[dict]:
+        s3_key = self._fetch_chart(url, report_date, img_dir)
+        return self.vectorize_records(report_date, img_dir, s3_key)
+
+    def vectorize_records(self, report_date: str, img_dir: str,
+                          s3_key: str | None) -> list[dict]:
+        """`img_dir/{date}.jpg` 已就位 → ledger／形狀／項次 records。
+
+        每日流程與 scripts/backfill_pla_tracks.py（從 S3 原圖補算）共用。
+        ⚠ 非 720×1040 的已知版型會被就地縮圖（georef.normalize_plate）。
+        """
         from collectors.pla_tracks.georef import vectorize_day
         from collectors.pla_tracks.items import read_day_items
 
-        s3_key = self._fetch_chart(url, report_date, img_dir)
         result = vectorize_day(img_dir, report_date)
 
         records: list[dict] = [{
@@ -230,8 +258,9 @@ class PlaTracksVectorizeCollector(BaseCollector):
         if bad_plate:
             alerting.raise_alert(
                 "pla_tracks_plate", alerting.YELLOW,
-                f"共軍航跡圖 {bad_plate}/{processed} 天版型不認得（已知只支援 720×1040）—— "
-                f"國防部可能改版，需更新 collectors/pla_tracks/georef.py 的 PLATE_SIZE 與 GEOREF")
+                f"共軍航跡圖 {bad_plate}/{processed} 天版型不認得（已知支援 720×1040、1125×1625）—— "
+                f"國防部可能改版，需在 collectors/pla_tracks/georef.py 的 PLATES 登記新版型與配準，"
+                f"再用 scripts/backfill_pla_tracks.py 補算")
         elif processed:
             alerting.clear_alert("pla_tracks_plate")
 
