@@ -1248,6 +1248,11 @@ class DailyReportTask:
             if name not in active_names:
                 broken.append(f"🟡 收集器 {alerting.display_name(name)} 已 {ago}沒執行"
                               f"（平常{_human_interval(interval)}）")
+        try:  # 週一 DB 效能體檢（tasks/db_efficiency_audit；今天沒跑或全綠＝空）
+            from tasks import db_efficiency_audit
+            broken += db_efficiency_audit.report_lines_for_today(now)
+        except Exception as e:
+            print(f"⚠️ 日報讀 DB 體檢失敗: {e}")
         try:
             for entry in monitoring.list_vm_health_snapshots(max_age_hours=26):
                 if entry["is_lost"] or entry["snapshot"] is None:
