@@ -24,6 +24,18 @@
 
 眾數（75 張中 40 張逐位元相同；第 2、3 名共 15 張差 ≤ 0.004° 屬像素級抖動）。
 緯度係數在所有成功樣本中完全一致，經度係數才是 off-by-N 的受害者。
+
+## 1125×1625 版型（2026-10-01 起）
+
+國防部 2026-10 起改出 1125×1625（與 720×1040 長寬比相同，都是 1.5625 倍），
+版面、圖例、經緯範圍目視逐項對照不變，但**不是 720 版的逐像素放大**：
+原生解在 720 座標系下緯度係數差 0.18%、圖頂偏 0.012°（重新繪製造成）。
+
+作法：先把原圖等比縮回 720×1040（LANCZOS），後段所有像素常數
+（表格區 x<60、編號環 12–26px、Hough 長度、閉合半徑…）全部沿用；
+配準則另外固化一組 —— 取 29 張（10-01～11-08）**縮圖後** solve 的眾數
+（18/29 逐位元相同，22/29 圖角差 ≤ 0.002°；與 720 版 40/75 的分佈同型）。
+縮圖後紅線寬約 2px，與 720 原圖 2–2.8px 相當，不需改放大參數。
 """
 from __future__ import annotations
 
@@ -37,19 +49,43 @@ from . import shape_extract
 from .shape_extract import extract_guided
 from .table_items import expected_shapes
 
-# 已知可處理的版型（寬, 高）。其餘版型一律不採用 —— 已知 794×1115（2026 年 3 張）
-# 網格線太少，配準與表格框偵測都必失敗，硬跑只會產生錯誤形狀。
+# 後段像素常數所依據的工作尺寸（寬, 高）。其他已知版型先等比縮到這個尺寸再處理。
 PLATE_SIZE = (720, 1040)
 
-# 固化配準：lon = ax·x + bx，lat = ay·y + by
-GEOREF = (0.0122698915, 115.4776685516, -0.0111111111, 31.0111111111)
+# 已知可處理的**原生**版型 → 固化配準（lon = ax·x + bx，lat = ay·y + by，
+# x/y 為縮到 PLATE_SIZE 之後的像素座標）。其餘版型一律不採用 —— 已知 794×1115
+# （2026 年 3 張）網格線太少，配準與表格框偵測都必失敗，硬跑只會產生錯誤形狀。
+# ⚠ 不以「長寬比相同」放行：新尺寸要先驗證版面沒變、量出自己的配準再登記。
+PLATES = {
+    (720, 1040): (0.0122698915, 115.4776685516, -0.0111111111, 31.0111111111),
+    (1125, 1625): (0.0122937453, 115.4742842900, -0.0111420613, 31.0278551532),
+}
+
+# 舊名保留：720 版的固化配準
+GEOREF = PLATES[PLATE_SIZE]
 
 # 當張解 vs 固化值的圖角最大偏差容忍（度）。
 # 實測正常抖動 ≤ 0.004°、錯誤解 ≥ 0.77° —— 0.05° 落在兩者之間，兩側都有 15 倍餘裕。
 GEOREF_TOL_DEG = 0.05
 
 
-def georef_deviation(path: str) -> float | None:
+def normalize_plate(path: str) -> tuple[int, int]:
+    """把已知版型的原圖**就地**縮成 PLATE_SIZE，回傳原生尺寸。
+
+    就地覆寫是必要的：shape_extract（含引導重試會重讀 7 次）與表格 OCR 都靠
+    `{date}.jpg` 檔名讀圖。呼叫端傳入的是暫存目錄的副本（S3 備份用的是下載的
+    原始 bytes），原圖不受影響。已是 PLATE_SIZE 或未知版型則不動。
+    """
+    with Image.open(path) as im:
+        size = im.size
+        if size == PLATE_SIZE or size not in PLATES:
+            return size
+        small = im.convert('RGB').resize(PLATE_SIZE, Image.LANCZOS)
+    small.save(path, format='JPEG', quality=95, subsampling=0)
+    return size
+
+
+def georef_deviation(path: str, georef: tuple = GEOREF) -> float | None:
     """當張 solve_georef 解與固化值的圖角最大偏差（度）。
 
     None = 當張配準失敗（11% 屬常態，不是錯誤）。
@@ -60,7 +96,7 @@ def georef_deviation(path: str) -> float | None:
     if not g:
         return None
     ax, bx, ay, by = g[:4]
-    gax, gbx, gay, gby = GEOREF
+    gax, gbx, gay, gby = georef
     w, h = PLATE_SIZE
     dlon = max(abs((ax - gax) * x + (bx - gbx)) for x in (0, w))
     dlat = max(abs((ay - gay) * y + (by - gby)) for y in (0, h))
@@ -93,13 +129,16 @@ def vectorize_day(img_dir: str, report_date: str) -> dict:
 
     `ok=False` → 呼叫端應把該日形狀標 needs_review（不靜默採用，兩支 RPC 預設排除）。
     `plate_ok=False` → 完全不產形狀，呼叫端應告警（版型改了，程式要跟）。
+
+    ⚠ 非 PLATE_SIZE 的已知版型會被**就地縮圖**（見 normalize_plate），
+    之後同一目錄的表格 OCR（items.read_day_items）讀到的也是縮過的圖。
     """
     path = os.path.join(img_dir, f"{report_date}.jpg")
-    size = Image.open(path).size
+    size = normalize_plate(path)
 
     out = {
         'report_date': report_date,
-        'plate_ok': size == PLATE_SIZE,
+        'plate_ok': size in PLATES,
         'plate_size': size,
         'georef_dev': None,
         'expected': None,
@@ -113,7 +152,8 @@ def vectorize_day(img_dir: str, report_date: str) -> dict:
     if not out['plate_ok']:
         return out
 
-    out['georef_dev'] = georef_deviation(path)
+    georef = PLATES[size]
+    out['georef_dev'] = georef_deviation(path, georef)
 
     # shape_extract 以模組級全域記影像目錄，且靠 date 組檔名找圖
     shape_extract.set_image_dir(img_dir)
@@ -124,7 +164,7 @@ def vectorize_day(img_dir: str, report_date: str) -> dict:
         report_date, n_exp if n_items else None, n_balloon=n_excl)
     n_table = n_exp if n_items else n_marker
 
-    ax, bx, ay, by = GEOREF
+    ax, bx, ay, by = georef
     out.update({
         'expected': n_table,
         'balloon_items': n_excl,
