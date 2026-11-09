@@ -1,20 +1,17 @@
 """
 告警分級狀態機（🔴 立即／🟡 每日彙整／⚪ 不送）
 
-設計依據：2026-11-08 Telegram 告警盤點（全綠日 1 則、平常日 1–3 則、大事故 2 則）。
+設計依據：2026-11-08 Telegram 告警盤點；2026-11-09 改成「收集器真的壞掉才發」。
 規則正本寫在 docs/handbook/operations.md §1，這裡只實作。
 
 - 🔴：開始一次、恢復一次；持續中不重送，只有超過 ALERT_STILL_DOWN_HOURS 仍未恢復補送一次。
 - 🟡：只記錄，次日 08:00 日報列出（「現在還壞的」「昨天壞過、已恢復」）。
-- collector：連續失敗達門檻才進 alerting，未達門檻就恢復的瞬斷完全不送（只計入日報「小錯誤」）。
-  間隔 < ALERT_DAILY_INTERVAL_MIN：連續 N（CONSECUTIVE_ERROR_THRESHOLD）次且持續 ≥ ALERT_MIN_DURATION_MIN 分；
-  間隔 ≥ ALERT_DAILY_INTERVAL_MIN（每日類）：連續 ALERT_DAILY_N 次，不加時間條件；
-  ALERT_OVERRIDES 可對常瞬斷上游放寬。cross_layer_map.yaml 的 critical 決定 🔴／🟡。
-- 同一 collector 的「收集失敗」與「DB 寫入失敗」共用 key `collector:<name>`（reasons 集合），
-  一支 collector 不會收到兩種告警；全部 reason 都好了才算恢復。
-- collector 的 🔴 先進 pending，由 flush()（main.py 每分鐘）送出：ALERT_BURST_WINDOW_SEC 內
-  ≥ ALERT_BURST_MERGE 支同時進 alerting → 合成一則，之後 ALERT_BURST_HOLD_MIN 分鐘內再壞的併入，
-  恢復時也合成一則。
+- collector 的即時告警只看「多久沒新資料」（tasks/staleness_watch.py 每 STALE_CHECK_INTERVAL_MIN
+  分鐘判斷一次，交給 update_staleness()）：門檻見 staleness_threshold_min()；同一輪新壞的、
+  恢復的、滿 24 小時仍未恢復的各合成一則。key `stale:<name>`。
+- collector 的失敗（收集失敗、DB 寫入失敗）本身**不發**即時訊息：連續失敗達門檻（threshold_for）
+  只進 🟡（日報「現在還壞的」），未達門檻就恢復的瞬斷只計入日報「小錯誤」。
+  同一 collector 的「收集失敗」與「DB 寫入失敗」共用 key `collector:<name>`（reasons 集合）。
 
 狀態存在 {LOCAL_DATA_DIR}/alert_state.json（與 anomaly_state.json 同目錄），寫入 tmp+rename。
 Telegram 未設定（HiCloud VM 子行程）時 send_telegram 回 False，不影響收集。
@@ -26,7 +23,6 @@ import json
 import logging
 import os
 import threading
-from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
@@ -42,7 +38,6 @@ _LOCK = threading.RLock()
 
 # collector name → 執行間隔（分鐘）；BaseCollector.__init__ 登記，DB writer 失敗時查得到
 _INTERVALS: dict[str, int] = {}
-_critical_cache: Optional[dict[str, bool]] = None
 _label_cache: Optional[dict[str, str]] = None
 
 # 測試注入點：預設走 Telegram 純文字（錯誤訊息常含 Markdown 特殊字元）
@@ -74,7 +69,22 @@ def state_path() -> Path:
 
 
 def _empty_state() -> dict:
-    return {"version": 1, "entries": {}, "pending": [], "daily": {}, "burst": None}
+    return {"version": 2, "entries": {}, "daily": {}}
+
+
+def _migrate(state: dict) -> dict:
+    """v1（連續失敗觸發 🔴、pending／burst 合併）→ v2：丟掉 pending／burst，
+    collector:* 一律降成 🟡（失敗不再發即時訊息；部署當下進行中的舊 🔴 不會收到恢復）。"""
+    if state.get("version", 1) >= 2:
+        return state
+    state.pop("pending", None)
+    state.pop("burst", None)
+    for key, e in state.get("entries", {}).items():
+        if key.startswith("collector:") and isinstance(e, dict):
+            e["level"] = YELLOW
+            e["notified_red"] = False
+    state["version"] = 2
+    return state
 
 
 def load_state() -> dict:
@@ -84,8 +94,9 @@ def load_state() -> dict:
             data = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 base = _empty_state()
+                base["version"] = 1  # 舊檔沒有 version → 視為 v1
                 base.update(data)
-                return base
+                return _migrate(base)
     except Exception as exc:  # 壞檔不擋收集，重新開始
         log.warning("alert_state 讀取失敗，重新開始: %s", exc)
     return _empty_state()
@@ -169,7 +180,7 @@ def _overrides() -> dict[str, tuple[int, int]]:
 
 
 def threshold_for(name: str, interval_minutes: Optional[int] = None) -> tuple[int, int]:
-    """回傳 (連續次數 N, 最短持續分鐘)。"""
+    """回傳 (連續次數 N, 最短持續分鐘)。只決定日報 🟡「現在還壞的」，不發即時訊息。"""
     ov = _overrides().get(name)
     if ov:
         return ov
@@ -177,26 +188,6 @@ def threshold_for(name: str, interval_minutes: Optional[int] = None) -> tuple[in
     if interval >= config.ALERT_DAILY_INTERVAL_MIN:
         return config.ALERT_DAILY_N, 0
     return config.CONSECUTIVE_ERROR_THRESHOLD, config.ALERT_MIN_DURATION_MIN
-
-
-def is_critical(name: str) -> bool:
-    """config/cross_layer_map.yaml 的 critical（以 collector 為鍵）。"""
-    global _critical_cache
-    if _critical_cache is None:
-        try:
-            from tasks.monitoring import load_cross_layer_map
-            _critical_cache = {k: bool(v.get("critical")) for k, v in load_cross_layer_map().items()
-                               if isinstance(v, dict)}
-        except Exception as exc:
-            log.warning("讀 cross_layer_map 失敗，critical 一律視為 False: %s", exc)
-            _critical_cache = {}
-    return _critical_cache.get(name, False)
-
-
-def _set_critical_cache(mapping: Optional[dict[str, bool]]) -> None:
-    """測試用。"""
-    global _critical_cache
-    _critical_cache = mapping
 
 
 def display_name(name: str) -> str:
@@ -230,7 +221,11 @@ def _set_label_cache(mapping: Optional[dict[str, str]]) -> None:
 def collector_failed(name: str, error: str, *, reason: str = "collect",
                      interval_minutes: Optional[int] = None,
                      now: Optional[datetime] = None) -> Optional[str]:
-    """collector 一次失敗。回傳轉換結果：None／'alerting'。"""
+    """collector 一次失敗。回傳轉換結果：None／'alerting'。
+
+    不發任何即時訊息：達門檻只標成 🟡（日報「現在還壞的」）。真的沒資料了由
+    update_staleness() 發 🔴。
+    """
     now = _now(now)
     if interval_minutes is not None:
         register_collector(name, interval_minutes)
@@ -253,15 +248,10 @@ def collector_failed(name: str, error: str, *, reason: str = "collect",
             n, min_dur = threshold_for(name, interval_minutes)
             since = _parse(r["since"]) or now
             if r["count"] >= n and (now - since) >= timedelta(minutes=min_dur):
-                level = RED if is_critical(name) else YELLOW
-                entry.update(state="alerting", level=level, alerted_at=now.isoformat(),
-                             notified_red=False, still_down_sent=False,
+                entry.update(state="alerting", level=YELLOW, alerted_at=now.isoformat(),
+                             notified_red=False,
                              first_seen=min(entry.get("first_seen", now.isoformat()), r["since"]))
-                state["pending"].append({"kind": "start", "key": key, "level": level,
-                                         "at": now.isoformat()})
                 transition = "alerting"
-        else:
-            _maybe_still_down(state, key, entry, now)
         save_state(state)
     return transition
 
@@ -282,10 +272,9 @@ def collector_succeeded(name: str, *, reason: str = "collect",
             return None
         transition = None
         if entry["state"] == "alerting":
-            _resolve(state, key, entry, now)
+            _record_resolved(state, key, entry, now)  # 🟡 的恢復只進日報
             transition = "recovered"
-        else:
-            state["entries"].pop(key, None)  # 未達門檻的瞬斷：不送任何東西
+        state["entries"].pop(key, None)  # 未達門檻的瞬斷：不送任何東西
         save_state(state)
     return transition
 
@@ -318,9 +307,11 @@ def raise_alert(key: str, level: str, text: str, *, now: Optional[datetime] = No
                 to_send.append(f"🔴 {text}{_instance_tag()}")
                 transition = "escalated"
             elif level == RED:
-                msg = _maybe_still_down(state, key, entry, now, queue=False)
-                if msg:
-                    to_send.append(msg)
+                if _still_down_due(entry, now):
+                    entry["still_down_sent"] = True
+                    first = _parse(entry.get("first_seen")) or now
+                    to_send.append(f"⏳ 仍未恢復（已 {_fmt_duration(now - first)}）：{entry.get('last_text') or key}"
+                                   f"{_instance_tag()}\n之後只在每日日報列出，恢復時會再通知。")
             entry["level"] = level  # 🔴→🟡 降級不送訊息，但 notified_red 保留，恢復時照送
         entry["last_seen"] = now.isoformat()
         entry["last_text"] = _short(text, 300)
@@ -391,7 +382,7 @@ def recent_events(key: str, since: datetime) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────
-# 內部：恢復、仍未恢復、pending flush
+# 內部：恢復、仍未恢復
 # ─────────────────────────────────────────────────────────
 
 def _record_resolved(state: dict, key: str, entry: dict, now: datetime) -> None:
@@ -401,174 +392,125 @@ def _record_resolved(state: dict, key: str, entry: dict, now: datetime) -> None:
     })
 
 
-def _resolve(state: dict, key: str, entry: dict, now: datetime) -> None:
-    """collector 由 alerting 恢復。送過 🔴（含合併告警成員）才排一則恢復。"""
-    _record_resolved(state, key, entry, now)
-    state["entries"].pop(key, None)
-    # 還沒 flush 出去的開始事件直接撤掉（開始＋恢復都在同一窗內 → 什麼都不送）
-    before = len(state["pending"])
-    state["pending"] = [p for p in state["pending"] if not (p["key"] == key and p["kind"] == "start")]
-    if len(state["pending"]) != before:
-        return
-    burst = state.get("burst")
-    if burst and key in burst.get("members", []):
-        burst.setdefault("recovered", []).append(key)
-        burst["last_recovery_at"] = now.isoformat()
-        return
-    if entry.get("notified_red"):
-        first = _parse(entry.get("first_seen")) or now
-        state["pending"].append({"kind": "recover", "key": key, "level": RED, "at": now.isoformat(),
-                                 "name": entry.get("name", key),
-                                 "duration": _fmt_duration(now - first)})
-
-
-def _maybe_still_down(state: dict, key: str, entry: dict, now: datetime,
-                      queue: bool = True) -> Optional[str]:
+def _still_down_due(entry: dict, now: datetime) -> bool:
     if entry.get("level") != RED or not entry.get("notified_red") or entry.get("still_down_sent"):
-        return None
+        return False
     first = _parse(entry.get("first_seen")) or now
-    if now - first < timedelta(hours=config.ALERT_STILL_DOWN_HOURS):
-        return None
-    burst = state.get("burst")
-    keys = [key]
-    if burst and key in burst.get("members", []):
-        # 合併告警的成員一起報一次
-        keys = [k for k in burst["members"] if k not in burst.get("recovered", [])
-                and state["entries"].get(k, {}).get("state") == "alerting"]
-    for k in keys:
-        if k in state["entries"]:
-            state["entries"][k]["still_down_sent"] = True
-    names = "、".join(display_name(state["entries"][k].get("name", k)) for k in keys if k in state["entries"])
-    msg = (f"⏳ 仍未恢復（已 {_fmt_duration(now - first)}）：{names}{_instance_tag()}\n"
-           "之後只在每日日報列出，恢復時會再通知。")
-    if queue:
-        state["pending"].append({"kind": "raw", "key": key, "level": RED, "at": now.isoformat(),
-                                 "text": msg})
-        return None
-    return msg
+    return now - first >= timedelta(hours=config.ALERT_STILL_DOWN_HOURS)
 
 
-def flush(now: Optional[datetime] = None) -> list[str]:
-    """送出 pending（main.py 每分鐘呼叫）。回傳實際送出的訊息（測試用）。"""
+# ─────────────────────────────────────────────────────────
+# 收集器「太久沒新資料」（tasks/staleness_watch.py 每輪呼叫）
+# ─────────────────────────────────────────────────────────
+
+_MIN_STALE_MIN = 30  # 高頻收集器至少等 30 分鐘
+_DAY_MIN = 1440
+
+
+def staleness_threshold_min(interval_minutes: int) -> int:
+    """多久沒新資料算「疑似壞掉」（分鐘）。門檻唯一出處。
+
+    間隔 < 1 天：max(30 分, 3 × 間隔)（5 分→30 分、15 分→45 分、60 分→3 小時）
+    間隔 ≥ 1 天：2 × 間隔（每天→晚一天才報、每週→晚一週才報）
+    """
+    interval = max(int(interval_minutes or 0), 1)
+    if interval >= _DAY_MIN:
+        return 2 * interval
+    return max(_MIN_STALE_MIN, 3 * interval)
+
+
+def _stale_line(f: dict, now: datetime) -> str:
+    what = "沒有新資料" if f.get("basis") == "table" else "沒有成功執行"
+    last = f.get("last_at")
+    ago = _fmt_duration(now - last) if last else "（從未有紀錄）"
+    tail = (f"，最後{'一筆' if f.get('basis') == 'table' else '成功'} {last:%m/%d %H:%M}"
+            if last else "")
+    return f"已 {ago}{what}（門檻 {_fmt_duration(timedelta(minutes=f['threshold_min']))}{tail}）"
+
+
+def update_staleness(findings: list[dict], now: Optional[datetime] = None) -> list[str]:
+    """一輪「多久沒新資料」的判斷結果 → 送出合併後的訊息，回傳實際送出的訊息（測試用）。
+
+    findings：這一輪有檢查的收集器，每筆
+      {name, stale: bool, last_at: datetime|None, threshold_min: int, basis: 'table'|'success'}
+    沒出現在 findings 的 stale:* 告警（停用、季節外）安靜收掉，只進日報「已恢復」。
+    findings 可帶 last_success（datetime）：存進狀態檔 last_success，重啟後當「最後成功執行」的
+    下限（DB collector_status 只在有寫入時更新，沒新事件的收集器會顯示很舊）。
+    """
     now = _now(now)
-    window = timedelta(seconds=config.ALERT_BURST_WINDOW_SEC)
-    messages: list[str] = []
+    started, recovered, still = [], [], []
     with _LOCK:
         state = load_state()
-        pending = state.get("pending", [])
-        burst = state.get("burst")
-        if burst and not burst.get("recovered") and now >= (_parse(burst.get("until")) or now) \
-                and not _burst_open_members(state, burst):
-            state["burst"] = None  # hold 結束、成員都已不在（例：狀態檔被清）→ 收掉
-
-        oldest = min((_parse(p["at"]) for p in pending), default=None)
-        if pending and oldest and now - oldest >= window:
-            starts = [p for p in pending if p["kind"] == "start"]
-            recovers = [p for p in pending if p["kind"] == "recover"]
-            raws = [p for p in pending if p["kind"] == "raw"]
-            state["pending"] = []
-            messages += _flush_starts(state, starts, now)
-            if recovers:
-                messages.append(_fmt_recoveries(recovers))
-            messages += [p["text"] for p in raws]
-
-        burst = state.get("burst")
-        if burst and burst.get("recovered"):
-            last = _parse(burst.get("last_recovery_at")) or now
-            remaining = _burst_open_members(state, burst)
-            hold_over = now >= (_parse(burst.get("until")) or now)
-            if now - last >= window and (not remaining or hold_over):
-                messages.append(_fmt_burst_recovery(state, burst, remaining, now))
-                state["burst"] = None
+        entries = state["entries"]
+        persisted = state.setdefault("last_success", {})
+        seen = set()
+        for f in findings:
+            name = f["name"]
+            if f.get("last_success") is not None:
+                persisted[name] = _now(f["last_success"]).isoformat()
+            key = f"stale:{name}"
+            seen.add(key)
+            entry = entries.get(key)
+            line = _stale_line(f, now)
+            if f.get("stale"):
+                if entry is None:
+                    first = f.get("last_at") or now
+                    entry = entries[key] = {
+                        "state": "alerting", "kind": "stale", "name": name, "level": RED,
+                        "first_seen": _now(first).isoformat(), "alerted_at": now.isoformat(),
+                        "notified_red": True, "still_down_sent": False, "basis": f.get("basis"),
+                    }
+                    started.append((name, line))
+                elif _still_down_due(entry, now):
+                    entry["still_down_sent"] = True
+                    still.append(name)
+                entry["last_text"] = f"收集器 {display_name(name)} {line}"
+                entry["last_seen"] = now.isoformat()
+            elif entry is not None:
+                first = _parse(entry.get("first_seen")) or now
+                _record_resolved(state, key, entry, now)
+                entries.pop(key, None)
+                recovered.append((name, _fmt_duration(now - first)))
+        for key in [k for k, e in entries.items() if e.get("kind") == "stale" and k not in seen]:
+            _record_resolved(state, key, entries[key], now)
+            entries.pop(key, None)
         save_state(state)
+
+    tag = _instance_tag()
+    messages: list[str] = []
+    if len(started) == 1:
+        name, line = started[0]
+        messages.append(f"🔴 收集器疑似壞掉：{display_name(name)}{tag}\n{line}\n"
+                        "恢復（又有新資料）時會再通知一則；持續中不重送。")
+    elif started:
+        lines = [f"🔴 {len(started)} 支收集器疑似壞掉（太久沒有新資料）{tag}"]
+        lines += [f"• {display_name(n)}：{line}" for n, line in started]
+        lines.append("恢復時會再通知；持續中不重送。")
+        messages.append("\n".join(lines))
+    if len(recovered) == 1:
+        name, dur = recovered[0]
+        messages.append(f"✅ {display_name(name)} 恢復，又有新資料（中斷約 {dur}）{tag}")
+    elif recovered:
+        lines = [f"✅ {len(recovered)} 支收集器恢復，又有新資料{tag}"]
+        lines += [f"• {display_name(n)}（中斷約 {d}）" for n, d in recovered]
+        messages.append("\n".join(lines))
+    if still:
+        names = "、".join(display_name(n) for n in still)
+        messages.append(f"⏳ 仍未恢復（超過 {config.ALERT_STILL_DOWN_HOURS:g} 小時沒有新資料）：{names}{tag}\n"
+                        "之後只在每日日報列出，恢復時會再通知。")
     for msg in messages:
         _send(msg)
     return messages
 
 
-def _burst_open_members(state: dict, burst: dict) -> list[str]:
-    return [k for k in burst.get("members", [])
-            if k not in burst.get("recovered", []) and k in state["entries"]]
-
-
-def _flush_starts(state: dict, starts: list[dict], now: datetime) -> list[str]:
-    live = [p for p in starts if state["entries"].get(p["key"], {}).get("state") == "alerting"]
-    if not live:
-        return []
-    burst = state.get("burst")
-    if burst and now < (_parse(burst.get("until")) or now):
-        # 合併告警持續中：併入，不另送
-        for p in live:
-            burst["members"].append(p["key"])
-            state["entries"][p["key"]]["notified_red"] = True
-        return []
-    entries = [state["entries"][p["key"]] for p in live]
-    reds = [e for e in entries if e.get("level") == RED]
-    if len(live) >= config.ALERT_BURST_MERGE:
-        state["burst"] = {
-            "started": now.isoformat(),
-            "until": (now + timedelta(minutes=config.ALERT_BURST_HOLD_MIN)).isoformat(),
-            "members": [p["key"] for p in live], "recovered": [],
-        }
-        for e in entries:
-            e["notified_red"] = True
-        if not reds:
-            return []  # 全部非 critical：合併成一件事，但只進日報
-        return [_fmt_burst(entries)]
-    for e in reds:
-        e["notified_red"] = True
-    if not reds:
-        return []
-    if len(reds) == 1:
-        e = reds[0]
-        n = sum(r.get("count", 0) for r in e.get("reasons", {}).values())
-        first = _parse(e.get("first_seen")) or now
-        what = "DB 寫入" if set(e.get("reasons", {})) == {"db"} else "收集器"
-        return [f"🔴 {what} {display_name(e['name'])} 連續失敗（{n} 次，已 {_fmt_duration(now - first)}）"
-                f"{_instance_tag()}\n錯誤：{e.get('last_text', '')}\n"
-                "恢復時會再通知一則；持續中不重送。"]
-    lines = [f"🔴 {len(reds)} 支收集器連續失敗{_instance_tag()}"]
-    for e in reds:
-        lines.append(f"• {display_name(e['name'])}：{_short(e.get('last_text', ''), 100)}")
-    lines.append("恢復時會再通知；持續中不重送。")
-    return ["\n".join(lines)]
-
-
-def _common_error(entries: list[dict]) -> tuple[str, int]:
-    c = Counter(_short(e.get("last_text", ""), 80) for e in entries)
-    text, n = c.most_common(1)[0]
-    return text, n
-
-
-def _fmt_burst(entries: list[dict]) -> str:
-    err, n = _common_error(entries)
-    names = [display_name(e["name"]) for e in entries]
-    crit = [display_name(e["name"]) for e in entries if e.get("level") == RED]
-    shown = "、".join(names[:12]) + (f"…等 {len(names)} 支" if len(names) > 12 else "")
-    return (f"🔴 {len(entries)} 支收集器同時失敗{_instance_tag()}\n"
-            f"共同錯誤（{n} 支）：{err}\n"
-            f"含 critical：{'、'.join(crit)}\n"
-            f"名單：{shown}\n"
-            f"之後 {config.ALERT_BURST_HOLD_MIN} 分鐘內再壞的併入這件事；全部恢復時通知一則。")
-
-
-def _fmt_recoveries(recovers: list[dict]) -> str:
-    if len(recovers) == 1:
-        p = recovers[0]
-        return f"✅ {display_name(p['name'])} 恢復（中斷 {p['duration']}）{_instance_tag()}"
-    lines = [f"✅ {len(recovers)} 支收集器恢復{_instance_tag()}"]
-    lines += [f"• {display_name(p['name'])}（中斷 {p['duration']}）" for p in recovers]
-    return "\n".join(lines)
-
-
-def _fmt_burst_recovery(state: dict, burst: dict, remaining: list[str], now: datetime) -> str:
-    started = _parse(burst.get("started")) or now
-    n = len(burst.get("recovered", []))
-    msg = f"✅ {n} 支收集器已恢復（事件開始於 {started:%m/%d %H:%M}，歷時約 {_fmt_duration(now - started)}）{_instance_tag()}"
-    if remaining:
-        names = "、".join(display_name(state["entries"][k].get("name", k)) for k in remaining)
-        msg += f"\n仍未恢復：{names}（之後各自恢復時再通知）"
-    return msg
+def persisted_last_success() -> dict[str, datetime]:
+    """update_staleness 存下的各收集器最後成功執行時間（跨重啟）。"""
+    out = {}
+    for name, ts in load_state().get("last_success", {}).items():
+        dt = _parse(ts)
+        if dt:
+            out[name] = dt
+    return out
 
 
 # ─────────────────────────────────────────────────────────
@@ -587,6 +529,9 @@ def snapshot(now: Optional[datetime] = None) -> dict:
         active.append({"key": key, "name": e.get("name", key), "level": e.get("level"),
                        "text": e.get("last_text", ""), "since": first,
                        "duration": _fmt_duration(now - first)})
+    # 同一支收集器同時有「連續失敗 🟡」與「太久沒新資料 🔴」→ 只列 🔴
+    stale_names = {a["name"] for a in active if a["key"].startswith("stale:")}
+    active = [a for a in active if not (a["key"].startswith("collector:") and a["name"] in stale_names)]
     active.sort(key=lambda a: (a["level"] != RED, a["since"]))
     resolved, events = [], []
     cutoff = now - timedelta(hours=24)

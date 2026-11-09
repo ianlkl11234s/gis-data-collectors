@@ -72,7 +72,7 @@ class BaseCollector(ABC):
         self.run_count: int = 0
         self.error_count: int = 0
         self.consecutive_errors: int = 0
-        # 告警門檻依實際執行間隔（含 env 覆寫）分高頻／每日類；DB writer 失敗時也查得到
+        # 日報 🟡 門檻依實際執行間隔（含 env 覆寫）分高頻／每日類；DB writer 失敗時也查得到
         alerting.register_collector(self.name, self.interval_minutes)
 
     @abstractmethod
@@ -140,7 +140,7 @@ class BaseCollector(ABC):
             self.last_run = timestamp
             self.last_success_at = timestamp
             self.consecutive_errors = 0  # 成功則重置連續錯誤
-            # 恢復與否由 alerting 狀態機判斷（只有送過 🔴 的才送恢復）
+            # 清掉連續失敗紀錄（失敗與恢復都不發即時訊息；即時 🔴 只看太久沒新資料）
             notify_success(self.name, stats)
 
             return stats

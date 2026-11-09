@@ -272,25 +272,21 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 DAILY_REPORT_ENABLED = os.getenv('DAILY_REPORT_ENABLED', 'true').lower() in ('true', '1', 'yes')
 DAILY_REPORT_TIME = os.getenv('DAILY_REPORT_TIME', '08:00')  # 每日報告時間 (HH:MM)
 
-# 連續錯誤告警門檻（間隔 < ALERT_DAILY_INTERVAL_MIN 的 collector 用這個 N）
-CONSECUTIVE_ERROR_THRESHOLD = int(os.getenv('CONSECUTIVE_ERROR_THRESHOLD', '3'))
-
 # 告警分級（utils/alerting.py；規則見 docs/handbook/operations.md §1）
-# 高頻 collector：連續 N 次且第一次失敗至今 ≥ 這麼多分鐘才進 alerting（濾掉瞬斷）
+# 收集器即時告警只看「多久沒新資料」（tasks/staleness_watch.py；門檻 alerting.staleness_threshold_min）
+STALE_ALERT_ENABLED = os.getenv('STALE_ALERT_ENABLED', 'true').lower() in ('true', '1', 'yes')
+STALE_CHECK_INTERVAL_MIN = int(os.getenv('STALE_CHECK_INTERVAL_MIN', '15'))
+# 以下只決定日報 🟡「現在還壞的」（連續失敗本身不發即時訊息）：
+# 高頻 collector：連續 N 次且第一次失敗至今 ≥ ALERT_MIN_DURATION_MIN 分鐘
+CONSECUTIVE_ERROR_THRESHOLD = int(os.getenv('CONSECUTIVE_ERROR_THRESHOLD', '3'))
 ALERT_MIN_DURATION_MIN = int(os.getenv('ALERT_MIN_DURATION_MIN', '15'))
-# 間隔 ≥ 這麼多分鐘算「每日類」：改用 ALERT_DAILY_N，不加時間條件（否則要壞好幾天才告警）
+# 間隔 ≥ 這麼多分鐘算「每日類」：改用 ALERT_DAILY_N，不加時間條件
 ALERT_DAILY_INTERVAL_MIN = int(os.getenv('ALERT_DAILY_INTERVAL_MIN', '360'))
 ALERT_DAILY_N = int(os.getenv('ALERT_DAILY_N', '2'))
+# 已知常瞬斷上游的放寬門檻：「name:N:分鐘」，逗號分隔
+ALERT_OVERRIDES = os.getenv('ALERT_OVERRIDES', 'news_events:6:60,twse_market_index:5:30')
 # 🔴 進 alerting 後超過這麼多小時仍未恢復，補送一次「仍未恢復」，之後只在日報出現
 ALERT_STILL_DOWN_HOURS = float(os.getenv('ALERT_STILL_DOWN_HOURS', '24'))
-# 同一段時間（ALERT_BURST_WINDOW_SEC）內 ≥ 這麼多支 collector 進 alerting → 合成一則
-ALERT_BURST_MERGE = int(os.getenv('ALERT_BURST_MERGE', '5'))
-ALERT_BURST_WINDOW_SEC = int(os.getenv('ALERT_BURST_WINDOW_SEC', '300'))
-# 合併告警送出後，這段時間內再壞的 collector 併入同一件事，不另送
-ALERT_BURST_HOLD_MIN = int(os.getenv('ALERT_BURST_HOLD_MIN', '60'))
-# 已知常瞬斷上游的放寬門檻：「name:N:分鐘」，逗號分隔
-#   news_events：RSS＋LLM（OpenRouter）常 429／逾時；twse_market_index：1 分鐘輪詢偶發逾時
-ALERT_OVERRIDES = os.getenv('ALERT_OVERRIDES', 'news_events:6:60,twse_market_index:5:30')
 # 日報送出後 ping（healthchecks.io 死人開關）；空值跳過
 HC_DAILY_REPORT_PING_URL = os.getenv('HC_DAILY_REPORT_PING_URL', '')
 

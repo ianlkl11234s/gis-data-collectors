@@ -151,6 +151,27 @@ def query_realtime_health(tables: list[dict]) -> list[dict]:
     return results
 
 
+def query_collector_last_success() -> dict[str, datetime]:
+    """metadata.collector_status 的 last_success_at（heartbeat 寫入，跨重啟保留）。
+
+    給 tasks/staleness_watch：只有事件驅動表或沒登記表的收集器，用「最後成功執行」判斷停擺。
+    失敗回 {}（不擋檢查，退回 in-memory last_success_at）。
+    """
+    if not (config.SUPABASE_ENABLED and config.SUPABASE_DB_URL):
+        return {}
+    try:
+        import psycopg2
+        with psycopg2.connect(config.SUPABASE_DB_URL, connect_timeout=15) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET TRANSACTION READ ONLY")
+                cur.execute("SELECT collector_name, last_success_at FROM metadata.collector_status"
+                            " WHERE last_success_at IS NOT NULL LIMIT 1000")
+                return {name: ts for name, ts in cur.fetchall()}
+    except Exception as exc:
+        log.warning("query_collector_last_success failed: %s", type(exc).__name__)
+        return {}
+
+
 def query_gfw_hourly_publish_health(now: datetime | None = None) -> dict[str, Any]:
     """Read GFW's current successful release and most recent attempt.
 
@@ -226,8 +247,8 @@ def stale_check_skip_reason(table: dict, cross_layer_map: dict, now: datetime | 
 
     - 'disabled'    ：表本身標 enabled: false（例：外部 writer 已停），或 owner collector
                       在 cross_layer_map 停用、且沒有其他啟用中的 collector 也寫這張表
-    - 'event_driven'：有事件才寫（地震、火山、旱災公告…）；收集器本身有沒有在跑由
-                      日報的「收集器沒執行」檢查（get_status last_run）與 utils/alerting 負責
+    - 'event_driven'：有事件才寫（地震、火山、旱災公告…）；收集器本身有沒有在跑改看
+                      「最後成功執行」（tasks/staleness_watch 即時告警、日報「收集器沒執行」）
     - 'off_season'  ：有 active_window 且今天（台北）不在當季
     """
     if table.get("enabled") is False:

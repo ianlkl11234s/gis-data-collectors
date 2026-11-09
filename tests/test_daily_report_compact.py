@@ -63,12 +63,10 @@ def _setup(monkeypatch, tmp_path, *, problems: bool):
 
     collectors = [_C("bus", 2, NOW - timedelta(minutes=1))]
     if problems:
-        alerting._set_critical_cache({"tdx_bus_eta": True})
         alerting.set_sender(lambda _t: True)
         for i in range(150):
             alerting.collector_failed("tdx_bus_eta", "HTTP 401 Unauthorized: 金鑰被拒",
                                       interval_minutes=2, now=NOW - timedelta(hours=6, minutes=-2 * i))
-        alerting.flush(now=NOW - timedelta(hours=5))
         # 昨天壞過、已恢復：DB 寫入中斷 28 分
         alerting.raise_alert("db_outage", alerting.RED, "DB 寫入中斷，已自動補寫",
                              now=NOW - timedelta(hours=4, minutes=48))
@@ -291,10 +289,23 @@ def test_enabled_entries_have_labels():
 
 def test_alert_uses_chinese_label():
     alerting._set_label_cache({"bus": "雙北公車位置"})
-    alerting._set_critical_cache({"bus": True})
     alerting.set_sender(lambda _t: True)
-    t0 = NOW - timedelta(hours=1)
+    msgs = alerting.update_staleness([{"name": "bus", "stale": True, "basis": "table",
+                                       "last_at": NOW - timedelta(minutes=40), "threshold_min": 30}],
+                                     now=NOW)
+    assert any("🔴 收集器疑似壞掉：雙北公車位置（bus）" in m for m in msgs), msgs
+
+
+def test_stale_collector_listed_once_in_daily(monkeypatch, tmp_path):
+    """同一支同時「連續失敗 🟡」與「太久沒新資料 🔴」→ 日報只列一列 🔴。"""
+    task = _setup(monkeypatch, tmp_path, problems=False)
+    alerting.set_sender(lambda _t: True)
     for i in range(10):
-        alerting.collector_failed("bus", "HTTP 500", interval_minutes=2, now=t0 + timedelta(minutes=2 * i))
-    msgs = alerting.flush(now=t0 + timedelta(minutes=40))
-    assert any("🔴 收集器 雙北公車位置（bus） 連續失敗" in m for m in msgs), msgs
+        alerting.collector_failed("youbike", "HTTP 500", interval_minutes=15,
+                                  now=NOW - timedelta(hours=3) + timedelta(minutes=15 * i))
+    alerting.update_staleness([{"name": "youbike", "stale": True, "basis": "table",
+                                "last_at": NOW - timedelta(hours=3), "threshold_min": 45}],
+                              now=NOW - timedelta(minutes=5))
+    report = task._build_compact_report(now=NOW)
+    assert report.count("youbike") == 1, report
+    assert "🔴 收集器 youbike 已 2 小時 55 分沒有新資料" in report, report

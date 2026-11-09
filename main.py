@@ -520,11 +520,16 @@ def main():
         sched.submit(_as_task("disk_guard", disk_guard.run, timeout=300))
         print(f"\n✓ 本機磁碟護欄 (每 {config.DISK_GUARD_INTERVAL_MIN} 分鐘)")
 
-    # 告警 pending 送出（collector 🔴 開始／恢復先排隊，窗內同時壞 ≥5 支合成一則）
-    from utils import alerting
-    sched = get_scheduler()
-    schedule.every(1).minutes.do(
-        sched.submit, _as_task("alert_flush", alerting.flush, timeout=60))
+    # 收集器「太久沒新資料」即時告警（失敗本身不發；規則見 docs/handbook/operations.md §1）
+    if config.STALE_ALERT_ENABLED and config.STALE_CHECK_INTERVAL_MIN > 0:
+        from tasks.staleness_watch import StalenessWatch
+        persistent = [n for n, w in (("aisstream", aisstream_worker),
+                                     ("ripe_ris_live", ripe_ris_live_worker)) if w]
+        staleness = StalenessWatch(collectors, persistent)
+        sched = get_scheduler()
+        schedule.every(config.STALE_CHECK_INTERVAL_MIN).minutes.do(
+            sched.submit, _as_task("staleness_watch", staleness.run, timeout=120))
+        print(f"\n✓ 收集器停更告警 (每 {config.STALE_CHECK_INTERVAL_MIN} 分鐘)")
 
     # Supabase buffer flush 排程
     if config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:

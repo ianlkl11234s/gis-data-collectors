@@ -1,7 +1,9 @@
 """告警分級狀態機（utils/alerting.py）
 
 背景：2026-11-08 盤點，Telegram 每天 15–60 則、多半是「單次瞬斷」「全綠也送」。
-新規則：🔴 開始一次、恢復一次；🟡 只進日報；瞬斷不送；同時壞 ≥5 支合成一則。
+新規則：🔴 開始一次、恢復一次；🟡 只進日報；瞬斷不送。
+2026-11-09：收集器失敗本身不發即時訊息（只進 🟡 日報）；🔴 改由「太久沒新資料」觸發
+（update_staleness，見 tests/test_staleness_watch.py）。
 """
 
 import json
@@ -27,15 +29,8 @@ def sent(monkeypatch):
     monkeypatch.setattr(config, "ALERT_DAILY_INTERVAL_MIN", 360)
     monkeypatch.setattr(config, "ALERT_DAILY_N", 2)
     monkeypatch.setattr(config, "ALERT_STILL_DOWN_HOURS", 24)
-    monkeypatch.setattr(config, "ALERT_BURST_MERGE", 5)
-    monkeypatch.setattr(config, "ALERT_BURST_WINDOW_SEC", 300)
-    monkeypatch.setattr(config, "ALERT_BURST_HOLD_MIN", 60)
     monkeypatch.setattr(config, "ALERT_OVERRIDES", "news_events:6:60")
     return out
-
-
-def critical(*names):
-    alerting._set_critical_cache({n: True for n in names})
 
 
 def fail_until(name, interval, start, n, step_min=None):
@@ -48,55 +43,35 @@ def fail_until(name, interval, start, n, step_min=None):
     return t
 
 
-# ── 開始／持續不重送／恢復 ───────────────────────────────
+# ── 收集器失敗：不發即時訊息，達門檻只進 🟡 日報 ───────────
 
 def test_fast_collector_needs_n_and_15_minutes(sent):
-    critical("bus")
     # 2 分鐘級：第 3 次（4 分鐘）還不到 15 分鐘 → 仍是 failing
     fail_until("bus", 2, T0, 3)
     assert alerting.load_state()["entries"]["collector:bus"]["state"] == "failing"
-    # 第 9 次（16 分鐘）才進 alerting
-    t = fail_until("bus", 2, T0 + timedelta(minutes=6), 6)
-    assert alerting.load_state()["entries"]["collector:bus"]["state"] == "alerting"
-    # 窗內不送，窗滿才送一則
-    assert alerting.flush(now=t) == []
-    msgs = alerting.flush(now=t + timedelta(seconds=300))
-    assert len(msgs) == 1 and msgs[0].startswith("🔴") and "bus" in msgs[0]
+    # 第 9 次（16 分鐘）才進 alerting，而且是 🟡、不送訊息
+    fail_until("bus", 2, T0 + timedelta(minutes=6), 6)
+    entry = alerting.load_state()["entries"]["collector:bus"]
+    assert entry["state"] == "alerting" and entry["level"] == alerting.YELLOW
+    assert sent == []
 
 
-def test_ongoing_failure_does_not_resend_and_recovery_once(sent):
-    critical("bus")
-    t = fail_until("bus", 2, T0, 10)
-    alerting.flush(now=t + timedelta(minutes=5))
-    t = fail_until("bus", 2, t + timedelta(minutes=6), 30)
-    alerting.flush(now=t + timedelta(minutes=10))
-    assert len(sent) == 1
-    alerting.collector_succeeded("bus", now=t + timedelta(minutes=12))
-    alerting.flush(now=t + timedelta(minutes=20))
-    assert len(sent) == 2 and sent[1].startswith("✅") and "bus" in sent[1]
-    assert "collector:bus" not in alerting.load_state()["entries"]
-
-
-def test_simulated_1_to_20_failures_then_success_sends_exactly_two(sent):
-    """驗收：一支 collector 依序失敗 1..20 次再成功 → 只出 1 則 🔴＋1 則恢復。"""
-    critical("youbike")
+def test_simulated_1_to_50_failures_then_success_sends_nothing(sent):
+    """驗收：單次或連續失敗（不論幾次）本身都不發；恢復也不發（只進日報「已恢復」）。"""
     t = T0
-    for i in range(20):
+    for i in range(50):
         t = T0 + timedelta(minutes=10 * i)
         alerting.collector_failed("youbike", "timeout", interval_minutes=10, now=t)
-        alerting.flush(now=t)
     t += timedelta(minutes=10)
     alerting.collector_succeeded("youbike", now=t)
-    for k in range(1, 8):
-        alerting.flush(now=t + timedelta(minutes=k))
-    assert [m[0] for m in sent] == ["🔴", "✅"]
+    assert sent == []
+    snap = alerting.snapshot(now=t + timedelta(minutes=1))
+    assert snap["active"] == [] and snap["resolved"][0]["name"] == "youbike"
 
 
 def test_transient_errors_below_threshold_send_nothing(sent):
-    critical("bus")
     fail_until("bus", 2, T0, 2)
     alerting.collector_succeeded("bus", now=T0 + timedelta(minutes=5))
-    alerting.flush(now=T0 + timedelta(hours=1))
     assert sent == []
     assert alerting.load_state()["entries"] == {}
     # 但仍計入當日小錯誤（隔天日報看得到）
@@ -105,19 +80,17 @@ def test_transient_errors_below_threshold_send_nothing(sent):
     assert snap["error_total_yesterday"] == 2
 
 
-def test_recovery_inside_window_cancels_start(sent):
-    """進 alerting 後窗內就恢復 → 開始與恢復都不送。"""
-    critical("bus")
-    t = fail_until("bus", 2, T0, 9)
-    alerting.collector_succeeded("bus", now=t + timedelta(minutes=2))
-    alerting.flush(now=t + timedelta(minutes=30))
+def test_failing_collector_is_yellow_in_daily_snapshot(sent):
+    t = fail_until("parking", 15, T0, 4)
+    snap = alerting.snapshot(now=t + timedelta(hours=1))
+    assert [a["name"] for a in snap["active"]] == ["parking"]
+    assert snap["active"][0]["level"] == alerting.YELLOW
     assert sent == []
 
 
-# ── 每日類／非 critical／放寬門檻 ────────────────────────
+# ── 每日類／放寬門檻（只影響日報 🟡） ─────────────────────
 
 def test_daily_collector_alerts_at_n2_without_time_condition(sent):
-    critical("weather_daily")
     alerting.collector_failed("weather_daily", "x", interval_minutes=1440, now=T0)
     assert alerting.load_state()["entries"]["collector:weather_daily"]["state"] == "failing"
     alerting.collector_failed("weather_daily", "x", interval_minutes=1440, now=T0 + timedelta(minutes=1))
@@ -132,89 +105,44 @@ def test_threshold_for_rules(sent):
 
 
 def test_flaky_upstream_override_is_wider(sent):
-    critical("news_events")
-    fail_until("news_events", 10, T0, 5)   # 5 次、40 分：預設規則早就告警，放寬後還沒
+    fail_until("news_events", 10, T0, 5)   # 5 次、40 分：預設規則早就進 🟡，放寬後還沒
     assert alerting.load_state()["entries"]["collector:news_events"]["state"] == "failing"
     fail_until("news_events", 10, T0 + timedelta(minutes=50), 2)  # 第 7 次、60 分
     assert alerting.load_state()["entries"]["collector:news_events"]["state"] == "alerting"
 
 
-def test_non_critical_is_yellow_no_message_but_in_daily(sent):
-    critical()  # 名單空 → 全部 🟡
-    t = fail_until("parking", 15, T0, 4)
-    alerting.flush(now=t + timedelta(hours=1))
-    assert sent == []
-    snap = alerting.snapshot(now=t + timedelta(hours=1))
-    assert [a["name"] for a in snap["active"]] == ["parking"]
-    assert snap["active"][0]["level"] == alerting.YELLOW
-    alerting.collector_succeeded("parking", now=t + timedelta(hours=2))
-    alerting.flush(now=t + timedelta(hours=3))
-    assert sent == []  # 🟡 的恢復不送
-    snap = alerting.snapshot(now=t + timedelta(hours=3))
-    assert snap["active"] == [] and snap["resolved"][0]["name"] == "parking"
-
-
-# ── 24 小時仍未恢復 ─────────────────────────────────────
-
-def test_still_down_after_24h_sent_once(sent):
-    critical("tra_train")
-    t = fail_until("tra_train", 2, T0, 10)
-    alerting.flush(now=t + timedelta(minutes=5))
-    later = T0 + timedelta(hours=25)
-    for k in range(5):
-        alerting.collector_failed("tra_train", "x", interval_minutes=2, now=later + timedelta(minutes=2 * k))
-    alerting.flush(now=later + timedelta(minutes=30))
-    alerting.flush(now=later + timedelta(hours=10))
-    assert len(sent) == 2 and sent[1].startswith("⏳") and "tra_train" in sent[1]
-
-
-# ── 同時壞 ≥5 支合成一則 ────────────────────────────────
-
-def test_burst_of_five_merges_into_one_and_recovers_once(sent):
-    names = ["bus", "tra_train", "youbike", "freeway_vd", "road_congestion", "parking"]
-    critical("bus", "tra_train", "youbike", "freeway_vd")
-    for name in names:
-        fail_until(name, 2, T0, 9)  # 16 分鐘都進 alerting
-    t = T0 + timedelta(minutes=16)
-    alerting.flush(now=t + timedelta(minutes=5))
-    assert len(sent) == 1
-    assert "6 支收集器同時失敗" in sent[0] and "HTTP 401" in sent[0]
-    # hold 期間再壞的（例：15 分鐘級的 weather）併入，不另送
-    critical("bus", "tra_train", "youbike", "freeway_vd", "weather")
-    fail_until("weather", 15, T0, 3, step_min=15)
-    alerting.flush(now=T0 + timedelta(minutes=40))
-    assert len(sent) == 1
-    # 全部恢復 → 一則
-    rt = T0 + timedelta(minutes=90)
-    for name in names + ["weather"]:
-        alerting.collector_succeeded(name, now=rt)
-    alerting.flush(now=rt + timedelta(minutes=6))
-    assert len(sent) == 2 and sent[1].startswith("✅") and "7 支收集器已恢復" in sent[1]
-
-
-def test_four_simultaneous_reds_send_one_combined_message(sent):
-    critical("a", "b", "c", "d")
-    for n in "abcd":
-        fail_until(n, 2, T0, 9)
-    alerting.flush(now=T0 + timedelta(minutes=30))
-    assert len(sent) == 1 and "4 支收集器連續失敗" in sent[0]
-
-
 # ── 收集失敗與 DB 寫入共用一個 key ──────────────────────
 
 def test_db_and_collect_reasons_share_one_key(sent):
-    critical("youbike")
     for i in range(3):
         t = T0 + timedelta(minutes=10 * i)
         alerting.collector_failed("youbike", "DB 寫入失敗", reason="db", interval_minutes=10, now=t)
         # 收集本身成功（base.run 走成功路徑）不能把 DB 的失敗清掉
         alerting.collector_succeeded("youbike", now=t)
     assert alerting.load_state()["entries"]["collector:youbike"]["state"] == "alerting"
-    alerting.flush(now=T0 + timedelta(minutes=30))
-    assert len(sent) == 1 and "DB 寫入" in sent[0]
     alerting.collector_succeeded("youbike", reason="db", now=T0 + timedelta(minutes=40))
-    alerting.flush(now=T0 + timedelta(minutes=50))
-    assert len(sent) == 2 and sent[1].startswith("✅")
+    assert "collector:youbike" not in alerting.load_state()["entries"]
+    assert sent == []
+
+
+# ── 舊版狀態檔（v1）升級 ────────────────────────────────
+
+def test_v1_state_drops_pending_and_downgrades_collector_red(sent, _isolate_alert_state):
+    _isolate_alert_state.write_text(json.dumps({
+        "entries": {"collector:bus": {"state": "alerting", "level": "red", "notified_red": True,
+                                      "name": "bus", "reasons": {"collect": {"count": 9}},
+                                      "first_seen": T0.isoformat()},
+                    "backup": {"state": "alerting", "level": "red", "notified_red": True,
+                               "first_seen": T0.isoformat()}},
+        "pending": [{"kind": "start", "key": "collector:bus", "at": T0.isoformat()}],
+        "burst": {"members": ["collector:bus"]}, "daily": {},
+    }), encoding="utf-8")
+    state = alerting.load_state()
+    assert state["version"] == 2 and "pending" not in state and "burst" not in state
+    assert state["entries"]["collector:bus"]["level"] == alerting.YELLOW
+    assert state["entries"]["backup"]["level"] == alerting.RED  # 非收集器告警不動
+    alerting.collector_succeeded("bus", now=T0 + timedelta(hours=1))
+    assert sent == []
 
 
 # ── 非 collector：raise／clear／event ─────────────────
@@ -273,11 +201,9 @@ class _EmptyCollector(BaseCollector):
     {"data": [], "total": 0},                   # 颱風季外／無震／無雷
 ])
 def test_seasonal_or_event_driven_empty_result_never_alerts(sent, result):
-    critical("env_jp_wbgt")
     c = _EmptyCollector(result)
     for _ in range(50):
         c.run()
-    alerting.flush(now=datetime.now(TPE) + timedelta(hours=1))
     assert sent == []
     assert alerting.load_state()["entries"] == {}
 
