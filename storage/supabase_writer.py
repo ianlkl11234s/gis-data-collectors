@@ -330,7 +330,10 @@ class SupabaseWriter:
     # jma_warnings（438 起只記變動）：下一輪會用新 control_datetime 重新差分，buffer 再補寫舊一輪
     # → 同一變動兩筆（UNIQUE 含 control_datetime 擋不住）。
     # env_jp_wbgt（440）：obs 是 DO UPDATE（上游回溯修正）；失敗批進 buffer 晚於新值 replay 會把修正值蓋回舊值。
-    NO_BUFFER_COLLECTORS = frozenset({'jma_warnings', 'env_jp_wbgt'})
+    # jma_raster／jma_ocean_env（COL-F010）：weather_raster_frames 的 upsert 刻意允許 ok→partial（收尾降級），
+    #   失敗批進 buffer 後在較新的 ok 之後 replay 會把 ok 蓋回舊 partial。兩支本來就把列留在
+    #   /data/state/<collector>/<產品>.json 的 pending_frames／pending_daily，DB 成功才清，下一輪重送最新狀態。
+    NO_BUFFER_COLLECTORS = frozenset({'jma_warnings', 'env_jp_wbgt', 'jma_raster', 'jma_ocean_env'})
 
     def _should_buffer(self, collector_name: str) -> bool:
         if collector_name in self.NO_BUFFER_COLLECTORS:
