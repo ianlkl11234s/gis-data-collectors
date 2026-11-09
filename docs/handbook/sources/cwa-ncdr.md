@@ -47,7 +47,7 @@
 鄉鎮震度（E-A0015-005，從 S3 取，免金鑰）。清冊標停用。上游只留最新一次地震，用 `origin_time` 守門避免重寫；寫 `live.earthquake_town_intensity`。
 
 ### earthquake_shakemap_grid
-NCDR EQ1 全台 2.5 km 網格（4,377 格，免金鑰）。清冊標停用。上游只留最新一次，用 `event_time` 守門避免每輪重寫；寫 `live.earthquake_shakemap_grid`。事件驅動，2026-10-05 調查時心跳與資料都停在 08-26，不能只看時間判斷壞掉（[collector-health 調查](../../investigations/2026-10-05-collector-health.md)）。
+NCDR EQ1 全台 2.5 km 網格（4,377 格，免金鑰）。清冊標停用。上游只留最新一次，用 `event_time` 守門避免每輪重寫；寫 `live.earthquake_shakemap_grid`。2026-11-09 起另把每個事件寫成 R2 事件檔 `events/shakemap/<UTC YYYYMMDDTHHMMSSZ>.json`（公開 https://data.itsmigu.com/，immutable）＋同 key 進 S3 正本，並維護 `events/shakemap/index.json`（5 分鐘快取）；R2 已有事件檔就整輪略過。前端改讀 R2 後，DB 只留短期（ADR-0026）。事件驅動，2026-10-05 調查時心跳與資料都停在 08-26，不能只看時間判斷壞掉（[collector-health 調查](../../investigations/2026-10-05-collector-health.md)）。
 
 ### earthquake_moment_tensor
 中研院 BATS AutoBATS 震源機制解。清冊標停用。
