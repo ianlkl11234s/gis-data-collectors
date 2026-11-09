@@ -171,7 +171,26 @@ def test_still_down_after_24h_once_and_merged(sent):
     later = NOW + timedelta(hours=24)
     alerting.update_staleness([F("a", True), F("b", True)], now=later)
     alerting.update_staleness([F("a", True), F("b", True)], now=later + timedelta(hours=5))
-    assert len(sent) == 2 and sent[1].startswith("⏳ 仍未恢復") and "a、b" in sent[1]
+    assert len(sent) == 2 and sent[1].startswith("⏳ 通報後已超過") and "a、b" in sent[1]
+
+
+def test_daily_collector_still_down_counts_from_alert_time(sent):
+    """每日類：通報時最後一筆早已超過 24 小時 → 不能 15 分鐘後就送 ⏳，要通報後滿 24 小時。"""
+    f = lambda now_: {"name": "daily", "stale": True, "basis": "table", "threshold_min": 2880,
+                      "last_at": NOW - timedelta(days=2, minutes=1)}
+    alerting.update_staleness([f(NOW)], now=NOW)
+    alerting.update_staleness([f(NOW)], now=NOW + timedelta(minutes=15))
+    assert len(sent) == 1 and sent[0].startswith("🔴")
+    alerting.update_staleness([f(NOW)], now=NOW + timedelta(hours=24))
+    assert len(sent) == 2 and sent[1].startswith("⏳ 通報後已超過 24 小時仍未恢復")
+
+
+def test_generic_red_still_down_after_24h_once(sent):
+    alerting.raise_alert("backup", alerting.RED, "Supabase 每日備份失敗", now=NOW)
+    alerting.raise_alert("backup", alerting.RED, "Supabase 每日備份失敗", now=NOW + timedelta(hours=23))
+    alerting.raise_alert("backup", alerting.RED, "Supabase 每日備份失敗", now=NOW + timedelta(hours=25))
+    alerting.raise_alert("backup", alerting.RED, "Supabase 每日備份失敗", now=NOW + timedelta(hours=49))
+    assert len(sent) == 2 and sent[1].startswith("⏳ 仍未恢復")
 
 
 def test_collector_dropped_from_check_is_cleared_silently(sent):
@@ -231,11 +250,20 @@ def test_run_alerts_and_only_requeries_tables_that_may_be_stale(sent, watch_env)
     assert "youbike：已 55 分沒有新資料" in msgs[0] and "earthquake：已 31 分沒有成功執行" in msgs[0]
 
 
-def test_run_skips_round_when_db_query_fails(sent, watch_env, monkeypatch):
+def test_run_skips_round_when_db_query_fails_then_alerts_after_two(sent, watch_env, monkeypatch):
+    ok_health = monitoring.query_realtime_health
     monkeypatch.setattr(monitoring, "query_realtime_health", lambda tables: [])
     w = StalenessWatch([C("youbike", 15)], now=NOW - timedelta(days=1))
     assert w.run(now=NOW) is None
-    assert sent == []
+    assert sent == []  # 一輪查不到不報
+    assert w.run(now=NOW + timedelta(minutes=15)) is None
+    assert len(sent) == 1 and sent[0].startswith("🔴 查不到資料新鮮度")
+    w.run(now=NOW + timedelta(minutes=30))
+    assert len(sent) == 1  # 持續中不重送
+    watch_env.max_time = {"youbike_snapshots": NOW + timedelta(minutes=44)}
+    monkeypatch.setattr(monitoring, "query_realtime_health", ok_health)
+    w.run(now=NOW + timedelta(minutes=45))
+    assert len(sent) == 2 and sent[1].startswith("✅ 恢復：資料新鮮度查詢")
 
 
 def test_run_uses_db_last_success_over_restart(sent, watch_env, monkeypatch):

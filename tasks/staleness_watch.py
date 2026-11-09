@@ -15,6 +15,8 @@
    重啟後不會誤報。都沒有就從行程啟動算）。表全在季節外（active_window）→ 不檢查。
 4. 為了少打 DB（health_snapshot 全表一次約 12 秒），每張表記住上次看到的最新時間，
    只有「可能已經超過門檻」的表才重查。
+5. 新鮮度查詢失敗（Supabase 連不上）這輪不判斷；連續 DB_FAIL_ROUNDS 輪查不到 → 🔴 一則
+   「查不到資料新鮮度」（key staleness_db），查得到時送恢復。
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ from utils import alerting
 log = logging.getLogger(__name__)
 
 TableKey = tuple[str, str]
+DB_FAIL_ROUNDS = 2  # 15 分一輪 → 約 30 分鐘查不到才通報
 
 
 def _key(t: dict) -> TableKey:
@@ -86,6 +89,7 @@ class StalenessWatch:
         self.extra_names = list(extra_names)  # 長駐 worker（aisstream、ripe_ris_live）
         self.started_at = alerting._now(now)
         self._known: dict[TableKey, Optional[datetime]] = {}
+        self._db_fail_rounds = 0
 
     def _targets(self, cmap: dict) -> dict[str, tuple[int, Optional[datetime]]]:
         out = {c.name: (int(c.interval_minutes or 0), getattr(c, "last_success_at", None))
@@ -116,8 +120,16 @@ class StalenessWatch:
         if due and config.SUPABASE_ENABLED and config.SUPABASE_DB_URL:
             rows = monitoring.query_realtime_health(list(due.values()))
             if not rows:
-                log.warning("staleness_watch：新鮮度查詢失敗，這輪不判斷")
+                self._db_fail_rounds += 1
+                log.warning("staleness_watch：新鮮度查詢失敗（連續 %d 輪），這輪不判斷", self._db_fail_rounds)
+                if self._db_fail_rounds >= DB_FAIL_ROUNDS:
+                    alerting.raise_alert(
+                        "staleness_db", alerting.RED,
+                        f"查不到資料新鮮度（連續 {self._db_fail_rounds} 輪），Supabase 可能連不上；"
+                        "這段期間無法判斷收集器有沒有停更", now=now)
                 return None
+            self._db_fail_rounds = 0
+            alerting.clear_alert("staleness_db", "資料新鮮度查詢", now=now)
             for r in rows:
                 if not r.get("error"):
                     self._known[(r["schema"], r["table"])] = r.get("max_time")

@@ -395,8 +395,9 @@ def _record_resolved(state: dict, key: str, entry: dict, now: datetime) -> None:
 def _still_down_due(entry: dict, now: datetime) -> bool:
     if entry.get("level") != RED or not entry.get("notified_red") or entry.get("still_down_sent"):
         return False
-    first = _parse(entry.get("first_seen")) or now
-    return now - first >= timedelta(hours=config.ALERT_STILL_DOWN_HOURS)
+    # 從「通報當下」算（stale:* 的 first_seen 是最後一筆資料時間，每日類一通報就已超過 24 小時）
+    since = _parse(entry.get("alerted_at")) or _parse(entry.get("first_seen")) or now
+    return now - since >= timedelta(hours=config.ALERT_STILL_DOWN_HOURS)
 
 
 # ─────────────────────────────────────────────────────────
@@ -496,7 +497,7 @@ def update_staleness(findings: list[dict], now: Optional[datetime] = None) -> li
         messages.append("\n".join(lines))
     if still:
         names = "、".join(display_name(n) for n in still)
-        messages.append(f"⏳ 仍未恢復（超過 {config.ALERT_STILL_DOWN_HOURS:g} 小時沒有新資料）：{names}{tag}\n"
+        messages.append(f"⏳ 通報後已超過 {config.ALERT_STILL_DOWN_HOURS:g} 小時仍未恢復：{names}{tag}\n"
                         "之後只在每日日報列出，恢復時會再通知。")
     for msg in messages:
         _send(msg)
