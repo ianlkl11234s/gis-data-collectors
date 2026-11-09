@@ -19,6 +19,7 @@ sudo chown -R "$USER":"$USER" "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
 echo ">>> 拷貝檔案到 $APP_DIR"
 cp "$(dirname "$0")"/cdc_public_health_weekly_collect.py "$APP_DIR/"
 cp "$(dirname "$0")"/archive_cdc_public_health_weekly.py "$APP_DIR/"
+cp "$(dirname "$0")"/bulk.py "$APP_DIR/"  # 固定形狀批次寫入（R5，external/vm_common/bulk.py）
 [ -f "$(dirname "$0")"/.env ] && cp "$(dirname "$0")"/.env "$APP_DIR/" || \
   { cp "$(dirname "$0")"/.env.example "$APP_DIR/.env"; chmod 600 "$APP_DIR/.env"; echo "!! 請編輯 $APP_DIR/.env 填入 SUPABASE_DB_URL、S3_ACCESS_KEY、S3_SECRET_KEY"; }
 

@@ -27,6 +27,7 @@ REPO_FILES=(
   storage/supabase_writer.py
   storage/supabase_tables.py
   storage/marine_write.py
+  storage/bulk.py
   utils/__init__.py
   utils/alerting.py
   utils/disk_guard.py

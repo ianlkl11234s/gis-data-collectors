@@ -35,7 +35,12 @@ from pathlib import Path
 import psycopg2
 import requests
 from dotenv import load_dotenv
-from psycopg2.extras import execute_values
+# 固定形狀批次寫入（鐵則 R5）：VM 部署時 bulk.py（external/vm_common/）跟本檔放同目錄
+try:
+    from bulk import execute_values
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vm_common"))
+    from bulk import execute_values
 
 # ────────────────────────────────────────────────────────────────────
 APP_DIR = Path(__file__).parent

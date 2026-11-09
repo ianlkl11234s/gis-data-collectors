@@ -71,7 +71,7 @@ ssh <帳號>@<NEW_IP>   # 確認 OK 後 exit 回本機
 
 # 2. scp 6 個檔案
 cd .../data-collectors/external/ship_ais_vm
-scp ship_ais_collect.py archive_ship_ais.py setup_vm.sh setup_cron.sh test_ais.py test_s3.py \
+scp ship_ais_collect.py archive_ship_ais.py setup_vm.sh setup_cron.sh test_ais.py test_s3.py ../vm_common/bulk.py \
     <帳號>@<NEW_IP>:/tmp/
 
 # 3. 在 VM 上跑 setup

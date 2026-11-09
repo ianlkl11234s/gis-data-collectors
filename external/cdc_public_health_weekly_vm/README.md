@@ -35,7 +35,7 @@
 ```bash
 # 0. 先 diff VM 現行檔（principles D-04：VM 手動部署，git push 不會生效）
 ssh <vm> 'sudo cp /opt/cdc-public-health/cdc_public_health_weekly_collect.py{,.bak_$(date +%Y%m%d)}'
-scp cdc_public_health_weekly_collect.py archive_cdc_public_health_weekly.py setup_cron.sh <vm>:~/cdc-vm/
+scp cdc_public_health_weekly_collect.py archive_cdc_public_health_weekly.py setup_cron.sh ../vm_common/bulk.py <vm>:~/cdc-vm/
 ssh <vm>
 diff ~/cdc-vm/cdc_public_health_weekly_collect.py /opt/cdc-public-health/cdc_public_health_weekly_collect.py
 cp ~/cdc-vm/cdc_public_health_weekly_collect.py ~/cdc-vm/archive_cdc_public_health_weekly.py /opt/cdc-public-health/
@@ -54,7 +54,7 @@ aws s3 ls s3://migu-gis-data-collector/cdc_public_health_weekly/archives/ | tail
 
 ```bash
 # 1. scp 5 個檔到 VM 同一目錄
-scp cdc_public_health_weekly_collect.py archive_cdc_public_health_weekly.py setup_vm.sh setup_cron.sh .env.example \
+scp cdc_public_health_weekly_collect.py archive_cdc_public_health_weekly.py setup_vm.sh setup_cron.sh .env.example ../vm_common/bulk.py \
     user@hicloud-vm:~/cdc-vm/
 
 # 2. SSH 進 VM

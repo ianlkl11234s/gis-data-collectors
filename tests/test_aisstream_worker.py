@@ -123,7 +123,7 @@ def test_position_geom_and_static_update_do_not_touch_position_freshness(monkeyp
 
     execute_calls = []
     monkeypatch.setattr(module, "Json", lambda value: value, raising=False)
-    monkeypatch.setattr("psycopg2.extras.execute_values", lambda cur, sql, values, **kwargs: execute_calls.append((sql, values, kwargs)), raising=True)
+    monkeypatch.setattr("storage.bulk.execute_values", lambda cur, sql, values, **kwargs: execute_calls.append((sql, values, kwargs)), raising=True)
 
     class Cursor:
         def __init__(self): self.sql = []

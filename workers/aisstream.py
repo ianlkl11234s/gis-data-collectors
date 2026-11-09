@@ -594,7 +594,9 @@ class AISStreamWorker:
     def _write_db(self, batch: list[tuple[dict, str]]) -> None:
         if self._writer is None:
             return
-        from psycopg2.extras import Json, execute_values
+        from psycopg2.extras import Json
+
+        from storage.bulk import execute_values  # 固定形狀批次寫入（鐵則 R5）
         observations: list[tuple] = []
         current: dict[str, tuple] = {}
         static_updates: dict[str, tuple] = {}
@@ -633,7 +635,7 @@ class AISStreamWorker:
                         execute_values(cur, """INSERT INTO live.aisstream_position_observations
                     (observed_at,provider,run_id,mmsi,message_type,source_event_key,payload_sha256,received_at,coverage_zone,ship_name,ship_type,imo,call_sign,destination,nav_status,speed_knots,course_over_ground,true_heading,longitude,latitude,geom,position_quality,quality_flags,raw_archive_key)
                     VALUES %s ON CONFLICT DO NOTHING""", observations,
-                    template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,ST_SetSRID(ST_MakePoint(%s,%s),4326),%s,%s,%s)")
+                    template="(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,ST_SetSRID(ST_MakePoint(%s::float8,%s::float8),4326),%s,%s,%s)")
                         for record in current.values():
                             cur.execute("""INSERT INTO live.aisstream_vessel_current
                         (provider,mmsi,observed_at,received_at,source_event_key,payload_sha256,coverage_zone,ship_name,ship_type,imo,call_sign,destination,nav_status,speed_knots,course_over_ground,true_heading,longitude,latitude,position_quality,quality_flags,source_run_id,geom,updated_at)

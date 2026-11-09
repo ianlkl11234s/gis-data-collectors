@@ -195,7 +195,11 @@ def test_writer_image_update_is_separate_and_failure_tolerant(monkeypatch):
             raise RuntimeError("column image_key does not exist")
         captured.append((sql, list(values), template))
     fail = {"on": False}
+
+    def ej(cur, sql, rows, page_size=100):
+        ev(cur, sql, rows, page_size=page_size, template=None)
     monkeypatch.setattr("storage.supabase_writer.execute_values", ev)
+    monkeypatch.setattr("storage.supabase_writer.execute_json", ej)
     w = SupabaseWriter.__new__(SupabaseWriter)
     w._pool = MagicMock(); w._pool.statement_timeout_ms = 30_000
     conn = MagicMock()
@@ -211,8 +215,12 @@ def test_writer_image_update_is_separate_and_failure_tolerant(monkeypatch):
     upsert, update = captured
     assert "image_key" not in upsert[0], "狀態列 upsert 不帶 image 欄"
     assert update[0].startswith("UPDATE live.weather_raster_frames") and len(update[1]) == 1
-    assert update[1][0][:4] == ("jma", "radar", "2026-10-09T00:00:00+00:00", img["image_key"])
-    assert "::timestamptz" in update[2] and "::smallint" in update[2]
+    row = update[1][0]
+    assert (row["source"], row["product"], row["valid_time"], row["image_key"]) == \
+        ("jma", "radar", "2026-10-09T00:00:00+00:00", img["image_key"])
+    # 固定形狀（R5）：型別寫在 json_to_recordset 欄位定義，SQL 不含 VALUES
+    assert "json_to_recordset(%s::json)" in update[0] and "VALUES" not in update[0]
+    assert "valid_time timestamptz" in update[0] and "image_width smallint" in update[0]
     # image UPDATE 失敗不 raise（frames 狀態已寫）
     captured.clear(); fail["on"] = True
     w._write_to_db(conn, "jma_raster", recs, datetime.now(timezone.utc))

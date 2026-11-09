@@ -25,7 +25,7 @@ on the VM, `test_egress.py` returns HTTP 200 for a TP endpoint, then one manual
 dry run validates current-upsert and archive creation. This directory is not
 installed or scheduled by this change.
 
-For deployment, copy the runner, normalizer, `marine_write.py`, `external/vm_common/vm_buffer.py`, archiver, setup scripts, egress test and `.env.example`.
+For deployment, copy the runner, normalizer, `marine_write.py`, `external/vm_common/vm_buffer.py`, `external/vm_common/bulk.py` (fixed-shape batch writes, rule R5), archiver, setup scripts, egress test and `.env.example`.
 `marine_observation.py` is deliberately
 standalone so the VM does not need a Git checkout; any semantic change must be
 made in the tested main normalizer first, then mirrored here in the same review.
