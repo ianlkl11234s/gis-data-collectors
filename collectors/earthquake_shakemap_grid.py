@@ -95,6 +95,18 @@ def merge_index(index: dict | None, entry: dict) -> dict:
     return {"updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "events": events}
 
 
+def ensure_indexed(r2, key: str) -> bool:
+    """事件檔已在 R2 但 index.json 沒有它（上次寫 index 失敗）→ 從事件檔補回 index。回傳是否有補。"""
+    index = r2.get_json(INDEX_KEY)
+    if any(e.get("key") == key for e in (index or {}).get("events", [])):
+        return False
+    payload = r2.get_json(key)
+    if payload is None:
+        return False
+    r2.put_json(INDEX_KEY, merge_index(index, index_entry(payload, key)), INDEX_CACHE_CONTROL)
+    return True
+
+
 def publish_event(r2, s3, rows: list) -> str | None:
     """寫事件檔到 R2＋S3、更新 index。回傳 key；R2 未設定回 None。失敗會 raise（呼叫端吞掉）。"""
     if r2 is None or not rows:
@@ -210,6 +222,11 @@ class EarthquakeShakemapGridCollector(BaseCollector):
 
         if self._event_published(event_time):
             print(f"   {event_name} {event_time} 的事件檔已在 R2 → 略過 {len(raw)} 格")
+            try:
+                if ensure_indexed(self._r2, shakemap_event_key(event_time)):
+                    print("   index.json 缺這個事件 → 已補回")
+            except Exception as e:
+                print(f"   [shakemap_grid] ⚠️ index.json 檢查失敗: {e}")
             return {
                 'fetch_time': fetch_time.isoformat(),
                 'event_time': event_time,

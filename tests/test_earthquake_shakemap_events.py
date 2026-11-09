@@ -8,6 +8,7 @@ import pytest
 from collectors.earthquake_shakemap_grid import (
     INDEX_KEY,
     build_event_payload,
+    ensure_indexed,
     merge_index,
     publish_event,
     shakemap_event_key,
@@ -87,3 +88,21 @@ def test_publish_s3_failure_raises_before_r2():
 
 def test_publish_noop_without_r2():
     assert publish_event(None, MagicMock(), _rows()) is None
+
+
+def test_ensure_indexed_repairs_missing_entry():
+    key = shakemap_event_key("2026-07-27T10:15:30+08:00")
+    payload = build_event_payload(_rows())
+    r2 = MagicMock()
+    r2.get_json.side_effect = lambda k: {"events": []} if k == INDEX_KEY else payload
+    assert ensure_indexed(r2, key) is True
+    idx = r2.put_json.call_args[0][1]
+    assert idx["events"][0]["key"] == key
+
+
+def test_ensure_indexed_noop_when_present():
+    key = shakemap_event_key("2026-07-27T10:15:30+08:00")
+    r2 = MagicMock()
+    r2.get_json.return_value = {"events": [{"key": key, "event_time": "x"}]}
+    assert ensure_indexed(r2, key) is False
+    r2.put_json.assert_not_called()
