@@ -318,3 +318,10 @@ def test_pg_stat_statements_single_entry(conn):
         entries, calls = cur.fetchone()
         assert entries == 1
         assert calls == 6  # 1 + 1 + 1 + 1 + 2 頁
+
+
+def test_psycopg2_binary_adapter_serializes_as_bytea_hex():
+    """supabase_writer 以 psycopg2.Binary(png) 傳 bytea（2026-11-09 部署後三支影像收集器報 not JSON serializable）。"""
+    psycopg2 = pytest.importorskip('psycopg2')
+    payload = bulk.serialize_rows([(psycopg2.Binary(b'\x89PNG'),)], [('c0', 'bytea')])
+    assert json.loads(payload) == [{'c0': '\\x89504e47'}]

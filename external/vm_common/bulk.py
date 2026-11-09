@@ -60,6 +60,10 @@ try:  # psycopg2 是 runtime 依賴；單元測試不一定要有連線
     from psycopg2.extras import Json as _PgJson
 except Exception:  # noqa: BLE001
     _PgJson = None
+try:  # psycopg2.Binary(...) 回傳的 adapter（bytea 欄位）
+    from psycopg2.extensions import Binary as _PgBinary
+except Exception:  # noqa: BLE001
+    _PgBinary = None
 
 __all__ = ['execute_values', 'execute_json', 'build_insert_sql', 'serialize_rows', 'clear_type_cache']
 
@@ -206,6 +210,8 @@ def _plain(value: Any) -> Any:
         return value
     if _PgJson is not None and isinstance(value, _PgJson):
         return value.adapted
+    if _PgBinary is not None and isinstance(value, _PgBinary):
+        return _plain(value.adapted)
     if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
         return value.isoformat()
     if isinstance(value, _dt.timedelta):
