@@ -4,7 +4,7 @@
 > **自動產生，勿手改**；跑 `python3 scripts/gen_handbook_catalog.py` 重產，`--check` 檢查是否最新（CI：`tests/test_handbook_catalog.py`）。
 > 來源：`collectors/registry.py`、`config.py` 的 `_COLLECTOR_TOGGLES`、`config/cross_layer_map.yaml`、`storage/supabase_tables.py` 的 `TABLE_MAP`、`config/realtime_tables.yaml`。要改內容就改這些來源（備註取自 cross_layer_map 的 notes）。
 
-共 104 筆（含排程 task），production 應在跑 93 筆。
+共 104 筆（含排程 task），production 應在跑 97 筆。
 
 欄位說明：
 
@@ -33,11 +33,11 @@
 | `road_event_planned` | TDX 交通 | 12 小時 | pulse-host | live.road_events<br>live.road_events_current | current＋history（多表） | 見 retention_policies | [sources/tdx](sources/tdx.md#road_event_planned) | 與 road_event_live 共用表（一源壞掉可能被他源新鮮度蓋過） |
 | `weather` | 氣象署／NCDR | 1 小時 | pulse-host | live.weather_observations<br>live.weather_current | current＋history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#weather) | 需 CWA_API_KEY；critical |
 | `temperature` | 氣象署／NCDR | 1 小時 | pulse-host | live.temperature_grids | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#temperature) | 需 CWA_API_KEY |
-| `earthquake` | 氣象署／NCDR | 15 分 | pulse-host | live.earthquake_events<br>live.earthquake_station_obs<br>live.tsunami_alerts | history（多表） | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake) | 需 CWA_API_KEY；critical；事件驅動，每日 archive 可能為空 |
-| `earthquake_catalog` | 氣象署／NCDR | 1 日 | 停用 | live.earthquake_events | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake_catalog) | 需 CWA_API_KEY；CWA E-A0073-001 本年度正式地震目錄（含無感），半年更新一批 |
-| `earthquake_town_intensity` | 氣象署／NCDR | 15 分 | 停用 | live.earthquake_town_intensity | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake_town_intensity) | CWA E-A0015-005（S3 免金鑰）368 鄉鎮震度 |
-| `earthquake_shakemap_grid` | 氣象署／NCDR | 15 分 | 停用 | live.earthquake_shakemap_grid | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake_shakemap_grid) | NCDR EQ1（免金鑰）全台 2.5km 共 4,377 格 |
-| `earthquake_moment_tensor` | 氣象署／NCDR | 30 分 | 停用 | live.earthquake_moment_tensor | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake_moment_tensor) | 需 CWA_API_KEY；中研院 AutoBATS 震源機制解 |
+| `earthquake` | 氣象署／NCDR | 15 分 | pulse-host | live.earthquake_events<br>live.earthquake_station_obs<br>live.tsunami_alerts | history（多表） | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake) | 需 CWA_API_KEY；critical；與 earthquake_catalog 共用表（一源壞掉可能被他源新鮮度蓋過）；事件驅動，每日 archive 可能為空 |
+| `earthquake_catalog` | 氣象署／NCDR | 1 日 | pulse-host | live.earthquake_events | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake_catalog) | 需 CWA_API_KEY；與 earthquake 共用表（一源壞掉可能被他源新鮮度蓋過）；CWA E-A0073-001 本年度正式地震目錄（含無感），半年更新一批 |
+| `earthquake_town_intensity` | 氣象署／NCDR | 15 分 | pulse-host | live.earthquake_town_intensity | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake_town_intensity) | CWA E-A0015-005（S3 免金鑰）368 鄉鎮震度 |
+| `earthquake_shakemap_grid` | 氣象署／NCDR | 15 分 | pulse-host | live.earthquake_shakemap_grid | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake_shakemap_grid) | NCDR EQ1（免金鑰）全台 2.5km 共 4,377 格 |
+| `earthquake_moment_tensor` | 氣象署／NCDR | 30 分 | pulse-host | live.earthquake_moment_tensor | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake_moment_tensor) | 需 CWA_API_KEY；中研院 AutoBATS 震源機制解 |
 | `cwa_satellite` | 氣象署／NCDR | 10 分 | pulse-host | live.cwa_imagery_frames | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#cwa_satellite) | 需 CWA_API_KEY |
 | `cwa_marine_observation` | 氣象署／NCDR | 15 分 | pulse-host | reference.marine_observation_stations<br>live.marine_observation_readings<br>live.marine_observation_current<br>live.marine_observation_quarantine | current＋history＋reference（多表） | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#cwa_marine_observation) | 需 CWA_API_KEY；與 isohe_port_marine 共用表（一源壞掉可能被他源新鮮度蓋過）；CWA O-B0076 registry plus O-B0075 rolling 48h; 85th orphan StationID is quarantined, never… |
 | `isohe_port_marine` | 氣象署／NCDR | 10 分 | VM | reference.marine_observation_stations<br>live.marine_observation_readings<br>live.marine_observation_current | current＋history＋reference（多表） | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#isohe_port_marine) | 與 cwa_marine_observation 共用表（一源壞掉可能被他源新鮮度蓋過）；8 ports x wave/current/tide/wind; Taiwan egress only; MZ legacy XML excluded and tide datu… |

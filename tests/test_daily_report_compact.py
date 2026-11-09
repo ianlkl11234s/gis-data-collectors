@@ -114,8 +114,9 @@ def test_problem_day_sections_in_order(monkeypatch, tmp_path):
     assert "嚴重不足" in report         # 磁碟 91%
     assert "DB 寫入中斷" in report
     # 依落後倍數排序：ship 240/5=48 倍 > drought 4320/720=6 倍
-    assert report.index("live.ship_positions") < report.index("public.drought_alert_current")
-    assert "live.bus_positions" not in report
+    assert report.index("ship_positions") < report.index("public.drought_alert_current")
+    assert "bus_positions" not in report
+    assert "ship_positions 4 小時沒更新（平常每 5 分鐘）" in report
     assert "收集器小錯誤 37 次" in report
     assert "詳細：S3 _daily_report/2026-11-08.md" in report
 
@@ -124,7 +125,7 @@ def test_silent_collector_listed_not_sent(monkeypatch, tmp_path):
     task = _setup(monkeypatch, tmp_path, problems=False)
     task.collectors.append(_C("water_reservoir", 60, NOW - timedelta(hours=5)))
     report = task._build_compact_report(now=NOW)
-    assert "🟡 收集器 water_reservoir 5 小時沒執行（應每 1 小時）" in report
+    assert "🟡 收集器 water_reservoir 已 5 小時沒執行（平常每小時）" in report
     assert "整體：🟡 有 1 件要處理" in report
 
 
@@ -189,3 +190,111 @@ def test_upload_full_report_writes_markdown_key(monkeypatch, tmp_path):
     key = task._upload_full_report()
     assert key.startswith("_daily_report/") and key.endswith(".md")
     assert puts[0]["Body"] == b"# full" and puts[0]["Key"] == key
+
+
+# ─────────────────────────────────────────────────────────
+# 停更清單：停用／事件驅動／季節外不列，文字講人話（2026-11-09 誤報修正）
+# ─────────────────────────────────────────────────────────
+
+# 2026-11-09 正式主機日報列為停更的 8 張表：(schema, table, 落後分鐘)
+REPORTED_20261109 = [
+    ("live", "env_jp_wbgt_observations", int(18.4 * 1440)),
+    ("live", "env_jp_wbgt_forecasts", int(18.4 * 1440)),
+    ("live", "jma_rainy_season", int(27.7 * 1440)),
+    ("live", "earthquake_shakemap_grid", int(74.2 * 1440)),
+    ("air_tickets", "fare_offers", int(61.5 * 1440)),
+    ("public", "drought_alert_current", int(177.7 * 1440)),
+    ("live", "launch_events", 144),
+    ("live", "jma_volcano_warnings", 5 * 1440),
+]
+
+
+def _real_yaml_report(monkeypatch, tmp_path, now, extra_ages=None):
+    """用 repo 真實的 realtime_tables／cross_layer_map，只假造各表最後寫入時間。"""
+    monkeypatch.setattr(daily_report.config, "LOCAL_DATA_DIR", tmp_path)
+    monkeypatch.setattr(daily_report.config, "INSTANCE_NAME", "")
+    monkeypatch.setattr(daily_report.config, "BACKUP_ENABLED", True, raising=False)
+    gb = 1024 ** 3
+    monkeypatch.setattr(daily_report.shutil, "disk_usage", lambda _: DiskUsage(200 * gb, 124 * gb, 76 * gb))
+    monkeypatch.setattr(monitoring, "list_vm_health_snapshots", lambda **_: [])
+    monkeypatch.setattr(monitoring, "list_archive_dates_per_collector", lambda: {})
+    from tasks import backup_watch
+    monkeypatch.setattr(backup_watch, "health_status", lambda: {
+        "enabled": True, "last_success_date": now.date().isoformat()})
+    ages = {t: a for _, t, a in REPORTED_20261109}
+    ages.update(extra_ages or {})
+    monkeypatch.setattr(monitoring, "query_realtime_health", lambda tables: [
+        {"schema": t["schema"], "table": t["table"], "error": None,
+         "max_time": now - timedelta(minutes=ages.get(t["table"], 1))}
+        for t in tables])
+    return DailyReportTask([])._build_compact_report(now=now)
+
+
+def test_20261109_false_alarms_gone(monkeypatch, tmp_path):
+    """11/09 的 8 張表：季節外、事件驅動、停用、interval 改正後都不該上停更清單。"""
+    now = datetime(2026, 11, 9, 8, 0, tzinfo=TPE)
+    report = _real_yaml_report(monkeypatch, tmp_path, now)
+    assert "資料停更" not in report, report
+    for _, table, _ in REPORTED_20261109:
+        assert table not in report
+
+
+def test_stale_line_is_plain_chinese(monkeypatch, tmp_path):
+    """當季的 WBGT 真的停了 → 中文名＋「X 天沒更新（平常每 2 小時）」＋表名短碼。"""
+    now = datetime(2026, 7, 15, 8, 0, tzinfo=TPE)
+    report = _real_yaml_report(monkeypatch, tmp_path, now,
+                               extra_ages={"weather_current": 4 * 60})
+    assert "日本熱中症指數（觀測） 18 天沒更新（平常每 2 小時） · env_jp_wbgt_observations" in report
+    assert "日本熱中症指數（預報） 18 天沒更新（平常每天） · env_jp_wbgt_forecasts" in report
+    assert "氣象即時 4 小時沒更新（平常每小時） · weather_current" in report
+    assert "jma_rainy_season" not in report  # 季內仍是事件驅動
+
+
+def test_stale_skip_reasons():
+    cmap = {
+        "off": {"enabled": False, "deployment": "disabled", "supabase_tables": ["live.shared", "live.only_off"]},
+        "on": {"enabled": True, "deployment": "pulse_host", "supabase_tables": ["live.shared"]},
+    }
+    reason = monitoring.stale_check_skip_reason
+    nov = datetime(2026, 11, 9, tzinfo=TPE)
+    jul = datetime(2026, 7, 1, tzinfo=TPE)
+    assert reason({"schema": "live", "table": "only_off", "owner_collector": "off"}, cmap, nov) == "disabled"
+    # 停用 owner，但還有啟用中的 collector 也寫這張表 → 照常檢查
+    assert reason({"schema": "live", "table": "shared", "owner_collector": "off"}, cmap, nov) is None
+    assert reason({"schema": "x", "table": "y", "enabled": False}, cmap, nov) == "disabled"
+    assert reason({"schema": "x", "table": "y", "event_driven": True}, cmap, nov) == "event_driven"
+    w = {"schema": "x", "table": "y", "active_window": {"from": "04-29", "to": "10-21"}}
+    assert reason(w, cmap, nov) == "off_season"
+    assert reason(w, cmap, jul) is None
+    winter = {"schema": "x", "table": "y", "active_window": {"from": "12-01", "to": "02-28"}}
+    assert reason(winter, cmap, datetime(2027, 1, 5, tzinfo=TPE)) is None
+    assert reason(winter, cmap, jul) == "off_season"
+
+
+def test_human_interval_and_ago():
+    hi, ago = daily_report._human_interval, daily_report._human_ago
+    assert [hi(m) for m in (15, 60, 120, 1440, 2880, 10080, 43200)] == [
+        "每 15 分鐘", "每小時", "每 2 小時", "每天", "每 2 天", "每週", "每月"]
+    assert [ago(m) for m in (40, 144, 2879, int(18.4 * 1440))] == ["40 分鐘", "2 小時", "47 小時", "18 天"]
+
+
+def test_enabled_entries_have_labels():
+    """啟用中的收集器與要檢查的表都要有中文 label（日報／告警顯示用）。"""
+    cmap = monitoring.load_cross_layer_map()
+    missing = [k for k, v in cmap.items() if isinstance(v, dict) and v.get("enabled") and not v.get("label")]
+    assert not missing, f"cross_layer_map.yaml 缺 label：{missing}"
+    tables = monitoring.load_realtime_tables()
+    missing = [f"{t['schema']}.{t['table']}" for t in tables
+               if monitoring.stale_check_skip_reason(t, cmap) != "disabled" and not t.get("label")]
+    assert not missing, f"realtime_tables.yaml 缺 label：{missing}"
+
+
+def test_alert_uses_chinese_label():
+    alerting._set_label_cache({"bus": "雙北公車位置"})
+    alerting._set_critical_cache({"bus": True})
+    alerting.set_sender(lambda _t: True)
+    t0 = NOW - timedelta(hours=1)
+    for i in range(10):
+        alerting.collector_failed("bus", "HTTP 500", interval_minutes=2, now=t0 + timedelta(minutes=2 * i))
+    msgs = alerting.flush(now=t0 + timedelta(minutes=40))
+    assert any("🔴 收集器 雙北公車位置（bus） 連續失敗" in m for m in msgs), msgs

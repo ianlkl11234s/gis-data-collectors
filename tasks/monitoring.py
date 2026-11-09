@@ -207,6 +207,56 @@ def classify_freshness(
     return "DEAD", age_min
 
 
+def _in_active_window(window: dict, today: datetime) -> bool:
+    """active_window: {from: "MM-DD", to: "MM-DD"}（台北日期，含頭尾；from > to 視為跨年）。"""
+    md = (today.month, today.day)
+    start = tuple(int(x) for x in str(window["from"]).split("-"))
+    end = tuple(int(x) for x in str(window["to"]).split("-"))
+    if start <= end:
+        return start <= md <= end
+    return md >= start or md <= end
+
+
+def _collector_off(cfg: dict | None) -> bool:
+    return bool(cfg) and (not cfg.get("enabled") or cfg.get("deployment") == "disabled")
+
+
+def stale_check_skip_reason(table: dict, cross_layer_map: dict, now: datetime | None = None) -> str | None:
+    """這張表今天要不要做「多久沒新資料」的停更判斷；不用判斷時回原因。
+
+    - 'disabled'    ：表本身標 enabled: false（例：外部 writer 已停），或 owner collector
+                      在 cross_layer_map 停用、且沒有其他啟用中的 collector 也寫這張表
+    - 'event_driven'：有事件才寫（地震、火山、旱災公告…）；收集器本身有沒有在跑由
+                      日報的「收集器沒執行」檢查（get_status last_run）與 utils/alerting 負責
+    - 'off_season'  ：有 active_window 且今天（台北）不在當季
+    """
+    if table.get("enabled") is False:
+        return "disabled"
+    if table.get("event_driven"):
+        return "event_driven"
+    window = table.get("active_window")
+    if window:
+        today = (now or datetime.now(TAIPEI_TZ)).astimezone(TAIPEI_TZ)
+        if not _in_active_window(window, today):
+            return "off_season"
+    owner = table.get("owner_collector")
+    if _collector_off(cross_layer_map.get(owner)):
+        full = f"{table['schema']}.{table['table']}"
+        others = [name for name, cfg in cross_layer_map.items()
+                  if name != owner and isinstance(cfg, dict) and not _collector_off(cfg)
+                  and full in (cfg.get("supabase_tables") or [])]
+        if not others:
+            return "disabled"
+    return None
+
+
+def collector_display_name(name: str, cross_layer_map: dict | None = None) -> str:
+    """收集器顯示名：「中文 label（原名）」；沒 label 退回原名。"""
+    cmap = cross_layer_map if cross_layer_map is not None else load_cross_layer_map()
+    label = (cmap.get(name) or {}).get("label") if isinstance(cmap.get(name), dict) else None
+    return f"{label}（{name}）" if label else name
+
+
 # ────────────────────────────────────────────────────────────────────
 # S3 archive 健康
 # ────────────────────────────────────────────────────────────────────

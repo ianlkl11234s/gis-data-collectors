@@ -1145,7 +1145,7 @@ class DailyReportTask:
                 continue
             last_dt = datetime.fromisoformat(last_run)
             if now - last_dt > timedelta(minutes=c.interval_minutes * 2):
-                out.append((c.name, _human_minutes(int((now - last_dt).total_seconds() // 60)),
+                out.append((c.name, _human_ago(int((now - last_dt).total_seconds() // 60)),
                             c.interval_minutes))
         return out
 
@@ -1155,29 +1155,39 @@ class DailyReportTask:
             return 0.0
         return sum(f.stat().st_size for f in data_dir.glob('**/*') if f.is_file()) / (1024 * 1024)
 
-    def _stale_tables(self, now: datetime) -> tuple[list[tuple[str, int, int]], bool]:
-        """STALE／DEAD 的表，依「落後倍數」排序。回傳 ([(表, 落後分, 應每分)], 有 critical DEAD)。
+    def _stale_tables(self, now: datetime) -> tuple[list[tuple[str, str, int, int]], bool]:
+        """STALE／DEAD 的表，依「落後倍數」排序。回傳 ([(中文名, 表短碼, 落後分, 應每分)], 有 critical DEAD)。
 
-        季節性與事件驅動表在 realtime_tables.yaml 已放寬 expected_interval_min（1440／43200），
-        所以颱風季外、無震、無雷時不會上榜。
+        不做停更判斷的表（monitoring.stale_check_skip_reason）：
+        已停用的收集器／外部 writer、事件驅動（有事件才寫；收集器有沒有在跑另由
+        「收集器沒執行」與 alerting 負責）、active_window 季節外。
         """
         from tasks import monitoring
         tables = monitoring.load_realtime_tables()
         if not tables:
             return [], False
-        meta = {(t["schema"], t["table"]): t for t in tables}
+        try:
+            cmap = monitoring.load_cross_layer_map()
+        except Exception as e:
+            print(f"⚠️ 讀 cross_layer_map 失敗，停用判斷略過: {e}")
+            cmap = {}
+        checked = [t for t in tables if monitoring.stale_check_skip_reason(t, cmap, now) is None]
+        meta = {(t["schema"], t["table"]): t for t in checked}
         rows, critical_dead = [], False
-        for r in monitoring.query_realtime_health(tables):
+        for r in monitoring.query_realtime_health(checked):
             if r.get("error"):
                 continue
-            t = meta.get((r["schema"], r["table"]), {})
+            t = meta.get((r["schema"], r["table"]))
+            if t is None:
+                continue
             interval = t.get("expected_interval_min", 60)
             status, age = monitoring.classify_freshness(r["max_time"], interval, now)
             if status in ("STALE", "DEAD"):
-                rows.append((f"{r['schema']}.{r['table']}", age, interval))
+                code = r["table"] if r["schema"] == "live" else f"{r['schema']}.{r['table']}"
+                rows.append((t.get("label") or "", code, age, interval))
                 if status == "DEAD" and t.get("critical"):
                     critical_dead = True
-        rows.sort(key=lambda x: x[1] / max(x[2], 1), reverse=True)
+        rows.sort(key=lambda x: x[2] / max(x[3], 1), reverse=True)
         return rows, critical_dead
 
     def _routine_line(self, snap: dict, now: datetime) -> str:
@@ -1227,13 +1237,15 @@ class DailyReportTask:
             red = red or a["level"] == alerting.RED
             dot = "🔴" if a["level"] == alerting.RED else "🟡"
             if a["key"].startswith("collector:"):
-                broken.append(f"{dot} 收集器 {a['name']} 壞 {a['duration']}（{_clip(a['text'], 50)}）")
+                broken.append(f"{dot} 收集器 {alerting.display_name(a['name'])} 壞 {a['duration']}"
+                              f"（{_clip(a['text'], 50)}）")
             else:
                 broken.append(f"{dot} {_clip(a['text'], 70)}（{a['duration']}）")
         active_names = {a["name"] for a in snap["active"]}
         for name, ago, interval in self._silent_collectors(now):
             if name not in active_names:
-                broken.append(f"🟡 收集器 {name} {ago}沒執行（應每 {_human_minutes(interval)}）")
+                broken.append(f"🟡 收集器 {alerting.display_name(name)} 已 {ago}沒執行"
+                              f"（平常{_human_interval(interval)}）")
         try:
             for entry in monitoring.list_vm_health_snapshots(max_age_hours=26):
                 if entry["is_lost"] or entry["snapshot"] is None:
@@ -1259,7 +1271,8 @@ class DailyReportTask:
                     days = (datetime.strptime(expected, "%Y-%m-%d") - datetime.strptime(last, "%Y-%m-%d")).days
                     if days >= 2:
                         red = red or days >= 3
-                        broken.append(f"{'🔴' if days >= 3 else '🟡'} {name} 歸檔 {days} 天沒上 S3（最新 {last}）")
+                        broken.append(f"{'🔴' if days >= 3 else '🟡'} {monitoring.collector_display_name(name, cmap)}"
+                                      f" 歸檔 {days} 天沒上 S3（最新 {last}）")
         except Exception as e:
             print(f"⚠️ 日報 S3 檢查失敗: {e}")
 
@@ -1270,7 +1283,7 @@ class DailyReportTask:
             stale, critical_dead = [], False
         red = red or critical_dead
 
-        resolved = [f"• {_clip(r.get('text') or r['name'], 60)}（中斷 {r['duration']}）"
+        resolved = [f"• {_clip(r.get('text') or alerting.display_name(r['name']), 60)}（中斷 {r['duration']}）"
                     for r in snap["resolved"]]
         resolved += [f"• {_clip(ev['text'], 70)}" for ev in snap["events"]
                      if ev.get("level") == alerting.YELLOW]
@@ -1295,8 +1308,8 @@ class DailyReportTask:
             lines += ["", f"🟠 昨天壞過、已恢復（{len(resolved)}）"] + resolved[:5]
         if stale:
             lines += ["", "📉 資料停更前 5"]
-            lines += [f"{i}. {t} 落後 {_human_minutes(age)}（應每 {_human_minutes(iv)}）"
-                      for i, (t, age, iv) in enumerate(stale[:5], 1)]
+            lines += [f"{i}. {_stale_line(label, code, age, iv)}"
+                      for i, (label, code, age, iv) in enumerate(stale[:5], 1)]
             if len(stale) > 5:
                 lines.append(f"…另 {len(stale) - 5} 張")
         problem = bool(broken or resolved or stale)
@@ -1310,15 +1323,41 @@ class DailyReportTask:
         return "\n".join(lines)
 
 
-def _human_minutes(minutes: int | None) -> str:
+def _human_interval(minutes: int | None) -> str:
+    """應更新頻率 → 「每 15 分鐘／每小時／每 2 小時／每天／每週／每月」。"""
+    if not minutes:
+        return "?"
+    if minutes % 43200 == 0:
+        n = minutes // 43200
+        return "每月" if n == 1 else f"每 {n} 個月"
+    if minutes % 10080 == 0:
+        n = minutes // 10080
+        return "每週" if n == 1 else f"每 {n} 週"
+    if minutes % 1440 == 0:
+        n = minutes // 1440
+        return "每天" if n == 1 else f"每 {n} 天"
+    if minutes % 60 == 0:
+        n = minutes // 60
+        return "每小時" if n == 1 else f"每 {n} 小時"
+    return f"每 {minutes} 分鐘"
+
+
+def _human_ago(minutes: int | None) -> str:
+    """落後時間 → 「40 分鐘／5 小時／18 天」（不到 2 天用小時）。"""
     if minutes is None:
         return "?"
     if minutes < 60:
-        return f"{minutes} 分"
+        return f"{minutes} 分鐘"
     if minutes < 1440 * 2:
-        h, m = divmod(minutes, 60)
-        return f"{h} 小時" + (f" {m} 分" if m and h < 6 else "")
+        return f"{minutes // 60} 小時"
     return f"{minutes // 1440} 天"
+
+
+def _stale_line(label: str, code: str, age: int | None, interval: int) -> str:
+    """「日本熱中症指數（觀測） 18 天沒更新（平常每 2 小時）· env_jp_wbgt_observations」"""
+    name = label or code
+    tail = f" · {code}" if label else ""
+    return f"{name} {_human_ago(age)}沒更新（平常{_human_interval(interval)}）{tail}"
 
 
 def _clip(text: str, limit: int) -> str:
