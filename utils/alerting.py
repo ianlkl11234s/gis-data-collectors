@@ -38,6 +38,11 @@ _LOCK = threading.RLock()
 
 # collector name → 執行間隔（分鐘）；BaseCollector.__init__ 登記，DB writer 失敗時查得到
 _INTERVALS: dict[str, int] = {}
+# 行程內活動紀錄（tasks/staleness_watch 用，零 DB 讀取）：name → {"success": dt, "write": dt}。
+# 鍵＝實際呼叫過 mark_* 的收集器名（有界，約百支）；值只留最新時間。
+_ACTIVITY: dict[str, dict[str, datetime]] = {}
+# Supabase 寫入結果（所有收集器合計）：最後成功、最後失敗、上次成功後失敗次數
+_DB_WRITES: dict = {"ok": None, "fail": None, "fails_since_ok": 0}
 _label_cache: Optional[dict[str, str]] = None
 
 # 測試注入點：預設走 Telegram 純文字（錯誤訊息常含 Markdown 特殊字元）
@@ -69,13 +74,18 @@ def state_path() -> Path:
 
 
 def _empty_state() -> dict:
-    return {"version": 2, "entries": {}, "daily": {}}
+    return {"version": 3, "entries": {}, "daily": {}}
 
 
 def _migrate(state: dict) -> dict:
     """v1（連續失敗觸發 🔴、pending／burst 合併）→ v2：丟掉 pending／burst，
     collector:* 一律降成 🟡（失敗不再發即時訊息；部署當下進行中的舊 🔴 不會收到恢復）。"""
+    if state.get("version", 1) >= 3:
+        return state
+    # v2→v3：「查不到資料新鮮度」（staleness_db，查 DB 的舊做法）已移除，殘留的告警收掉
+    state.get("entries", {}).pop("staleness_db", None)
     if state.get("version", 1) >= 2:
+        state["version"] = 3
         return state
     state.pop("pending", None)
     state.pop("burst", None)
@@ -83,7 +93,7 @@ def _migrate(state: dict) -> dict:
         if key.startswith("collector:") and isinstance(e, dict):
             e["level"] = YELLOW
             e["notified_red"] = False
-    state["version"] = 2
+    state["version"] = 3
     return state
 
 
@@ -206,6 +216,33 @@ def display_name(name: str) -> str:
             _label_cache = {}
     label = _label_cache.get(name)
     return f"{label}（{name}）" if label else name
+
+
+def mark_success(name: str, now: Optional[datetime] = None) -> None:
+    """收集器一次成功執行（collectors/base.py）。只寫記憶體。"""
+    _ACTIVITY.setdefault(name, {})["success"] = _now(now)
+
+
+def mark_write(name: str, rows: int, now: Optional[datetime] = None) -> None:
+    """收集器成功寫入 Supabase ≥1 筆（storage/supabase_writer.py、aisstream worker）。只寫記憶體。"""
+    if rows and rows > 0:
+        _ACTIVITY.setdefault(name, {})["write"] = _now(now)
+
+
+def mark_db_result(ok: bool, now: Optional[datetime] = None) -> None:
+    """一次 Supabase 寫入的結果（不分收集器），給「資料庫連不上」判斷。只寫記憶體。"""
+    now = _now(now)
+    with _LOCK:
+        if ok:
+            _DB_WRITES.update(ok=now, fails_since_ok=0)
+        else:
+            _DB_WRITES["fail"] = now
+            _DB_WRITES["fails_since_ok"] += 1
+
+
+def activity_snapshot() -> tuple[dict[str, dict[str, datetime]], dict]:
+    with _LOCK:
+        return {k: dict(v) for k, v in _ACTIVITY.items()}, dict(_DB_WRITES)
 
 
 def _set_label_cache(mapping: Optional[dict[str, str]]) -> None:
@@ -421,12 +458,12 @@ def staleness_threshold_min(interval_minutes: int) -> int:
 
 
 def _stale_line(f: dict, now: datetime) -> str:
-    what = "沒有新資料" if f.get("basis") == "table" else "沒有成功執行"
+    what = "沒有新資料" if f.get("basis") == "write" else "沒有成功執行"
     last = f.get("last_at")
     if last is not None and last.tzinfo is not None:
         last = last.astimezone(TAIPEI_TZ)  # DB 時間是 UTC，訊息一律台北時間
     ago = _fmt_duration(now - last) if last else "（從未有紀錄）"
-    tail = (f"，最後{'一筆' if f.get('basis') == 'table' else '成功'} {last:%m/%d %H:%M}"
+    tail = (f"，最後{'寫入' if f.get('basis') == 'write' else '成功'} {last:%m/%d %H:%M}"
             if last else "")
     return f"已 {ago}{what}（門檻 {_fmt_duration(timedelta(minutes=f['threshold_min']))}{tail}）"
 
@@ -435,22 +472,27 @@ def update_staleness(findings: list[dict], now: Optional[datetime] = None) -> li
     """一輪「多久沒新資料」的判斷結果 → 送出合併後的訊息，回傳實際送出的訊息（測試用）。
 
     findings：這一輪有檢查的收集器，每筆
-      {name, stale: bool, last_at: datetime|None, threshold_min: int, basis: 'table'|'success'}
+      {name, stale: bool, last_at: datetime|None, threshold_min: int, basis: 'write'|'success'}
     沒出現在 findings 的 stale:* 告警（停用、季節外）安靜收掉，只進日報「已恢復」。
-    findings 可帶 last_success（datetime）：存進狀態檔 last_success，重啟後當「最後成功執行」的
-    下限（DB collector_status 只在有寫入時更新，沒新事件的收集器會顯示很舊）。
+    findings 可帶 last_success／last_write（datetime）：存進狀態檔，重啟後沿用（行程內紀錄會歸零）。
+    狀態檔只保留這一輪有檢查的收集器（有界）。
     """
     now = _now(now)
     started, recovered, still = [], [], []
     with _LOCK:
         state = load_state()
         entries = state["entries"]
-        persisted = state.setdefault("last_success", {})
+        names = {f["name"] for f in findings}
+        persisted = {}
+        for field in ("last_success", "last_write"):
+            old = state.get(field, {})
+            persisted[field] = state[field] = {n: v for n, v in old.items() if n in names}
         seen = set()
         for f in findings:
             name = f["name"]
-            if f.get("last_success") is not None:
-                persisted[name] = _now(f["last_success"]).isoformat()
+            for field in ("last_success", "last_write"):
+                if f.get(field) is not None:
+                    persisted[field][name] = _now(f[field]).isoformat()
             key = f"stale:{name}"
             seen.add(key)
             entry = entries.get(key)
@@ -506,13 +548,12 @@ def update_staleness(findings: list[dict], now: Optional[datetime] = None) -> li
     return messages
 
 
-def persisted_last_success() -> dict[str, datetime]:
-    """update_staleness 存下的各收集器最後成功執行時間（跨重啟）。"""
-    out = {}
-    for name, ts in load_state().get("last_success", {}).items():
-        dt = _parse(ts)
-        if dt:
-            out[name] = dt
+def persisted_activity() -> dict[str, dict[str, datetime]]:
+    """update_staleness 存下的最後成功執行／最後寫入時間（跨重啟）：{"last_success": {...}, "last_write": {...}}。"""
+    state = load_state()
+    out: dict[str, dict[str, datetime]] = {}
+    for field in ("last_success", "last_write"):
+        out[field] = {n: dt for n, ts in state.get(field, {}).items() if (dt := _parse(ts))}
     return out
 
 

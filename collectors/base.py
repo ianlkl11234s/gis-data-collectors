@@ -140,6 +140,7 @@ class BaseCollector(ABC):
             self.last_run = timestamp
             self.last_success_at = timestamp
             self.consecutive_errors = 0  # 成功則重置連續錯誤
+            alerting.mark_success(self.name)  # 停更告警用（記憶體，零 DB 讀取）
             # 清掉連續失敗紀錄（失敗與恢復都不發即時訊息；即時 🔴 只看太久沒新資料）
             notify_success(self.name, stats)
 

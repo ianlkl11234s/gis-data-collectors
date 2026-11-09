@@ -221,4 +221,6 @@ def _isolate_alert_state(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(alerting, "_label_cache", {})
     monkeypatch.setattr(alerting, "_sender", None)
     monkeypatch.setattr(alerting, "_INTERVALS", {})
+    monkeypatch.setattr(alerting, "_ACTIVITY", {})
+    monkeypatch.setattr(alerting, "_DB_WRITES", {"ok": None, "fail": None, "fails_since_ok": 0})
     yield path

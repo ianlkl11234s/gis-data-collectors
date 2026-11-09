@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import config
-from tasks import monitoring, staleness_watch
+from tasks import monitoring
 from tasks.staleness_watch import StalenessWatch, evaluate, plan_collector
 from utils import alerting
 
@@ -91,49 +91,42 @@ def test_plan_no_registered_table_uses_last_success():
     assert p == {"name": "s3_only", "tables": [], "threshold_min": 2880}
 
 
-# ── evaluate ──────────────────────────────────────────
+# ── evaluate（純記憶體） ─────────────────────────────────
 
-def test_any_main_table_fresh_counts_as_ok():
-    p = plan_collector("marine", 60, TABLES, CMAP, NOW)
-    known = {("live", "marine_readings"): NOW - timedelta(minutes=30),
-             ("live", "marine_stations"): NOW - timedelta(days=5)}
-    assert evaluate(p, known, None, NOW - timedelta(days=1), NOW)["stale"] is False
+DAY_AGO = NOW - timedelta(days=1)
 
 
-def test_table_stale_beyond_threshold():
+def test_write_basis_stale_beyond_threshold():
     p = plan_collector("youbike", 15, TABLES, CMAP, NOW)
-    known = {("live", "youbike_snapshots"): NOW - timedelta(minutes=46),
-             ("live", "youbike_current"): NOW - timedelta(minutes=50)}
-    f = evaluate(p, known, NOW, NOW - timedelta(days=1), NOW)
-    assert f["stale"] and f["basis"] == "table"
-    known[("live", "youbike_current")] = NOW - timedelta(minutes=44)
-    assert evaluate(p, known, None, NOW - timedelta(days=1), NOW)["stale"] is False
+    f = evaluate(p, NOW - timedelta(minutes=46), NOW, DAY_AGO, NOW)  # 有在跑、但 46 分沒寫入
+    assert f["stale"] and f["basis"] == "write"
+    assert evaluate(p, NOW - timedelta(minutes=44), None, DAY_AGO, NOW)["stale"] is False
 
 
 def test_event_driven_uses_last_success():
     p = plan_collector("earthquake", 5, TABLES, CMAP, NOW)
-    started = NOW - timedelta(days=1)
-    assert evaluate(p, {}, NOW - timedelta(minutes=20), started, NOW)["stale"] is False
-    f = evaluate(p, {}, NOW - timedelta(minutes=31), started, NOW)
+    # 事件驅動：就算很久沒寫入，只要有成功執行就正常
+    assert evaluate(p, NOW - timedelta(days=9), NOW - timedelta(minutes=20), DAY_AGO, NOW)["stale"] is False
+    f = evaluate(p, None, NOW - timedelta(minutes=31), DAY_AGO, NOW)
     assert f["stale"] and f["basis"] == "success"
 
 
-def test_no_success_record_waits_from_process_start():
+def test_no_record_waits_from_process_start():
     p = plan_collector("earthquake", 5, TABLES, CMAP, NOW)
-    assert evaluate(p, {}, None, NOW - timedelta(minutes=10), NOW)["stale"] is False  # 剛重啟
-    assert evaluate(p, {}, None, NOW - timedelta(hours=2), NOW)["stale"] is True
+    assert evaluate(p, None, None, NOW - timedelta(minutes=10), NOW)["stale"] is False  # 剛重啟
+    assert evaluate(p, None, None, NOW - timedelta(hours=2), NOW)["stale"] is True
 
 
-def test_tables_without_any_data_fall_back_to_last_success():
+def test_never_wrote_falls_back_to_last_success():
+    """有登記表、但從沒經 writer 記到寫入（自己直連 DB 的收集器）→ 看最後成功執行。"""
     p = plan_collector("youbike", 15, TABLES, CMAP, NOW)
-    f = evaluate(p, {("live", "youbike_current"): None}, NOW - timedelta(minutes=5),
-                 NOW - timedelta(days=1), NOW)
+    f = evaluate(p, None, NOW - timedelta(minutes=5), DAY_AGO, NOW)
     assert f["basis"] == "success" and f["stale"] is False
 
 
 # ── update_staleness：開始、恢復、去重、合併、24h ──────────────
 
-def F(name, stale, last_min=60, threshold=30, basis="table"):
+def F(name, stale, last_min=60, threshold=30, basis="write"):
     return {"name": name, "stale": stale, "basis": basis, "threshold_min": threshold,
             "last_at": NOW - timedelta(minutes=last_min)}
 
@@ -176,7 +169,7 @@ def test_still_down_after_24h_once_and_merged(sent):
 
 def test_daily_collector_still_down_counts_from_alert_time(sent):
     """每日類：通報時最後一筆早已超過 24 小時 → 不能 15 分鐘後就送 ⏳，要通報後滿 24 小時。"""
-    f = lambda now_: {"name": "daily", "stale": True, "basis": "table", "threshold_min": 2880,
+    f = lambda now_: {"name": "daily", "stale": True, "basis": "write", "threshold_min": 2880,
                       "last_at": NOW - timedelta(days=2, minutes=1)}
     alerting.update_staleness([f(NOW)], now=NOW)
     alerting.update_staleness([f(NOW)], now=NOW + timedelta(minutes=15))
@@ -208,89 +201,112 @@ def test_failures_alone_never_send(sent):
     assert sent == []
 
 
-# ── StalenessWatch.run：查哪些表、DB 失敗不判斷 ────────────────
+# ── StalenessWatch.run：零 DB 讀取 ─────────────────────────
 
 @pytest.fixture
 def watch_env(monkeypatch):
-    monkeypatch.setattr(config, "SUPABASE_ENABLED", True)
-    monkeypatch.setattr(config, "SUPABASE_DB_URL", "postgres://x")
-    monkeypatch.setattr(config, "STALE_CHECK_INTERVAL_MIN", 15)
     monkeypatch.setattr(monitoring, "load_realtime_tables", lambda: TABLES)
     monkeypatch.setattr(monitoring, "load_cross_layer_map", lambda: CMAP)
-    monkeypatch.setattr(monitoring, "query_collector_last_success", lambda: {})
-    env = SimpleNamespace(max_time={}, queried=[])
 
-    def fake_health(tables):
-        env.queried.append(sorted(t["table"] for t in tables))
-        return [{"schema": t["schema"], "table": t["table"], "count_24h": 1, "error": None,
-                 "max_time": env.max_time.get(t["table"])} for t in tables]
-    monkeypatch.setattr(monitoring, "query_realtime_health", fake_health)
-    return env
+    def boom(*_a, **_k):
+        raise AssertionError("staleness_watch 不可以查 DB")
+    monkeypatch.setattr(monitoring, "query_realtime_health", boom)
+    monkeypatch.setattr(alerting, "_ACTIVITY", {})
+    monkeypatch.setattr(alerting, "_DB_WRITES", {"ok": None, "fail": None, "fails_since_ok": 0})
 
 
-def C(name, interval, last_success=None):
-    return SimpleNamespace(name=name, interval_minutes=interval, last_success_at=last_success)
+def C(name, interval):
+    return SimpleNamespace(name=name, interval_minutes=interval)
 
 
-def test_run_alerts_and_only_requeries_tables_that_may_be_stale(sent, watch_env):
-    w = StalenessWatch([C("youbike", 15), C("earthquake", 5, NOW + timedelta(minutes=14))],
-                       now=NOW - timedelta(days=1))
-    watch_env.max_time = {"youbike_snapshots": NOW - timedelta(minutes=10),
-                          "youbike_current": NOW - timedelta(minutes=10)}
+def test_run_uses_in_memory_writes_and_merges(sent, watch_env):
+    w = StalenessWatch([C("youbike", 15), C("earthquake", 5)], now=DAY_AGO)
+    alerting.mark_write("youbike", 120, now=NOW - timedelta(minutes=10))
+    alerting.mark_write("youbike", 0, now=NOW)            # 0 筆不算新資料
+    alerting.mark_success("youbike", now=NOW)
+    alerting.mark_success("earthquake", now=NOW + timedelta(minutes=14))
+    alerting.mark_db_result(True, now=NOW)
     assert w.run(now=NOW) == []
-    # 15 分鐘後：上次看到 10 分鐘前的資料，門檻 45 − 間隔 15 → 還不用重查
-    assert w.run(now=NOW + timedelta(minutes=15)) == []
-    assert len(watch_env.queried) == 1
-    # 30 分鐘後：可能快超過 → 重查；上游停了 → 40 分沒資料，還沒到 45
-    w.run(now=NOW + timedelta(minutes=30))
-    assert len(watch_env.queried) == 2 and sent == []
-    # 45 分鐘後：55 分沒資料 → 🔴（earthquake 的最後成功也過期，一起合併成一則）
+    assert w.run(now=NOW + timedelta(minutes=30)) == []   # youbike 40 分沒寫入，門檻 45
     msgs = w.run(now=NOW + timedelta(minutes=45))
     assert len(msgs) == 1 and "2 支收集器疑似壞掉" in msgs[0]
     assert "youbike：已 55 分沒有新資料" in msgs[0] and "earthquake：已 31 分沒有成功執行" in msgs[0]
+    alerting.mark_write("youbike", 5, now=NOW + timedelta(minutes=50))
+    alerting.mark_success("earthquake", now=NOW + timedelta(minutes=50))
+    msgs = w.run(now=NOW + timedelta(minutes=60))
+    assert len(msgs) == 1 and msgs[0].startswith("✅ 2 支收集器恢復")
 
 
-def test_run_skips_round_when_db_query_fails_then_alerts_after_two(sent, watch_env, monkeypatch):
-    ok_health = monitoring.query_realtime_health
-    monkeypatch.setattr(monitoring, "query_realtime_health", lambda tables: [])
-    w = StalenessWatch([C("youbike", 15)], now=NOW - timedelta(days=1))
-    assert w.run(now=NOW) is None
-    assert sent == []  # 一輪查不到不報
-    assert w.run(now=NOW + timedelta(minutes=15)) is None
-    assert len(sent) == 1 and sent[0].startswith("🔴 查不到資料新鮮度")
-    w.run(now=NOW + timedelta(minutes=30))
-    assert len(sent) == 1  # 持續中不重送
-    watch_env.max_time = {"youbike_snapshots": NOW + timedelta(minutes=44)}
-    monkeypatch.setattr(monitoring, "query_realtime_health", ok_health)
-    w.run(now=NOW + timedelta(minutes=45))
-    assert len(sent) == 2 and sent[1].startswith("✅ 恢復：資料新鮮度查詢")
-
-
-def test_run_uses_db_last_success_over_restart(sent, watch_env, monkeypatch):
-    """行程剛重啟（in-memory 沒紀錄），DB collector_status 顯示 2 小時沒成功 → 照報。"""
-    monkeypatch.setattr(monitoring, "query_collector_last_success",
-                        lambda: {"earthquake": NOW - timedelta(hours=2)})
-    w = StalenessWatch([C("earthquake", 5)], now=NOW - timedelta(minutes=5))
-    msgs = w.run(now=NOW)
-    assert len(msgs) == 1 and "earthquake" in msgs[0] and "沒有成功執行" in msgs[0]
+def test_run_persists_activity_across_restart(sent, watch_env, monkeypatch):
+    before = StalenessWatch([C("youbike", 15)], now=DAY_AGO)
+    alerting.mark_write("youbike", 3, now=NOW - timedelta(minutes=5))
+    assert before.run(now=NOW) == []
+    monkeypatch.setattr(alerting, "_ACTIVITY", {})       # 重啟：行程內紀錄歸零
+    after = StalenessWatch([C("youbike", 15)], now=NOW + timedelta(minutes=1))
+    assert after.run(now=NOW + timedelta(minutes=30)) == []   # 存檔的 35 分前寫入 < 45
+    msgs = after.run(now=NOW + timedelta(minutes=45))     # 重啟後一直沒寫入 → 照報
+    assert len(msgs) == 1 and "youbike" in msgs[0]
 
 
 def test_run_extra_persistent_worker_interval_from_cmap(sent, watch_env, monkeypatch):
     cmap = {**CMAP, "aisstream": {"enabled": True, "deployment": "pulse_host",
                                   "expected_interval_min": 1}}
     monkeypatch.setattr(monitoring, "load_cross_layer_map", lambda: cmap)
-    w = StalenessWatch([], ["aisstream"], now=NOW - timedelta(days=1))
+    w = StalenessWatch([], ["aisstream"], now=DAY_AGO)
     msgs = w.run(now=NOW)
     assert len(msgs) == 1 and "aisstream" in msgs[0]
 
 
-def test_run_persists_last_success_across_restart(sent, watch_env, monkeypatch):
-    """DB collector_status 很舊（沒新事件就不更新），但上一個行程記得它 5 分鐘前還成功 → 重啟後不誤報。"""
-    monkeypatch.setattr(monitoring, "query_collector_last_success",
-                        lambda: {"earthquake": NOW - timedelta(days=30)})
-    before = StalenessWatch([C("earthquake", 5, NOW - timedelta(minutes=5))], now=NOW - timedelta(days=1))
-    assert before.run(now=NOW) == []
-    after = StalenessWatch([C("earthquake", 5)], now=NOW + timedelta(minutes=1))  # 重啟，行程內沒紀錄
-    assert after.run(now=NOW + timedelta(minutes=16)) == []
-    msgs = after.run(now=NOW + timedelta(minutes=40))  # 重啟後一直沒成功、超過 30 分 → 照報
-    assert len(msgs) == 1 and "earthquake" in msgs[0]
+def test_db_down_alert_once_suppresses_collectors_and_recovers(sent, watch_env):
+    w = StalenessWatch([C("youbike", 15)], now=DAY_AGO)
+    alerting.mark_write("youbike", 3, now=NOW)
+    alerting.mark_db_result(True, now=NOW)
+    for k in range(1, 40):
+        alerting.mark_db_result(False, now=NOW + timedelta(minutes=k))
+    assert w.run(now=NOW + timedelta(minutes=20)) == [] and sent == []  # 才 20 分
+    w.run(now=NOW + timedelta(minutes=35))
+    assert len(sent) == 1 and sent[0].startswith("🔴 資料庫連不上")
+    w.run(now=NOW + timedelta(minutes=50))  # youbike 50 分沒寫入，但 DB 斷線期間不報收集器
+    assert len(sent) == 1
+    alerting.mark_db_result(True, now=NOW + timedelta(minutes=52))
+    alerting.mark_write("youbike", 9, now=NOW + timedelta(minutes=52))
+    w.run(now=NOW + timedelta(minutes=55))
+    assert len(sent) == 2 and sent[1].startswith("✅ 恢復：資料庫寫入")
+
+
+def test_one_collector_failing_writes_is_not_db_down(sent, watch_env):
+    w = StalenessWatch([], now=DAY_AGO)
+    for k in range(40):
+        alerting.mark_db_result(False, now=NOW + timedelta(minutes=k))
+        alerting.mark_db_result(True, now=NOW + timedelta(minutes=k, seconds=30))
+    w.run(now=NOW + timedelta(minutes=40))
+    assert sent == []
+
+
+def test_writer_records_write_and_db_result(monkeypatch):
+    """supabase_writer 成功寫入 ≥1 筆 → mark_write／mark_db_result(True)，失敗 → False。"""
+    monkeypatch.setattr(alerting, "_ACTIVITY", {})
+    monkeypatch.setattr(alerting, "_DB_WRITES", {"ok": None, "fail": None, "fails_since_ok": 0})
+    from contextlib import contextmanager
+    from storage.supabase_writer import SupabaseWriter
+    wr = SupabaseWriter.__new__(SupabaseWriter)
+    import threading
+    wr._err_lock = threading.Lock()
+    wr._db_consecutive_errors = {}
+
+    @contextmanager
+    def borrow(*_a, **_k):
+        yield object()
+    wr._pool = SimpleNamespace(borrow=borrow)
+    monkeypatch.setattr(wr, "_transform", lambda *a: [{"x": 1}, {"x": 2}], raising=False)
+    monkeypatch.setattr(wr, "_write_to_db", lambda *a: None, raising=False)
+    monkeypatch.setattr(wr, "_report_heartbeat", lambda *a, **k: None, raising=False)
+    assert wr.write("youbike", {"data": [1, 2]}, NOW) is True
+    act, db = alerting.activity_snapshot()
+    assert "write" in act["youbike"] and db["ok"] is not None
+    monkeypatch.setattr(wr, "_write_to_db", lambda *a: (_ for _ in ()).throw(RuntimeError("down")),
+                        raising=False)
+    monkeypatch.setattr(wr, "_should_buffer", lambda *_: False, raising=False)
+    monkeypatch.setattr(wr, "_record_db_error", lambda *_: None, raising=False)
+    assert wr.write("youbike", {"data": [1]}, NOW) is False
+    assert alerting.activity_snapshot()[1]["fails_since_ok"] == 1

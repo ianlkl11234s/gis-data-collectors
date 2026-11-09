@@ -286,6 +286,9 @@ class SupabaseWriter:
                 # 例外在 _report_heartbeat 內吞掉（best-effort 語義不變）。
                 self._report_heartbeat(collector_name, True, len(records), conn=conn)
 
+            # 停更告警（tasks/staleness_watch）只看這裡記的寫入時間，不另外查 DB
+            alerting.mark_write(collector_name, len(records))
+            alerting.mark_db_result(True)
             # 連續錯誤計數重置；恢復通知由 alerting 決定（與收集失敗共用 collector:<name>）
             with self._err_lock:
                 prev_errors = self._db_consecutive_errors.get(collector_name, 0)
@@ -305,6 +308,7 @@ class SupabaseWriter:
         except (PoolBorrowTimeout, PoolBreakerOpen) as e:
             # 池滿 / 斷路器 — 都是「DB 暫時不可用」的訊號。不是 bug，不要 Telegram 洗版。
             logger.warning(f"[{collector_name}] DB 暫時不可用，暫存 buffer: {e}")
+            alerting.mark_db_result(False)
             if self._should_buffer(collector_name):
                 self._write_to_buffer(collector_name, result, timestamp)
             self._report_heartbeat(collector_name, False, 0, str(e))
@@ -313,6 +317,7 @@ class SupabaseWriter:
 
         except Exception as e:
             logger.warning(f"[{collector_name}] DB 寫入失敗，暫存 buffer: {e}")
+            alerting.mark_db_result(False)
             if self._should_buffer(collector_name):
                 self._write_to_buffer(collector_name, result, timestamp)
             self._report_heartbeat(collector_name, False, 0, str(e))
@@ -383,6 +388,8 @@ class SupabaseWriter:
                         records = reject_mojibake_records(payload['collector'], records)
                         if records:
                             self._write_to_db(conn, payload['collector'], records, ts)
+                            alerting.mark_write(payload['collector'], len(records))
+                            alerting.mark_db_result(True)
                         f.unlink()
                         success += 1
                         consecutive_failures = 0

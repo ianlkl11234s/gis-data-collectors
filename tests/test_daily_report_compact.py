@@ -290,7 +290,7 @@ def test_enabled_entries_have_labels():
 def test_alert_uses_chinese_label():
     alerting._set_label_cache({"bus": "雙北公車位置"})
     alerting.set_sender(lambda _t: True)
-    msgs = alerting.update_staleness([{"name": "bus", "stale": True, "basis": "table",
+    msgs = alerting.update_staleness([{"name": "bus", "stale": True, "basis": "write",
                                        "last_at": NOW - timedelta(minutes=40), "threshold_min": 30}],
                                      now=NOW)
     assert any("🔴 收集器疑似壞掉：雙北公車位置（bus）" in m for m in msgs), msgs
@@ -303,7 +303,7 @@ def test_stale_collector_listed_once_in_daily(monkeypatch, tmp_path):
     for i in range(10):
         alerting.collector_failed("youbike", "HTTP 500", interval_minutes=15,
                                   now=NOW - timedelta(hours=3) + timedelta(minutes=15 * i))
-    alerting.update_staleness([{"name": "youbike", "stale": True, "basis": "table",
+    alerting.update_staleness([{"name": "youbike", "stale": True, "basis": "write",
                                 "last_at": NOW - timedelta(hours=3), "threshold_min": 45}],
                               now=NOW - timedelta(minutes=5))
     report = task._build_compact_report(now=NOW)
