@@ -3,12 +3,15 @@
 週一 07:30（台北）跑一次，結果寫 LOCAL_DATA_DIR/db_efficiency_audit.json；同一天 08:00 的日報讀檔，
 有發現才併進「🔧 現在還壞的」（🟡），全綠不出現。列三種漏網之魚：
 
-1. 前端 RPC 太慢（R1）：anon／authenticated 呼叫的 RPC，這段期間平均 >1 秒。
+「讀者」角色＝anon、authenticated（前端）與 cloud_agent_ro（分析倉庫／MCP）。
+
+1. 前端 RPC 太慢（R1）：讀者角色呼叫的 RPC，這段期間平均 >1 秒。
    被 statement_timeout 取消的呼叫不進 pg_stat_statements，所以平均是下限。
 2. 預算表沒人讀（R2）：pg_cron 的 refresh 函式寫入的表（從 cron.job 的 command 找 refresh_*，
    再從函式本體找 INSERT／UPDATE 目標），
-   a. 沒有任何前端可呼叫的函式讀它、也沒開放 anon 直接讀 → 「沒有讀者」；
-   b. 有讀者函式，但這段期間 anon／authenticated 呼叫 0 次 → 「一週沒人讀」。
+   a. 沒有任何讀者角色可呼叫的函式讀它、讀者角色也不能直接 SELECT → 「沒有讀者」；
+   b. 有讀者函式，但這段期間讀者角色呼叫 0 次 → 「一週沒人讀」。
+   能直接 SELECT 的表只看授權、不計次數（分辨不出 refresh 自己的讀取）。
    （不用 pg_stat_user_tables 的 seq_scan＋idx_scan：refresh 自己的 DELETE／UPDATE 也會累加，
    2026-11-09 實測沒讀者的 youbike_h3_daily idx_scan 仍有 231，訊號被蓋掉。）
 3. 單一 SQL 每天磁碟讀 >1 GB（shared_blks_read 差值 ÷ 天數）。
@@ -37,7 +40,7 @@ import config
 log = logging.getLogger(__name__)
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
-READER_ROLES = ("anon", "authenticated")
+READER_ROLES = ("anon", "authenticated", "cloud_agent_ro")  # 前端＋分析倉庫／MCP 唯讀角色
 APP_SCHEMAS = ("public", "live", "analytics", "spatial", "metadata", "reference", "intel")
 SLOW_RPC_MS = 1000.0
 DAILY_READ_BYTES = 1024 ** 3
@@ -109,24 +112,27 @@ def fetch_numbers(cur) -> dict:
     jobs = [{"jobname": j, "schedule": s, "command": c} for j, s, c in cur.fetchall()]
 
     # 應用 schema 的函式（名稱、本體、前端能不能呼叫）；只讀 pg_proc
+    roles = list(reader_oids)
     cur.execute("""
         SELECT n.nspname, p.proname, p.prosrc,
-               has_function_privilege('anon', p.oid, 'EXECUTE')
-               OR has_function_privilege('authenticated', p.oid, 'EXECUTE') AS frontend
+               coalesce(bool_or(has_function_privilege(r.oid, p.oid, 'EXECUTE')), false) AS frontend
         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        LEFT JOIN pg_roles r ON r.oid = ANY(%s::oid[])
         WHERE n.nspname = ANY(%s) AND p.prokind IN ('f', 'p')
+        GROUP BY n.nspname, p.proname, p.prosrc
         LIMIT 5000
-    """, (list(APP_SCHEMAS),))
+    """, (roles, list(APP_SCHEMAS)))
     funcs = [{"schema": s, "name": n, "src": src or "", "frontend": bool(fe)} for s, n, src, fe in cur.fetchall()]
 
     cur.execute("""
         SELECT n.nspname || '.' || c.relname,
-               has_table_privilege('anon', c.oid, 'SELECT')
-               OR has_table_privilege('authenticated', c.oid, 'SELECT')
+               coalesce(bool_or(has_table_privilege(r.oid, c.oid, 'SELECT')), false)
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN pg_roles r ON r.oid = ANY(%s::oid[])
         WHERE c.relkind IN ('r', 'p', 'm') AND n.nspname = ANY(%s)
+        GROUP BY 1
         LIMIT 20000
-    """, (list(APP_SCHEMAS),))
+    """, (roles, list(APP_SCHEMAS)))
     tables = {t: bool(sel) for t, sel in cur.fetchall()}
     return {"stats_reset": stats_reset, "dealloc": int(dealloc or 0), "reader_oids": reader_oids,
             "stmts": stmts, "jobs": jobs, "funcs": funcs, "tables": tables}
@@ -318,7 +324,7 @@ def evaluate(numbers: dict, delta: dict, names: dict, window_days: float, labels
         readers = readers_of(table, funcs, writers)
         direct = numbers["tables"].get(table, False)
         if not readers and not direct:
-            reason = "沒有讀者（沒有前端 RPC 讀它，也沒開放直接讀）"
+            reason = "沒有讀者（前端與分析倉庫都沒有函式讀它，也不能直接讀）"
         elif readers and not direct and not baseline and not (set(readers) & called):
             reason = f"讀者 {'、'.join(readers[:2])} {_days_label(window_days)}內 0 次呼叫"
         else:
