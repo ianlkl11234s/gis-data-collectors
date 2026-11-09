@@ -21,7 +21,7 @@ JSON 的 key 用短的位置名（c0、c1…、額外參數 p0…）並以緊湊
   ``INSERT INTO <table> [AS alias] (<cols>) VALUES %s <tail>``。ON CONFLICT／
   RETURNING 尾段原樣保留；``fetch=True`` 收齊每一頁的 RETURNING；分頁仍照
   page_size（每頁 SQL 文字相同）。欄位型別取自目標表的 catalog（每個 process
-  每張表查一次，查詢本身也是固定形狀）。
+  每張表查一次，查詢本身也是固定形狀；遇到快取裡沒有的欄位會重查一次）。
 - ``execute_json(cur, sql, rows, page_size=100, fetch=False)``：給非 INSERT 的寫法
   （例如 ``UPDATE ... FROM json_to_recordset(%s::json) AS v(...)``），呼叫端自己
   寫好欄位定義，rows 是 dict list。
@@ -269,7 +269,15 @@ def execute_values(cur, sql: str, argslist, template: str | None = None,
     m = _INSERT_RE.match(sql)
     if not m:
         raise ValueError(f'bulk: 只支援 INSERT INTO <table> (<cols>) VALUES %s ...，收到：{sql[:120]!r}')
-    fixed, spec = build_insert_sql(sql, _table_types(cur, m.group('table')), template)
+    table = m.group('table')
+    try:
+        fixed, spec = build_insert_sql(sql, _table_types(cur, table), template)
+    except ValueError:
+        if table not in _TYPE_CACHE:
+            raise
+        # 型別快取可能早於 migration（process 未重啟）→ 重查一次
+        del _TYPE_CACHE[table]
+        fixed, spec = build_insert_sql(sql, _table_types(cur, table), template)
     result = []
     for page in _pages(rows, page_size):
         cur.execute(fixed, (serialize_rows(page, spec),))

@@ -91,6 +91,16 @@ def test_pages_respect_page_size_and_catalog_cached():
     assert sizes == [100, 100, 50, 1]
 
 
+def test_stale_type_cache_is_refreshed_once():
+    cur = RecordingCursor(types={'id': ('integer', 'int4')})
+    bulk.execute_values(cur, "INSERT INTO live.demo (id) VALUES %s", [(1,)])
+    cur.types = {'id': ('integer', 'int4'), 'name': ('text', 'text')}  # migration 加欄位
+    bulk.execute_values(cur, "INSERT INTO live.demo (id, name) VALUES %s", [(1, 'a')])
+    assert sum(1 for sql, _ in cur.calls if sql == bulk._CATALOG_SQL) == 2
+    with pytest.raises(ValueError):
+        bulk.execute_values(cur, "INSERT INTO live.demo (id, nope) VALUES %s", [(1, 'a')])
+
+
 def test_empty_rows_noop():
     cur = RecordingCursor()
     assert bulk.execute_values(cur, SQL, []) is None

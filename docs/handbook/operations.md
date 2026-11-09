@@ -277,6 +277,7 @@ DB 是收資料、重算、供網站讀的共用資源，一個來源吃光 IO �
 - **template 規則**：每欄一個元素。`%s`、`%s::型別`、不含 `%s` 的運算式（`now()`）照常用；其他運算式裡的 `%s` 以 text 傳入（`ST_GeomFromText(%s,4326)`、`ST_GeomFromGeoJSON(%s)` 可直接用），**需要數值的參數要寫明轉型**，例如 `ST_MakePoint(%s::float8, %s::float8)`。不支援具名參數 `%(x)s`。
 - **非 INSERT**（例如 `UPDATE ... FROM (VALUES %s)`）改用 `execute_json(cur, sql, rows_as_dicts)`，SQL 自己寫 `FROM json_to_recordset(%s::json) AS v(欄 型別, ...)`（實例：`_write_weather_raster_images`）。
 - 值的語意與舊寫法一致（`tests/test_bulk.py` 在本機 PG 逐列比對新舊結果）：NaN／Infinity、jsonb 收到 JSON 字串、json 欄位原文、整數欄位收到小數的四捨五入、bytea、interval、陣列欄位都已涵蓋。`cur.rowcount` 仍只反映最後一頁。
+- **已在跑的 VM 更新順序**：先把 `external/vm_common/bulk.py` 放到 collector 同目錄，再換 `*_collect.py`；只換 collector 會在 import 時失敗，cron 從此每輪報錯。適用 ship_ais、waste_positions、immigration_apis_airport、cdc_public_health_weekly、isohe_port_marine；moa_opendata 由 `deploy.sh` 打包時自動帶 `storage/bulk.py`。
 - 新寫法上線並全部部署（pulse-host 映像＋各 VM collector＋aisstream worker）後，由使用者執行一次 `pg_stat_statements_reset()` 清掉舊形狀；之後收集器 INSERT 每張表應只剩一筆。
 - 尚未改的一次性腳本：`scripts/backfill_*`、`scripts/verify_vessels.py` 仍用 psycopg2 `execute_values`（手動、偶爾跑，不是持續累積的來源）；下次修改時順手換成 `storage.bulk`。
 
