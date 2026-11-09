@@ -17,7 +17,8 @@
 排程：每週四 11:00 抓一次（CDC 約 10:00 發布上週資料）。
 歸檔：快照存完整 data，archive_cdc_public_health_weekly.py 每日 03:20 把隔天以前的
       日期目錄打包上 S3 cdc_public_health_weekly/archives/YYYY-MM-DD.tar.gz。
-過濾：只保留近 2 年（KEEP_YEARS=2）。
+過濾：只寫週起日在近 KEEP_DAYS 天內的週（預設 60；gis-platform 544：原始表只留 60 天，
+      去年同週比較改讀永久週彙總）。舊版保留近 2 年會把已清掉的週每週四寫回。
 DB 寫入失敗 → 存 <DATA_DIR>/buffer/*.json，下輪開頭自動補寫（vm_buffer.py；
 週跑型 → buffer 保留 30 天，預設 3 天必過期）。
 
@@ -32,7 +33,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import psycopg2
@@ -65,7 +66,7 @@ if not DB_URL:
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/var/lib/cdc-public-health/data"))
 BUFFER_DIR = DATA_DIR / "buffer"  # DB 寫入失敗的暫存區（vm_buffer）
 BUFFER_MAX_AGE_DAYS = 30  # 週跑一次，預設 3 天必過期 → 拉長到 30 天
-KEEP_YEARS = int(os.environ.get("KEEP_YEARS", "2"))
+KEEP_DAYS = int(os.environ.get("KEEP_DAYS", "60"))
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
 HTTP_TIMEOUT = (15, 60)
@@ -88,6 +89,12 @@ DATASETS = [
      "kind": "rods"},
 ]
 CDC_CSV_BASE = "https://od.cdc.gov.tw/eic"
+
+
+def iso_week_monday(iso_year: int, iso_week: int) -> date:
+    """ISO 年週的週一（純日期算術，不因週 53 不存在而失敗）；與 gis-platform 544 的 SQL 公式一致。"""
+    jan4 = date(iso_year, 1, 4)
+    return jan4 - timedelta(days=jan4.isoweekday() - 1) + timedelta(weeks=iso_week - 1)
 
 SESSION = requests.Session()
 SESSION.verify = False
@@ -200,7 +207,7 @@ def disabled_diseases() -> set[str]:
     return {x.strip() for x in raw.split(",") if x.strip()}
 
 
-def fetch_dataset(ds: dict, cutoff_year: int, log: logging.Logger) -> list[dict]:
+def fetch_dataset(ds: dict, cutoff: date, log: logging.Logger) -> list[dict]:
     """抓 + 解析單一疾病。HTTP 非 2xx / 空檔 / 全列解析失敗（格式改變）一律 raise。"""
     url = f"{CDC_CSV_BASE}/{ds['filename']}"
     resp = SESSION.get(url, timeout=HTTP_TIMEOUT)
@@ -218,8 +225,8 @@ def fetch_dataset(ds: dict, cutoff_year: int, log: logging.Logger) -> list[dict]
         raise ValueError(
             f"{len(all_rows)} 列全部解析失敗（格式疑似改變）；缺必要欄位: {missing or '無（值格式異常）'}；"
             f"表頭: {sorted(header)[:12]}")
-    out = [n for n in parsed if n["iso_year"] >= cutoff_year]
-    log.info(f"{ds['disease_code']}: {len(out)} 筆（>= {cutoff_year}）")
+    out = [n for n in parsed if iso_week_monday(n["iso_year"], n["iso_week"]) >= cutoff]
+    log.info(f"{ds['disease_code']}: {len(out)} 筆（週起日 >= {cutoff}）")
     return out
 
 
@@ -326,7 +333,7 @@ def main() -> int:
     )
     log = logging.getLogger("cdc_public_health_weekly")
     ts = datetime.now(TAIPEI_TZ)
-    cutoff_year = ts.year - KEEP_YEARS + 1
+    cutoff = ts.date() - timedelta(days=KEEP_DAYS)
 
     all_records: list[dict] = []
     stats: dict[str, dict] = {}
@@ -338,7 +345,7 @@ def main() -> int:
             log.info(f"{code}: 已停用（CDC_PUBLIC_HEALTH_WEEKLY_DISABLED）")
             continue
         try:
-            rows = fetch_dataset(ds, cutoff_year, log)
+            rows = fetch_dataset(ds, cutoff, log)
             all_records.extend(rows)
             stats[code] = {"status": "ok", "rows": len(rows)}
         except Exception as e:
@@ -352,7 +359,7 @@ def main() -> int:
         for k in enabled:
             stats[k] = {**stats[k], "status": "error", "error": "no retained rows after cutoff"}
         failed = sorted(enabled)
-        log.error(f"啟用的來源全部 0 筆保留列（cutoff_year={cutoff_year}）：{failed}")
+        log.error(f"啟用的來源全部 0 筆保留列（cutoff={cutoff}）：{failed}")
 
     # DB：連線 retry → 先補寫積壓 buffer → 寫本輪；寫入失敗存 buffer 不丟資料
     inserted = 0

@@ -2,7 +2,8 @@
 太空發射資料收集器 — Launch Library 2 (TheSpaceDevs)
 
 收集策略：
-1. 歷史回溯：啟動時檢查 DB 最舊紀錄，從最近往前抓到 5 年前自動停止
+1. 歷史回溯：啟動時從最近往前抓，抓到 BACKFILL_CUTOFF_DAYS（30 天）前自動停止
+   （live.launches 依 net 只留 30 天，gis-platform migration 544；舊版回補 5 年會把清掉的列寫回）
 2. 每日同步：upcoming launches UPSERT（狀態自動更新 TBD→Go→Success）
 3. 發射台：首次同步全部 233 個，之後每月更新一次
 4. 太空事件：每日抓取 upcoming events
@@ -26,8 +27,10 @@ from collectors.base import BaseCollector
 # LL2 API
 LL2_BASE = "https://ll.thespacedevs.com/2.2.0"
 
-# 歷史回溯停止點：5 年前
-BACKFILL_CUTOFF_YEARS = 5
+# 歷史回溯停止點：30 天前。必須 ≤ live.launches 的保留天數（gis-platform 544：net 過後 30 天刪），
+# 否則每次重啟都會把已清掉的歷史發射 upsert 回來。更早的歷史在 S3
+# supabase-export/live.launches/full-20261109.csv.gz 與 launch/archives。
+BACKFILL_CUTOFF_DAYS = 30
 
 # Rate limit 安全間隔（秒）— 付費 token 才縮短
 RATE_LIMIT_PAID_INTERVAL = 2
@@ -228,7 +231,7 @@ class LaunchCollector(BaseCollector):
         return events
 
     def _backfill_history(self) -> list[dict]:
-        """歷史回溯：從最近往前抓，到 5 年前自動停止
+        """歷史回溯：從最近往前抓，到 BACKFILL_CUTOFF_DAYS 天前自動停止
 
         每次 collect() 只抓一批（100 筆），下次 collect() 繼續。
         避免一次抓太多觸發 rate limit。
@@ -237,7 +240,7 @@ class LaunchCollector(BaseCollector):
             return []
 
         # 計算截止日期
-        cutoff = datetime.now(timezone.utc) - timedelta(days=BACKFILL_CUTOFF_YEARS * 365)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=BACKFILL_CUTOFF_DAYS)
 
         offset = self._backfill_offset
 
@@ -259,7 +262,7 @@ class LaunchCollector(BaseCollector):
                     # 過濾掉超過截止日期的
                     launches = [l for l in launches if l.get('net') and
                                 datetime.fromisoformat(l['net'].replace('Z', '+00:00')) >= cutoff]
-                    print(f"[{self.name}] 已達 {BACKFILL_CUTOFF_YEARS} 年前，回溯完成")
+                    print(f"[{self.name}] 已達 {BACKFILL_CUTOFF_DAYS} 天前，回溯完成")
                     self._backfill_complete = True
             except (ValueError, TypeError):
                 pass

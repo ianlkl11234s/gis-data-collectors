@@ -66,6 +66,8 @@ def zeabur(monkeypatch):
     c = CdcPublicHealthWeeklyCollector.__new__(CdcPublicHealthWeeklyCollector)
     c._session = MagicMock()
     c.name = "cdc_public_health_weekly"
+    # 固定測試資料是 2026 第 40／41 週；放寬視窗避免測試隨日期過期（視窗本身另有測試）
+    c.KEEP_DAYS = 100000
 
     def use(mapping):
         c._session.get.side_effect = _router(mapping)
@@ -147,6 +149,7 @@ def vm(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(VM_DIR))
     sys.modules.pop("cdc_public_health_weekly_collect", None)
     mod = importlib.import_module("cdc_public_health_weekly_collect")
+    monkeypatch.setattr(mod, "KEEP_DAYS", 100000)  # 同上：固定測試週不隨日期過期
     written = []
     monkeypatch.setattr(mod, "connect_with_retry", lambda *a, **k: MagicMock())
     monkeypatch.setattr(mod, "flush_pending", lambda *a, **k: None)
@@ -219,7 +222,7 @@ def test_vm_disabled_dengue_exit0_no_fetch(vm, monkeypatch, tmp_path):
 
 def test_vm_no_retained_rows_after_cutoff_exit1(vm, monkeypatch, tmp_path):
     mod = vm(_mapping())
-    monkeypatch.setattr(mod, "KEEP_YEARS", 0)   # cutoff 在未來 → 啟用來源皆 0 筆保留列
+    monkeypatch.setattr(mod, "KEEP_DAYS", -1000)   # cutoff 在未來 → 啟用來源皆 0 筆保留列
     assert mod.main() == 1
     snap = _snapshot(tmp_path)
     assert snap["failed"] == ["dengue", "enterovirus", "influenza"]
@@ -243,3 +246,45 @@ def test_vm_heartbeat_all_fail_reports_failure(vm):
     mod = vm({FILES["influenza"]: boom, FILES["dengue"]: boom, FILES["enterovirus"]: boom})
     assert mod.main() == 1
     assert len(mod._hb) == 1 and mod._hb[0][0] is False
+
+
+# ── 只寫保留窗內的週（gis-platform 544：原始表只留 60 天）──
+def _recent_csvs():
+    from datetime import date, timedelta
+    y, w, _ = date.today().isocalendar()
+    oy, ow, _ = (date.today() - timedelta(days=200)).isocalendar()
+    head = "年,週,年齡別,縣市,縣市別代碼,類流感急診就診人次\n"
+    rods = head + f"{y},{w},0-6,臺北市,63,12\n{oy},{ow},0-6,臺北市,63,9\n"
+    ev = rods.replace("類流感急診就診人次", "腸病毒急診就診人次")
+    dengue = ("發病年份,發病週別,縣市,鄉鎮,性別,是否為境外移入,年齡層,確定病例數\n"
+              f"{y},{w},高雄市,前鎮區,男,否,30-34,2\n{oy},{ow},高雄市,前鎮區,男,否,30-34,1\n")
+    return {FILES["influenza"]: rods, FILES["dengue"]: dengue, FILES["enterovirus"]: ev}, (y, w)
+
+
+def test_iso_week_monday_matches_isocalendar():
+    from datetime import date, timedelta
+    from collectors.cdc_public_health_weekly import iso_week_monday
+    d = date(2020, 12, 28)
+    while d < date(2027, 1, 10):
+        y, w, _ = d.isocalendar()
+        assert iso_week_monday(y, w) == d - timedelta(days=d.isoweekday() - 1)
+        d += timedelta(days=1)
+
+
+def test_zeabur_keeps_only_weeks_in_window(zeabur):
+    from collectors.cdc_public_health_weekly import CdcPublicHealthWeeklyCollector
+    mapping, (y, w) = _recent_csvs()
+    c = zeabur(mapping)
+    c.KEEP_DAYS = CdcPublicHealthWeeklyCollector.KEEP_DAYS
+    assert c.KEEP_DAYS == 60
+    out = c.collect()
+    assert {(r["iso_year"], r["iso_week"]) for r in out["data"]} == {(y, w)}
+    assert "_collector_error" not in out
+
+
+def test_vm_keeps_only_weeks_in_window(vm, monkeypatch):
+    mapping, (y, w) = _recent_csvs()
+    mod = vm(mapping)
+    monkeypatch.setattr(mod, "KEEP_DAYS", 60)
+    assert mod.main() == 0
+    assert {(r["iso_year"], r["iso_week"]) for r in mod._written[0]} == {(y, w)}

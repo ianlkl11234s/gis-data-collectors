@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import requests
@@ -41,6 +41,12 @@ from collectors.base import BaseCollector, TAIPEI_TZ
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 CDC_CSV_BASE = "https://od.cdc.gov.tw/eic"
+
+
+def iso_week_monday(iso_year: int, iso_week: int) -> date:
+    """ISO 年週的週一（純日期算術，不因週 53 不存在而失敗）；與 gis-platform 544 的 SQL 公式一致。"""
+    jan4 = date(iso_year, 1, 4)
+    return jan4 - timedelta(days=jan4.isoweekday() - 1) + timedelta(weeks=iso_week - 1)
 
 # (disease_code, dataset_filename, column_mapping)
 # 檔名取自 data.cdc.gov.tw CKAN package_show 真實 resources[].url
@@ -203,10 +209,12 @@ class CdcPublicHealthWeeklyCollector(BaseCollector):
         reader = csv.DictReader(io.StringIO(text))
         return list(reader)
 
-    # 只保留近 N 年資料（CDC 歷史可達 20+ 年，monitor 用 2 年足夠）
-    KEEP_YEARS = 2
+    # 只寫週起日在近 N 天內的週（gis-platform 544：live.public_health_weekly 原始只留 60 天，
+    # 去年同週比較改讀永久週彙總 analytics.public_health_weekly_national；
+    # 舊版寫近 2 年會把清掉的週每輪寫回）。
+    KEEP_DAYS = 60
 
-    def _fetch_one(self, ds: dict, cutoff_year: int) -> list[dict]:
+    def _fetch_one(self, ds: dict, cutoff: date) -> list[dict]:
         """抓並解析單一疾病。任何異常 / 空檔 / 格式改變一律 raise（呼叫端標 error，不當 0 筆）。"""
         rows = self._fetch_csv(ds["filename"])   # HTTP 非 2xx → HTTPError
         if not rows:
@@ -220,11 +228,11 @@ class CdcPublicHealthWeeklyCollector(BaseCollector):
             raise ValueError(
                 f"{len(rows)} 列全部解析失敗（格式疑似改變）；缺必要欄位: {missing or '無（值格式異常）'}；"
                 f"表頭: {sorted(header)[:12]}")
-        return [n for n in parsed if n["iso_year"] >= cutoff_year]
+        return [n for n in parsed if iso_week_monday(n["iso_year"], n["iso_week"]) >= cutoff]
 
     def collect(self) -> dict:
         now = datetime.now(tz=TAIPEI_TZ)
-        cutoff_year = now.year - self.KEEP_YEARS + 1
+        cutoff = now.date() - timedelta(days=self.KEEP_DAYS)
         disabled = _disabled_diseases()
         all_records: list[dict] = []
         dataset_stats: dict[str, int | str] = {}
@@ -236,7 +244,7 @@ class CdcPublicHealthWeeklyCollector(BaseCollector):
                 dataset_stats[code] = "disabled"
                 continue
             try:
-                recs = self._fetch_one(ds, cutoff_year)
+                recs = self._fetch_one(ds, cutoff)
             except Exception as e:  # noqa: BLE001 — 任何失敗都要標 error，不可變 0
                 msg = f"{type(e).__name__}: {str(e)[:200]}"
                 print(f"[{self.name}] ✗ {code} ({ds['filename']}) 失敗: {msg}")
