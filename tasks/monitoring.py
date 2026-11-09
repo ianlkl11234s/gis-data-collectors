@@ -151,27 +151,6 @@ def query_realtime_health(tables: list[dict]) -> list[dict]:
     return results
 
 
-def query_collector_last_success() -> dict[str, datetime]:
-    """metadata.collector_status 的 last_success_at（heartbeat 寫入，跨重啟保留）。
-
-    給 tasks/staleness_watch：只有事件驅動表或沒登記表的收集器，用「最後成功執行」判斷停擺。
-    失敗回 {}（不擋檢查，退回 in-memory last_success_at）。
-    """
-    if not (config.SUPABASE_ENABLED and config.SUPABASE_DB_URL):
-        return {}
-    try:
-        import psycopg2
-        with psycopg2.connect(config.SUPABASE_DB_URL, connect_timeout=15) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SET TRANSACTION READ ONLY")
-                cur.execute("SELECT collector_name, last_success_at FROM metadata.collector_status"
-                            " WHERE last_success_at IS NOT NULL LIMIT 1000")
-                return {name: ts for name, ts in cur.fetchall()}
-    except Exception as exc:
-        log.warning("query_collector_last_success failed: %s", type(exc).__name__)
-        return {}
-
-
 def query_gfw_hourly_publish_health(now: datetime | None = None) -> dict[str, Any]:
     """Read GFW's current successful release and most recent attempt.
 

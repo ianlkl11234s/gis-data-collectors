@@ -138,11 +138,21 @@ def test_v1_state_drops_pending_and_downgrades_collector_red(sent, _isolate_aler
         "burst": {"members": ["collector:bus"]}, "daily": {},
     }), encoding="utf-8")
     state = alerting.load_state()
-    assert state["version"] == 2 and "pending" not in state and "burst" not in state
+    assert state["version"] == 3 and "pending" not in state and "burst" not in state
     assert state["entries"]["collector:bus"]["level"] == alerting.YELLOW
     assert state["entries"]["backup"]["level"] == alerting.RED  # 非收集器告警不動
     alerting.collector_succeeded("bus", now=T0 + timedelta(hours=1))
     assert sent == []
+
+
+def test_v2_state_drops_old_staleness_db_alert(sent, _isolate_alert_state):
+    _isolate_alert_state.write_text(json.dumps({
+        "version": 2, "daily": {},
+        "entries": {"staleness_db": {"state": "alerting", "level": "red", "notified_red": True},
+                    "backup": {"state": "alerting", "level": "red", "notified_red": True}},
+    }), encoding="utf-8")
+    state = alerting.load_state()
+    assert state["version"] == 3 and list(state["entries"]) == ["backup"]
 
 
 # ── 非 collector：raise／clear／event ─────────────────

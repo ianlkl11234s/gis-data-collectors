@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import config
+from utils import alerting
 from utils.spool_recovery import compress_orphan_jsonl
 
 try:  # optional dependency: disabled deployments need not import websockets
@@ -584,6 +585,7 @@ class AISStreamWorker:
         try:
             self._write_db(batch)
         except Exception as exc:
+            alerting.mark_db_result(False)
             self.stats.db_errors += 1
             self.stats.last_error = f"db: {exc}"
             logger.warning("AISStream DB batch failed; raw events remain archived: %s", exc)
@@ -660,6 +662,9 @@ class AISStreamWorker:
                 db.rollback()
                 raise
         self.stats.db_written += len(observations)
+        # 停更告警（tasks/staleness_watch）用：記憶體紀錄，零 DB 讀取
+        alerting.mark_write("aisstream", len(observations))
+        alerting.mark_db_result(True)
 
     def _write_health(self, status: str) -> None:
         self._health_last = time.monotonic()
