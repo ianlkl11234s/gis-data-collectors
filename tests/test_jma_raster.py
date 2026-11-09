@@ -457,6 +457,24 @@ def test_writer_frames_status_guard_and_daily_upsert(monkeypatch):
     assert sqls["live.weather_raster_daily"].rstrip().endswith("updated_at=now()")
 
 
+@pytest.mark.parametrize("name", ["jma_raster", "jma_ocean_env"])
+def test_writer_db_failure_is_not_buffered(monkeypatch, name):
+    """COL-F010：frames upsert 允許 ok→partial，buffer replay 會把較新的 ok 蓋回舊 partial。
+    兩支靠自己的 pending_frames 重送最新狀態，DB 失敗不可進 buffer。"""
+    buffered = []
+    w = SupabaseWriter.__new__(SupabaseWriter)
+    w._pool = MagicMock(); w._pool.statement_timeout_ms = 30_000
+    w._pool.borrow.side_effect = RuntimeError("db down")
+    monkeypatch.setattr(w, "_write_to_buffer", lambda *a: buffered.append(a[0]), raising=False)
+    monkeypatch.setattr(w, "_report_heartbeat", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(w, "_record_db_error", lambda *a, **k: None, raising=False)
+    data = [{"_type": "frame", "source": "jma", "product": "radar", "valid_time": "2026-10-09T00:00:00+00:00",
+             "status": "partial", "tiles_requested": 48}]
+    assert w.write(name, {"data": data}, datetime.now(timezone.utc)) is False
+    assert buffered == [], f"{name} DB 失敗不可進 buffer（pending_frames 會重送）"
+    assert w._should_buffer(name) is False
+
+
 def test_radar_backlog_fills_fine_tiles_and_settles(tmp_path, monkeypatch):
     latest = "20261009000000"
     monkeypatch.setattr("collectors.global_climate.jma_common.fetch",
