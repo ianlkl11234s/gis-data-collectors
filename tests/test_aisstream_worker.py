@@ -205,3 +205,36 @@ def test_prepare_runs_startup_gates_synchronously_once():
     worker.prepare()
     worker.prepare()
     assert calls == ["preflight", "run_start", "retry_pending"]
+
+
+def test_collector_status_heartbeat_only_counts_new_db_writes():
+    """DIO-4：aisstream 同名 collector_status。成功＝上次心跳後有新船位寫進 DB，不是「連線中」。"""
+    class Cursor:
+        def __init__(self, calls): self.calls = calls
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def execute(self, sql, args): self.calls.append(args)
+
+    class Conn:
+        def __init__(self): self.calls = []
+        def cursor(self): return Cursor(self.calls)
+        def commit(self): pass
+        def rollback(self): pass
+
+    worker = AISStreamWorker.__new__(AISStreamWorker)
+    worker.stats = type("Stats", (), {"db_written": 0, "last_error": None})()
+    worker._hb_db_written = 0
+    conn = Conn()
+
+    worker._report_heartbeat(conn, "healthy")           # 沒有新寫入 → 不回報
+    assert conn.calls == []
+    worker.stats.db_written = 40
+    worker._report_heartbeat(conn, "healthy")
+    assert conn.calls == [("aisstream", True, 40, None)]
+    worker._report_heartbeat(conn, "healthy")           # 同一批不重複算
+    assert len(conn.calls) == 1
+    worker.stats.last_error = "socket closed"
+    worker._report_heartbeat(conn, "degraded")
+    assert conn.calls[-1] == ("aisstream", False, 0, "socket closed")
+    worker._report_heartbeat(conn, "stopped")
+    assert len(conn.calls) == 2

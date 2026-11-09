@@ -70,10 +70,10 @@ tables:
   - {schema: live, table: aisstream_position_observations,label: AISStream 船位, time_column: received_at, owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream independent provider; raw S3 archive is permanent}
   - {schema: live, table: aisstream_vessel_current,label: AISStream 即時船舶, time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream current snapshot; sticky static fields and positions}
   - {schema: live, table: aisstream_ingest_health,  label: AISStream 健康, time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 5, critical: false, notes: AISStream worker health heartbeat}
-  - {schema: live, table: gfw_vessel_presence_runs, label: GFW 每日船舶收集紀錄, time_column: started_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: Legacy GFW daily DB presence ledger; collector intentionally disabled in favor of the unified hourly publisher}
-  - {schema: live, table: gfw_vessel_presence_archive_manifests, label: GFW 每日船舶歸檔清單, time_column: uploaded_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW raw archive ledger; empty until license gate}
-  - {schema: live, table: gfw_vessel_presence_snapshots, label: GFW 每日船舶快照, time_column: received_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW daily vessel presence snapshots}
-  - {schema: live, table: gfw_vessel_presence_current, label: GFW 每日船舶即時, time_column: updated_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW latest vessel presence; reconstructible from snapshots}
+  - {schema: live, table: gfw_vessel_presence_runs, label: GFW 每日船舶收集紀錄, enabled: false, time_column: started_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: Legacy GFW daily DB presence ledger; collector intentionally disabled in favor of the unified hourly publisher}
+  - {schema: live, table: gfw_vessel_presence_archive_manifests, label: GFW 每日船舶歸檔清單, enabled: false, time_column: uploaded_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW raw archive ledger; empty until license gate}
+  - {schema: live, table: gfw_vessel_presence_snapshots, label: GFW 每日船舶快照, enabled: false, time_column: received_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW daily vessel presence snapshots}
+  - {schema: live, table: gfw_vessel_presence_current, label: GFW 每日船舶即時, enabled: false, time_column: updated_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW latest vessel presence; reconstructible from snapshots}
   # gfw_hourly_publish_runs is deliberately excluded from generic MAX(time)
   # freshness: failed attempts still advance started_at. The monitor uses
   # public.get_gfw_hourly_publish_health() to compare last attempt with the
@@ -82,7 +82,7 @@ tables:
   - {schema: live, table: parking_segments_current,  label: 路邊停車即時, time_column: collected_at, owner_collector: parking, expected_interval_min: 15, critical: false, notes: OnStreet 路邊停車；availability 由 current 代監控（測試豁免）}
 
   # ── 航空 ────────────────────────────────
-  - {schema: live, table: flight_positions,          label: 航班位置, time_column: collected_at, owner_collector: flight_fr24, expected_interval_min: 5, critical: false, notes: 多 collector 共用}
+  - {schema: live, table: flight_positions,          label: 航班位置, time_column: collected_at, owner_collector: flight_fr24_zone, expected_interval_min: 5, critical: false, notes: 多 collector 共用；flight_fr24（舊全域版）已停用，實際寫入者是 flight_fr24_zone（collector_status 同名列）}
   # fare_offers：writer 是 openAB 的 habermas-hermes（Zeabur），2026-10-24 盤點已 SUSPENDED、使用者決定不搬
   # （.gis-agent-system/projects/2026-10-zeabur-migration/README.md）→ 寫入端已停，不檢查停更。重新啟用時拿掉 enabled: false。
   - {schema: air_tickets, table: fare_offers,             label: 機票價格（外部機票雷達）, enabled: false, time_column: observed_at, owner_collector: air_ticket_radar, expected_interval_min: 2880, critical: false, notes: 外部 owner（不在本 repo；writer 在 openAB 的 Hermes 容器，見 openab-ops docs/11-air-ticket-radar-runbook.md）；每 48 小時掃描；private SSOT。2026-10-16 查最新 observed_at 停在 2026-09-08}
@@ -173,6 +173,13 @@ tables:
   - {schema: live, table: taipei_pumb_status,         label: 臺北抽水站狀態, time_column: observed_at,  owner_collector: wic_pumb, expected_interval_min: 10, critical: false}
   - {schema: live, table: pla_activity_daily,         label: 共機每日動態, time_column: collected_at, owner_collector: pla_activity_daily, expected_interval_min: 1440, critical: false, notes: 每日通報 1 row/day}
   - {schema: live, table: food_price_daily,           label: 農產品批發價, time_column: collected_at, owner_collector: food_prices, expected_interval_min: 1440, critical: false, notes: 農業部四類批發價；T+1 更新故每日 1 次}
+  # FP-2（2026-11-09）：上面 raw 表用 collected_at，收集器每天都會跑所以永遠綠；交易日停滯（上游沒新日期）
+  # 或價格指數沒算（writer 是 taipei-gis-analytics pipelines/food_prices/wholesale_prices/run_daily.sh，
+  # 使用者 Mac launchd 每天 06:00，不在本 repo）都看不出來。指數表沒有 timestamptz 欄，改看 max(trade_date)：
+  # health_snapshot 對 date 欄做 max(trade_date)::timestamptz，EXPLAIN 走 food_price_index_daily_pkey Index Only Scan
+  # （cost≈1.4，鐵則 R4 OK；只在日報每天一次）。指數不會比 raw 新，所以這一列同時涵蓋 raw 的交易日停滯。
+  # 門檻：trade_date 錨在 00:00 UTC，正常落後約 2–3 天（T+1＋週末＋休市）；1920 分 → 3x＝4 天 🟡 STALE、12x＝16 天 DEAD。
+  - {schema: analytics, table: food_price_index_daily,  label: 農產品價格指數（交易日）, time_column: trade_date, owner_collector: food_prices, expected_interval_min: 1920, critical: false, notes: 依 max(trade_date) 判斷；writer 是 analytics 本機 run_daily.sh（launchd 06:00）}
   # ⚠ 監控的是 ledger 不是 spatial.pla_tracks —— 「共機 0 架次」是合法的 0 形狀，
   #   pla_tracks 該日沒有任何 row，拿它當心跳會把「沒共機」誤判成「沒跑」。
   #   ledger 每個處理過的日子必有一列。2026-08-06 之前無此監控，向量化斷 5 天沒人知道。
