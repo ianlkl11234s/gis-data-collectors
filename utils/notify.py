@@ -113,7 +113,7 @@ def send_telegram_long(message: str, parse_mode: str = 'Markdown') -> bool:
 
 def notify_error(collector_name: str, error: str, consecutive_errors: int = 0,
                  interval_minutes: int | None = None):
-    """collector 一次失敗：交給告警狀態機（單次瞬斷不送，達門檻才進 alerting）。
+    """collector 一次失敗：交給告警狀態機（不發即時訊息；連續失敗達門檻只進日報 🟡）。
 
     consecutive_errors 保留給舊呼叫端相容；連續次數改由 alert_state.json 持久化計算
     （watchdog 重啟後不會歸零）。
@@ -126,7 +126,7 @@ def notify_error(collector_name: str, error: str, consecutive_errors: int = 0,
 
 
 def notify_success(collector_name: str, stats: dict | None = None):
-    """collector 一次成功：清掉收集失敗；曾送過 🔴 的會在 flush 時送恢復。"""
+    """collector 一次成功：清掉收集失敗（不送訊息；即時恢復通知由 tasks/staleness_watch 判斷）。"""
     from utils import alerting
     try:
         alerting.collector_succeeded(collector_name)

@@ -1239,6 +1239,8 @@ class DailyReportTask:
             if a["key"].startswith("collector:"):
                 broken.append(f"{dot} 收集器 {alerting.display_name(a['name'])} 壞 {a['duration']}"
                               f"（{_clip(a['text'], 50)}）")
+            elif a["key"].startswith("stale:"):  # 太久沒新資料（tasks/staleness_watch）
+                broken.append(f"{dot} {_clip(a['text'], 90)}")
             else:
                 broken.append(f"{dot} {_clip(a['text'], 70)}（{a['duration']}）")
         active_names = {a["name"] for a in snap["active"]}

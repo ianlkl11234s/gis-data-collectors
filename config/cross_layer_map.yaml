@@ -17,7 +17,8 @@
 #   expected_interval_min : 期望抓取間隔（分鐘，給 staleness 判斷用）
 #   supabase_tables       : 該 collector 寫的所有 Supabase 表（含 history / current / 多表）
 #   s3_prefixes           : 該 collector 在 S3 上的歸檔路徑（用於檢查 daily tar.gz 是否健康）
-#   critical              : 壞了會 page 你的，True / False
+#   critical              : 日報加重標記（critical 表 DEAD → 整體 🔴、S3 歸檔落後才檢查）；
+#                           不影響即時告警——即時 🔴 一律看「多久沒新資料」（tasks/staleness_watch.py）
 #   notes                 : 自由備註
 
 # ─────────────────────────────────────────────────────────

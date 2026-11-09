@@ -1,7 +1,8 @@
 # Supabase live / spatial / reference 表清冊
 #
 # 用途：
-#   tasks/daily_report.py 的 _section_supabase_realtime 用此清單呼叫 RPC
+#   tasks/daily_report.py 的 _section_supabase_realtime 與 tasks/staleness_watch.py（即時
+#   「太久沒新資料」告警）用此清單呼叫 RPC
 #   live.health_snapshot()（見 gis-platform/migrations/149_realtime_health_snapshot.sql）
 #   一次撈所有表的寫入新鮮度，依 expected_interval_min 判定 STALE / OK / DEAD。
 #
@@ -14,13 +15,14 @@
 #   time_column           : 用什麼欄位算 max() 看新鮮度（預設 collected_at，部分表是 observed_at / occurred_at 等）
 #   owner_collector       : cross_layer_map.yaml 裡的 collector key
 #   expected_interval_min : 期望寫入頻率（分鐘）
-#   critical              : 壞了會 page 你的
+#   critical              : 日報加重標記（DEAD 時整體 🔴）；不影響即時告警
 #   notes                 : 自由備註
 #   label                 : 日報顯示的中文名稱（必填，測試守門；缺時退回表名）
 #   event_driven          : true＝有事件才寫（地震、火山、旱災公告、梅雨速報…），「多久沒新資料」
-#                           不代表壞掉 → 不列入日報停更清單。收集器本身有沒有在跑，由日報
-#                           「收集器 X 已 N 沒執行」（get_status last_run）與 utils/alerting 失敗告警負責。
+#                           不代表壞掉 → 不列入日報停更清單；即時告警（tasks/staleness_watch.py）
+#                           對「表全是 event_driven」的收集器改看最後成功執行時間。
 #   active_window         : {from: "MM-DD", to: "MM-DD"}（台北日期、含頭尾、可跨年）；季節外不檢查停更
+#                           （收集器的表全在季外時，即時告警也不檢查）
 #   enabled               : false＝寫入端已停（例：外部 writer 停機），不檢查停更
 #   ※ owner_collector 在 cross_layer_map.yaml 停用（enabled:false 或 deployment:disabled）且沒有
 #     其他啟用中的 collector 也寫這張表時，同樣不檢查停更（tasks/monitoring.stale_check_skip_reason）。
