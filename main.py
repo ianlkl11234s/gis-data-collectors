@@ -306,6 +306,18 @@ def run_daily_report_task(collectors: list, archive_task=None):
         return None
 
 
+def run_db_efficiency_audit_task():
+    """每週一 DB 效能體檢（規則見 docs/handbook/operations.md §8）；結果由當天日報讀檔併入。"""
+    if not (config.DB_AUDIT_ENABLED and config.SUPABASE_ENABLED and config.SUPABASE_DB_URL):
+        print("\n⏸️  DB 效能體檢停用（DB_AUDIT_ENABLED=false 或 Supabase 未設定）")
+        return
+    from tasks import db_efficiency_audit
+    sched = get_scheduler()
+    schedule.every().monday.at(config.DB_AUDIT_TIME).do(
+        sched.submit, _as_task("db_efficiency_audit", db_efficiency_audit.run, timeout=120))
+    print(f"\n✓ DB 效能體檢 (每週一 {config.DB_AUDIT_TIME}，結果併進當天日報)")
+
+
 def run_mini_taipei_publish_task():
     """設定 Mini Taipei 每日時刻表發布任務"""
     if not getattr(config, 'MINI_TAIPEI_PUBLISH_ENABLED', False):
@@ -494,6 +506,7 @@ def main():
 
     # 設定每日報告（先建立，讓歸檔任務可以回傳結果）
     daily_report_task = run_daily_report_task(collectors)
+    run_db_efficiency_audit_task()
 
     # 設定歸檔任務（傳入 daily_report_task 以記錄結果）
     archive_task = run_archive_task(daily_report_task)

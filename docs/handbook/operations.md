@@ -18,6 +18,7 @@
 | 例行任務 | 02:00 軌跡匯出、03:00 歸檔 | `main.py`、`utils/notify.py` | 成功**不送**，結果列在日報「例行」行；有失敗 🔴（bus 軌跡只留 3 天，要在期限內補跑） |
 | 每日日報 | `DAILY_REPORT_TIME`（預設 08:00，容器時間＝台北） | `tasks/daily_report.py`、`tasks/monitoring.py` | **一則**：整體、現在還壞的、昨天壞過已恢復、資料停更前 5、例行、昨天小錯誤數；全綠 3 行內。長版（三層健康、跨層、VM、成本…）寫 S3 `_daily_report/<YYYY-MM-DD>.md`。送出成功後 ping `HC_DAILY_REPORT_PING_URL`（healthchecks.io 死人開關，空值跳過）。見 §2 |
 | 日報附帶檢查 | 同上 | `DailyReportTask._silent_collectors()`、`_filesystem_pressure_state()` | collector 超過 2 倍間隔沒跑（行程內 `last_run`，比即時告警的門檻早）、共用檔案系統 80% 警告／90% 嚴重、本機資料超過 `DISK_ALERT_THRESHOLD_MB`：只列在日報，不另送 |
+| DB 效能體檢（每週） | 週一 `DB_AUDIT_TIME`（預設 07:30） | `tasks/db_efficiency_audit.py` → 狀態檔 `LOCAL_DATA_DIR/db_efficiency_audit.json` | 前端 RPC 平均 >1 秒、預算表沒人讀、單一 SQL 每天磁碟讀 >1 GB；有發現才併進當天日報 🟡（每類一行），全綠不出現。見 §8 |
 | 告警狀態 | — | `LOCAL_DATA_DIR/alert_state.json` | 每個告警的 state／level／first_seen／reasons（`stale:<name>` 是太久沒新資料、`collector:<name>` 是連續失敗）、各收集器最後成功執行／最後寫入時間（`last_success`／`last_write`，只留本輪有檢查的收集器）、近 3 天每支 collector 的錯誤數（日報「昨天」用）。舊版（v1）檔讀進來時會丟掉 pending／burst，並把 `collector:*` 降成 🟡。想重置就刪檔 |
 | DB 死人開關 | pg_cron 每 15 分 | gis-platform `migrations/255_collector_freshness_alert.sql` `metadata.check_collector_freshness(30)` | **所有** enabled collector 的 `MAX(last_success_at)` 超過 30 分鐘 → 用 pg_net 發 Telegram。用途是「整個 collector 進程死掉」，抓不到單一 collector 停擺（盲點 1）。和上面的「太久沒新資料」並存：整個進程掛掉時兩邊都可能發（這個走 DB 端 pg_cron，進程死了也送得出去），單一收集器停擺只有後者會發 |
 | VM 健康 | VM cron 每日 | `external/_shared/health_report.py` | 推 `s3://<BUCKET>/_external_vm_health/<host>/YYYY-MM-DD.json`，日報讀取。VM 子行程不發 Telegram（VM 的 `TELEGRAM_BOT_TOKEN` 為空），失聯在日報「現在還壞的」列 🔴 |
@@ -207,7 +208,7 @@ VM 的建置、cron 與 health report 部署細節見 [EXTERNAL_COLLECTORS.md](.
 
 ### 5.5 重新部署日報（災難復原）
 
-- 主容器需要的環境變數（只列名稱）：`DAILY_REPORT_ENABLED`、`DAILY_REPORT_TIME`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`SUPABASE_DB_URL`、`S3_BUCKET`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`、`S3_REGION`。`DAILY_REPORT_TIME` 建議晚於 VM 與本機稽核推送的時間。
+- 主容器需要的環境變數（只列名稱）：`DAILY_REPORT_ENABLED`、`DAILY_REPORT_TIME`、`DB_AUDIT_ENABLED`／`DB_AUDIT_TIME`（選填，預設開、週一 07:30）、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`SUPABASE_DB_URL`、`S3_BUCKET`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`、`S3_REGION`。`DAILY_REPORT_TIME` 建議晚於 VM 與本機稽核推送的時間。
 - DB 端需要 gis-platform `migrations/306_health_snapshot_public.sql`（`149_realtime_health_snapshot.sql` 是舊版，不必再套）。
 - VM 整台重建：依序照 `external/ship_ais_vm/README.md`、`external/waste_positions_vm/README.md`、`external/_shared/README.md` 的部署章節。
 - 本機稽核：以 `scripts/com.gis.local_audit.plist` 範本建立 launchd 設定，金鑰放本機設定檔並 `chmod 600`。
@@ -237,6 +238,41 @@ DB 是收資料、重算、供網站讀的共用資源，一個來源吃光 IO �
 7. **健康檢查**：套用期間與收尾看 `cron.job_run_details` 全部 succeeded、collector 異常清單只有套用前就存在的項目。
 8. **留文件**：在 gis-platform `docs/research/` 寫報告（背景、量測口徑、做了什麼、套用紀錄、待追蹤），collector 相關事故在本 repo pitfall 補一段並連結。
 9. **約一週後同口徑複量**；DB 若重啟要換窗口。
+
+## 8. DB 效能鐵則：監控與收集器（2026-11-09 起）
+
+2026-11-09 減量大掃除的教訓（盤點：每天約 140 GB 磁碟讀、400 GB temp 寫）。四條鐵則與完整實例的正本在 mini-taiwan-pulse `docs/supabase-optimization.md` §0；R1／R2 在前端與 gis-platform 守，本 repo 守 R4、R5，並負責上線後的每週體檢。
+
+### R4 監控不可掃資料表（必須）
+
+監控、告警、日報判斷「有沒有新資料」時，用收集器自己記的時間（`alerting.mark_write`／`mark_success`，存在 `alert_state.json`）或輕量狀態表（一列一支收集器），**不可**對資料表做 `max(time)`、`count(*)`，也不可每輪呼叫會掃表的 RPC。
+
+- 實例：停更檢查原本每 15 分鐘呼叫 `health_snapshot`（對 100 多張表各取 `max()`），等於重演 2026-09-04 的 Disk IO 事故，3.5 天量到每天約 1.7 GB 磁碟讀；#188／#189 改成零 DB 讀取（`tasks/staleness_watch.py`）。
+- 每天一次的日報仍呼叫 `health_snapshot`（長版三層健康），屬已知例外，頻率不得提高。
+- 新監控要讀 DB 時只查統計檢視（`pg_stat_*`）與系統目錄，唯讀交易、`statement_timeout`、有 `LIMIT`，並在 PR 寫實測成本。
+
+### R5 收集器寫入用固定形狀 SQL（建議；收集器改完後改為必須）
+
+`execute_values(..., page_size=1000)` 每批列數不同，每種列數都是一個新的 `queryid`，`pg_stat_statements` 會被撐爆：2026-11-09 有 4,977 筆（上限 5,000），其中 4,371 筆、232 MB 是收集器的多列 INSERT。Supabase 自己的 exporter 每分鐘讀全文並排序，每次約 230 MB temp，換算每天約 400 GB temp 寫；統計也一直被擠掉（dealloc），低頻語句看不到。
+
+- 做法：每張表只產生一種 SQL，例如 `INSERT ... SELECT * FROM unnest(%s::text[], %s::float8[], ...) ON CONFLICT ...` 或 `json_populate_recordset`，列數變化放在參數裡。
+- 待改：`storage/supabase_writer.py` 的批次寫入、`external/isohe_port_marine_vm/isohe_port_marine_collect.py`。全部改完、使用者執行一次 `pg_stat_statements_reset()` 後，本條改成必須。
+- 新收集器現在就照固定形狀寫。
+
+### 每週體檢（`tasks/db_efficiency_audit.py`）
+
+抓上線後才出現的漏網之魚。週一 07:30 跑、結果寫狀態檔，08:00 日報讀檔併入 🟡；今天沒跑或全綠就不出現。關掉：`DB_AUDIT_ENABLED=false`。
+
+| 檢查 | 怎麼算 | 對應鐵則 |
+|---|---|---|
+| 前端 RPC 太慢 | `pg_stat_statements` 裡 anon／authenticated 的語句，依 RPC 名彙總，本期平均 >1 秒。被逾時取消的呼叫不進統計，所以是下限 | R1 |
+| 預算表沒人讀 | 從 `cron.job` 找 `refresh_*` 函式、再從函式本體找寫入的表（`_watermark` 等狀態表除外）。讀者角色＝anon、authenticated、`cloud_agent_ro`（分析倉庫／MCP）。沒有讀者角色可呼叫的函式讀它（含經一層內部函式）、讀者角色也不能直接 SELECT →「沒有讀者」；有讀者函式但本期 0 次呼叫 →「0 次呼叫」。能直接 SELECT 的表只看授權、不計次數 | R2 |
+| 單一 SQL 讀太多 | `shared_blks_read` 差值 ÷ 天數 >1 GB／天。收集器的 INSERT 不列（必要寫入，改善走 R5 與索引盤點） | R1、R3 |
+
+- 差值基準存在狀態檔（不建新表）：上次的累計值。`pg_stat_statements_info.stats_reset` 變了、或第一次跑，只建基準，只報不需差值的「沒有讀者」；累計值變小（被 dealloc 擠掉後重新出現）就用目前值。
+- 不用 `pg_stat_user_tables` 的 `seq_scan＋idx_scan` 判斷「沒人讀」：refresh 自己的 DELETE／UPDATE 也會累加，2026-11-09 實測沒有讀者的 `youbike_h3_daily` idx_scan 仍有 231。
+- 自身成本（2026-11-09 正式庫唯讀實測）：數字與系統目錄約 0.85 秒（連線來回在內），`pg_stat_statements(false)` 本身約 7 ms、零 temp。查詢文字只在「有沒見過的前端 queryid 或超標語句」時取一次，解析出的 RPC 名存進狀態檔；目前文字有 233 MB，取一次約 6 秒、約 216 MB temp（與 exporter 每分鐘一次同量級）。R5 落地後會小很多。
+- 名稱：表用 `config/realtime_tables.yaml` 的 label（預算表借它來源表的 label），RPC 借本體裡共用字最多的那張表的 label，沒有就用原名。
 
 ## 相關文件
 

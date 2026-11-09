@@ -271,6 +271,9 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 # 每日報告
 DAILY_REPORT_ENABLED = os.getenv('DAILY_REPORT_ENABLED', 'true').lower() in ('true', '1', 'yes')
 DAILY_REPORT_TIME = os.getenv('DAILY_REPORT_TIME', '08:00')  # 每日報告時間 (HH:MM)
+# 每週 DB 效能體檢（tasks/db_efficiency_audit.py）：週一在日報前跑，有發現才併進當天日報 🟡
+DB_AUDIT_ENABLED = os.getenv('DB_AUDIT_ENABLED', 'true').lower() in ('true', '1', 'yes')
+DB_AUDIT_TIME = os.getenv('DB_AUDIT_TIME', '07:30')  # 週一 HH:MM（容器時區，與 DAILY_REPORT_TIME 同）
 
 # 告警分級（utils/alerting.py；規則見 docs/handbook/operations.md §1）
 # 收集器即時告警只看「多久沒新資料」（tasks/staleness_watch.py；門檻 alerting.staleness_threshold_min）
