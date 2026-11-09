@@ -9,6 +9,7 @@
 #   遺漏會造成 daily_report 漏報該 collector 的健康狀態。
 #
 # 欄位定義：
+#   label                 : 中文名稱（日報與 Telegram 告警顯示用；啟用中的必填，測試守門）
 #   enabled               : 該 collector 是否「應該在跑」（不論部署在哪）
 #                           ⚠️ 反映 production 實況（pulse-host env 覆寫），非 config.py repo 預設
 #                           （2026-07-08 依主站實際 env 校正 22 筆 AR-05 回填時誤標 disabled 的 collector）
@@ -23,6 +24,7 @@
 # 交通類
 # ─────────────────────────────────────────────────────────
 youbike:
+  label: YouBike 站點
   enabled: true
   deployment: pulse_host
   expected_interval_min: 15
@@ -32,6 +34,7 @@ youbike:
   critical: true
 
 bus:
+  label: 雙北公車位置
   enabled: true
   deployment: pulse_host
   expected_interval_min: 2
@@ -41,6 +44,7 @@ bus:
   critical: true
 
 bus_intercity:
+  label: 公路客運位置
   enabled: true
   deployment: pulse_host
   expected_interval_min: 2
@@ -50,6 +54,7 @@ bus_intercity:
   critical: false
 
 vd:
+  label: 車輛偵測器（舊）
   enabled: false
   deployment: disabled
   expected_interval_min: 5
@@ -59,6 +64,7 @@ vd:
   notes: 已被 freeway_vd 取代
 
 freeway_vd:
+  label: 國道車流
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10
@@ -71,6 +77,7 @@ freeway_vd:
   critical: true
 
 parking:
+  label: 路邊停車格
   enabled: true
   deployment: pulse_host
   expected_interval_min: 15
@@ -81,6 +88,7 @@ parking:
   notes: 2026-07-08 依主站 env 校正——實際在跑（先前誤標已下線）；表對應 TABLE_MAP['parking']（OnStreet 路邊停車）
 
 tra_train:
+  label: 台鐵列車位置
   enabled: true
   deployment: pulse_host
   expected_interval_min: 2
@@ -90,6 +98,7 @@ tra_train:
   critical: true
 
 tra_static:
+  label: 台鐵靜態資料
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -99,6 +108,7 @@ tra_static:
   critical: false
 
 rail_timetable:
+  label: 軌道時刻表
   enabled: true
   deployment: pulse_host
   expected_interval_min: 240
@@ -108,6 +118,7 @@ rail_timetable:
   critical: false
 
 ship_tdx:
+  label: 船舶位置（TDX，舊）
   enabled: false
   deployment: disabled
   expected_interval_min: 2
@@ -117,6 +128,7 @@ ship_tdx:
   notes: 改走 ship_ais（覆蓋面更廣）
 
 ship_ais:
+  label: 船舶 AIS 位置
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP required，跑在 HiCloud VM
   expected_interval_min: 10
@@ -127,6 +139,7 @@ ship_ais:
   critical: true
 
 cwa_marine_observation:
+  label: 海象觀測
   enabled: true
   deployment: pulse_host
   expected_interval_min: 15
@@ -137,6 +150,7 @@ cwa_marine_observation:
   notes: CWA O-B0076 registry plus O-B0075 rolling 48h; 85th orphan StationID is quarantined, never silently dropped
 
 isohe_port_marine:
+  label: 港口海象
   enabled: true  # 2026-10-16 校正：VM 在跑（marine_observation_current 的 isohe 列 collected_at 新鮮、S3 archives 持續到位）；VM 不寫 collector_status
   deployment: hicloud_vm
   expected_interval_min: 10
@@ -147,6 +161,7 @@ isohe_port_marine:
   notes: 8 ports x wave/current/tide/wind; Taiwan egress only; MZ legacy XML excluded and tide datums stay separate
 
 aisstream:
+  label: AISStream 船舶串流
   enabled: true  # 2026-10-16 校正：無同名 collector_status，但 aisstream_position_observations／ingest_health 數分鐘內、archive manifests 當天
   deployment: pulse_host
   expected_interval_min: 1
@@ -164,6 +179,7 @@ aisstream:
     collector 只在 upload 與 HEAD 驗證後清理本地 spool，不設定 S3 expiry/lifecycle delete。
 
 gfw_vessel_presence:
+  label: GFW 每日船舶（舊）
   enabled: false
   deployment: disabled
   expected_interval_min: 1440
@@ -179,6 +195,7 @@ gfw_vessel_presence:
     raw S3 永久保存仍受獨立 license gate 限制。
 
 gfw_hourly_publish:
+  label: GFW 逐時船舶發布
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -197,6 +214,7 @@ gfw_hourly_publish:
 # 航空類
 # ─────────────────────────────────────────────────────────
 flight_fr24:
+  label: 航班位置（FR24）
   enabled: false
   deployment: disabled
   expected_interval_min: 5
@@ -207,6 +225,7 @@ flight_fr24:
   notes: 2026-05 起停跑，archives silent fail 32 天屬已知問題（disabled 後預期）
 
 flight_fr24_zone:
+  label: 航班位置（FR24 區域）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 5
@@ -216,6 +235,7 @@ flight_fr24_zone:
   critical: false
 
 flight_opensky:
+  label: 航班位置（OpenSky）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 5
@@ -228,6 +248,7 @@ flight_opensky:
 # 氣象 / 環境 / 地震
 # ─────────────────────────────────────────────────────────
 weather:
+  label: 氣象觀測
   enabled: true
   deployment: pulse_host
   expected_interval_min: 60
@@ -237,6 +258,7 @@ weather:
   critical: true
 
 temperature:
+  label: 溫度網格
   enabled: true
   deployment: pulse_host
   expected_interval_min: 60
@@ -246,6 +268,7 @@ temperature:
   critical: false
 
 cwa_satellite:
+  label: 氣象署衛星雲圖
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10
@@ -255,6 +278,7 @@ cwa_satellite:
   critical: false
 
 earthquake:
+  label: 地震報告
   enabled: true
   deployment: pulse_host
   expected_interval_min: 15
@@ -268,8 +292,9 @@ earthquake:
     完整地震目錄 E-A0073-001 已拆到 earthquake_catalog collector。
 
 earthquake_catalog:
-  enabled: false
-  deployment: disabled
+  label: 地震目錄
+  enabled: true  # 2026-11-09 依主站 env（*_ENABLED='true'）與 log 校正：實際在跑
+  deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.earthquake_events]
   s3_prefixes:
@@ -278,8 +303,9 @@ earthquake_catalog:
   notes: CWA E-A0073-001 本年度正式地震目錄（含無感），半年更新一批；每日比對 DB 筆數，有新才寫
 
 earthquake_town_intensity:
-  enabled: false
-  deployment: disabled
+  label: 鄉鎮震度
+  enabled: true  # 2026-11-09 依主站 env（*_ENABLED='true'）與 log 校正：實際在跑
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.earthquake_town_intensity]
   s3_prefixes:
@@ -288,8 +314,9 @@ earthquake_town_intensity:
   notes: CWA E-A0015-005（S3 免金鑰）368 鄉鎮震度；上游只留最新一次地震，origin_time 守門
 
 earthquake_shakemap_grid:
-  enabled: false
-  deployment: disabled
+  label: 震度網格圖
+  enabled: true  # 2026-11-09 依主站 env（*_ENABLED='true'）與 log 校正：實際在跑
+  deployment: pulse_host
   expected_interval_min: 15
   supabase_tables: [live.earthquake_shakemap_grid]
   s3_prefixes:
@@ -298,8 +325,9 @@ earthquake_shakemap_grid:
   notes: NCDR EQ1（免金鑰）全台 2.5km 共 4,377 格；event_time 守門避免每輪重寫
 
 earthquake_moment_tensor:
-  enabled: false
-  deployment: disabled
+  label: 震源機制解
+  enabled: true  # 2026-11-09 依主站 env（*_ENABLED='true'）與 log 校正：實際在跑
+  deployment: pulse_host
   expected_interval_min: 30
   supabase_tables: [live.earthquake_moment_tensor]
   s3_prefixes:
@@ -310,6 +338,7 @@ earthquake_moment_tensor:
     查無回 HTTP 200 空殼 JSON 不是 404；只有規模較大事件有解，查無屬常態。
 
 ncdr_alerts:
+  label: 災害示警
   enabled: true
   deployment: pulse_host
   expected_interval_min: 15
@@ -319,6 +348,7 @@ ncdr_alerts:
   critical: true
 
 cloudflare_radar:
+  label: 網路健康（Cloudflare）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 5
@@ -340,6 +370,7 @@ cloudflare_radar:
     freshness 門檻仍待多輪校準，Composite detector 尚未實作。
 
 ioda_internet_health:
+  label: 網路健康（IODA）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 5
@@ -359,6 +390,7 @@ ioda_internet_health:
     公開排除由 platform contract 強制。alerts 未驗證且保持關閉；Composite detector 未實作。
 
 ripe_atlas_internet_health:
+  label: 網路健康（RIPE Atlas）
   enabled: true  # 2026-10-16 依 metadata.collector_status 校正（is_enabled=t、last_success 數分鐘內）
   deployment: pulse_host
   expected_interval_min: 5
@@ -380,6 +412,7 @@ ripe_atlas_internet_health:
     succeeded 916/56/0。health HTTP 200、main loop/DB green。
 
 ripe_ris_live:
+  label: 網路路由（RIPE RIS）
   enabled: true  # 2026-10-16 依 metadata.collector_status 校正（is_enabled=t、last_success 數分鐘內）
   deployment: pulse_host
   expected_interval_min: 5
@@ -405,6 +438,7 @@ ripe_ris_live:
     breaker false。
 
 news_events:
+  label: 新聞事件
   enabled: true
   deployment: pulse_host
   expected_interval_min: 20
@@ -415,6 +449,7 @@ news_events:
   notes: RSS 29 feeds + Gemini Flash-Lite 地名抽取（需 GEMINI_API_KEY + NEWS_EVENTS_ENABLED）
 
 global_events:
+  label: 全球事件（GDELT）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 60
@@ -436,6 +471,7 @@ global_events:
 # 太空 / 衛星
 # ─────────────────────────────────────────────────────────
 satellite:
+  label: 衛星位置
   enabled: true
   deployment: pulse_host
   expected_interval_min: 120
@@ -449,6 +485,7 @@ satellite:
   critical: false
 
 launch:
+  label: 火箭發射
   enabled: true
   deployment: pulse_host
   expected_interval_min: 15
@@ -463,6 +500,7 @@ launch:
 # 空氣品質
 # ─────────────────────────────────────────────────────────
 air_quality:
+  label: 空氣品質
   enabled: true
   deployment: pulse_host
   expected_interval_min: 60
@@ -472,6 +510,7 @@ air_quality:
   critical: false
 
 air_quality_imagery:
+  label: 空品影像
   enabled: true
   deployment: pulse_host
   expected_interval_min: 60
@@ -481,6 +520,7 @@ air_quality_imagery:
   critical: false
 
 air_quality_microsensors:
+  label: 空品微型感測器
   enabled: true
   deployment: pulse_host
   expected_interval_min: 5
@@ -493,6 +533,7 @@ air_quality_microsensors:
 # 水利
 # ─────────────────────────────────────────────────────────
 water_reservoir:
+  label: 水庫水情
   enabled: true
   deployment: pulse_host
   expected_interval_min: 60
@@ -502,6 +543,7 @@ water_reservoir:
   critical: false
 
 water_reservoir_daily_ops:
+  label: 水庫每日營運
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -512,6 +554,7 @@ water_reservoir_daily_ops:
   notes: 官方 09:30 後更新，排程晚於資料源發布即可能延遲
 
 river_water_level:
+  label: 河川水位
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10
@@ -521,6 +564,7 @@ river_water_level:
   critical: false
 
 rain_gauge_realtime:
+  label: 雨量站
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10
@@ -530,6 +574,7 @@ rain_gauge_realtime:
   critical: false
 
 groundwater_level:
+  label: 地下水位
   enabled: true
   deployment: pulse_host
   expected_interval_min: 60
@@ -539,6 +584,7 @@ groundwater_level:
   critical: false
 
 wra_drought_alert:
+  label: 旱災水情燈號
   enabled: true
   deployment: pulse_host
   # 事件驅動：上游不定期公告（實測 18 天未變屬常態，hash 未變即整批不寫）。
@@ -552,6 +598,7 @@ wra_drought_alert:
   notes: 2026-07-08 依主站 env 校正 enabled；current 表列 realtime_tables（fetched_at），history 由 current 代監控（測試豁免）
 
 iot_wra:
+  label: 水利署 IoT 感測
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10  # 正式 env IOT_WRA_INTERVAL=10（repo 預設 60）；2026-10-16 依 collected_at 每 10 分一批校正
@@ -561,6 +608,7 @@ iot_wra:
   critical: false
 
 uswg:
+  label: 水利署淹水感測
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10
@@ -573,6 +621,7 @@ uswg:
 # 道路事件 / 廢棄物 / 急診 / 電力
 # ─────────────────────────────────────────────────────────
 road_event_live:
+  label: 即時路況事件
   enabled: true
   deployment: pulse_host
   expected_interval_min: 5
@@ -582,6 +631,7 @@ road_event_live:
   critical: false
 
 road_event_planned:
+  label: 道路施工計畫
   enabled: true
   deployment: pulse_host
   expected_interval_min: 720
@@ -591,6 +641,7 @@ road_event_planned:
   critical: false
 
 waste_positions:
+  label: 垃圾車位置
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP recommended，跑在 HiCloud VM
   expected_interval_min: 2
@@ -601,6 +652,7 @@ waste_positions:
   critical: true
 
 cdc_public_health_weekly:
+  label: 疾管署每週疫情
   enabled: true
   deployment: hicloud_vm        # 跑在 HiCloud VM，週四 11:00 一次
   expected_interval_min: 10080  # 一週
@@ -612,6 +664,7 @@ cdc_public_health_weekly:
   notes: CDC 開放資料每週更新，僅週四 11:00 抓一次寫 SB；完整快照隔天由 VM archive 上 S3
 
 waste_match:
+  label: 垃圾車路線比對
   enabled: false
   deployment: disabled
   expected_interval_min: 5
@@ -621,6 +674,7 @@ waste_match:
   critical: false
 
 er_hospital_realtime:
+  label: 急診壅塞
   enabled: true
   deployment: pulse_host
   expected_interval_min: 15
@@ -630,6 +684,7 @@ er_hospital_realtime:
   critical: false
 
 power_taipower:
+  label: 台電供電
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10
@@ -644,6 +699,7 @@ power_taipower:
 # ⚠️ 不可再打開：目標表 reference.foursquare_poi 已於 2026-11-07 刪除（gis-platform mig 510），
 #    冷存於 S3 supabase-export/reference.foursquare_poi/full-20261107.csv.gz
 foursquare_poi:
+  label: Foursquare 地點
   enabled: false
   deployment: disabled
   expected_interval_min: 43200    # 每 30 天
@@ -664,6 +720,7 @@ foursquare_poi:
 # ─────────────────────────────────────────────────────────
 
 correctional_daily_snapshot:
+  label: 矯正機關收容人數
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -674,6 +731,7 @@ correctional_daily_snapshot:
   notes: 破案：6/27 那筆是開發期一次性測試寫入、從未排程；2026-07-03 用戶設 Zeabur env 正式啟用（日更 1 row，啟用當晚已確認寫入）
 
 animal_adoption:
+  label: 動物認領養
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 1440
@@ -691,6 +749,7 @@ animal_adoption:
     2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_shelter_outcomes:
+  label: 收容所成果月報
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 43200
@@ -706,6 +765,7 @@ animal_shelter_outcomes:
     2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_shelter_pressure:
+  label: 收容壓力月報
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 43200
@@ -721,6 +781,7 @@ animal_shelter_pressure:
     2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_veterinary_clinics:
+  label: 動物醫院
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 259200
@@ -733,6 +794,7 @@ animal_veterinary_clinics:
     2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_licensed_pet_businesses:
+  label: 寵物業者
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 525600
@@ -745,6 +807,7 @@ animal_licensed_pet_businesses:
     2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 animal_protection_offices:
+  label: 動保處
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 129600
@@ -757,6 +820,7 @@ animal_protection_offices:
     2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 global_climate_bake:
+  label: 全球氣候烤圖
   enabled: true
   deployment: pulse_host
   expected_interval_min: 360
@@ -767,6 +831,7 @@ global_climate_bake:
   notes: 烤圖 job — 產物在 deploy-assets/climate/ 非 DB；2026-07-23 依主站重啟 log（排程 jitter）確認實際跑在 Zeabur 主站，先前條目誤標 disabled（7/20 commit bcd9d19 忘同步），本次修正
 
 global_climate_cams:
+  label: 全球空品模式（CAMS）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -777,6 +842,7 @@ global_climate_cams:
   notes: production 實測 2026-07-02 10:27 UTC 有寫入（日級模型，interval 1440）
 
 global_climate_cmems:
+  label: 全球海洋模式（CMEMS）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -787,6 +853,7 @@ global_climate_cmems:
   notes: production 實測 2026-07-02 10:27 UTC 有寫入（日級模型，interval 1440）
 
 global_climate_jma_typhoon:
+  label: 颱風路徑（日本氣象廳）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -797,6 +864,7 @@ global_climate_jma_typhoon:
   notes: production 實測 2026-07-02 15:34 UTC；事件驅動（targetTc 空即無資料）→ interval 比照 earthquake 放寬 1440；颱風季外跨層 B 斷層屬預期（collector 輪詢 180min）
 
 global_climate_jtwc:
+  label: 颱風路徑（JTWC）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -807,6 +875,7 @@ global_climate_jtwc:
   notes: production 實測 2026-07-02 15:34 UTC；事件驅動同 jma_typhoon，interval 放寬 1440（collector 輪詢 360min）
 
 global_climate_noaa_gfs:
+  label: 全球氣象模式（GFS）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -817,6 +886,7 @@ global_climate_noaa_gfs:
   notes: production 實測 2026-07-02 10:27 UTC 有寫入（日級模型，interval 1440）
 
 global_climate_usgs_earthquake:
+  label: 全球地震（USGS）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 60
@@ -827,6 +897,7 @@ global_climate_usgs_earthquake:
   notes: production 實測 2026-07-02 15:34 UTC；全球 hourly feed 恆有事件，count 穩定
 
 immigration_apis_airport:
+  label: 機場出入境人數
   enabled: true
   deployment: hicloud_vm
   expected_interval_min: 60
@@ -837,6 +908,7 @@ immigration_apis_airport:
   notes: production 實測 2026-07-02 15:07 UTC；跑在 HiCloud VM（external/immigration_apis_airport_vm/），Zeabur 端 env 維持 false
 
 lightning_events:
+  label: 落雷
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -847,6 +919,7 @@ lightning_events:
   notes: production 實測 2026-07-02 有寫入（最新 row 約 15h 前）；事件驅動（無落雷即無資料）→ interval 比照 earthquake_events 放寬 1440，久旱仍可能誤報屬預期；collector 實際 1min cron
 
 npa_traffic_accident_a1:
+  label: A1 死亡車禍
   enabled: true
   deployment: pulse_host
   expected_interval_min: 720
@@ -857,6 +930,7 @@ npa_traffic_accident_a1:
   notes: 破案：6/27 那筆是開發期一次性測試寫入、從未排程；2026-07-03 用戶設 Zeabur env 正式啟用（feed 年度累積 dedup by hash，無新事故日 MAX 不動屬預期）
 
 nuclear_radiation:
+  label: 核設施輻射
   enabled: true
   deployment: pulse_host
   expected_interval_min: 15
@@ -867,6 +941,7 @@ nuclear_radiation:
   notes: production 實測 2026-07-02 15:50 UTC
 
 parking_offstreet:
+  label: 停車場剩餘車位
   enabled: true
   deployment: pulse_host
   expected_interval_min: 15
@@ -877,6 +952,7 @@ parking_offstreet:
   notes: production 實測 2026-07-02 15:49 UTC
 
 parking_ref:
+  label: 停車靜態座標
   enabled: false
   deployment: disabled        # 半靜態月更，目前手動觸發（比照 foursquare_poi 低頻慣例）；TDX 國際可打，要排程可移 pulse_host
   expected_interval_min: 43200  # 每 30 天
@@ -886,6 +962,7 @@ parking_ref:
   notes: 停車靜態座標 ref（TDX v1 OnStreet ParkingSegment + OffStreet CarPark/ServiceArea/Tourism）。前端 join live.parking_*_current（migration 286）。ref 表 updated_at 監控待人工設計
 
 pla_activity_daily:
+  label: 共機動態
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -896,6 +973,7 @@ pla_activity_daily:
   notes: production 實測 2026-07-02 15:34 UTC；資料為每日通報 → interval 用 1440（collector 輪詢 30min）
 
 pla_tracks_vectorize:
+  label: 共機航跡向量化
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -910,6 +988,7 @@ pla_tracks_vectorize:
     曾斷 5 天無告警。監控看 spatial.pla_tracks_runs（ledger），不看 pla_tracks。
 
 precipitation_raster:
+  label: 雨量柵格
   enabled: true
   deployment: pulse_host
   expected_interval_min: 120
@@ -920,6 +999,7 @@ precipitation_raster:
   notes: production 實測 2026-07-02 13:27 UTC；上游柵格發布常延遲 1-2h → interval 放寬 120 避免 STALE 誤報（collector 每 60min 跑）
 
 road_congestion:
+  label: 道路壅塞
   enabled: true
   deployment: pulse_host
   expected_interval_min: 5
@@ -930,6 +1010,7 @@ road_congestion:
   notes: production 實測 2026-07-02 current 表 15:59 UTC 新鮮；road_sections_live MAX 會 timeout → realtime_tables.yaml 只監控 current 表
 
 satellite_passes_daily:
+  label: 衛星過境預報
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -940,6 +1021,7 @@ satellite_passes_daily:
   notes: 2026-07-08 依主站 env 校正 enabled——實際每日在跑（heartbeat 監控生效）；表級監控待人工設計
 
 tourist_shuttle:
+  label: 觀光接駁車
   enabled: true
   deployment: pulse_host
   expected_interval_min: 2
@@ -950,6 +1032,7 @@ tourist_shuttle:
   notes: production 實測 2026-07-02 16:00 UTC
 
 twse_market_index:
+  label: 台股指數
   enabled: true
   deployment: pulse_host
   expected_interval_min: 1440
@@ -960,6 +1043,7 @@ twse_market_index:
   notes: production 實測 2026-07-02（最新 05:34 UTC＝台北收盤 13:34）；僅開盤時段有資料 → interval 放寬 1440（3x＝3 天蓋過週末），連假仍可能誤報屬預期；collector 1min 輪詢
 
 wic_evacuate:
+  label: 臺北疏散門
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10
@@ -970,6 +1054,7 @@ wic_evacuate:
   notes: production 實測 2026-07-02 15:54 UTC
 
 wic_pumb:
+  label: 臺北抽水站
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10
@@ -980,6 +1065,7 @@ wic_pumb:
   notes: production 實測 2026-07-02 15:54 UTC
 
 wic_sewer:
+  label: 臺北下水道水位
   enabled: true
   deployment: pulse_host
   expected_interval_min: 10
@@ -990,6 +1076,7 @@ wic_sewer:
   notes: production 實測 2026-07-02 15:54 UTC
 
 yt_live_video_resolver:
+  label: YouTube 直播
   enabled: true
   deployment: pulse_host
   expected_interval_min: 5
@@ -1000,6 +1087,7 @@ yt_live_video_resolver:
   notes: 2026-07-26 由 HTML 爬取改 YouTube Data API v3 — Zeabur 必設 YOUTUBE_API_KEY（缺 key 會 silent skip）；sticky 寫入，API 失敗不清空既有 video_id
 
 tpml_seat:
+  label: 北市圖座位
   enabled: true  # 2026-07-16 上線（migration 290 已 apply + Zeabur TPML_SEAT_ENABLED=true）
   deployment: pulse_host
   expected_interval_min: 10
@@ -1010,6 +1098,7 @@ tpml_seat:
   notes: 北市圖 6 分館 29 區座位（seat.tpml.edu.tw，無金鑰）；閉館全 0 → is_closed=true
 
 food_prices:
+  label: 農產品批發價
   enabled: true
   deployment: hicloud_vm        # ⚠️ Taiwan IP required（data.moa.gov.tw 擋 Zeabur）
   expected_interval_min: 1440
@@ -1023,6 +1112,7 @@ food_prices:
     2026-10-23 起移到 HiCloud VM（external/moa_opendata_vm/，同一份主 repo 程式，會寫 collector_status）。
 
 lightning_cwa:
+  label: 落雷（氣象署）
   enabled: true
   deployment: pulse_host
   expected_interval_min: 5
@@ -1039,6 +1129,7 @@ lightning_cwa:
 # ── 環境即時測站 wave2（2026-10-02；gis-platform migrations 419–422 已 apply）──
 # merge 到 main 並部署到 pulse-host 後，需設 *_ENABLED=true + restart 才實際運行
 nusc_gamma_radiation:
+  label: 環境輻射
   enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
   deployment: pulse_host
   expected_interval_min: 15
@@ -1049,6 +1140,7 @@ nusc_gamma_radiation:
   notes: 核安會全國環境輻射 63 站（datagov 119233，免金鑰）；與 nuclear_radiation（台電核設施）不同網路，不可距離合併
 
 water_effluent_monitoring:
+  label: 放流水監測
   enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
   deployment: pulse_host
   expected_interval_min: 60
@@ -1059,6 +1151,7 @@ water_effluent_monitoring:
   notes: 放流水 CWMS 22 縣市 wqx_p_47..67 + wqx_p_126；臺中 wqx_p_54 上游停更於 2024-12（stale 屬預期）
 
 cems_stack_monitoring:
+  label: 煙道排放監測
   enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
   deployment: pulse_host
   expected_interval_min: 60
@@ -1069,6 +1162,7 @@ cems_stack_monitoring:
   notes: CEMS 煙道 aqx_p_187 + 燃燒塔 aqx_p_493 1h 值；上游延遲 4–5h，observed_at 落後屬預期
 
 cwa_uv_daily:
+  label: 紫外線日最大值
   enabled: true  # 2026-10-02 merge 後設 Zeabur env + restart 生效
   deployment: pulse_host
   expected_interval_min: 720
@@ -1079,6 +1173,7 @@ cwa_uv_daily:
   notes: CWA O-A0005-001 前一日紫外線最大值（約 30 站）；observed_at=obs_date 00:00，落後 24–48h 屬預期
 
 jma_amedas:
+  label: 日本 AMeDAS 氣象站
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_AMEDAS_ENABLED=true + restart 生效
   deployment: pulse_host
   expected_interval_min: 10
@@ -1090,6 +1185,7 @@ jma_amedas:
   notes: 日本氣象廳 AMeDAS 約 1,286 站 10 分值（bosai 非公式 JSON，PDL1.0）；observations 只寫整點；每 JST 日結一份每站×10 分 Parquet（weather-obs/jma/amedas/，約 2.3 MB/日）
 
 jma_warnings:
+  label: 日本警報・注意報
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_WARNINGS_ENABLED=true + restart 生效
   deployment: pulse_host
   expected_interval_min: 720
@@ -1100,6 +1196,7 @@ jma_warnings:
   notes: R8 警報・注意報；438 起只記變動（start/status_change/end）→ live.jma_warning_events（永久）；整份有效快照只進本地 JSON raw_payload → 每日 archives；舊 live.jma_warnings 停寫
 
 jma_quake:
+  label: 日本地震・海嘯・火山
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_QUAKE_ENABLED=true + restart 生效
   deployment: pulse_host
   expected_interval_min: 1440
@@ -1111,6 +1208,7 @@ jma_quake:
 
 
 jma_seasonal:
+  label: 日本季節觀測
   enabled: true  # 2026-10-12 Zeabur env JAPAN_JMA_SEASONAL_ENABLED=true 已啟用
   deployment: pulse_host
   expected_interval_min: 1440
@@ -1121,6 +1219,7 @@ jma_seasonal:
   notes: 生物季節 HTML（楓銀杏/櫻）＋XML VGSK55／山頂初冠雪（44 山）／梅雨速報；只記變動（DO NOTHING，永久）；季節性，長期無新列屬預期；原文只在有新列時進本地 JSON raw_payload
 
 jma_raster:
+  label: 日本氣象網格圖
   enabled: true  # 2026-10-10 上線（Zeabur JAPAN_JMA_RASTER_ENABLED=true）；T2 weather-grid/ 永久（依全桶規則轉 IA/GIR）
   deployment: pulse_host
   expected_interval_min: 60
@@ -1137,6 +1236,7 @@ jma_raster:
     snow 48、himawari 12；並發 ≤4。日結 JST D+1 01:00 後：T1 weather-daily、T3 weather-raw（DEEP_ARCHIVE），T2 weather-grid 每小時
 
 jma_ocean_env:
+  label: 日本海洋環境網格
   enabled: true  # 2026-10-12 Zeabur env JAPAN_JMA_OCEAN_ENV_ENABLED=true 已啟用
   deployment: pulse_host
   expected_interval_min: 60
@@ -1160,6 +1260,7 @@ jma_ocean_env:
     T3 weather-raw DEEP_ARCHIVE、T2 weather-grid/jma/{product}/{YYYY}/{YYYYMMDD}.npz、T1 只有 uv_anal；DB 只放狀態（source='jma'）
 
 jma_lightning:
+  label: 日本落雷
   enabled: true  # 2026-10-12 Zeabur env JAPAN_JMA_LIGHTNING_ENABLED=true 已啟用
   deployment: pulse_host
   expected_interval_min: 1440
@@ -1170,6 +1271,7 @@ jma_lightning:
   notes: JMA 雷ナウキャスト LIDEN 5 分幀 → live.lightning_events source='jma'（與台電／CWA 同表，source_type 存上游 type 原值）；自產 5 分格點補抓 48h 內缺幀；事件驅動，無雷擊即無新列
 
 jma_forecast:
+  label: 日本天氣預報
   enabled: true  # 2026-10-12 Zeabur env JAPAN_JMA_FORECAST_ENABLED=true 已啟用
   deployment: pulse_host
   expected_interval_min: 720
@@ -1180,6 +1282,7 @@ jma_forecast:
   notes: 府縣天氣預報 56 office 全區域（短期 05/11/17、週間 11/17）＋早期注意 r8；map.json 偵測 reportDatetime 有變才抓 office JSON；每次發表保留（DO NOTHING）；raw office JSON 進本地 raw_payload → archives
 
 env_jp_wbgt:
+  label: 日本熱中症指數
   enabled: true  # 2026-10-12 Zeabur env JAPAN_ENV_WBGT_ENABLED=true 已啟用
   deployment: pulse_host
   expected_interval_min: 120
@@ -1190,6 +1293,7 @@ env_jp_wbgt:
   notes: 環境省 WBGT 841 站（站號＝AMeDAS）實況逐時（列 hash 變動才寫、可回溯修正 DO UPDATE）＋預報每期保留；服務期約 4/22–10/21，季外 DEAD 屬預期；出典：環境省（電子情報提供サービス，非 PDL1.0）
 
 global_climate_cwa_typhoon:
+  label: 颱風路徑（氣象署）
   enabled: true  # 2026-10-17 部署（#158）＋Zeabur GLOBAL_CLIMATE_CWA_TYPHOON_ENABLED=true；19:59Z 首輪成功寫入
   deployment: pulse_host
   expected_interval_min: 1440
@@ -1200,6 +1304,7 @@ global_climate_cwa_typhoon:
   notes: 氣象署 W-C0034-005（mig 476）；事件驅動同 jma_typhoon，interval 放寬 1440（collector 輪詢 60min）；無颱風回 status=no_active_storm、不寫列
 
 global_climate_ncdr_typhoon_routes:
+  label: 颱風預報（NCDR 多國）
   enabled: true  # 2026-10-17 部署（#158）＋Zeabur GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES_ENABLED=true；19:59Z 首輪成功寫入
   deployment: pulse_host
   expected_interval_min: 1440

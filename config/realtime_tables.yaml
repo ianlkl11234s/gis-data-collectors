@@ -16,6 +16,14 @@
 #   expected_interval_min : 期望寫入頻率（分鐘）
 #   critical              : 壞了會 page 你的
 #   notes                 : 自由備註
+#   label                 : 日報顯示的中文名稱（必填，測試守門；缺時退回表名）
+#   event_driven          : true＝有事件才寫（地震、火山、旱災公告、梅雨速報…），「多久沒新資料」
+#                           不代表壞掉 → 不列入日報停更清單。收集器本身有沒有在跑，由日報
+#                           「收集器 X 已 N 沒執行」（get_status last_run）與 utils/alerting 失敗告警負責。
+#   active_window         : {from: "MM-DD", to: "MM-DD"}（台北日期、含頭尾、可跨年）；季節外不檢查停更
+#   enabled               : false＝寫入端已停（例：外部 writer 停機），不檢查停更
+#   ※ owner_collector 在 cross_layer_map.yaml 停用（enabled:false 或 deployment:disabled）且沒有
+#     其他啟用中的 collector 也寫這張表時，同樣不檢查停更（tasks/monitoring.stale_check_skip_reason）。
 
 gfw_hourly_publish_monitor:
   # GFW source observations are expected five UTC days behind. This is source
@@ -32,112 +40,117 @@ tables:
   # pipeline 停滯 29 小時都沒有任何告警。health_snapshot 是 SECURITY DEFINER
   # 且 monitoring 走 SUPABASE_DB_URL（與 writer 同一條連線），所以 intel schema
   # 的 FORCE RLS 不擋；若日報出現 permission denied，需要補 grant（見 PR）。
-  - {schema: intel, table: global_event_candidate_observations, time_column: available_at, owner_collector: global_events, expected_interval_min: 60, critical: false, notes: AI 候選觀測（migration 397）；pending/assessed 皆會寫入}
-  - {schema: intel, table: global_event_collector_run_receipts, time_column: finished_at, owner_collector: global_events, expected_interval_min: 60, critical: false, notes: migration 389 run receipts；停滯時這張表會先變 STALE}
+  - {schema: intel, table: global_event_candidate_observations, label: 全球事件候選, time_column: available_at, owner_collector: global_events, expected_interval_min: 60, critical: false, notes: AI 候選觀測（migration 397）；pending/assessed 皆會寫入}
+  - {schema: intel, table: global_event_collector_run_receipts, label: 全球事件收集紀錄, time_column: finished_at, owner_collector: global_events, expected_interval_min: 60, critical: false, notes: migration 389 run receipts；停滯時這張表會先變 STALE}
   # ── 交通 ────────────────────────────────
-  - {schema: live, table: youbike_snapshots,         time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
-  - {schema: live, table: youbike_current,           time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
-  - {schema: live, table: bus_positions,             time_column: collected_at, owner_collector: bus, expected_interval_min: 2, critical: true}
-  - {schema: live, table: bus_current,               time_column: collected_at, owner_collector: bus, expected_interval_min: 2, critical: true}
-  - {schema: live, table: bus_intercity_positions,   time_column: collected_at, owner_collector: bus_intercity, expected_interval_min: 2, critical: false}
-  - {schema: live, table: bus_intercity_current,     time_column: collected_at, owner_collector: bus_intercity, expected_interval_min: 2, critical: false}
-  - {schema: live, table: freeway_sections,          time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
-  - {schema: live, table: freeway_sections_current,  time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
-  - {schema: live, table: freeway_vd_traffic,        time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
-  - {schema: live, table: train_positions,           time_column: collected_at, owner_collector: tra_train, expected_interval_min: 2, critical: true}
-  - {schema: live, table: ship_positions,            time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
-  - {schema: live, table: ship_current,              time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
-  - {schema: reference, table: marine_observation_stations, time_column: last_seen_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: shared station registry; CWA ownership/distribution provenance retained}
+  - {schema: live, table: youbike_snapshots,         label: YouBike 歷史, time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
+  - {schema: live, table: youbike_current,           label: YouBike 即時, time_column: collected_at, owner_collector: youbike, expected_interval_min: 15, critical: true}
+  - {schema: live, table: bus_positions,             label: 雙北公車位置歷史, time_column: collected_at, owner_collector: bus, expected_interval_min: 2, critical: true}
+  - {schema: live, table: bus_current,               label: 雙北公車即時位置, time_column: collected_at, owner_collector: bus, expected_interval_min: 2, critical: true}
+  - {schema: live, table: bus_intercity_positions,   label: 公路客運位置歷史, time_column: collected_at, owner_collector: bus_intercity, expected_interval_min: 2, critical: false}
+  - {schema: live, table: bus_intercity_current,     label: 公路客運即時位置, time_column: collected_at, owner_collector: bus_intercity, expected_interval_min: 2, critical: false}
+  - {schema: live, table: freeway_sections,          label: 國道路段車速歷史, time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
+  - {schema: live, table: freeway_sections_current,  label: 國道路段即時車速, time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
+  - {schema: live, table: freeway_vd_traffic,        label: 國道偵測器車流, time_column: collected_at, owner_collector: freeway_vd, expected_interval_min: 10, critical: true}
+  - {schema: live, table: train_positions,           label: 台鐵列車位置, time_column: collected_at, owner_collector: tra_train, expected_interval_min: 2, critical: true}
+  - {schema: live, table: ship_positions,            label: 船舶位置歷史, time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
+  - {schema: live, table: ship_current,              label: 船舶即時位置, time_column: collected_at, owner_collector: ship_ais, expected_interval_min: 10, critical: true}
+  - {schema: reference, table: marine_observation_stations, label: 海象測站, time_column: last_seen_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: shared station registry; CWA ownership/distribution provenance retained}
   # 2026-09-04 Disk IO 事故止血：原設 collected_at，但該欄無索引 → 每輪 health_snapshot 全掃 110MB 兩次。
   # 表上 idx_marine_observation_readings_time 的 leading column 就是 observed_at，改看它即走 index probe。
   # 實測兩欄位落差僅 2.3 秒（門檻 15 分），不影響 STALE 判定。
-  - {schema: live, table: marine_observation_readings, time_column: observed_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: canonical long history; ISOHE writes same table under separate source_network}
-  - {schema: live, table: marine_observation_current, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 60, critical: false, notes: serving cache; current update only accepts newer observed_at and skips unchanged rows (collected_at does not advance on no-change), so interval is relaxed to 60}
-  - {schema: live, table: marine_observation_quarantine, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: CWA reading IDs absent from metadata roster}
-  - {schema: live, table: aisstream_ingest_runs,   time_column: started_at,    owner_collector: aisstream, expected_interval_min: 1440, critical: false, notes: AISStream run ledger}
-  - {schema: live, table: aisstream_archive_manifests,time_column: uploaded_at,   owner_collector: aisstream, expected_interval_min: 60, critical: false, notes: S3 permanent raw archive ledger}
-  - {schema: live, table: aisstream_position_observations,time_column: received_at, owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream independent provider; raw S3 archive is permanent}
-  - {schema: live, table: aisstream_vessel_current,time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream current snapshot; sticky static fields and positions}
-  - {schema: live, table: aisstream_ingest_health,  time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 5, critical: false, notes: AISStream worker health heartbeat}
-  - {schema: live, table: gfw_vessel_presence_runs, time_column: started_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: Legacy GFW daily DB presence ledger; collector intentionally disabled in favor of the unified hourly publisher}
-  - {schema: live, table: gfw_vessel_presence_archive_manifests, time_column: uploaded_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW raw archive ledger; empty until license gate}
-  - {schema: live, table: gfw_vessel_presence_snapshots, time_column: received_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW daily vessel presence snapshots}
-  - {schema: live, table: gfw_vessel_presence_current, time_column: updated_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW latest vessel presence; reconstructible from snapshots}
+  - {schema: live, table: marine_observation_readings, label: 海象觀測值, time_column: observed_at, owner_collector: cwa_marine_observation, expected_interval_min: 15, critical: false, notes: canonical long history; ISOHE writes same table under separate source_network}
+  - {schema: live, table: marine_observation_current, label: 海象即時, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 60, critical: false, notes: serving cache; current update only accepts newer observed_at and skips unchanged rows (collected_at does not advance on no-change), so interval is relaxed to 60}
+  - {schema: live, table: marine_observation_quarantine, label: 海象異常值隔離, time_column: collected_at, owner_collector: cwa_marine_observation, expected_interval_min: 1440, critical: false, notes: CWA reading IDs absent from metadata roster}
+  - {schema: live, table: aisstream_ingest_runs,   label: AISStream 收集紀錄, time_column: started_at,    owner_collector: aisstream, expected_interval_min: 1440, critical: false, notes: AISStream run ledger}
+  - {schema: live, table: aisstream_archive_manifests,label: AISStream 歸檔清單, time_column: uploaded_at,   owner_collector: aisstream, expected_interval_min: 60, critical: false, notes: S3 permanent raw archive ledger}
+  - {schema: live, table: aisstream_position_observations,label: AISStream 船位, time_column: received_at, owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream independent provider; raw S3 archive is permanent}
+  - {schema: live, table: aisstream_vessel_current,label: AISStream 即時船舶, time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 1, critical: false, notes: AISStream current snapshot; sticky static fields and positions}
+  - {schema: live, table: aisstream_ingest_health,  label: AISStream 健康, time_column: updated_at,    owner_collector: aisstream, expected_interval_min: 5, critical: false, notes: AISStream worker health heartbeat}
+  - {schema: live, table: gfw_vessel_presence_runs, label: GFW 每日船舶收集紀錄, time_column: started_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: Legacy GFW daily DB presence ledger; collector intentionally disabled in favor of the unified hourly publisher}
+  - {schema: live, table: gfw_vessel_presence_archive_manifests, label: GFW 每日船舶歸檔清單, time_column: uploaded_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW raw archive ledger; empty until license gate}
+  - {schema: live, table: gfw_vessel_presence_snapshots, label: GFW 每日船舶快照, time_column: received_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW daily vessel presence snapshots}
+  - {schema: live, table: gfw_vessel_presence_current, label: GFW 每日船舶即時, time_column: updated_at, owner_collector: gfw_vessel_presence, expected_interval_min: 1440, critical: false, notes: GFW latest vessel presence; reconstructible from snapshots}
   # gfw_hourly_publish_runs is deliberately excluded from generic MAX(time)
   # freshness: failed attempts still advance started_at. The monitor uses
   # public.get_gfw_hourly_publish_health() to compare last attempt with the
   # verified is_current release and its UTC latest_complete_date.
-  - {schema: reference, table: daily_schedules,          time_column: created_at,   owner_collector: rail_timetable, expected_interval_min: 240, critical: false}
-  - {schema: live, table: parking_segments_current,  time_column: collected_at, owner_collector: parking, expected_interval_min: 15, critical: false, notes: OnStreet 路邊停車；availability 由 current 代監控（測試豁免）}
+  - {schema: reference, table: daily_schedules,          label: 軌道每日時刻表, time_column: created_at,   owner_collector: rail_timetable, expected_interval_min: 240, critical: false}
+  - {schema: live, table: parking_segments_current,  label: 路邊停車即時, time_column: collected_at, owner_collector: parking, expected_interval_min: 15, critical: false, notes: OnStreet 路邊停車；availability 由 current 代監控（測試豁免）}
 
   # ── 航空 ────────────────────────────────
-  - {schema: live, table: flight_positions,          time_column: collected_at, owner_collector: flight_fr24, expected_interval_min: 5, critical: false, notes: 多 collector 共用}
-  - {schema: air_tickets, table: fare_offers,             time_column: observed_at, owner_collector: air_ticket_radar, expected_interval_min: 2880, critical: false, notes: 外部 owner（不在本 repo；writer 在 openAB 的 Hermes 容器，見 openab-ops docs/11-air-ticket-radar-runbook.md）；每 48 小時掃描；private SSOT。2026-10-16 查最新 observed_at 停在 2026-09-08}
+  - {schema: live, table: flight_positions,          label: 航班位置, time_column: collected_at, owner_collector: flight_fr24, expected_interval_min: 5, critical: false, notes: 多 collector 共用}
+  # fare_offers：writer 是 openAB 的 habermas-hermes（Zeabur），2026-10-24 盤點已 SUSPENDED、使用者決定不搬
+  # （.gis-agent-system/projects/2026-10-zeabur-migration/README.md）→ 寫入端已停，不檢查停更。重新啟用時拿掉 enabled: false。
+  - {schema: air_tickets, table: fare_offers,             label: 機票價格（外部機票雷達）, enabled: false, time_column: observed_at, owner_collector: air_ticket_radar, expected_interval_min: 2880, critical: false, notes: 外部 owner（不在本 repo；writer 在 openAB 的 Hermes 容器，見 openab-ops docs/11-air-ticket-radar-runbook.md）；每 48 小時掃描；private SSOT。2026-10-16 查最新 observed_at 停在 2026-09-08}
   # flight_trails — partitioned parent，本來就為空，NEVER 是預期。從清冊移除避免干擾顯示。
 
   # ── 氣象 / 地震 ─────────────────────────
-  - {schema: live, table: weather_observations,      time_column: collected_at, owner_collector: weather, expected_interval_min: 60, critical: true}
-  - {schema: live, table: weather_current,           time_column: observed_at,  owner_collector: weather, expected_interval_min: 60, critical: true}
-  - {schema: live, table: temperature_grids,         time_column: collected_at, owner_collector: temperature, expected_interval_min: 60, critical: false}
-  - {schema: live, table: cwa_imagery_frames,        time_column: observed_at,  owner_collector: cwa_satellite, expected_interval_min: 10, critical: false}
-  - {schema: live, table: earthquake_events,         time_column: occurred_at,  owner_collector: earthquake, expected_interval_min: 1440, critical: false, notes: 事件驅動可能很久才一次（critical=false 避免無震時誤觸 🔴 嚴重）}
+  - {schema: live, table: weather_observations,      label: 氣象觀測歷史, time_column: collected_at, owner_collector: weather, expected_interval_min: 60, critical: true}
+  - {schema: live, table: weather_current,           label: 氣象即時, time_column: observed_at,  owner_collector: weather, expected_interval_min: 60, critical: true}
+  - {schema: live, table: temperature_grids,         label: 溫度網格, time_column: collected_at, owner_collector: temperature, expected_interval_min: 60, critical: false}
+  - {schema: live, table: cwa_imagery_frames,        label: 氣象署雲圖影格, time_column: observed_at,  owner_collector: cwa_satellite, expected_interval_min: 10, critical: false}
+  - {schema: live, table: earthquake_events,         label: 地震事件, event_driven: true, time_column: occurred_at,  owner_collector: earthquake, expected_interval_min: 1440, critical: false, notes: 事件驅動可能很久才一次（critical=false 避免無震時誤觸 🔴 嚴重）}
   # 地震擴充 5 表（migration 321）— 全部事件驅動，無震時空表/停滯屬預期，一律 critical=false
-  - {schema: live, table: earthquake_station_obs,    time_column: collected_at, owner_collector: earthquake, expected_interval_min: 1440, critical: false, notes: 逐測站觀測；只在「新事件」才寫（collector 端查 DB 守門），比照 earthquake_events 放寬}
-  - {schema: live, table: tsunami_alerts,            time_column: collected_at, owner_collector: earthquake, expected_interval_min: 43200, critical: false, notes: 海嘯報告一年數則；長期無新 row 屬預期，不參與事故判定}
-  - {schema: live, table: earthquake_town_intensity, time_column: collected_at, owner_collector: earthquake_town_intensity, expected_interval_min: 10080, critical: false, notes: 368 鄉鎮震度；上游只留最新一次有感地震，無新震即不寫}
-  - {schema: live, table: earthquake_shakemap_grid,  time_column: collected_at, owner_collector: earthquake_shakemap_grid, expected_interval_min: 10080, critical: false, notes: NCDR 2.5km 網格 4,377 格/次；event_time 守門，無新震即不寫}
-  - {schema: live, table: earthquake_moment_tensor,  time_column: collected_at, owner_collector: earthquake_moment_tensor, expected_interval_min: 43200, critical: false, notes: AutoBATS 只對規模較大事件出解；查無屬常態}
-  - {schema: live, table: disaster_alerts,           time_column: collected_at, owner_collector: ncdr_alerts, expected_interval_min: 15, critical: true}
+  - {schema: live, table: earthquake_station_obs,    label: 地震測站觀測, event_driven: true, time_column: collected_at, owner_collector: earthquake, expected_interval_min: 1440, critical: false, notes: 逐測站觀測；只在「新事件」才寫（collector 端查 DB 守門），比照 earthquake_events 放寬}
+  - {schema: live, table: tsunami_alerts,            label: 海嘯警報, event_driven: true, time_column: collected_at, owner_collector: earthquake, expected_interval_min: 43200, critical: false, notes: 海嘯報告一年數則；長期無新 row 屬預期，不參與事故判定}
+  - {schema: live, table: earthquake_town_intensity, label: 鄉鎮震度, event_driven: true, time_column: collected_at, owner_collector: earthquake_town_intensity, expected_interval_min: 10080, critical: false, notes: 368 鄉鎮震度；上游只留最新一次有感地震，無新震即不寫}
+  - {schema: live, table: earthquake_shakemap_grid,  label: 震度網格圖, event_driven: true, time_column: collected_at, owner_collector: earthquake_shakemap_grid, expected_interval_min: 10080, critical: false, notes: NCDR 2.5km 網格 4,377 格/次；event_time 守門，無新震即不寫}
+  - {schema: live, table: earthquake_moment_tensor,  label: 震源機制解, event_driven: true, time_column: collected_at, owner_collector: earthquake_moment_tensor, expected_interval_min: 43200, critical: false, notes: AutoBATS 只對規模較大事件出解；查無屬常態}
+  - {schema: live, table: disaster_alerts,           label: 災害示警, time_column: collected_at, owner_collector: ncdr_alerts, expected_interval_min: 15, critical: true}
   # 網路健康的 provider event 可能合法為空；source_runs 才是主要心跳。
-  - {schema: live, table: internet_health_source_runs, time_column: finished_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: Cloudflare/IODA/RIPE Atlas/RIS production 5min 共用 run ledger；RIS 截至 2026-08-31 15:05 UTC 正式 3 runs（partial 1 / succeeded 2）已驗；status/error_code 區分 partial、empty、stale、config/http/parse/stream_gap}
-  - {schema: live, table: internet_health_observations, time_column: collected_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: canonical evidence history；RIPE 只寫 finite 5min aggregates，RIS gap/partial 保持 NULL/unknown、不補 0；RIS production current 6/6 fresh，public RPC 0}
-  - {schema: live, table: internet_health_current, time_column: observed_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: DB trigger 維護 latest pointer；conditional upsert 防止舊 observation 倒退，collector 不直寫}
-  - {schema: live, table: internet_health_incidents, time_column: last_detected_at, owner_collector: cloudflare_radar, expected_interval_min: 43200, critical: false, notes: 事件驅動可長期無 row；不得作 collector 心跳}
+  - {schema: live, table: internet_health_source_runs, label: 網路健康收集紀錄, time_column: finished_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: Cloudflare/IODA/RIPE Atlas/RIS production 5min 共用 run ledger；RIS 截至 2026-08-31 15:05 UTC 正式 3 runs（partial 1 / succeeded 2）已驗；status/error_code 區分 partial、empty、stale、config/http/parse/stream_gap}
+  - {schema: live, table: internet_health_observations, label: 網路健康觀測, time_column: collected_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: canonical evidence history；RIPE 只寫 finite 5min aggregates，RIS gap/partial 保持 NULL/unknown、不補 0；RIS production current 6/6 fresh，public RPC 0}
+  - {schema: live, table: internet_health_current, label: 網路健康即時, time_column: observed_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: DB trigger 維護 latest pointer；conditional upsert 防止舊 observation 倒退，collector 不直寫}
+  - {schema: live, table: internet_health_incidents, label: 網路中斷事件, event_driven: true, time_column: last_detected_at, owner_collector: cloudflare_radar, expected_interval_min: 43200, critical: false, notes: 事件驅動可長期無 row；不得作 collector 心跳}
 
   # ── 太空 ────────────────────────────────
-  - {schema: live, table: satellite_positions,       time_column: collected_at, owner_collector: satellite, expected_interval_min: 120, critical: false}
-  - {schema: live, table: satellite_current,         time_column: collected_at, owner_collector: satellite, expected_interval_min: 120, critical: false}
-  - {schema: live, table: satellite_tle,             time_column: updated_at,   owner_collector: satellite, expected_interval_min: 1440, critical: false}
-  - {schema: live, table: satellite_tle_history,     time_column: fetched_at,   owner_collector: satellite, expected_interval_min: 1440, critical: false}
-  - {schema: live, table: launches,                  time_column: collected_at, owner_collector: launch, expected_interval_min: 15, critical: false}
-  - {schema: live, table: launch_events,             time_column: collected_at, owner_collector: launch, expected_interval_min: 15, critical: false}
-  - {schema: live, table: launch_pads,               time_column: collected_at, owner_collector: launch, expected_interval_min: 1440, critical: false}
+  - {schema: live, table: satellite_positions,       label: 衛星位置歷史, time_column: collected_at, owner_collector: satellite, expected_interval_min: 120, critical: false}
+  - {schema: live, table: satellite_current,         label: 衛星即時位置, time_column: collected_at, owner_collector: satellite, expected_interval_min: 120, critical: false}
+  - {schema: live, table: satellite_tle,             label: 衛星軌道參數, time_column: updated_at,   owner_collector: satellite, expected_interval_min: 1440, critical: false}
+  - {schema: live, table: satellite_tle_history,     label: 衛星軌道參數歷史, time_column: fetched_at,   owner_collector: satellite, expected_interval_min: 1440, critical: false}
+  # launch 收集器 15 分一輪、四個任務輪流（upcoming→backfill→pads→events，collectors/launch.py）：
+  # launches 每 2 輪寫一次（≈30 分）、launch_events 每 4 輪寫一次（≈60 分；UPSERT 會更新 collected_at）。
+  # 2026-11-09 由 15 分改正（原設定 3 倍 45 分就判停更，launch_events 天天誤報）。
+  - {schema: live, table: launches,                  label: 火箭發射清單, time_column: collected_at, owner_collector: launch, expected_interval_min: 30, critical: false}
+  - {schema: live, table: launch_events,             label: 太空活動事件, time_column: collected_at, owner_collector: launch, expected_interval_min: 60, critical: false}
+  - {schema: live, table: launch_pads,               label: 發射台, time_column: collected_at, owner_collector: launch, expected_interval_min: 1440, critical: false}
 
   # ── 空氣品質 ────────────────────────────
-  - {schema: live, table: air_quality_observations,  time_column: collected_at, owner_collector: air_quality, expected_interval_min: 60, critical: false}
-  - {schema: live, table: air_quality_current,       time_column: observed_at,  owner_collector: air_quality, expected_interval_min: 60, critical: false}
-  - {schema: live, table: aqi_imagery_frames,        time_column: observed_at,  owner_collector: air_quality_imagery, expected_interval_min: 60, critical: false}
-  - {schema: live, table: micro_sensor_readings,     time_column: collected_at, owner_collector: air_quality_microsensors, expected_interval_min: 5, critical: false}
+  - {schema: live, table: air_quality_observations,  label: 空品觀測歷史, time_column: collected_at, owner_collector: air_quality, expected_interval_min: 60, critical: false}
+  - {schema: live, table: air_quality_current,       label: 空品即時, time_column: observed_at,  owner_collector: air_quality, expected_interval_min: 60, critical: false}
+  - {schema: live, table: aqi_imagery_frames,        label: 空品影像影格, time_column: observed_at,  owner_collector: air_quality_imagery, expected_interval_min: 60, critical: false}
+  - {schema: live, table: micro_sensor_readings,     label: 空品微型感測器, time_column: collected_at, owner_collector: air_quality_microsensors, expected_interval_min: 5, critical: false}
 
   # ── 水利 ────────────────────────────────
-  - {schema: live, table: reservoir_status,          time_column: snapshot_at,  owner_collector: water_reservoir, expected_interval_min: 60, critical: false}
-  - {schema: live, table: reservoir_daily_ops,       time_column: observed_at,  owner_collector: water_reservoir_daily_ops, expected_interval_min: 1440, critical: false}
-  - {schema: live, table: river_water_level,         time_column: observed_at,  owner_collector: river_water_level, expected_interval_min: 10, critical: false}
-  - {schema: live, table: rain_gauge_readings,       time_column: observed_at,  owner_collector: rain_gauge_realtime, expected_interval_min: 10, critical: false}
-  - {schema: live, table: groundwater_level_readings, time_column: observed_at, owner_collector: groundwater_level, expected_interval_min: 60, critical: false}
-  - {schema: live, table: iot_wra_measurements,      time_column: observed_at,  owner_collector: iot_wra, expected_interval_min: 10, critical: false}
-  - {schema: live, table: uswg_measurements,         time_column: observed_at,  owner_collector: uswg, expected_interval_min: 10, critical: false}
+  - {schema: live, table: reservoir_status,          label: 水庫水情, time_column: snapshot_at,  owner_collector: water_reservoir, expected_interval_min: 60, critical: false}
+  - {schema: live, table: reservoir_daily_ops,       label: 水庫每日營運, time_column: observed_at,  owner_collector: water_reservoir_daily_ops, expected_interval_min: 1440, critical: false}
+  - {schema: live, table: river_water_level,         label: 河川水位, time_column: observed_at,  owner_collector: river_water_level, expected_interval_min: 10, critical: false}
+  - {schema: live, table: rain_gauge_readings,       label: 雨量站觀測, time_column: observed_at,  owner_collector: rain_gauge_realtime, expected_interval_min: 10, critical: false}
+  - {schema: live, table: groundwater_level_readings, label: 地下水位, time_column: observed_at, owner_collector: groundwater_level, expected_interval_min: 60, critical: false}
+  - {schema: live, table: iot_wra_measurements,      label: 水利署 IoT 感測值, time_column: observed_at,  owner_collector: iot_wra, expected_interval_min: 10, critical: false}
+  - {schema: live, table: uswg_measurements,         label: 淹水感測值, time_column: observed_at,  owner_collector: uswg, expected_interval_min: 10, critical: false}
   # drought_alert_current — 2026-07-08 確認 collector 在主站實際運作，加回監控。
   # 事件驅動（hash 未變即不寫，18 天未變屬常態）→ interval 比照 foursquare_poi 放寬 43200
   # 避免天天 DEAD 噪音；drought_alert_history 同批寫入，由 current 代監控（測試豁免）。
-  - {schema: public,   table: drought_alert_current,     time_column: fetched_at,   owner_collector: wra_drought_alert, expected_interval_min: 43200, critical: false, notes: 事件驅動 hash 去重，上游不定期公告}
+  - {schema: public,   table: drought_alert_current,     label: 旱災水情燈號, event_driven: true, time_column: fetched_at,   owner_collector: wra_drought_alert, expected_interval_min: 43200, critical: false, notes: 事件驅動 hash 去重，上游不定期公告}
 
   # ── 道路 / 廢棄物 / 急診 / 電力 ─────────
-  - {schema: live, table: road_events,               time_column: collected_at, owner_collector: road_event_live, expected_interval_min: 5, critical: false}
-  - {schema: live, table: road_events_current,       time_column: collected_at, owner_collector: road_event_live, expected_interval_min: 5, critical: false}
-  - {schema: spatial,  table: waste_positions_realtime,  time_column: observed_at,  owner_collector: waste_positions, expected_interval_min: 2, critical: true}
-  - {schema: live, table: er_hospital_status,        time_column: observed_at,  owner_collector: er_hospital_realtime, expected_interval_min: 15, critical: false}
-  - {schema: live, table: er_hospital_current,       time_column: observed_at,  owner_collector: er_hospital_realtime, expected_interval_min: 15, critical: false}
-  - {schema: live, table: power_system_status,       time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
-  - {schema: live, table: power_generation_unit,     time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
-  - {schema: live, table: power_region_demand,       time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
+  - {schema: live, table: road_events,               label: 路況事件歷史, time_column: collected_at, owner_collector: road_event_live, expected_interval_min: 5, critical: false}
+  - {schema: live, table: road_events_current,       label: 即時路況事件, time_column: collected_at, owner_collector: road_event_live, expected_interval_min: 5, critical: false}
+  - {schema: spatial,  table: waste_positions_realtime,  label: 垃圾車即時位置, time_column: observed_at,  owner_collector: waste_positions, expected_interval_min: 2, critical: true}
+  - {schema: live, table: er_hospital_status,        label: 急診壅塞歷史, time_column: observed_at,  owner_collector: er_hospital_realtime, expected_interval_min: 15, critical: false}
+  - {schema: live, table: er_hospital_current,       label: 急診壅塞即時, time_column: observed_at,  owner_collector: er_hospital_realtime, expected_interval_min: 15, critical: false}
+  - {schema: live, table: power_system_status,       label: 台電供電狀態, time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
+  - {schema: live, table: power_generation_unit,     label: 電廠機組出力, time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
+  - {schema: live, table: power_region_demand,       label: 分區用電, time_column: observed_at,  owner_collector: power_taipower, expected_interval_min: 10, critical: false}
 
   # ── 新聞 ────────────────────────────────
-  - {schema: live, table: news_events,               time_column: created_at,   owner_collector: news_events, expected_interval_min: 20, critical: false}
+  - {schema: live, table: news_events,               label: 新聞事件, time_column: created_at,   owner_collector: news_events, expected_interval_min: 20, critical: false}
 
   # ── 公衛 ────────────────────────────────
   # cdc_public_health_weekly 跑在 HiCloud VM 上，每週四 11:00 一次
-  - {schema: live, table: public_health_weekly,      time_column: collected_at, owner_collector: cdc_public_health_weekly, expected_interval_min: 10080, critical: false, notes: 週四 11:00 跑一次}
+  - {schema: live, table: public_health_weekly,      label: 疾管署每週疫情, time_column: collected_at, owner_collector: cdc_public_health_weekly, expected_interval_min: 10080, critical: false, notes: 週四 11:00 跑一次}
 
   # ── 其他 reference ──────────────────────
   # 2026-09-04 Disk IO 事故止血：此表 105 MB、imported_at 無索引，每輪 health_snapshot 對它全掃兩次。
@@ -148,65 +161,74 @@ tables:
   # ── 2026-07-02 production 實測補齊（AR-05，與 cross_layer_map.yaml 自動補回區同步）──
   # 挑表原則：有 current 表優先（小、可 MAX）；current_touch_updated_at 的表用 updated_at
   # 當 collector 心跳；事件驅動表比照 earthquake_events（interval 1440 + critical false + notes）。
-  - {schema: live, table: road_sections_current,      time_column: collected_at, owner_collector: road_congestion, expected_interval_min: 5, critical: false, notes: road_sections_live MAX 會 timeout，只監控 current}
-  - {schema: live, table: parking_lots_current,       time_column: collected_at, owner_collector: parking_offstreet, expected_interval_min: 15, critical: false}
-  - {schema: live, table: tourist_shuttle_current,    time_column: collected_at, owner_collector: tourist_shuttle, expected_interval_min: 2, critical: false}
-  - {schema: live, table: nuclear_radiation_stations, time_column: updated_at,   owner_collector: nuclear_radiation, expected_interval_min: 15, critical: false, notes: current 表 updated_at 每輪 touch＝collector 心跳（來源 stale 由 is_stale 欄位表達）}
-  - {schema: live, table: taipei_sewer_measurements,  time_column: observed_at,  owner_collector: wic_sewer, expected_interval_min: 10, critical: false}
-  - {schema: live, table: taipei_evacuate_status,     time_column: observed_at,  owner_collector: wic_evacuate, expected_interval_min: 10, critical: false}
-  - {schema: live, table: taipei_pumb_status,         time_column: observed_at,  owner_collector: wic_pumb, expected_interval_min: 10, critical: false}
-  - {schema: live, table: pla_activity_daily,         time_column: collected_at, owner_collector: pla_activity_daily, expected_interval_min: 1440, critical: false, notes: 每日通報 1 row/day}
-  - {schema: live, table: food_price_daily,           time_column: collected_at, owner_collector: food_prices, expected_interval_min: 1440, critical: false, notes: 農業部四類批發價；T+1 更新故每日 1 次}
+  - {schema: live, table: road_sections_current,      label: 道路即時壅塞, time_column: collected_at, owner_collector: road_congestion, expected_interval_min: 5, critical: false, notes: road_sections_live MAX 會 timeout，只監控 current}
+  - {schema: live, table: parking_lots_current,       label: 停車場即時車位, time_column: collected_at, owner_collector: parking_offstreet, expected_interval_min: 15, critical: false}
+  - {schema: live, table: tourist_shuttle_current,    label: 觀光接駁車即時, time_column: collected_at, owner_collector: tourist_shuttle, expected_interval_min: 2, critical: false}
+  - {schema: live, table: nuclear_radiation_stations, label: 核設施輻射站, time_column: updated_at,   owner_collector: nuclear_radiation, expected_interval_min: 15, critical: false, notes: current 表 updated_at 每輪 touch＝collector 心跳（來源 stale 由 is_stale 欄位表達）}
+  - {schema: live, table: taipei_sewer_measurements,  label: 臺北下水道水位, time_column: observed_at,  owner_collector: wic_sewer, expected_interval_min: 10, critical: false}
+  - {schema: live, table: taipei_evacuate_status,     label: 臺北疏散門狀態, time_column: observed_at,  owner_collector: wic_evacuate, expected_interval_min: 10, critical: false}
+  - {schema: live, table: taipei_pumb_status,         label: 臺北抽水站狀態, time_column: observed_at,  owner_collector: wic_pumb, expected_interval_min: 10, critical: false}
+  - {schema: live, table: pla_activity_daily,         label: 共機每日動態, time_column: collected_at, owner_collector: pla_activity_daily, expected_interval_min: 1440, critical: false, notes: 每日通報 1 row/day}
+  - {schema: live, table: food_price_daily,           label: 農產品批發價, time_column: collected_at, owner_collector: food_prices, expected_interval_min: 1440, critical: false, notes: 農業部四類批發價；T+1 更新故每日 1 次}
   # ⚠ 監控的是 ledger 不是 spatial.pla_tracks —— 「共機 0 架次」是合法的 0 形狀，
   #   pla_tracks 該日沒有任何 row，拿它當心跳會把「沒共機」誤判成「沒跑」。
   #   ledger 每個處理過的日子必有一列。2026-08-06 之前無此監控，向量化斷 5 天沒人知道。
-  - {schema: spatial, table: pla_tracks_runs,         time_column: run_at,       owner_collector: pla_tracks_vectorize, expected_interval_min: 1440, critical: false, notes: 航跡向量化 ledger；1 row/通報日，這條 pipeline 唯一可靠心跳}
-  - {schema: live, table: yt_live_current,            time_column: updated_at,   owner_collector: yt_live_video_resolver, expected_interval_min: 5, critical: false}
-  - {schema: live, table: precipitation_raster_frames, time_column: collected_at, owner_collector: precipitation_raster, expected_interval_min: 120, critical: false, notes: 上游柵格發布常延遲 1-2h，interval 放寬 120}
-  - {schema: live, table: earthquakes_global,         time_column: collected_at, owner_collector: global_climate_usgs_earthquake, expected_interval_min: 60, critical: false}
-  - {schema: live, table: typhoon_positions,          time_column: collected_at, owner_collector: global_climate_jma_typhoon, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（jma/jtwc/cwa，cwa 自 mig 476）；事件驅動，颱風季外 DEAD 屬預期}
-  - {schema: live, table: typhoon_agency_forecasts,   time_column: collected_at, owner_collector: global_climate_ncdr_typhoon_routes, expected_interval_min: 1440, critical: false, notes: NCDR 五家颱風預報（mig 476）；事件驅動，同版重抓 DO NOTHING 不更新 collected_at，無颱風時 DEAD 屬預期}
-  - {schema: live, table: global_climate_grids,       time_column: collected_at, owner_collector: global_climate_cmems, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（cmems/cams/noaa_gfs），日級模型}
-  - {schema: live, table: border_airport_snapshot,    time_column: collected_at, owner_collector: immigration_apis_airport, expected_interval_min: 60, critical: false, notes: 跑在 HiCloud VM}
-  - {schema: live, table: lightning_events,           time_column: collected_at, owner_collector: lightning_events, expected_interval_min: 1440, critical: false, notes: 事件驅動（無落雷即無資料），比照 earthquake_events 放寬}
-  - {schema: live, table: market_index_current,       time_column: updated_at,   owner_collector: twse_market_index, expected_interval_min: 1440, critical: false, notes: 僅開盤時段有資料，1440x3＝3 天蓋過週末；連假誤報屬預期}
-  - {schema: live, table: prison_population_daily,    time_column: collected_at, owner_collector: correctional_daily_snapshot, expected_interval_min: 1440, critical: false, notes: 每日 1 row（2026-07-03 啟用）}
-  - {schema: live, table: animal_adoption_snapshot_runs, time_column: snapshot_date, owner_collector: animal_adoption, expected_interval_min: 1440, critical: false, notes: 完整性 ledger；failed/partial run 不會更新 current/daily}
-  - {schema: live, table: animal_adoption_snapshots,  time_column: snapshot_date, owner_collector: animal_adoption, expected_interval_min: 1440, critical: false, notes: 僅完整成功快照}
-  - {schema: live, table: animal_adoption_current,    time_column: updated_at, owner_collector: animal_adoption, expected_interval_min: 1440, critical: false, notes: current 由 finalize 更新；missing_once 不是 adopted}
-  - {schema: analytics, table: animal_adoption_daily, time_column: snapshot_date, owner_collector: animal_adoption, expected_interval_min: 1440, critical: false, notes: 每日最後完整成功快照聚合}
-  - {schema: live, table: animal_shelter_outcome_runs, time_column: snapshot_date, owner_collector: animal_shelter_outcomes, expected_interval_min: 43200, critical: false, notes: 41236/73396 月報共用 run ledger；failed/partial 不會覆寫既有 outcomes}
-  - {schema: live, table: animal_shelter_outcomes, time_column: snapshot_date, owner_collector: animal_shelter_outcomes, expected_interval_min: 43200, critical: false, notes: immutable 月報 source rows；73396 同 grain revision 保留}
-  - {schema: live, table: animal_welfare_point_runs, time_column: snapshot_date, owner_collector: animal_veterinary_clinics, expected_interval_min: 259200, critical: false, notes: 8705/97070/134283 共用完整快照 ledger；per-source freshness 見 cross_layer_map}
-  - {schema: live, table: animal_welfare_point_snapshots, time_column: snapshot_date, owner_collector: animal_protection_offices, expected_interval_min: 129600, critical: false, notes: 8705/97070/134283 共用據點快照；以 90 日來源作最短 freshness gate}
-  - {schema: live, table: traffic_accidents_a1,       time_column: collected_at, owner_collector: npa_traffic_accident_a1, expected_interval_min: 720, critical: false, notes: dedup by hash，僅新事故推進 MAX；久無新事故告警屬預期（2026-07-03 啟用）}
+  - {schema: spatial, table: pla_tracks_runs,         label: 共機航跡向量化紀錄, time_column: run_at,       owner_collector: pla_tracks_vectorize, expected_interval_min: 1440, critical: false, notes: 航跡向量化 ledger；1 row/通報日，這條 pipeline 唯一可靠心跳}
+  - {schema: live, table: yt_live_current,            label: YouTube 直播, time_column: updated_at,   owner_collector: yt_live_video_resolver, expected_interval_min: 5, critical: false}
+  - {schema: live, table: precipitation_raster_frames, label: 雨量柵格影格, time_column: collected_at, owner_collector: precipitation_raster, expected_interval_min: 120, critical: false, notes: 上游柵格發布常延遲 1-2h，interval 放寬 120}
+  - {schema: live, table: earthquakes_global,         label: 全球地震, time_column: collected_at, owner_collector: global_climate_usgs_earthquake, expected_interval_min: 60, critical: false}
+  - {schema: live, table: typhoon_positions,          label: 颱風位置, event_driven: true, time_column: collected_at, owner_collector: global_climate_jma_typhoon, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（jma/jtwc/cwa，cwa 自 mig 476）；事件驅動，颱風季外 DEAD 屬預期}
+  - {schema: live, table: typhoon_agency_forecasts,   label: 颱風多國預報, event_driven: true, time_column: collected_at, owner_collector: global_climate_ncdr_typhoon_routes, expected_interval_min: 1440, critical: false, notes: NCDR 五家颱風預報（mig 476）；事件驅動，同版重抓 DO NOTHING 不更新 collected_at，無颱風時 DEAD 屬預期}
+  - {schema: live, table: global_climate_grids,       label: 全球氣候網格, time_column: collected_at, owner_collector: global_climate_cmems, expected_interval_min: 1440, critical: false, notes: 多 collector 共用（cmems/cams/noaa_gfs），日級模型}
+  - {schema: live, table: border_airport_snapshot,    label: 機場出入境人數, time_column: collected_at, owner_collector: immigration_apis_airport, expected_interval_min: 60, critical: false, notes: 跑在 HiCloud VM}
+  - {schema: live, table: lightning_events,           label: 落雷, event_driven: true, time_column: collected_at, owner_collector: lightning_events, expected_interval_min: 1440, critical: false, notes: 事件驅動（無落雷即無資料），比照 earthquake_events 放寬}
+  - {schema: live, table: market_index_current,       label: 台股指數, time_column: updated_at,   owner_collector: twse_market_index, expected_interval_min: 1440, critical: false, notes: 僅開盤時段有資料，1440x3＝3 天蓋過週末；連假誤報屬預期}
+  - {schema: live, table: prison_population_daily,    label: 矯正機關收容人數, time_column: collected_at, owner_collector: correctional_daily_snapshot, expected_interval_min: 1440, critical: false, notes: 每日 1 row（2026-07-03 啟用）}
+  - {schema: live, table: animal_adoption_snapshot_runs, label: 動物認領養收集紀錄, time_column: snapshot_date, owner_collector: animal_adoption, expected_interval_min: 1440, critical: false, notes: 完整性 ledger；failed/partial run 不會更新 current/daily}
+  - {schema: live, table: animal_adoption_snapshots,  label: 動物認領養快照, time_column: snapshot_date, owner_collector: animal_adoption, expected_interval_min: 1440, critical: false, notes: 僅完整成功快照}
+  - {schema: live, table: animal_adoption_current,    label: 動物認領養即時, time_column: updated_at, owner_collector: animal_adoption, expected_interval_min: 1440, critical: false, notes: current 由 finalize 更新；missing_once 不是 adopted}
+  - {schema: analytics, table: animal_adoption_daily, label: 動物認領養每日統計, time_column: snapshot_date, owner_collector: animal_adoption, expected_interval_min: 1440, critical: false, notes: 每日最後完整成功快照聚合}
+  - {schema: live, table: animal_shelter_outcome_runs, label: 收容成果收集紀錄, time_column: snapshot_date, owner_collector: animal_shelter_outcomes, expected_interval_min: 43200, critical: false, notes: 41236/73396 月報共用 run ledger；failed/partial 不會覆寫既有 outcomes}
+  - {schema: live, table: animal_shelter_outcomes, label: 收容成果月報, time_column: snapshot_date, owner_collector: animal_shelter_outcomes, expected_interval_min: 43200, critical: false, notes: immutable 月報 source rows；73396 同 grain revision 保留}
+  - {schema: live, table: animal_welfare_point_runs, label: 動物福利點位收集紀錄, time_column: snapshot_date, owner_collector: animal_veterinary_clinics, expected_interval_min: 259200, critical: false, notes: 8705/97070/134283 共用完整快照 ledger；per-source freshness 見 cross_layer_map}
+  - {schema: live, table: animal_welfare_point_snapshots, label: 動物福利點位快照, time_column: snapshot_date, owner_collector: animal_protection_offices, expected_interval_min: 129600, critical: false, notes: 8705/97070/134283 共用據點快照；以 90 日來源作最短 freshness gate}
+  - {schema: live, table: traffic_accidents_a1,       label: A1 死亡車禍, event_driven: true, time_column: collected_at, owner_collector: npa_traffic_accident_a1, expected_interval_min: 720, critical: false, notes: dedup by hash，僅新事故推進 MAX；久無新事故告警屬預期（2026-07-03 啟用）}
 
   # ── 文化場館 ────────────────────────────
-  - {schema: live, table: tpml_seat_status,            time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false, notes: 北市圖座位；閉館時段仍寫入（is_closed=true）}
-  - {schema: live, table: tpml_seat_current,           time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false}
+  - {schema: live, table: tpml_seat_status,            label: 北市圖座位歷史, time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false, notes: 北市圖座位；閉館時段仍寫入（is_closed=true）}
+  - {schema: live, table: tpml_seat_current,           label: 北市圖座位即時, time_column: observed_at,  owner_collector: tpml_seat, expected_interval_min: 10, critical: false}
 
   # ── 環境即時測站 wave2（2026-10-02）──
   # 歷史表（*_measurements / *_readings）由 current 表 updated_at 心跳代監控（見 tests 豁免清單）；cwa_uv_daily 無 current 表故直接監控。
-  - {schema: live, table: nusc_gamma_stations,         time_column: updated_at,   owner_collector: nusc_gamma_radiation, expected_interval_min: 15, critical: false, notes: current 表 updated_at 每輪 touch＝心跳；來源 stale 看 observed_at}
-  - {schema: live, table: water_effluent_current,      time_column: updated_at,   owner_collector: water_effluent_monitoring, expected_interval_min: 60, critical: false, notes: updated_at 每輪 touch＝心跳}
-  - {schema: live, table: cems_stack_current,          time_column: updated_at,   owner_collector: cems_stack_monitoring, expected_interval_min: 60, critical: false, notes: updated_at 每輪 touch＝心跳；observed_at 上游延遲 4–5h}
-  - {schema: live, table: cwa_uv_daily,                time_column: collected_at, owner_collector: cwa_uv_daily, expected_interval_min: 720, critical: false, notes: 同日重抓 DO UPDATE 會推進 collected_at}
+  - {schema: live, table: nusc_gamma_stations,         label: 環境輻射站, time_column: updated_at,   owner_collector: nusc_gamma_radiation, expected_interval_min: 15, critical: false, notes: current 表 updated_at 每輪 touch＝心跳；來源 stale 看 observed_at}
+  - {schema: live, table: water_effluent_current,      label: 放流水監測, time_column: updated_at,   owner_collector: water_effluent_monitoring, expected_interval_min: 60, critical: false, notes: updated_at 每輪 touch＝心跳}
+  - {schema: live, table: cems_stack_current,          label: 煙道排放監測, time_column: updated_at,   owner_collector: cems_stack_monitoring, expected_interval_min: 60, critical: false, notes: updated_at 每輪 touch＝心跳；observed_at 上游延遲 4–5h}
+  - {schema: live, table: cwa_uv_daily,                label: 紫外線日最大值, time_column: collected_at, owner_collector: cwa_uv_daily, expected_interval_min: 720, critical: false, notes: 同日重抓 DO UPDATE 會推進 collected_at}
 
   # ── 日本氣象廳 JMA P0（2026-10-09；gis-platform migration 435）──
-  - {schema: live, table: jma_amedas_current,          time_column: updated_at,   owner_collector: jma_amedas, expected_interval_min: 10, critical: false, notes: AMeDAS 約 1,286 站；updated_at 每輪 touch＝心跳；來源 stale 看 source_time（>40 分 collector 會 log）}
-  - {schema: live, table: jma_amedas_observations,     time_column: collected_at, owner_collector: jma_amedas, expected_interval_min: 60, critical: false, notes: 只寫整點；保留期見 metadata.retention_policies（mig 436）}
-  - {schema: live, table: jma_warning_events,          time_column: collected_at, owner_collector: jma_warnings, expected_interval_min: 1440, critical: false, notes: 438 起只記變動（start/status_change/end，永久）；安靜時可整天無新列屬預期；control_datetime >6h 未變 collector 會 log stale；舊 live.jma_warnings 停寫、7 天自然清空}
-  - {schema: live, table: jma_quake_reports,           time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（DO NOTHING，僅新地震推進 MAX）}
-  - {schema: live, table: jma_tsunami_reports,         time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（無津波情報即無資料），長期 DEAD 屬預期}
-  - {schema: live, table: jma_volcano_warnings,        time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（火山警報異動才有新列），長期 DEAD 屬預期}
-  - {schema: live, table: jma_phenology_observations,  time_column: first_seen_at, owner_collector: jma_seasonal, expected_interval_min: 1440, critical: false, notes: 季節性（只記變動；楓銀杏 10–1 月、櫻 12–6 月），季節外長期無新列屬預期}
-  - {schema: live, table: jma_snowcap,                 time_column: first_seen_at, owner_collector: jma_seasonal, expected_interval_min: 1440, critical: false, notes: 初冠雪日（每山每寒候年一列），季節性}
-  - {schema: live, table: jma_snowcap_status,          time_column: source_time,   owner_collector: jma_seasonal, expected_interval_min: 1440, critical: false, notes: 山頂積雪狀況只在改變時寫列；夏季長期不變屬預期}
-  - {schema: live, table: jma_rainy_season,            time_column: first_seen_at, owner_collector: jma_seasonal, expected_interval_min: 1440, critical: false, notes: 梅雨速報（5–8 月發表時才有新列）}
-  - {schema: live, table: weather_raster_frames,       time_column: collected_at, owner_collector: jma_raster, expected_interval_min: 120, critical: false, notes: 網格圖磚每幀狀態（每輪 60 分寫入；status 只升不降）；保留 400 天；jma_ocean_env（C8：sst_him/sst_mgd/sea_ice/uv_anal/kosa_fcst）共用}
-  - {schema: live, table: weather_raster_daily,        time_column: uploaded_at,  owner_collector: jma_raster, expected_interval_min: 2880, critical: false, notes: 每產品每 JST 日一列（D+1 01:00 後日結；缺幀日等上游保留期到期才結）；永久；jma_ocean_env（C8）共用}
+  - {schema: live, table: jma_amedas_current,          label: 日本 AMeDAS 即時, time_column: updated_at,   owner_collector: jma_amedas, expected_interval_min: 10, critical: false, notes: AMeDAS 約 1,286 站；updated_at 每輪 touch＝心跳；來源 stale 看 source_time（>40 分 collector 會 log）}
+  - {schema: live, table: jma_amedas_observations,     label: 日本 AMeDAS 觀測, time_column: collected_at, owner_collector: jma_amedas, expected_interval_min: 60, critical: false, notes: 只寫整點；保留期見 metadata.retention_policies（mig 436）}
+  - {schema: live, table: jma_warning_events,          label: 日本警報・注意報, event_driven: true, time_column: collected_at, owner_collector: jma_warnings, expected_interval_min: 1440, critical: false, notes: 438 起只記變動（start/status_change/end，永久）；安靜時可整天無新列屬預期；control_datetime >6h 未變 collector 會 log stale；舊 live.jma_warnings 停寫、7 天自然清空}
+  - {schema: live, table: jma_quake_reports,           label: 日本地震情報, event_driven: true, time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（DO NOTHING，僅新地震推進 MAX）}
+  - {schema: live, table: jma_tsunami_reports,         label: 日本海嘯情報, event_driven: true, time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（無津波情報即無資料），長期 DEAD 屬預期}
+  - {schema: live, table: jma_volcano_warnings,        label: 日本火山警報, event_driven: true, time_column: collected_at, owner_collector: jma_quake, expected_interval_min: 1440, critical: false, notes: 事件驅動（火山警報異動才有新列），長期 DEAD 屬預期}
+  - {schema: live, table: jma_phenology_observations,  label: 日本生物季節觀測, event_driven: true, time_column: first_seen_at, owner_collector: jma_seasonal, expected_interval_min: 1440, critical: false, notes: 季節性（只記變動；楓銀杏 10–1 月、櫻 12–6 月），季節外長期無新列屬預期}
+  - {schema: live, table: jma_snowcap,                 label: 日本初冠雪, event_driven: true, time_column: first_seen_at, owner_collector: jma_seasonal, expected_interval_min: 1440, critical: false, notes: 初冠雪日（每山每寒候年一列），季節性}
+  - {schema: live, table: jma_snowcap_status,          label: 日本山頂積雪, event_driven: true, time_column: source_time,   owner_collector: jma_seasonal, expected_interval_min: 1440, critical: false, notes: 山頂積雪狀況只在改變時寫列；夏季長期不變屬預期}
+  # 梅雨入り／明け：氣象廳只在各地區入梅、出梅時發「梅雨の時期に関する気象情報」速報（約 5–8 月，
+  # 季內也常隔一週以上才有下一則），9 月初再公布確定值 → 季內也是事件驅動，不用季節視窗。
+  # 出處：大阪管區氣象台 2026-09-01 https://www.data.jma.go.jp/osaka/topics/R08/20260901_tsuyu.pdf
+  - {schema: live, table: jma_rainy_season,            label: 日本梅雨入出梅, event_driven: true, time_column: first_seen_at, owner_collector: jma_seasonal, expected_interval_min: 1440, critical: false, notes: 梅雨速報（5–8 月發表時才有新列）}
+  - {schema: live, table: weather_raster_frames,       label: 日本氣象網格影格, time_column: collected_at, owner_collector: jma_raster, expected_interval_min: 120, critical: false, notes: 網格圖磚每幀狀態（每輪 60 分寫入；status 只升不降）；保留 400 天；jma_ocean_env（C8：sst_him/sst_mgd/sea_ice/uv_anal/kosa_fcst）共用}
+  - {schema: live, table: weather_raster_daily,        label: 日本氣象網格日結, time_column: uploaded_at,  owner_collector: jma_raster, expected_interval_min: 2880, critical: false, notes: 每產品每 JST 日一列（D+1 01:00 後日結；缺幀日等上游保留期到期才結）；永久；jma_ocean_env（C8）共用}
   # ── JMA 預報／環境省 WBGT（2026-10-12；gis-platform migration 440；落雷寫既有 lightning_events）──
-  - {schema: live, table: jma_forecasts,               time_column: collected_at, owner_collector: jma_forecast, expected_interval_min: 720, critical: false, notes: 府縣預報每次發表保留（短期 05/11/17、週間 11/17）；保留 90 天}
-  - {schema: live, table: jma_forecast_probabilities,  time_column: collected_at, owner_collector: jma_forecast, expected_interval_min: 1440, critical: false, notes: 早期注意 r8（levels 空字串＝未達中，不是缺值）；保留 30 天}
-  - {schema: live, table: env_jp_wbgt_observations,    time_column: collected_at, owner_collector: env_jp_wbgt, expected_interval_min: 120, critical: false, notes: 841 站逐時 WBGT；服務期約 4/22–10/21，季外 DEAD 屬預期；保留 30 天}
-  - {schema: live, table: env_jp_wbgt_forecasts,       time_column: collected_at, owner_collector: env_jp_wbgt, expected_interval_min: 1440, critical: false, notes: 每期一站一列（3 小時格陣列）；季外 DEAD 屬預期；保留 30 天}
+  - {schema: live, table: jma_forecasts,               label: 日本天氣預報, time_column: collected_at, owner_collector: jma_forecast, expected_interval_min: 720, critical: false, notes: 府縣預報每次發表保留（短期 05/11/17、週間 11/17）；保留 90 天}
+  - {schema: live, table: jma_forecast_probabilities,  label: 日本早期注意情報, time_column: collected_at, owner_collector: jma_forecast, expected_interval_min: 1440, critical: false, notes: 早期注意 r8（levels 空字串＝未達中，不是缺值）；保留 30 天}
+  # WBGT 當季視窗：環境省熱中症警戒アラート運用期間＝每年 4 月第 4 個週三～10 月第 4 個週三
+  # （2026：4/22–10/21；2025：4/23–10/22）。第 4 個週三落在 22–28 日，所以取 04-29～10-21，
+  # 每年都一定在服務期內、不必年年改。出處：環境省 2026-04-14 報道発表
+  # https://www.env.go.jp/press/press_04076.html 、香川縣運用期間公告
+  # https://www.pref.kagawa.lg.jp/kankyoseisaku/chikyu/tekiou/nettyuusyo2.html 、
+  # 2025 事務連絡 https://www.wbgt.env.go.jp/pdf/notice/20250401_notice.pdf
+  - {schema: live, table: env_jp_wbgt_observations,    label: 日本熱中症指數（觀測）, active_window: {from: "04-29", to: "10-21"}, time_column: collected_at, owner_collector: env_jp_wbgt, expected_interval_min: 120, critical: false, notes: 841 站逐時 WBGT；服務期約 4/22–10/21，季外 DEAD 屬預期；保留 30 天}
+  - {schema: live, table: env_jp_wbgt_forecasts,       label: 日本熱中症指數（預報）, active_window: {from: "04-29", to: "10-21"}, time_column: collected_at, owner_collector: env_jp_wbgt, expected_interval_min: 1440, critical: false, notes: 每期一站一列（3 小時格陣列）；季外 DEAD 屬預期；保留 30 天}

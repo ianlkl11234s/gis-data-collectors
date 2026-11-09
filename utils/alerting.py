@@ -43,6 +43,7 @@ _LOCK = threading.RLock()
 # collector name → 執行間隔（分鐘）；BaseCollector.__init__ 登記，DB writer 失敗時查得到
 _INTERVALS: dict[str, int] = {}
 _critical_cache: Optional[dict[str, bool]] = None
+_label_cache: Optional[dict[str, str]] = None
 
 # 測試注入點：預設走 Telegram 純文字（錯誤訊息常含 Markdown 特殊字元）
 _sender: Optional[Callable[[str], bool]] = None
@@ -196,6 +197,30 @@ def _set_critical_cache(mapping: Optional[dict[str, bool]]) -> None:
     """測試用。"""
     global _critical_cache
     _critical_cache = mapping
+
+
+def display_name(name: str) -> str:
+    """收集器顯示名：cross_layer_map 的中文 label＋（原名）；沒 label 或非收集器退回原名。
+
+    只在格式化訊息時查，不寫進 alert_state（name 仍是識別用的原名）。
+    """
+    global _label_cache
+    if _label_cache is None:
+        try:
+            from tasks.monitoring import load_cross_layer_map
+            _label_cache = {k: str(v["label"]) for k, v in load_cross_layer_map().items()
+                            if isinstance(v, dict) and v.get("label")}
+        except Exception as exc:
+            log.warning("讀 cross_layer_map label 失敗，一律用原名: %s", exc)
+            _label_cache = {}
+    label = _label_cache.get(name)
+    return f"{label}（{name}）" if label else name
+
+
+def _set_label_cache(mapping: Optional[dict[str, str]]) -> None:
+    """測試用。"""
+    global _label_cache
+    _label_cache = mapping
 
 
 # ─────────────────────────────────────────────────────────
@@ -413,7 +438,7 @@ def _maybe_still_down(state: dict, key: str, entry: dict, now: datetime,
     for k in keys:
         if k in state["entries"]:
             state["entries"][k]["still_down_sent"] = True
-    names = "、".join(state["entries"][k].get("name", k) for k in keys if k in state["entries"])
+    names = "、".join(display_name(state["entries"][k].get("name", k)) for k in keys if k in state["entries"])
     msg = (f"⏳ 仍未恢復（已 {_fmt_duration(now - first)}）：{names}{_instance_tag()}\n"
            "之後只在每日日報列出，恢復時會再通知。")
     if queue:
@@ -499,12 +524,12 @@ def _flush_starts(state: dict, starts: list[dict], now: datetime) -> list[str]:
         n = sum(r.get("count", 0) for r in e.get("reasons", {}).values())
         first = _parse(e.get("first_seen")) or now
         what = "DB 寫入" if set(e.get("reasons", {})) == {"db"} else "收集器"
-        return [f"🔴 {what} {e['name']} 連續失敗（{n} 次，已 {_fmt_duration(now - first)}）"
+        return [f"🔴 {what} {display_name(e['name'])} 連續失敗（{n} 次，已 {_fmt_duration(now - first)}）"
                 f"{_instance_tag()}\n錯誤：{e.get('last_text', '')}\n"
                 "恢復時會再通知一則；持續中不重送。"]
     lines = [f"🔴 {len(reds)} 支收集器連續失敗{_instance_tag()}"]
     for e in reds:
-        lines.append(f"• {e['name']}：{_short(e.get('last_text', ''), 100)}")
+        lines.append(f"• {display_name(e['name'])}：{_short(e.get('last_text', ''), 100)}")
     lines.append("恢復時會再通知；持續中不重送。")
     return ["\n".join(lines)]
 
@@ -517,8 +542,8 @@ def _common_error(entries: list[dict]) -> tuple[str, int]:
 
 def _fmt_burst(entries: list[dict]) -> str:
     err, n = _common_error(entries)
-    names = [e["name"] for e in entries]
-    crit = [e["name"] for e in entries if e.get("level") == RED]
+    names = [display_name(e["name"]) for e in entries]
+    crit = [display_name(e["name"]) for e in entries if e.get("level") == RED]
     shown = "、".join(names[:12]) + (f"…等 {len(names)} 支" if len(names) > 12 else "")
     return (f"🔴 {len(entries)} 支收集器同時失敗{_instance_tag()}\n"
             f"共同錯誤（{n} 支）：{err}\n"
@@ -530,9 +555,9 @@ def _fmt_burst(entries: list[dict]) -> str:
 def _fmt_recoveries(recovers: list[dict]) -> str:
     if len(recovers) == 1:
         p = recovers[0]
-        return f"✅ {p['name']} 恢復（中斷 {p['duration']}）{_instance_tag()}"
+        return f"✅ {display_name(p['name'])} 恢復（中斷 {p['duration']}）{_instance_tag()}"
     lines = [f"✅ {len(recovers)} 支收集器恢復{_instance_tag()}"]
-    lines += [f"• {p['name']}（中斷 {p['duration']}）" for p in recovers]
+    lines += [f"• {display_name(p['name'])}（中斷 {p['duration']}）" for p in recovers]
     return "\n".join(lines)
 
 
@@ -541,7 +566,7 @@ def _fmt_burst_recovery(state: dict, burst: dict, remaining: list[str], now: dat
     n = len(burst.get("recovered", []))
     msg = f"✅ {n} 支收集器已恢復（事件開始於 {started:%m/%d %H:%M}，歷時約 {_fmt_duration(now - started)}）{_instance_tag()}"
     if remaining:
-        names = "、".join(state["entries"][k].get("name", k) for k in remaining)
+        names = "、".join(display_name(state["entries"][k].get("name", k)) for k in remaining)
         msg += f"\n仍未恢復：{names}（之後各自恢復時再通知）"
     return msg
 
