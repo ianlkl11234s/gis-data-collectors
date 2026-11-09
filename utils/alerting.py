@@ -423,6 +423,8 @@ def staleness_threshold_min(interval_minutes: int) -> int:
 def _stale_line(f: dict, now: datetime) -> str:
     what = "沒有新資料" if f.get("basis") == "table" else "沒有成功執行"
     last = f.get("last_at")
+    if last is not None and last.tzinfo is not None:
+        last = last.astimezone(TAIPEI_TZ)  # DB 時間是 UTC，訊息一律台北時間
     ago = _fmt_duration(now - last) if last else "（從未有紀錄）"
     tail = (f"，最後{'一筆' if f.get('basis') == 'table' else '成功'} {last:%m/%d %H:%M}"
             if last else "")
