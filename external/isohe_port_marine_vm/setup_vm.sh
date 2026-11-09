@@ -19,6 +19,7 @@ install -m 755 /tmp/isohe_port_marine_collect.py "$APP_DIR/isohe_port_marine_col
 install -m 644 /tmp/marine_observation.py "$APP_DIR/marine_observation.py"
 install -m 644 /tmp/marine_write.py "$APP_DIR/marine_write.py"
 install -m 644 /tmp/vm_buffer.py "$APP_DIR/vm_buffer.py"
+install -m 644 /tmp/bulk.py "$APP_DIR/bulk.py"  # 固定形狀批次寫入（R5）
 install -m 755 /tmp/archive_isohe_port_marine.py "$APP_DIR/archive_isohe_port_marine.py"
 install -m 755 /tmp/test_egress.py "$APP_DIR/test_egress.py"
 

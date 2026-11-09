@@ -18,7 +18,7 @@ from pathlib import Path
 import psycopg2
 import requests
 from dotenv import load_dotenv
-from psycopg2.extras import Json, execute_values
+from psycopg2.extras import Json
 
 from marine_observation import isohe_payload_to_long
 import marine_write
@@ -27,6 +27,11 @@ try:
     from vm_buffer import connect_with_retry, flush_pending, save_batch
 except ImportError as exc:  # VM deployment must include external/vm_common/vm_buffer.py
     raise RuntimeError("vm_buffer.py is required beside this collector") from exc
+
+try:  # fixed-shape batch writes (rule R5)
+    from bulk import execute_values
+except ImportError as exc:  # VM deployment must include external/vm_common/bulk.py
+    raise RuntimeError("bulk.py is required beside this collector") from exc
 
 PORTS = ("TP", "KL", "TC", "KH", "HL", "SA", "BD", "AP")
 RESOURCES = {"wave": "Wave", "current": "Current", "tide": "Tide", "wind": "Wind"}

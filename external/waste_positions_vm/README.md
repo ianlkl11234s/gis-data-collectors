@@ -56,7 +56,7 @@
 ```bash
 # 1. scp 4 個檔案
 cd .../data-collectors/external/waste_positions_vm
-scp waste_positions_collect.py archive_waste_positions.py setup_waste.sh setup_waste_cron.sh \
+scp waste_positions_collect.py archive_waste_positions.py setup_waste.sh setup_waste_cron.sh ../vm_common/bulk.py \
     <帳號>@<VM_HOST>:/tmp/
 
 # 2. 在 VM 上裝

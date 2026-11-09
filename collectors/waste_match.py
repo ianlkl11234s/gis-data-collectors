@@ -23,7 +23,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Optional
 
 import psycopg2
-from psycopg2.extras import execute_values
+from storage.bulk import execute_values  # 固定形狀批次寫入（鐵則 R5）
 import requests
 
 import config

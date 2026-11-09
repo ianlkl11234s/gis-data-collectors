@@ -12,6 +12,7 @@ mkdir -p "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
 echo "[2/3] 部署程式"
 install -m 755 /tmp/waste_positions_collect.py  "$APP_DIR/waste_positions_collect.py"
 install -m 755 /tmp/archive_waste_positions.py  "$APP_DIR/archive_waste_positions.py"
+install -m 644 /tmp/bulk.py  "$APP_DIR/bulk.py"  # 固定形狀批次寫入（R5，external/vm_common/bulk.py）
 
 if [ ! -f "$APP_DIR/.env" ]; then
   cat >"$APP_DIR/.env" <<'ENVEOF'

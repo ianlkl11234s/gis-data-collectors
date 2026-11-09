@@ -251,13 +251,34 @@ DB 是收資料、重算、供網站讀的共用資源，一個來源吃光 IO �
 - 每天一次的日報仍呼叫 `health_snapshot`（長版三層健康），屬已知例外，頻率不得提高。
 - 新監控要讀 DB 時只查統計檢視（`pg_stat_*`）與系統目錄，唯讀交易、`statement_timeout`、有 `LIMIT`，並在 PR 寫實測成本。
 
-### R5 收集器寫入用固定形狀 SQL（建議；收集器改完後改為必須）
+### R5 收集器寫入用固定形狀 SQL（必須）
 
-`execute_values(..., page_size=1000)` 每批列數不同，每種列數都是一個新的 `queryid`，`pg_stat_statements` 會被撐爆：2026-11-09 有 4,977 筆（上限 5,000），其中 4,371 筆、232 MB 是收集器的多列 INSERT。Supabase 自己的 exporter 每分鐘讀全文並排序，每次約 230 MB temp，換算每天約 400 GB temp 寫；統計也一直被擠掉（dealloc），低頻語句看不到。
+`psycopg2.extras.execute_values(..., page_size=1000)` 每批列數不同，每種列數都是一個新的 `queryid`，`pg_stat_statements` 會被撐爆：2026-11-09 有 4,977 筆（上限 5,000），其中 4,371 筆、232 MB 是收集器的多列 INSERT（`marine_observation_readings` 一張就 971 筆、133 MB）。Supabase 自己的 exporter 每分鐘讀全文並排序，每次約 230 MB temp，換算每天約 400 GB temp 寫；統計也一直被擠掉（dealloc），低頻語句看不到。
 
-- 做法：每張表只產生一種 SQL，例如 `INSERT ... SELECT * FROM unnest(%s::text[], %s::float8[], ...) ON CONFLICT ...` 或 `json_populate_recordset`，列數變化放在參數裡。
-- 待改：`storage/supabase_writer.py` 的批次寫入、`external/isohe_port_marine_vm/isohe_port_marine_collect.py`。全部改完、使用者執行一次 `pg_stat_statements_reset()` 後，本條改成必須。
-- 新收集器現在就照固定形狀寫。
+- **規則**：多列寫入一律用 `storage/bulk.py`（VM 用同內容的 `external/vm_common/bulk.py`，部署時放在 collector 同目錄）。**不可**直接 import `psycopg2.extras.execute_values`，也不可自己組多列 `VALUES (...),(...)`。逐列 `cur.execute`、`execute_batch` 本來就是固定形狀，不受限。
+- **用法**（與 psycopg2 同簽名，只換 import）：
+
+  ```python
+  from storage.bulk import execute_values      # VM：from bulk import execute_values
+
+  execute_values(
+      cur,
+      "INSERT INTO live.foo AS t (id, name, geom, updated_at) VALUES %s "
+      "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name WHERE t.name IS DISTINCT FROM EXCLUDED.name "
+      "RETURNING id",
+      rows,                                      # list of tuple，順序同欄位
+      template="(%s, %s, ST_GeomFromText(%s, 4326), now())",   # 可省略
+      page_size=1000,
+      fetch=True,                                # 要 RETURNING 時；收齊每一頁
+  )
+  ```
+
+  它把 `VALUES %s` 改寫成 `SELECT ... FROM json_to_recordset(%s::json) AS _bulk(c0 <型別>, ...)`，整批只是一個 JSON 參數，所以不同批量的 SQL 文字完全相同，每張表在 `pg_stat_statements` 只留一筆。欄位型別取自目標表（每個 process 每張表查一次系統目錄）；ON CONFLICT／RETURNING 尾段原樣保留。
+- **template 規則**：每欄一個元素。`%s`、`%s::型別`、不含 `%s` 的運算式（`now()`）照常用；其他運算式裡的 `%s` 以 text 傳入（`ST_GeomFromText(%s,4326)`、`ST_GeomFromGeoJSON(%s)` 可直接用），**需要數值的參數要寫明轉型**，例如 `ST_MakePoint(%s::float8, %s::float8)`。不支援具名參數 `%(x)s`。
+- **非 INSERT**（例如 `UPDATE ... FROM (VALUES %s)`）改用 `execute_json(cur, sql, rows_as_dicts)`，SQL 自己寫 `FROM json_to_recordset(%s::json) AS v(欄 型別, ...)`（實例：`_write_weather_raster_images`）。
+- 值的語意與舊寫法一致（`tests/test_bulk.py` 在本機 PG 逐列比對新舊結果）：NaN／Infinity、jsonb 收到 JSON 字串、json 欄位原文、整數欄位收到小數的四捨五入、bytea、interval、陣列欄位都已涵蓋。`cur.rowcount` 仍只反映最後一頁。
+- 新寫法上線並全部部署（pulse-host 映像＋各 VM collector＋aisstream worker）後，由使用者執行一次 `pg_stat_statements_reset()` 清掉舊形狀；之後收集器 INSERT 每張表應只剩一筆。
+- 尚未改的一次性腳本：`scripts/backfill_*`、`scripts/verify_vessels.py` 仍用 psycopg2 `execute_values`（手動、偶爾跑，不是持續累積的來源）；下次修改時順手換成 `storage.bulk`。
 
 ### 每週體檢（`tasks/db_efficiency_audit.py`）
 

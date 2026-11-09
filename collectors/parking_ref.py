@@ -26,7 +26,7 @@ uid 對齊（關鍵）：car_park_uid = <頂層 AuthorityCode>_<CarParkID>，
 from datetime import datetime
 
 import psycopg2
-from psycopg2.extras import execute_values
+from storage.bulk import execute_values  # 固定形狀批次寫入（鐵則 R5）
 
 import config
 from storage.db import connect_supabase

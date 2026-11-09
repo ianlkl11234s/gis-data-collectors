@@ -21,7 +21,9 @@ from pathlib import Path
 from typing import Optional
 
 from psycopg2 import Binary as PgBinary
-from psycopg2.extras import Json, execute_values
+from psycopg2.extras import Json
+
+from storage.bulk import execute_json, execute_values  # 固定形狀批次寫入（鐵則 R5）
 
 import config
 from storage.db import SupabaseConnectionPool, PoolBorrowTimeout, PoolBreakerOpen
@@ -2156,15 +2158,16 @@ class SupabaseWriter:
             return
         cols = self._JMA_RASTER_IMAGE_COLS
         names = ['source', 'product', 'valid_time'] + [c for c, _ in cols]
-        template = '(%s,%s,%s::timestamptz,' + ','.join(f'%s::{t}' for _, t in cols) + ')'
+        # 固定形狀（R5）：整批一個 JSON 參數；source／product 照舊以 text 比對
+        defs = ','.join(['source text', 'product text', 'valid_time timestamptz'] + [f'{c} {t}' for c, t in cols])
         sets = ','.join(f'{c}=v.{c}' for c, _ in cols)
         try:
             with self._txn(conn) as cur:
-                execute_values(
+                execute_json(
                     cur,
-                    f"UPDATE live.weather_raster_frames f SET {sets} FROM (VALUES %s) AS v({','.join(names)}) "
+                    f"UPDATE live.weather_raster_frames f SET {sets} FROM json_to_recordset(%s::json) AS v({defs}) "
                     f"WHERE f.source=v.source AND f.product=v.product AND f.valid_time=v.valid_time",
-                    [tuple(r.get(c) for c in names) for r in imgs.values()], template=template, page_size=500,
+                    [{c: r.get(c) for c in names} for r in imgs.values()], page_size=500,
                 )
             logger.info(f"[{collector_name}] ✓ 發布幀 image 欄 {len(imgs)} 筆")
         except Exception as e:  # noqa: BLE001

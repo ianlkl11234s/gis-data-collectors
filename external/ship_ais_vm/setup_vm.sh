@@ -32,6 +32,7 @@ pip3 install $PIP_FLAGS --quiet \
 echo "[4/5] 部署程式"
 install -m 755 /tmp/ship_ais_collect.py  "$APP_DIR/ship_ais_collect.py"
 install -m 755 /tmp/archive_ship_ais.py  "$APP_DIR/archive_ship_ais.py"
+install -m 644 /tmp/bulk.py  "$APP_DIR/bulk.py"  # 固定形狀批次寫入（R5，external/vm_common/bulk.py）
 
 if [ ! -f "$APP_DIR/.env" ]; then
   cat >"$APP_DIR/.env" <<'ENVEOF'

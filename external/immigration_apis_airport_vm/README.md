@@ -61,7 +61,7 @@ external/immigration_apis_airport_vm/
 
 ```bash
 # 1. SCP 6 個檔到 /tmp/
-scp external/immigration_apis_airport_vm/*.{py,sh} <帳號>@<VM_HOST>:/tmp/
+scp external/immigration_apis_airport_vm/*.{py,sh} external/vm_common/bulk.py <帳號>@<VM_HOST>:/tmp/
 
 # 2. SSH 進去
 ssh <帳號>@<VM_HOST>
