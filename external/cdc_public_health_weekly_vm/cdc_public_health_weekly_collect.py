@@ -293,6 +293,31 @@ def _flush_write(conn, payload: dict) -> None:
 
 
 # ────────────────────────────────────────────────────────────────────
+# Heartbeat — best-effort，寫 metadata.collector_status（同 immigration_apis_airport）
+# 成功只在「本輪 DB 寫入成功」後回報（用同一條連線）；失敗路徑另開短連線，
+# DB 斷線時心跳本身也會失敗，只記 warning、不影響主流程。
+# ────────────────────────────────────────────────────────────────────
+COLLECTOR_NAME = "cdc_public_health_weekly"
+
+
+def report_heartbeat(success: bool, records: int = 0, error: str | None = None, conn=None) -> None:
+    args = (COLLECTOR_NAME, success, int(records or 0), (error or None) and str(error)[:500])
+    sql = "SELECT report_collector_heartbeat(%s, %s, %s, %s)"
+    own = None
+    try:
+        if conn is None:
+            conn = own = psycopg2.connect(DB_URL, connect_timeout=5)
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+        conn.commit()
+    except Exception as exc:
+        logging.warning(f"heartbeat 失敗（不影響主流程）: {exc}")
+    finally:
+        if own is not None:
+            own.close()
+
+
+# ────────────────────────────────────────────────────────────────────
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -340,14 +365,21 @@ def main() -> int:
                           max_age_days=BUFFER_MAX_AGE_DAYS)
             inserted = write_to_supabase(conn, all_records, ts)
             log.info(f"✓ DB 寫入 {inserted} 筆（總候選 {len(all_records)}）")
+            if all_records:
+                # 部分疾病失敗、其他寫入成功 → 仍算成功，失敗清單寫進 last_error（同 immigration）
+                report_heartbeat(True, len(all_records),
+                                 f"diseases failed: {','.join(failed)}" if failed else None, conn=conn)
         except Exception as e:
             log.error(f"DB 寫入失敗: {e}")
             if all_records:
                 save_batch(BUFFER_DIR, "cdc_public_health_weekly",
                            {"ts": ts.isoformat(), "records": all_records}, log=log)
+            report_heartbeat(False, 0, f"DB: {e}")
         finally:
             if conn is not None:
                 conn.close()
+    if not all_records and failed:
+        report_heartbeat(False, 0, f"diseases failed: {','.join(failed)}")
 
     result = {
         "fetch_time": ts.isoformat(),

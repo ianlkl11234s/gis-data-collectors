@@ -204,6 +204,31 @@ def _flush_write(conn, payload: dict) -> None:
 
 
 # ────────────────────────────────────────────────────────────────────
+# Heartbeat — best-effort，寫 metadata.collector_status（同 immigration_apis_airport）
+# 成功只在「本輪 DB 寫入成功」後回報（用同一條連線）；失敗路徑另開短連線，
+# DB 斷線時心跳本身也會失敗，只記 warning、不影響主流程。
+# ────────────────────────────────────────────────────────────────────
+COLLECTOR_NAME = "ship_ais"
+
+
+def report_heartbeat(success: bool, records: int = 0, error: str | None = None, conn=None) -> None:
+    args = (COLLECTOR_NAME, success, int(records or 0), (error or None) and str(error)[:500])
+    sql = "SELECT report_collector_heartbeat(%s, %s, %s, %s)"
+    own = None
+    try:
+        if conn is None:
+            conn = own = psycopg2.connect(DB_URL, connect_timeout=5)
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+        conn.commit()
+    except Exception as exc:
+        logging.warning(f"heartbeat 失敗（不影響主流程）: {exc}")
+    finally:
+        if own is not None:
+            own.close()
+
+
+# ────────────────────────────────────────────────────────────────────
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -215,6 +240,7 @@ def main() -> int:
 
     # 1) fetch + snapshot（失敗不影響 buffer 補寫）
     result = None
+    fetch_err = None
     try:
         result = fetch_and_process(ts)
         log.info(f"抓到 {result['ship_count']} 艘船")
@@ -222,11 +248,14 @@ def main() -> int:
         snap_path = save_snapshot(result, ts)
         log.info(f"snapshot → {snap_path}")
     except Exception as exc:
+        fetch_err = f"fetch: {exc}"
         log.error(f"FAILED: {exc}", exc_info=True)
 
     # 2) DB：連線 retry → 先補寫積壓 buffer → 寫本輪；寫入失敗存 buffer 不丟資料
     have_rows = result is not None and bool(result["data"])
     if not have_rows and not has_pending(BUFFER_DIR):
+        if fetch_err:
+            report_heartbeat(False, 0, fetch_err)
         return 0 if result is not None else 1
 
     conn = None
@@ -237,13 +266,18 @@ def main() -> int:
         if have_rows:
             h, c = write_to_supabase(conn, result["data"], ts)
             log.info(f"Supabase 寫入: history={h}, current={c}")
+            report_heartbeat(True, h, conn=conn)
+        elif fetch_err:
+            report_heartbeat(False, 0, fetch_err, conn=conn)
     except Exception as exc:
         log.error(f"DB 寫入失敗: {exc}")
+        saved = None
         if have_rows:
             saved = save_batch(BUFFER_DIR, "ship_ais",
                                {"ts": ts.isoformat(), "records": result["data"]}, log=log)
-            if saved is None:
-                return 1  # buffer 也存不進去才算真的丟資料
+        report_heartbeat(False, 0, f"DB: {exc}")
+        if have_rows and saved is None:
+            return 1  # buffer 也存不進去才算真的丟資料
     finally:
         if conn is not None:
             conn.close()

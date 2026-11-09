@@ -163,7 +163,7 @@ isohe_port_marine:
 
 aisstream:
   label: AISStream 船舶串流
-  enabled: true  # 2026-10-16 校正：無同名 collector_status，但 aisstream_position_observations／ingest_health 數分鐘內、archive manifests 當天
+  enabled: true  # 2026-11-09 起 worker 每分鐘隨 ingest_health 寫同名 collector_status（有新船位寫入才算成功，DIO-4）
   deployment: pulse_host
   expected_interval_min: 1
   supabase_tables:

@@ -155,6 +155,11 @@ def vm(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "write_to_supabase",
                         lambda conn, recs, ts: written.append(list(recs)) or len(recs))
     mod._written = written
+    heartbeats = []
+    monkeypatch.setattr(mod, "report_heartbeat",
+                        lambda success, records=0, error=None, conn=None:
+                        heartbeats.append((success, records, error)))
+    mod._hb = heartbeats
 
     def use(mapping):
         monkeypatch.setattr(mod.SESSION, "get", _router(mapping))
@@ -218,3 +223,23 @@ def test_vm_no_retained_rows_after_cutoff_exit1(vm, monkeypatch, tmp_path):
     assert mod.main() == 1
     snap = _snapshot(tmp_path)
     assert snap["failed"] == ["dengue", "enterovirus", "influenza"]
+
+
+# ── DIO-4：collector_status 心跳（2026-11-09）──
+def test_vm_heartbeat_success_after_db_write(vm):
+    mod = vm(_mapping())
+    assert mod.main() == 0
+    assert mod._hb == [(True, len(mod._written[0]), None)]
+
+
+def test_vm_heartbeat_partial_failure_still_success_with_error(vm):
+    mod = vm(_mapping(dengue=("nf", 404)))
+    assert mod.main() == 1
+    assert mod._hb == [(True, len(mod._written[0]), "diseases failed: dengue")]
+
+
+def test_vm_heartbeat_all_fail_reports_failure(vm):
+    boom = requests.ConnectionError("x")
+    mod = vm({FILES["influenza"]: boom, FILES["dengue"]: boom, FILES["enterovirus"]: boom})
+    assert mod.main() == 1
+    assert len(mod._hb) == 1 and mod._hb[0][0] is False

@@ -399,6 +399,7 @@ class AISStreamWorker:
         self._static_cache: dict[str, dict] = _BoundedLRU(config.AISSTREAM_STATIC_CACHE_MAX)
         self._last_db_flush = time.monotonic()
         self._health_last = 0.0
+        self._hb_db_written = 0  # 上次 collector_status 心跳時的 stats.db_written
         self._started = _utc_now()
         self._prepared = False
         self._s3 = s3_storage
@@ -686,8 +687,31 @@ class AISStreamWorker:
                     updated_at=now()""",
                     (PROVIDER, self.run_id, status, self.stats.last_observed_at, self.stats.last_message_at, self.stats.last_s3_success_at, self.stats.messages_received, self.stats.observations_seen, 0))
                 db.commit()
+                self._report_heartbeat(db, status)
         except Exception as exc:
             logger.debug("AISStream health write failed: %s", exc)
+
+    def _report_heartbeat(self, db, status: str) -> None:
+        """metadata.collector_status 同名列（DIO-4）。best-effort，跟著 health 每分鐘一次。
+
+        成功＝上次心跳後確實有船位寫進 DB（stats.db_written 增加），不是「websocket 連著」；
+        重連中回報失敗；沒有新寫入（例：DB 批次失敗）不回報，讓 last_success_at 自然變舊。
+        """
+        written = self.stats.db_written - self._hb_db_written
+        if status == "healthy" and written > 0:
+            args = ("aisstream", True, written, None)
+        elif status == "degraded":
+            args = ("aisstream", False, 0, (self.stats.last_error or "reconnecting")[:500])
+        else:
+            return
+        try:
+            with db.cursor() as cur:
+                cur.execute("SELECT report_collector_heartbeat(%s, %s, %s, %s)", args)
+            db.commit()
+            self._hb_db_written += written if args[1] else 0
+        except Exception as exc:
+            db.rollback()
+            logger.debug("AISStream collector_status heartbeat failed: %s", exc)
 
     def _write_run_end(self, status: str) -> None:
         """將本次 worker lifecycle 寫入 ingest_runs（best effort）。"""
