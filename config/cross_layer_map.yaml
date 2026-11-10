@@ -722,8 +722,10 @@ foursquare_poi:
 
 correctional_daily_snapshot:
   label: 矯正機關收容人數
-  enabled: true
-  deployment: pulse_host
+  # 2026-11-07 停用：上游 today.xml 自 2026-05-15 起未更新，HiCloud VM runner
+  # （external/moa_opendata_vm/moa_opendata_run.py）已註解；pulse-host 也未啟用（Linode IP 被拒）
+  enabled: false
+  deployment: disabled
   expected_interval_min: 1440
   supabase_tables: [live.prison_population_daily]
   s3_prefixes:

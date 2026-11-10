@@ -4,7 +4,7 @@
 > **自動產生，勿手改**；跑 `python3 scripts/gen_handbook_catalog.py` 重產，`--check` 檢查是否最新（CI：`tests/test_handbook_catalog.py`）。
 > 來源：`collectors/registry.py`、`config.py` 的 `_COLLECTOR_TOGGLES`、`config/cross_layer_map.yaml`、`storage/supabase_tables.py` 的 `TABLE_MAP`、`config/realtime_tables.yaml`。要改內容就改這些來源（備註取自 cross_layer_map 的 notes）。
 
-共 104 筆（含排程 task），production 應在跑 97 筆。
+共 104 筆（含排程 task），production 應在跑 96 筆。
 
 欄位說明：
 
@@ -110,7 +110,7 @@
 | `pla_tracks_vectorize` | 政府雜項 | 1 日 | pulse-host | spatial.pla_tracks<br>live.pla_activity_items<br>spatial.pla_tracks_runs | history＋ledger（多表） | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#pla_tracks_vectorize) | 共機航跡示意圖 CV 向量化（非 API collector） |
 | `cdc_public_health_weekly` | 政府雜項 | 6 小時 | VM | live.public_health_weekly | history | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#cdc_public_health_weekly) | 監控門檻 7 日；CDC 開放資料每週更新，僅週四 11:00 抓一次寫 SB |
 | `yt_live_video_resolver` | 政府雜項 | 5 分 | pulse-host | live.yt_live_history<br>live.yt_live_current | current＋history | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#yt_live_video_resolver) | 需 YOUTUBE_API_KEY；2026-07-26 由 HTML 爬取改 YouTube Data API v3 — Zeabur 必設 YOUTUBE_API_KEY（缺 key 會 silent skip） |
-| `correctional_daily_snapshot` | 政府雜項 | 1 日 | pulse-host | live.prison_population_daily | history | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#correctional_daily_snapshot) |  |
+| `correctional_daily_snapshot` | 政府雜項 | 1 日 | 停用 | live.prison_population_daily | history | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#correctional_daily_snapshot) |  |
 | `animal_adoption` | 政府雜項 | 1 日 | VM | live.animal_adoption_snapshot_runs<br>live.animal_adoption_snapshots<br>live.animal_adoption_current<br>analytics.animal_adoption_daily | current＋history＋ledger＋彙總（多表） | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#animal_adoption) | 農業部待認領養名單完整快照 |
 | `animal_shelter_outcomes` | 政府雜項 | 30 日 | VM | live.animal_shelter_outcome_runs<br>live.animal_shelter_outcomes | history＋ledger（多表） | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#animal_shelter_outcomes) | 與 animal_shelter_pressure 共用表（一源壞掉可能被他源新鮮度蓋過）；農業部 datagov:41236 收容成果歷史月報 |
 | `animal_shelter_pressure` | 政府雜項 | 30 日 | VM | live.animal_shelter_outcome_runs<br>live.animal_shelter_outcomes | history＋ledger（多表） | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#animal_shelter_pressure) | 與 animal_shelter_outcomes 共用表（一源壞掉可能被他源新鮮度蓋過）；農業部 datagov:73396 收容壓力/去向歷史月報 |
