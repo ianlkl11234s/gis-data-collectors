@@ -639,7 +639,8 @@ def pending_env(monkeypatch, tmp_path, gazetteer):
         c.last_run = c.last_success_at = None
         c.storage = Mock()
         c.storage.save.return_value = None
-        c.supabase_writer = None
+        c.supabase_writer = Mock()
+        c.supabase_writer.write.return_value = writer_ok
         c._fetch_all_feeds = Mock(return_value=(feed_items, 1, 0))
         c._fetch_recent_keys = Mock(return_value=(set(), []))
         c._load_gazetteer = Mock(return_value=gazetteer)
@@ -750,6 +751,33 @@ class TestPendingSpool:
 
         assert len(ok.written) == 2
         assert len(_pending_lines(tmp_path)) == 1
+
+    def test_missing_writer_keeps_annotated_in_pending(self, pending_env, tmp_path):
+        """沒有 writer（或寫入失敗）不可當成功、把已標註的移出暫存區（review F030）。"""
+        c = pending_env(_feed(1))
+        c._llm_extract_batch = Mock(return_value=({0: _annotation()}, _usage()))
+        c.supabase_writer = None
+
+        stats = c.run()
+
+        assert 'error' in stats
+        assert [r['url'] for r in _pending_lines(tmp_path)] == ['https://example.test/a0']
+
+    def test_carry_item_back_in_feed_is_not_fresh(self, pending_env, tmp_path, monkeypatch):
+        """暫存區沒輪到的項目又出現在 RSS：不當新的標註，保留原 _pending_since（review F031）。"""
+        failing = pending_env(_feed(3))
+        failing._validate_llm_config = Mock(side_effect=NewsAnnotationError('no key'))
+        failing.run()
+        before = {r['url']: r['_pending_since'] for r in _pending_lines(tmp_path)}
+        monkeypatch.setattr(config, 'NEWS_EVENTS_PENDING_REPLAY_MAX', 1)
+
+        ok = pending_env(_feed(3))  # 三則都還在 feed 上
+        ok._llm_extract_batch = Mock(side_effect=lambda batch, gaz: ({0: _annotation()}, _usage()))
+        assert 'error' not in ok.run()
+
+        assert len(ok.written) == 1
+        after = {r['url']: r['_pending_since'] for r in _pending_lines(tmp_path)}
+        assert len(after) == 2 and all(after[u] == before[u] for u in after)
 
     def test_dry_run_ignores_pending(self, pending_env, tmp_path):
         c = pending_env(_feed(1))
