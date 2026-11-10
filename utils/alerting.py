@@ -132,7 +132,10 @@ def _send(text: str) -> bool:
         return bool(_sender(text))
     try:
         from utils.notify import send_telegram
-        return send_telegram(text, parse_mode=None)
+        if send_telegram(text, parse_mode=None):
+            return True
+        # 沒設定 Telegram（HiCloud VM 子行程）不算送失敗：沒有通道，重送也沒用
+        return not (getattr(config, "TELEGRAM_BOT_TOKEN", "") and getattr(config, "TELEGRAM_CHAT_ID", ""))
     except Exception as exc:  # 通知失敗不影響主程序
         log.warning("alert 發送失敗: %s", exc)
         return False

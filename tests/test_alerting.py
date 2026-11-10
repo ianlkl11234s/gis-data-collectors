@@ -288,3 +288,12 @@ def test_mark_activity_holds_lock(monkeypatch):
     alerting.mark_success("bus", now=T0)
     alerting.mark_write("bus", 3, now=T0)
     assert SpyLock.held == 2
+
+
+def test_unconfigured_telegram_is_not_retried(monkeypatch):
+    """沒設 Telegram（VM 子行程）不算送失敗，不每輪退旗標重試。"""
+    monkeypatch.setattr(alerting, "_sender", None)
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "", raising=False)
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "", raising=False)
+    alerting.raise_alert("backup", alerting.RED, "備份失敗", now=T0)
+    assert alerting.load_state()["entries"]["backup"]["notified_red"] is True
