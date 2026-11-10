@@ -123,3 +123,33 @@ def test_pending_query_gives_up_on_old_404(monkeypatch):
     with pytest.raises(requests.HTTPError) as e:
         resp.raise_for_status()
     assert m.ERROR_404_MARK in str(e.value)
+
+
+def test_writer_clears_items_of_rerun_days(monkeypatch):
+    """重跑某日時 pla_activity_items 也要先清該日，舊的多餘 item_no 不可殘留（review F054）。"""
+    from contextlib import contextmanager
+    import storage.supabase_writer as sw
+
+    executed = []
+
+    class Cur:
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+
+    @contextmanager
+    def txn(_conn):
+        yield Cur()
+
+    monkeypatch.setattr(sw, "execute_values",
+                        lambda cur, sql, values, **k: executed.append((" ".join(sql.split())[:40], None)))
+    wr = sw.SupabaseWriter.__new__(sw.SupabaseWriter)
+    monkeypatch.setattr(wr, "_txn", txn, raising=False)
+    records = [
+        {"_type": "run", "report_date": "2026-11-01", "ok": True},
+        {"_type": "item", "report_date": "2026-11-01", "item_no": 1, "sorties": 3},
+    ]
+    wr._write_to_db(object(), "pla_tracks_vectorize", records, None)
+    sqls = [s for s, _ in executed]
+    i_del = next(i for i, s in enumerate(sqls) if s.startswith("DELETE FROM live.pla_activity_items"))
+    i_ins = next(i for i, s in enumerate(sqls) if s.startswith("INSERT INTO live.pla_activity_items"))
+    assert i_del < i_ins and executed[i_del][1] == (["2026-11-01"],)

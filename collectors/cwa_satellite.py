@@ -248,10 +248,14 @@ class CWASatelliteCollector(BaseCollector):
 
             # R2 雙寫（best-effort，需在 observed_at 轉字串前算 key）
             frame["image_key"] = self._upload_to_r2(frame, png)
-            if frame["image_key"]:
+            bbox = (frame["lon_min"], frame["lat_min"], frame["lon_max"], frame["lat_max"])
+            if frame["image_key"] and None in bbox:
+                # 範圍字串解析失敗：不列進前端幀清單（沒有 bbox 無法貼圖），DB／本地照存
+                print(f"[{self.name}]   ⚠️ {dataset_id} 範圍解析失敗，略過幀清單 {bbox}")
+            elif frame["image_key"]:
                 manifest_entries.append(frame_entry(
                     dataset_id, frame["observed_at"], frame["image_key"], frame["mime_type"], len(png),
-                    (frame["lon_min"], frame["lat_min"], frame["lon_max"], frame["lat_max"]),
+                    bbox,
                 ))
 
             # JSON-safe：image_b64 給 local storage / supabase transformer 使用

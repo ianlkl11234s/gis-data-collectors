@@ -3796,6 +3796,10 @@ class SupabaseWriter:
                     )
 
                 # 2) 表格項次（機型／架次／時段）— PK (report_date, item_no)
+                #    同樣先清該日：重跑 OCR 項次變少時，舊的多餘 item_no 不可殘留
+                if days:
+                    cur.execute("DELETE FROM live.pla_activity_items WHERE report_date = ANY(%s::date[])",
+                                (days,))
                 if items:
                     cols = ['report_date', 'item_no', 'sorties', 'kinds',
                             'is_balloon', 'balloon_count', 'time_window', 'ocr_text']
