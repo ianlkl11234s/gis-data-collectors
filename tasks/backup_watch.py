@@ -218,7 +218,8 @@ def record_run(
 def _audit_log_has_run_today(today_iso: str) -> bool | None:
     """狀態檔不存在時（新主機）的備援：查 backup_audit_log 今天有沒有「成功的」即時快照紀錄。
 
-    今天要有 realtime_snapshot 紀錄，且當天沒有任何 upload_failed（失敗的備份也會寫 audit 列）。
+    成功證據＝今天有 realtime_snapshot 的 snapshot_uploaded／skipped_empty_day 列，且當天沒有任何
+    upload_failed（失敗、略過的備份也會寫 audit 列，不能只數列數）。
     """
     if not (getattr(config, "SUPABASE_ENABLED", False) and config.SUPABASE_DB_URL):
         return None
@@ -229,7 +230,8 @@ def _audit_log_has_run_today(today_iso: str) -> bool | None:
                 cur.execute("SET statement_timeout = 15000")
                 cur.execute(
                     """
-                    SELECT count(*) FILTER (WHERE run_kind = 'realtime_snapshot'),
+                    SELECT count(*) FILTER (WHERE run_kind = 'realtime_snapshot'
+                                              AND code IN ('snapshot_uploaded', 'skipped_empty_day')),
                            count(*) FILTER (WHERE code = 'upload_failed')
                     FROM metadata.backup_audit_log
                     WHERE (run_at AT TIME ZONE 'Asia/Taipei')::date = %s::date

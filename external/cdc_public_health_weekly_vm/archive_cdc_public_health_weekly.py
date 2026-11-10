@@ -105,7 +105,10 @@ def archive_one_day(s3, day: datetime) -> str:
     if existing == len(tar_bytes):
         shutil.rmtree(date_dir, ignore_errors=True)
         return f"{date_str}: S3 已存在且大小一致 ({s3_key})，本地刪除"
-    # existing 不是 None 但大小不同：上次上傳驗證失敗留下的壞物件 → 用本地重傳
+    if existing is not None and existing > len(tar_bytes):
+        # S3 比本地大：本地可能是上次刪到一半的殘缺子集，不可拿來覆蓋，保留本地待人工看
+        raise RuntimeError(f"S3 已存在且比本地大（本地 {len(tar_bytes)}、S3 {existing}），保留本地")
+    # existing 比本地小：上次上傳驗證失敗留下的壞物件 → 用本地重傳
     s3.put_object(Bucket=BUCKET, Key=s3_key, Body=tar_bytes, ContentType="application/gzip")
     remote = s3_object_size(s3, s3_key)
     if remote != len(tar_bytes):
