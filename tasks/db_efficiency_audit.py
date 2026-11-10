@@ -89,8 +89,10 @@ def save_state(state: dict) -> None:
 def _connect():
     import psycopg2
     conn = psycopg2.connect(config.SUPABASE_DB_URL, connect_timeout=15)
-    conn.set_session(readonly=True, autocommit=False)
+    # 唯讀只設在這個交易上（psycopg2 非 autocommit，第一句會隱含 BEGIN）。
+    # 不用 conn.set_session(readonly=True)：transaction pooler 下 session 設定會漏給下一個借到連線的人。
     cur = conn.cursor()
+    cur.execute("SET TRANSACTION READ ONLY")
     cur.execute(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'")
     return conn, cur
 
@@ -292,10 +294,12 @@ def _days_label(days: float) -> str:
 
 
 def evaluate(numbers: dict, delta: dict, names: dict, window_days: float, labels: dict,
-             baseline: bool = False) -> dict:
+             baseline: bool = False, dealloc_delta: int = 0) -> dict:
     """三項判斷。回傳 {slow_rpcs, unread_tables, heavy_sql}，每項是已排序的 dict 清單。
 
-    baseline=True（第一次、只有基準沒有差值）：只做不靠差值的「沒有讀者」。"""
+    baseline=True（第一次、只有基準沒有差值）：只做不靠差值的「沒有讀者」。
+    dealloc_delta：視窗內 pg_stat_statements 擠掉的 statement 數。>0 時讀者的呼叫可能被擠掉漏算，
+    「讀者 0 次呼叫」改標不確定（unsure=True）。"""
     reader_oids = {str(o) for o in numbers["reader_oids"]}
     funcs = numbers["funcs"]
     funcs_by_name = {}
@@ -323,15 +327,19 @@ def evaluate(numbers: dict, delta: dict, names: dict, window_days: float, labels
     for table, info in sorted(targets.items()):
         readers = readers_of(table, funcs, writers)
         direct = numbers["tables"].get(table, False)
+        unsure = False
         if not readers and not direct:
             reason = "沒有讀者（前端與分析倉庫都沒有函式讀它，也不能直接讀）"
         elif readers and not direct and not baseline and not (set(readers) & called):
             reason = f"讀者 {'、'.join(readers[:2])} {_days_label(window_days)}內 0 次呼叫"
+            if dealloc_delta > 0:
+                unsure = True
+                reason += f"（不確定：期間統計被擠掉 {dealloc_delta} 筆，呼叫可能漏算）"
         else:
             continue
         unread.append({"table": table, "display": display_table(table, targets, funcs_by_name, labels),
                        "reason": reason, "jobs": info["jobs"], "schedules": info["schedules"],
-                       "readers": readers})
+                       "readers": readers, "unsure": unsure})
 
     # 3. 單一 SQL 每天磁碟讀 >1 GB
     heavy = []
@@ -399,9 +407,12 @@ def run(now: Optional[datetime] = None) -> dict:
         stats_reset = numbers["stats_reset"]
         prev = state.get("snapshot") or {}
         same_epoch = prev.get("stats_reset") == str(stats_reset) and prev.get("taken_at")
+        dealloc_delta = 0
         if same_epoch:
             since = datetime.fromisoformat(prev["taken_at"])
             delta = diff_stmts(prev.get("stmts"), numbers["stmts"])
+            # 舊狀態檔沒存 dealloc → 用 stats_reset 以來的累計（偏保守：只會多標不確定）
+            dealloc_delta = max(numbers["dealloc"] - int(prev.get("dealloc") or 0), 0)
         else:
             # 第一次（或 stats_reset 變了）只建基準：累計值含已修好的舊問題，拿來報會是假警報。
             # 不需要差值的「預算表沒有讀者」（結構判斷）照常報。
@@ -422,7 +433,8 @@ def run(now: Optional[datetime] = None) -> dict:
         conn.close()
     elapsed_ms = (time.monotonic() - t0) * 1000
 
-    findings = evaluate(numbers, delta, names, window_days, _labels(), baseline=not same_epoch)
+    findings = evaluate(numbers, delta, names, window_days, _labels(), baseline=not same_epoch,
+                        dealloc_delta=dealloc_delta)
     result = {
         "run_date": now.date().isoformat(),
         "ran_at": now.isoformat(),
@@ -437,7 +449,8 @@ def run(now: Optional[datetime] = None) -> dict:
     keep_names = {k: v for k, v in names.items()
                   if k in numbers["stmts"] or (k.startswith("text:") and k[5:] in numbers["stmts"])}
     save_state({
-        "snapshot": {"stats_reset": str(stats_reset), "taken_at": now.isoformat(), "stmts": numbers["stmts"]},
+        "snapshot": {"stats_reset": str(stats_reset), "taken_at": now.isoformat(), "stmts": numbers["stmts"],
+                     "dealloc": numbers["dealloc"]},
         "names": keep_names,
         "last": result,
     })

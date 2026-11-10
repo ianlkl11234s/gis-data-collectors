@@ -199,7 +199,7 @@ def test_connect_is_readonly_with_timeout(monkeypatch):
 
     class C:
         def set_session(self, **kw):
-            calls["session"] = kw
+            calls["session"] = kw  # 不可再用：pooler 會漏 session 設定（review F057）
 
         def cursor(self):
             class K:
@@ -211,8 +211,30 @@ def test_connect_is_readonly_with_timeout(monkeypatch):
     monkeypatch.setattr(psycopg2, "connect", lambda *a, **k: C())
     monkeypatch.setattr(audit.config, "SUPABASE_DB_URL", "postgresql://x", raising=False)
     audit._connect()
-    assert calls["session"]["readonly"] is True
-    assert "statement_timeout" in calls["sql"][0]
+    assert "session" not in calls
+    assert calls["sql"][0] == "SET TRANSACTION READ ONLY"
+    assert "SET LOCAL statement_timeout" in calls["sql"][1]
+
+
+def test_zero_calls_with_dealloc_is_unsure():
+    """視窗內有 statement 被擠掉 → 「讀者 0 次呼叫」改標不確定（review F058）。"""
+    f = audit.evaluate(_numbers({}), {}, {}, 7.0, {}, dealloc_delta=12)
+    unread = {r["table"]: r for r in f["unread_tables"]}
+    assert unread["live.baz_hourly"]["unsure"] is True and "不確定" in unread["live.baz_hourly"]["reason"]
+    assert unread["live.bar_daily"]["unsure"] is False  # 結構上沒讀者不受 dealloc 影響
+    f = audit.evaluate(_numbers({}), {}, {}, 7.0, {}, dealloc_delta=0)
+    assert all(not r["unsure"] for r in f["unread_tables"])
+
+
+def test_run_dealloc_delta_from_snapshot(monkeypatch, tmp_path):
+    monkeypatch.setattr(audit.config, "LOCAL_DATA_DIR", tmp_path)
+    monkeypatch.setattr(audit, "_labels", lambda: {})
+    cur = _Cur({f"{ANON}:2": [5, 5.0, 0]}, {2: '"public"."get_foo_day"('})
+    monkeypatch.setattr(audit, "_connect", lambda: (_Conn(), cur))
+    audit.run(now=MON)
+    assert audit.load_state()["snapshot"]["dealloc"] == 3
+    again = audit.run(now=MON + timedelta(days=7))  # _Cur 的 dealloc 固定 3 → 視窗內沒擠掉
+    assert not any("不確定" in x for x in again["lines"])
 
 
 # ── 日報併入 ─────────────────────────────────────────────────────────────────
