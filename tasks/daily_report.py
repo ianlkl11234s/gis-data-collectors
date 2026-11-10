@@ -1155,8 +1155,10 @@ class DailyReportTask:
             return 0.0
         return sum(f.stat().st_size for f in data_dir.glob('**/*') if f.is_file()) / (1024 * 1024)
 
-    def _stale_tables(self, now: datetime) -> tuple[list[tuple[str, str, int, int]], bool]:
-        """STALE／DEAD 的表，依「落後倍數」排序。回傳 ([(中文名, 表短碼, 落後分, 應每分)], 有 critical DEAD)。
+    def _stale_tables(self, now: datetime) -> tuple[list[tuple[str, str, int, int]], bool, list[str]]:
+        """STALE／DEAD 的表，依「落後倍數」排序。
+        回傳 ([(中文名, 表短碼, 落後分, 應每分)], 有 critical DEAD／從未有資料, 問題行)。
+        問題行：查詢失敗、從未有資料的表（判斷不了新鮮度，不能當正常），給「現在還壞的」。
 
         不做停更判斷的表（monitoring.stale_check_skip_reason）：
         已停用的收集器／外部 writer、事件驅動（有事件才寫；收集器有沒有在跑另由
@@ -1165,7 +1167,7 @@ class DailyReportTask:
         from tasks import monitoring
         tables = monitoring.load_realtime_tables()
         if not tables:
-            return [], False
+            return [], False, []
         try:
             cmap = monitoring.load_cross_layer_map()
         except Exception as e:
@@ -1174,21 +1176,32 @@ class DailyReportTask:
         checked = [t for t in tables if monitoring.stale_check_skip_reason(t, cmap, now) is None]
         meta = {(t["schema"], t["table"]): t for t in checked}
         rows, critical_dead = [], False
+        errored, never = [], []
         for r in monitoring.query_realtime_health(checked):
-            if r.get("error"):
-                continue
             t = meta.get((r["schema"], r["table"]))
             if t is None:
                 continue
+            code = r["table"] if r["schema"] == "live" else f"{r['schema']}.{r['table']}"
+            name = t.get("label") or code
+            if r.get("error"):
+                errored.append(name)
+                continue
             interval = t.get("expected_interval_min", 60)
             status, age = monitoring.classify_freshness(r["max_time"], interval, now)
-            if status in ("STALE", "DEAD"):
-                code = r["table"] if r["schema"] == "live" else f"{r['schema']}.{r['table']}"
+            if status == "NEVER":
+                never.append(name)
+                critical_dead = critical_dead or bool(t.get("critical"))
+            elif status in ("STALE", "DEAD"):
                 rows.append((t.get("label") or "", code, age, interval))
                 if status == "DEAD" and t.get("critical"):
                     critical_dead = True
         rows.sort(key=lambda x: x[2] / max(x[3], 1), reverse=True)
-        return rows, critical_dead
+        problems = []
+        if never:
+            problems.append(f"🟡 {len(never)} 張表從未有資料：{_clip('、'.join(never), 60)}")
+        if errored:
+            problems.append(f"🟡 {len(errored)} 張表查不到新鮮度（查詢失敗）：{_clip('、'.join(errored), 60)}")
+        return rows, critical_dead, problems
 
     def _routine_line(self, snap: dict, now: datetime) -> str:
         bits = []
@@ -1284,11 +1297,13 @@ class DailyReportTask:
             print(f"⚠️ 日報 S3 檢查失敗: {e}")
 
         try:
-            stale, critical_dead = self._stale_tables(now)
+            stale, critical_dead, freshness_problems = self._stale_tables(now)
         except Exception as e:
             print(f"⚠️ 日報新鮮度檢查失敗: {e}")
             stale, critical_dead = [], False
+            freshness_problems = [f"🟡 資料新鮮度檢查失敗（{_clip(e, 50)}）"]
         red = red or critical_dead
+        broken += freshness_problems
 
         resolved = [f"• {_clip(r.get('text') or alerting.display_name(r['name']), 60)}（中斷 {r['duration']}）"
                     for r in snap["resolved"]]

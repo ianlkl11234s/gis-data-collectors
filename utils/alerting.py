@@ -132,7 +132,10 @@ def _send(text: str) -> bool:
         return bool(_sender(text))
     try:
         from utils.notify import send_telegram
-        return send_telegram(text, parse_mode=None)
+        if send_telegram(text, parse_mode=None):
+            return True
+        # 沒設定 Telegram（HiCloud VM 子行程）不算送失敗：沒有通道，重送也沒用
+        return not (getattr(config, "TELEGRAM_BOT_TOKEN", "") and getattr(config, "TELEGRAM_CHAT_ID", ""))
     except Exception as exc:  # 通知失敗不影響主程序
         log.warning("alert 發送失敗: %s", exc)
         return False
@@ -220,13 +223,15 @@ def display_name(name: str) -> str:
 
 def mark_success(name: str, now: Optional[datetime] = None) -> None:
     """收集器一次成功執行（collectors/base.py）。只寫記憶體。"""
-    _ACTIVITY.setdefault(name, {})["success"] = _now(now)
+    with _LOCK:  # activity_snapshot 在別的 thread 迭代 _ACTIVITY
+        _ACTIVITY.setdefault(name, {})["success"] = _now(now)
 
 
 def mark_write(name: str, rows: int, now: Optional[datetime] = None) -> None:
     """收集器成功寫入 Supabase ≥1 筆（storage/supabase_writer.py、aisstream worker）。只寫記憶體。"""
     if rows and rows > 0:
-        _ACTIVITY.setdefault(name, {})["write"] = _now(now)
+        with _LOCK:
+            _ACTIVITY.setdefault(name, {})["write"] = _now(now)
 
 
 def mark_db_result(ok: bool, now: Optional[datetime] = None) -> None:
@@ -324,7 +329,7 @@ def raise_alert(key: str, level: str, text: str, *, now: Optional[datetime] = No
     recovery=False：恢復時不送通知（例：watchdog 這類單次事件）。
     """
     now = _now(now)
-    to_send: list[str] = []
+    to_send: list[tuple[str, str]] = []  # (訊息, 送出失敗時要退回的旗標)
     with _LOCK:
         state = load_state()
         entry = state["entries"].get(key)
@@ -336,26 +341,28 @@ def raise_alert(key: str, level: str, text: str, *, now: Optional[datetime] = No
             transition = "alerting"
             if level == RED:
                 entry["notified_red"] = True
-                to_send.append(f"🔴 {text}{_instance_tag()}")
+                to_send.append((f"🔴 {text}{_instance_tag()}", "notified_red"))
         else:
             transition = None
-            if level == RED and entry.get("level") != RED:
+            if level == RED and (entry.get("level") != RED or not entry.get("notified_red")):
+                # 🟡→🔴 升級，或上次 🔴 沒送出去（Telegram 失敗）→ 這輪重送
                 entry["notified_red"] = True
-                to_send.append(f"🔴 {text}{_instance_tag()}")
+                to_send.append((f"🔴 {text}{_instance_tag()}", "notified_red"))
                 transition = "escalated"
             elif level == RED:
                 if _still_down_due(entry, now):
                     entry["still_down_sent"] = True
                     first = _parse(entry.get("first_seen")) or now
-                    to_send.append(f"⏳ 仍未恢復（已 {_fmt_duration(now - first)}）：{entry.get('last_text') or key}"
-                                   f"{_instance_tag()}\n之後只在每日日報列出，恢復時會再通知。")
+                    to_send.append((f"⏳ 仍未恢復（已 {_fmt_duration(now - first)}）：{entry.get('last_text') or key}"
+                                    f"{_instance_tag()}\n之後只在每日日報列出，恢復時會再通知。", "still_down_sent"))
             entry["level"] = level  # 🔴→🟡 降級不送訊息，但 notified_red 保留，恢復時照送
         entry["last_seen"] = now.isoformat()
         entry["last_text"] = _short(text, 300)
         entry["recovery"] = recovery
         save_state(state)
-    for msg in to_send:
-        _send(msg)
+    failed = [flag for msg, flag in to_send if not _send(msg)]
+    if failed:
+        _unmark(key, failed)
     return transition
 
 
@@ -429,6 +436,18 @@ def _record_resolved(state: dict, key: str, entry: dict, now: datetime) -> None:
     })
 
 
+def _unmark(key: str, flags: list[str]) -> None:
+    """訊息沒送出去（Telegram 失敗）→ 旗標退回，下一輪重送。"""
+    with _LOCK:
+        state = load_state()
+        entry = state["entries"].get(key)
+        if entry is None:
+            return
+        for flag in flags:
+            entry[flag] = False
+        save_state(state)
+
+
 def _still_down_due(entry: dict, now: datetime) -> bool:
     if entry.get("level") != RED or not entry.get("notified_red") or entry.get("still_down_sent"):
         return False
@@ -498,7 +517,10 @@ def update_staleness(findings: list[dict], now: Optional[datetime] = None) -> li
             entry = entries.get(key)
             line = _stale_line(f, now)
             if f.get("stale"):
-                if entry is None:
+                if entry is not None and not entry.get("notified_red"):
+                    entry["notified_red"] = True  # 上次 🔴 沒送出去 → 這輪重送
+                    started.append((name, line))
+                elif entry is None:
                     first = f.get("last_at") or now
                     entry = entries[key] = {
                         "state": "alerting", "kind": "stale", "name": name, "level": RED,
@@ -523,28 +545,36 @@ def update_staleness(findings: list[dict], now: Optional[datetime] = None) -> li
 
     tag = _instance_tag()
     messages: list[str] = []
+    retry: list[tuple[list[str], str]] = []  # 與 messages 對應：送失敗要退回旗標的 key
     if len(started) == 1:
         name, line = started[0]
         messages.append(f"🔴 收集器疑似壞掉：{display_name(name)}{tag}\n{line}\n"
                         "恢復（又有新資料）時會再通知一則；持續中不重送。")
+        retry.append(([f"stale:{name}"], "notified_red"))
     elif started:
         lines = [f"🔴 {len(started)} 支收集器疑似壞掉（太久沒有新資料）{tag}"]
         lines += [f"• {display_name(n)}：{line}" for n, line in started]
         lines.append("恢復時會再通知；持續中不重送。")
         messages.append("\n".join(lines))
+        retry.append(([f"stale:{n}" for n, _ in started], "notified_red"))
     if len(recovered) == 1:
         name, dur = recovered[0]
         messages.append(f"✅ {display_name(name)} 恢復，又有新資料（中斷約 {dur}）{tag}")
+        retry.append(([], ""))
     elif recovered:
         lines = [f"✅ {len(recovered)} 支收集器恢復，又有新資料{tag}"]
         lines += [f"• {display_name(n)}（中斷約 {d}）" for n, d in recovered]
         messages.append("\n".join(lines))
+        retry.append(([], ""))
     if still:
         names = "、".join(display_name(n) for n in still)
         messages.append(f"⏳ 通報後已超過 {config.ALERT_STILL_DOWN_HOURS:g} 小時仍未恢復：{names}{tag}\n"
                         "之後只在每日日報列出，恢復時會再通知。")
-    for msg in messages:
-        _send(msg)
+        retry.append(([f"stale:{n}" for n in still], "still_down_sent"))
+    for msg, (keys, flag) in zip(messages, retry):
+        if not _send(msg) and flag:
+            for key in keys:
+                _unmark(key, [flag])
     return messages
 
 

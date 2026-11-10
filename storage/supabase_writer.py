@@ -175,6 +175,8 @@ class SupabaseWriter:
 
     # DB 寫入連續錯誤追蹤（跨 collector 共用）
     _db_consecutive_errors: dict[str, int] = {}
+    # 本行程已成功寫入過的 collector（__init__ 會換成 instance 自己的 set）
+    _db_ok_seen: set[str] = set()
 
     # History dedup 的每日 heartbeat：collector_name -> 上次全量寫入 history 的
     # 台北日期。同一台北日只需第一輪全量，其餘走正常 dedup；跨到新的一天
@@ -189,6 +191,8 @@ class SupabaseWriter:
         self._pool = SupabaseConnectionPool()
         # 只保護 _db_consecutive_errors dict 的 increment/reset 短臨界區
         self._err_lock = threading.Lock()
+        # 本行程已成功寫入過的 collector（第一次成功時清掉持久化的 db 失敗標記）
+        self._db_ok_seen: set[str] = set()
         BUFFER_DIR.mkdir(parents=True, exist_ok=True)
 
     def health_snapshot(self) -> dict:
@@ -292,10 +296,14 @@ class SupabaseWriter:
             alerting.mark_write(collector_name, len(records))
             alerting.mark_db_result(True)
             # 連續錯誤計數重置；恢復通知由 alerting 決定（與收集失敗共用 collector:<name>）
+            # 重啟後記憶體計數歸零，但 alert_state.json 可能還留著上個行程的 db 失敗：
+            # 本行程第一次成功也要清（collector_succeeded 沒有該失敗時是 no-op）
             with self._err_lock:
                 prev_errors = self._db_consecutive_errors.get(collector_name, 0)
                 self._db_consecutive_errors[collector_name] = 0
-            if prev_errors:
+                first_ok = collector_name not in self._db_ok_seen
+                self._db_ok_seen.add(collector_name)
+            if prev_errors or first_ok:
                 try:
                     alerting.collector_succeeded(collector_name, reason='db')
                 except Exception as alert_err:
@@ -3788,6 +3796,16 @@ class SupabaseWriter:
                     )
 
                 # 2) 表格項次（機型／架次／時段）— PK (report_date, item_no)
+                #    同樣先清該日：重跑 OCR 項次變少時，舊的多餘 item_no 不可殘留。
+                #    只清表格 OCR 成功（items_ok）的日子：OCR 拋例外或版型不認得時沒有新項次，
+                #    清了就把舊的機型／架次刪光且補不回 → 保留舊項次。
+                item_days = sorted({r['report_date'] for r in runs if r.get('items_ok') is True})
+                skipped = [d for d in days if d not in item_days]
+                if skipped:
+                    logger.warning(f"[pla_tracks_vectorize] 表格 OCR 未成功，保留舊項次: {skipped}")
+                if item_days:
+                    cur.execute("DELETE FROM live.pla_activity_items WHERE report_date = ANY(%s::date[])",
+                                (item_days,))
                 if items:
                     cols = ['report_date', 'item_no', 'sorties', 'kinds',
                             'is_balloon', 'balloon_count', 'time_window', 'ocr_text']

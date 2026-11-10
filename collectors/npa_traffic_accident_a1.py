@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -86,6 +87,11 @@ def _hash(date: str, time: str, location: str, party_order: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:32]
 
 
+# data.gov.tw metadata 查詢：暫時性失敗重試（2、4 秒退避），都失敗才退回寫死網址
+META_ATTEMPTS = 3
+META_BACKOFF_SEC = 2
+
+
 class NpaTrafficAccidentA1Collector(BaseCollector):
     """警政署即時 A1 交通事故收集器（每日 1-2 次足夠，cumulative dedup）"""
 
@@ -102,15 +108,22 @@ class NpaTrafficAccidentA1Collector(BaseCollector):
         self._session.verify = False
 
     def _resolve_url(self) -> str:
-        try:
-            resp = self._session.get(DATASET_META_URL, timeout=config.REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            url = _pick_download_url(resp.json())
-            if url:
-                return url
-            print(f"[{self.name}] ⚠ data.gov.tw {DATASET_NID} 沒有 JSON resource，退回寫死網址")
-        except (requests.RequestException, ValueError) as exc:
-            print(f"[{self.name}] ⚠ data.gov.tw {DATASET_NID} 查詢失敗（{exc}），退回寫死網址")
+        for attempt in range(1, META_ATTEMPTS + 1):
+            try:
+                resp = self._session.get(DATASET_META_URL, timeout=config.REQUEST_TIMEOUT)
+                resp.raise_for_status()
+                url = _pick_download_url(resp.json())
+                if url:
+                    return url
+                print(f"[{self.name}] ⚠ data.gov.tw {DATASET_NID} 沒有 JSON resource，退回寫死網址")
+                return A1_URL
+            except (requests.RequestException, ValueError) as exc:
+                if attempt < META_ATTEMPTS:
+                    wait = META_BACKOFF_SEC * 2 ** (attempt - 1)
+                    print(f"[{self.name}] ⚠ data.gov.tw {DATASET_NID} 查詢失敗（{exc}），{wait} 秒後重試")
+                    time.sleep(wait)
+                    continue
+                print(f"[{self.name}] ⚠ data.gov.tw {DATASET_NID} 查詢失敗 {META_ATTEMPTS} 次（{exc}），退回寫死網址")
         return A1_URL
 
     def _fetch(self) -> dict:

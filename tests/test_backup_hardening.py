@@ -150,6 +150,53 @@ def test_watchdog_fresh_host_falls_back_to_audit_log(watch_env):
     assert backup_watch.check_today(now=now, notify=sent.append, audit_fallback=lambda d: None) == "alerted"
 
 
+def test_dry_run_success_does_not_count_as_backup(watch_env):
+    """BACKUP_DRY_RUN 沒寫 S3：不記成功、不壓掉 watchdog（review F015）。"""
+    sent = watch_env
+    t = datetime(2026, 11, 8, 3, 40, tzinfo=TPE)
+    backup_watch.record_run(_ok_result(dry_run=True), now=t, notify=sent.append)
+    st = backup_watch.load_state()
+    assert "last_success_date" not in st and "last_status" not in st
+    assert backup_watch.check_today(now=t.replace(hour=6, minute=30), notify=sent.append,
+                                    audit_fallback=lambda d: None) == "alerted"
+
+
+def test_dry_run_after_failure_sends_no_recovery(watch_env):
+    sent = watch_env
+    t = datetime(2026, 11, 8, 3, 40, tzinfo=TPE)
+    backup_watch.record_run(_ok_result(s3_ready=False), now=t, notify=sent.append)
+    backup_watch.record_run(_ok_result(dry_run=True), now=t + timedelta(hours=1), notify=sent.append)
+    assert len(sent) == 1 and backup_watch.load_state()["last_status"] == "failed"
+
+
+def test_audit_fallback_requires_no_upload_failures(watch_env, monkeypatch):
+    """新主機 fallback：今天有 realtime 紀錄但有 upload_failed → 不算成功（review F013）。"""
+    rows = {"v": (5, 0)}
+
+    class Cur:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, params=None):
+            if "backup_audit_log" in sql:
+                assert "snapshot_uploaded" in sql and "upload_failed" in sql
+        def fetchone(self): return rows["v"]
+
+    class Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def cursor(self): return Cur()
+
+    import psycopg2
+    monkeypatch.setattr(psycopg2, "connect", lambda *a, **k: Conn())
+    monkeypatch.setattr(config, "SUPABASE_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "SUPABASE_DB_URL", "postgresql://example", raising=False)
+    assert backup_watch._audit_log_has_run_today("2026-11-08") is True
+    rows["v"] = (5, 2)
+    assert backup_watch._audit_log_has_run_today("2026-11-08") is False
+    rows["v"] = (0, 0)
+    assert backup_watch._audit_log_has_run_today("2026-11-08") is False
+
+
 def test_watchdog_disabled_instance_never_alerts(watch_env, monkeypatch):
     monkeypatch.setattr(config, "BACKUP_ENABLED", False)
     assert backup_watch.check_today(notify=watch_env.append) == "disabled"
@@ -405,9 +452,35 @@ def test_cdc_archive_existing_key_is_not_overwritten(tmp_path, monkeypatch):
     monkeypatch.setattr(cdc_archive, "BUCKET", "bucket")
     day = datetime(2026, 11, 5, tzinfo=cdc_archive.TAIPEI_TZ)
     d = _day_dir(tmp_path, day)
-    s3 = _FakeS3Client({"cdc_public_health_weekly/archives/2026-11-05.tar.gz": b"x"})
+    same_size = b"x" * len(cdc_archive.pack_date(d))
+    s3 = _FakeS3Client({"cdc_public_health_weekly/archives/2026-11-05.tar.gz": same_size})
     assert "已存在" in cdc_archive.archive_one_day(s3, day)
     assert s3.puts == [] and not d.exists()
+
+
+def test_cdc_archive_existing_bad_object_is_reuploaded(tmp_path, monkeypatch):
+    """S3 已有物件但大小不符（上次驗證失敗留下的壞物件）→ 重傳，不可直接刪本地（review F014）。"""
+    monkeypatch.setattr(cdc_archive, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cdc_archive, "BUCKET", "bucket")
+    day = datetime(2026, 11, 5, tzinfo=cdc_archive.TAIPEI_TZ)
+    d = _day_dir(tmp_path, day)
+    key = "cdc_public_health_weekly/archives/2026-11-05.tar.gz"
+    s3 = _FakeS3Client({key: b"x"})
+    assert "上傳 1 檔" in cdc_archive.archive_one_day(s3, day)
+    assert s3.puts == [key] and len(s3.objects[key]) > 1 and not d.exists()
+
+
+def test_cdc_archive_existing_larger_object_keeps_local(tmp_path, monkeypatch):
+    """S3 比本地大（本地可能是刪到一半的殘缺子集）→ 不覆蓋、保留本地。"""
+    monkeypatch.setattr(cdc_archive, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cdc_archive, "BUCKET", "bucket")
+    day = datetime(2026, 11, 5, tzinfo=cdc_archive.TAIPEI_TZ)
+    d = _day_dir(tmp_path, day)
+    key = "cdc_public_health_weekly/archives/2026-11-05.tar.gz"
+    s3 = _FakeS3Client({key: b"x" * 100000})
+    with pytest.raises(RuntimeError):
+        cdc_archive.archive_one_day(s3, day)
+    assert s3.puts == [] and d.exists()
 
 
 def test_cdc_archive_size_mismatch_keeps_local(tmp_path, monkeypatch):

@@ -44,9 +44,29 @@ def test_resolve_url_uses_data_gov_tw():
     assert c._resolve_url() == NEW_URL
 
 
-def test_resolve_url_falls_back_on_error():
+def test_resolve_url_falls_back_on_error(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(a1.time, "sleep", sleeps.append)
+
     def boom(*a, **k):
         raise requests.ConnectionError("down")
     c = _collector_with(boom)
     assert c._resolve_url() == a1.A1_URL
+    assert c._session.get.call_count == a1.META_ATTEMPTS and sleeps == [2, 4]
     assert "A3C4A73F" not in a1.A1_URL  # 舊 resource 已凍結，不可再當退路
+
+
+def test_resolve_url_retries_transient_error(monkeypatch):
+    """單次 metadata 失敗不直接退回寫死網址（review F038）。"""
+    monkeypatch.setattr(a1.time, "sleep", lambda s: None)
+    resp = MagicMock()
+    resp.json.return_value = _meta({"resourceFormat": "JSON", "resourceDownloadUrl": NEW_URL})
+    calls = iter([requests.Timeout("slow"), resp])
+
+    def get(*a, **k):
+        r = next(calls)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    c = _collector_with(get)
+    assert c._resolve_url() == NEW_URL

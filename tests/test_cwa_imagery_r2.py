@@ -129,3 +129,18 @@ def test_double_write_r2_success(collector):
     assert args[0] == 'imagery/cwa/O-A0058-005/20260407/081000.png'
     assert args[1] == b'FAKE-PNG-BYTES'
     assert args[2] == 'image/png'
+
+
+def test_unparsable_range_skips_manifest_but_keeps_frame(collector, monkeypatch):
+    """範圍解析失敗（bbox 有 None）→ 不進幀清單，但整輪不中止、frame 照寫（review F016）。"""
+    bad = dict(collector._extract_frame('O-A0058-005', {}), lon_min=None, lon_max=None)
+    monkeypatch.setattr(collector, '_extract_frame', lambda ds, payload: dict(bad))
+    published = []
+    monkeypatch.setattr('collectors.cwa_satellite.publish_frames',
+                        lambda r2, src, entries, **k: published.append(list(entries)))
+    collector._r2 = MagicMock()
+
+    result = collector.collect()
+
+    assert result['frame_count'] == 1 and result['data'][0]['image_b64']
+    assert published == [[]]

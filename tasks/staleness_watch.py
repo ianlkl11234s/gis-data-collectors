@@ -118,7 +118,8 @@ class StalenessWatch:
                 f"資料庫連不上：收集器寫入 Supabase 已 {mins} 分鐘沒有一次成功"
                 f"（期間失敗 {db.get('fails_since_ok', 0)} 次，資料先暫存 buffer）", now=now)
             return []  # DB 斷線期間不判斷個別收集器停更
-        if db.get("ok") is not None:
+        ok, fail = _aware(db.get("ok")), _aware(db.get("fail"))
+        if ok is not None and (fail is None or ok > fail):  # 最後一次失敗之後真的有成功寫入才算恢復
             alerting.clear_alert("db_down", "資料庫寫入", now=now)
 
         tables = monitoring.load_realtime_tables()

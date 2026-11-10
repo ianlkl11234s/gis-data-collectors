@@ -309,3 +309,25 @@ def test_stale_collector_listed_once_in_daily(monkeypatch, tmp_path):
     report = task._build_compact_report(now=NOW)
     assert report.count("youbike") == 1, report
     assert "🔴 收集器 youbike 已 2 小時 55 分沒有新資料" in report, report
+
+
+def test_freshness_query_error_and_never_are_problems(monkeypatch, tmp_path):
+    """查詢失敗、從未有資料的表不可當成正常（review F051）。"""
+    task = _setup(monkeypatch, tmp_path, problems=False)
+    tables = [
+        {"schema": "live", "table": "bus_positions", "expected_interval_min": 2, "critical": True,
+         "label": "雙北公車位置"},
+        {"schema": "live", "table": "ship_positions", "expected_interval_min": 5, "label": "船舶位置"},
+        {"schema": "live", "table": "youbike_status", "expected_interval_min": 5},
+    ]
+    monkeypatch.setattr(monitoring, "load_realtime_tables", lambda: tables)
+    monkeypatch.setattr(monitoring, "query_realtime_health", lambda *_: [
+        {"schema": "live", "table": "bus_positions", "max_time": None, "error": None},
+        {"schema": "live", "table": "ship_positions", "max_time": None, "error": "timeout"},
+        {"schema": "live", "table": "youbike_status", "max_time": NOW, "error": None},
+    ])
+    report = task._build_compact_report(now=NOW)
+    assert "✅ 一切正常" not in report
+    assert "🔴" in report.splitlines()[1]  # critical 表從未有資料
+    assert "1 張表從未有資料：雙北公車位置" in report
+    assert "1 張表查不到新鮮度（查詢失敗）：船舶位置" in report

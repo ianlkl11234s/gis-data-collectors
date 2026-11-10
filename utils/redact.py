@@ -1,4 +1,4 @@
-"""錯誤訊息脫敏：遮掉 URL query 中的金鑰類參數值與 Bearer token。
+"""錯誤訊息脫敏：遮掉 URL query 中的金鑰類參數值、URI 帳密（scheme://user:pw@host）與 Bearer token。
 
 requests 的 HTTPError 訊息含完整 URL（例如 ?Authorization=<key>&format=JSON），
 不可原樣 print、通知或寫進 collector_status。
@@ -14,6 +14,8 @@ _QUERY_SECRET = re.compile(
     r"password|passwd|signature|key|sig|auth)[\w.\-]*)=(?P<val>[^&\s'\")#]*)",
     re.IGNORECASE,
 )
+# scheme://userinfo@host：DB 連線字串（postgresql://user:pw@host）、https://TOKEN@host 等，整段 userinfo 遮掉
+_URI_USERINFO = re.compile(r"(?i)\b(?P<scheme>[a-z][a-z0-9+.\-]*://)(?!<REDACTED>@)[^\s/@'\"<>]*(?::[^\s@'\"<>]*)?@")
 _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{8,}")
 _HEADER = re.compile(
     r"(?i)\b(authorization|x-api-key|api-key)(\s*[:=]\s*)(?!<REDACTED>)[^\s,;'\"}]+(?:\s+[A-Za-z0-9._~+/=\-]{8,})?"
@@ -25,6 +27,7 @@ def redact_secrets(text) -> str:
     if text is None:
         return ""
     s = str(text)
+    s = _URI_USERINFO.sub(lambda m: f"{m.group('scheme')}{REDACTED}@", s)
     s = _QUERY_SECRET.sub(lambda m: f"{m.group('pre')}{m.group('name')}={REDACTED}", s)
     s = _BEARER.sub(lambda m: f"{m.group(1)} {REDACTED}", s)
     s = _HEADER.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", s)

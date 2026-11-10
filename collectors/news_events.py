@@ -615,9 +615,15 @@ class NewsEventsCollector(BaseCollector):
             logger.warning(f"[{self.name}] 讀取近 {self.DEDUP_WINDOW_DAYS} 天去重集合失敗: {e}")
             return set(), []
 
-    def _dedup(self, items: list[dict]) -> tuple[list[dict], dict]:
-        """兩層去重：url_norm（DB + 同批）→ simhash hamming <= 3（DB + 同批）"""
+    def _dedup(self, items: list[dict], exclude: list[dict] = ()) -> tuple[list[dict], dict]:
+        """兩層去重：url_norm（DB + 同批）→ simhash hamming <= 3（DB + 同批）
+
+        exclude：仍留在暫存區、本輪沒輪到補標的項目（carry）。RSS 又出現同一則時不能當新的
+        再標一次，也不能讓它蓋掉暫存區原本的 _pending_since。
+        """
         seen_urls, seen_hashes = self._fetch_recent_keys()
+        seen_urls = set(seen_urls)
+        seen_urls.update(u for u in (normalize_url(it.get('url', '')) for it in exclude) if u)
         stats = {'dup_url': 0, 'dup_simhash': 0}
 
         fresh: list[dict] = []
@@ -992,6 +998,10 @@ class NewsEventsCollector(BaseCollector):
             return 0
         return len(rows)
 
+    def require_db_write(self) -> bool:
+        # 寫入失敗（或沒有 writer）必須讓整輪失敗：run() 只在成功時才把已標註的移出暫存區
+        return True
+
     def run(self) -> dict:
         self._pending_keep_after_write = None
         stats = super().run()
@@ -1021,7 +1031,7 @@ class NewsEventsCollector(BaseCollector):
         if pending:
             print(f"   待標註暫存區 {len(pending)} 則，本輪補標 {len(replay)} 則")
 
-        fresh, dedup_stats = self._dedup(replay + all_items)
+        fresh, dedup_stats = self._dedup(replay + all_items, exclude=carry)
         print(
             f"   去重後新項目 {len(fresh)} 則 "
             f"(url 重複 {dedup_stats['dup_url']} / simhash 重複 {dedup_stats['dup_simhash']})"

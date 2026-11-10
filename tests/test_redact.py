@@ -43,3 +43,18 @@ def test_run_redacts_print_notify_and_heartbeat(mock_notify, capsys):
     assert "CWA-SECRET-123" not in mock_notify.call_args.args[1]
     assert "CWA-SECRET-123" not in capsys.readouterr().out
     assert calls and "CWA-SECRET-123" not in calls[0][3]
+
+
+def test_uri_userinfo_redacted():
+    """review F011：連線字串的帳密要遮。"""
+    for raw, secret in (
+        ("connection failed: postgresql://postgres.abc:S3cr3t-pw@pooler.example.com:6543/postgres", "S3cr3t-pw"),
+        ("redis://:only-pass@cache.example:6379/0", "only-pass"),
+        ("git fetch https://ghp_TOKEN123@github.example/x.git", "ghp_TOKEN123"),
+        ("postgresql://u:pa/ss@h/db", "pa/ss"),
+    ):
+        out = redact_secrets(raw)
+        assert secret not in out, out
+        assert f"://{REDACTED}@" in out
+    assert redact_secrets("see https://host.example/path?a=1") == "see https://host.example/path?a=1"
+    assert redact_secrets(redact_secrets("x postgresql://u:p@h/db")) == f"x postgresql://{REDACTED}@h/db"

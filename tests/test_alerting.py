@@ -232,3 +232,68 @@ def test_daily_buckets_pruned_to_three_days(sent):
     for d in range(6):
         alerting.collector_failed("bus", "x", interval_minutes=2, now=T0 + timedelta(days=d))
     assert len(alerting.load_state()["daily"]) == 3
+
+
+# ── 送出失敗要重送（review F048）、_ACTIVITY 取鎖（F053）──────────
+
+def test_generic_red_send_failure_retries_next_round(monkeypatch):
+    out, ok = [], {"v": False}
+    monkeypatch.setattr(alerting, "_sender", lambda text: out.append(text) or ok["v"])
+    alerting.raise_alert("backup", alerting.RED, "備份失敗", now=T0)
+    assert len(out) == 1
+    assert alerting.load_state()["entries"]["backup"]["notified_red"] is False
+    ok["v"] = True
+    alerting.raise_alert("backup", alerting.RED, "備份失敗", now=T0 + timedelta(minutes=10))
+    assert len(out) == 2 and out[1].startswith("🔴 備份失敗")
+    alerting.raise_alert("backup", alerting.RED, "備份失敗", now=T0 + timedelta(minutes=20))
+    assert len(out) == 2  # 送成功後不再重送
+
+
+def test_still_down_send_failure_retries(monkeypatch, sent):
+    alerting.raise_alert("backup", alerting.RED, "備份失敗", now=T0)
+    monkeypatch.setattr(alerting, "_sender", lambda text: sent.append(text) and False)
+    alerting.raise_alert("backup", alerting.RED, "備份失敗", now=T0 + timedelta(hours=25))
+    assert alerting.load_state()["entries"]["backup"]["still_down_sent"] is False
+    monkeypatch.setattr(alerting, "_sender", lambda text: sent.append(text) or True)
+    alerting.raise_alert("backup", alerting.RED, "備份失敗", now=T0 + timedelta(hours=26))
+    alerting.raise_alert("backup", alerting.RED, "備份失敗", now=T0 + timedelta(hours=27))
+    assert [m[:1] for m in sent] == ["🔴", "⏳", "⏳"]
+
+
+def test_stale_red_send_failure_retries_next_round(monkeypatch):
+    out, ok = [], {"v": False}
+    monkeypatch.setattr(alerting, "_sender", lambda text: out.append(text) or ok["v"])
+    f = {"name": "bus", "stale": True, "basis": "write", "threshold_min": 30,
+         "last_at": T0 - timedelta(hours=1)}
+    alerting.update_staleness([f], now=T0)
+    assert alerting.load_state()["entries"]["stale:bus"]["notified_red"] is False
+    ok["v"] = True
+    alerting.update_staleness([f], now=T0 + timedelta(minutes=15))
+    assert len(out) == 2 and out[1].startswith("🔴 收集器疑似壞掉：bus")
+    alerting.update_staleness([f], now=T0 + timedelta(minutes=30))
+    assert len(out) == 2
+
+
+def test_mark_activity_holds_lock(monkeypatch):
+    class SpyLock:
+        held = 0
+
+        def __enter__(self):
+            SpyLock.held += 1
+
+        def __exit__(self, *a):
+            return False
+    monkeypatch.setattr(alerting, "_LOCK", SpyLock())
+    monkeypatch.setattr(alerting, "_ACTIVITY", {})
+    alerting.mark_success("bus", now=T0)
+    alerting.mark_write("bus", 3, now=T0)
+    assert SpyLock.held == 2
+
+
+def test_unconfigured_telegram_is_not_retried(monkeypatch):
+    """沒設 Telegram（VM 子行程）不算送失敗，不每輪退旗標重試。"""
+    monkeypatch.setattr(alerting, "_sender", None)
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "", raising=False)
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "", raising=False)
+    alerting.raise_alert("backup", alerting.RED, "備份失敗", now=T0)
+    assert alerting.load_state()["entries"]["backup"]["notified_red"] is True

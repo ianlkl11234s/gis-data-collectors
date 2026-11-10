@@ -310,3 +310,41 @@ def test_writer_records_write_and_db_result(monkeypatch):
     monkeypatch.setattr(wr, "_record_db_error", lambda *_: None, raising=False)
     assert wr.write("youbike", {"data": [1]}, NOW) is False
     assert alerting.activity_snapshot()[1]["fails_since_ok"] == 1
+
+
+def test_db_down_not_cleared_without_success_after_last_failure(sent, watch_env):
+    """失敗滿 DB_DOWN_MIN 後 _db_down 回 False，但最後失敗之後沒有成功 → 不可宣告恢復（review F052）。"""
+    w = StalenessWatch([], now=DAY_AGO)
+    alerting.mark_db_result(True, now=NOW)
+    for k in range(1, 40):
+        alerting.mark_db_result(False, now=NOW + timedelta(minutes=k))
+    w.run(now=NOW + timedelta(minutes=45))
+    assert len(sent) == 1 and sent[0].startswith("🔴 資料庫連不上")
+    w.run(now=NOW + timedelta(minutes=39 + 31))  # 最後失敗已超過 30 分、仍無成功
+    assert len(sent) == 1 and "db_down" in alerting.load_state()["entries"]
+
+
+def test_writer_first_success_after_restart_clears_persisted_db_failure(monkeypatch):
+    """重啟後記憶體錯誤計數是 0，第一次成功也要清掉 alert_state 裡的 db 失敗（review F050）。"""
+    import threading
+    from contextlib import contextmanager
+    from storage.supabase_writer import SupabaseWriter
+    monkeypatch.setattr(alerting, "_ACTIVITY", {})
+    for i in range(5):
+        alerting.collector_failed("youbike", "db down", reason="db", interval_minutes=15,
+                                  now=NOW + timedelta(minutes=15 * i))
+    assert "collector:youbike" in alerting.load_state()["entries"]
+    wr = SupabaseWriter.__new__(SupabaseWriter)
+    wr._err_lock = threading.Lock()
+    wr._db_consecutive_errors = {}
+    wr._db_ok_seen = set()
+
+    @contextmanager
+    def borrow(*_a, **_k):
+        yield object()
+    wr._pool = SimpleNamespace(borrow=borrow)
+    monkeypatch.setattr(wr, "_transform", lambda *a: [{"x": 1}], raising=False)
+    monkeypatch.setattr(wr, "_write_to_db", lambda *a: None, raising=False)
+    monkeypatch.setattr(wr, "_report_heartbeat", lambda *a, **k: None, raising=False)
+    assert wr.write("youbike", {"data": [1]}, NOW) is True
+    assert "collector:youbike" not in alerting.load_state()["entries"]
