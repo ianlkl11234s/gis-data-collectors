@@ -38,6 +38,8 @@ ssh <vm> 'sudo cp /opt/cdc-public-health/cdc_public_health_weekly_collect.py{,.b
 scp cdc_public_health_weekly_collect.py archive_cdc_public_health_weekly.py setup_cron.sh ../vm_common/bulk.py <vm>:~/cdc-vm/
 ssh <vm>
 diff ~/cdc-vm/cdc_public_health_weekly_collect.py /opt/cdc-public-health/cdc_public_health_weekly_collect.py
+# bulk.py 要先裝：collector 一 import 就會讀它（放同目錄）
+cp ~/cdc-vm/bulk.py /opt/cdc-public-health/
 cp ~/cdc-vm/cdc_public_health_weekly_collect.py ~/cdc-vm/archive_cdc_public_health_weekly.py /opt/cdc-public-health/
 /opt/cdc-public-health/venv/bin/pip install --quiet boto3
 # 1. .env 補 S3_BUCKET／S3_REGION／S3_ACCESS_KEY／S3_SECRET_KEY（只填值，不要 cat 出來）

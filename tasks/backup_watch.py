@@ -176,6 +176,12 @@ def record_run(
         ok, problems = evaluate(result)
         problems = [_redact(p) for p in problems]
 
+    if ok and isinstance(result, dict) and result.get("dry_run"):
+        # BACKUP_DRY_RUN：沒有真的寫 S3，不能算今天備份成功（否則 watchdog 被壓掉）
+        state["last_dry_run_at"] = now.isoformat()
+        save_state(state)
+        return state
+
     prev_status = state.get("last_status")
     state["last_run_at"] = now.isoformat()
     state["last_status"] = "ok" if ok else "failed"
@@ -210,7 +216,10 @@ def record_run(
 
 
 def _audit_log_has_run_today(today_iso: str) -> bool | None:
-    """狀態檔不存在時（新主機）的備援：查 backup_audit_log 今天有沒有即時快照紀錄。"""
+    """狀態檔不存在時（新主機）的備援：查 backup_audit_log 今天有沒有「成功的」即時快照紀錄。
+
+    今天要有 realtime_snapshot 紀錄，且當天沒有任何 upload_failed（失敗的備份也會寫 audit 列）。
+    """
     if not (getattr(config, "SUPABASE_ENABLED", False) and config.SUPABASE_DB_URL):
         return None
     try:
@@ -220,13 +229,15 @@ def _audit_log_has_run_today(today_iso: str) -> bool | None:
                 cur.execute("SET statement_timeout = 15000")
                 cur.execute(
                     """
-                    SELECT count(*) FROM metadata.backup_audit_log
-                    WHERE run_kind = 'realtime_snapshot'
-                      AND (run_at AT TIME ZONE 'Asia/Taipei')::date = %s::date
+                    SELECT count(*) FILTER (WHERE run_kind = 'realtime_snapshot'),
+                           count(*) FILTER (WHERE code = 'upload_failed')
+                    FROM metadata.backup_audit_log
+                    WHERE (run_at AT TIME ZONE 'Asia/Taipei')::date = %s::date
                     """,
                     (today_iso,),
                 )
-                return cur.fetchone()[0] > 0
+                realtime_rows, failed_rows = cur.fetchone()
+                return realtime_rows > 0 and failed_rows == 0
     except Exception as exc:
         log.warning("backup watch 查 audit log 失敗: %s", exc)
         return None

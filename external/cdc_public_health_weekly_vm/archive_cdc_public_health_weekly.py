@@ -100,11 +100,12 @@ def archive_one_day(s3, day: datetime) -> str:
         return f"{date_str}: 空目錄，已刪"
 
     s3_key = f"{COLLECTOR}/archives/{date_str}.tar.gz"
-    if s3_object_size(s3, s3_key) is not None:
-        shutil.rmtree(date_dir, ignore_errors=True)
-        return f"{date_str}: S3 已存在 ({s3_key})，本地刪除"
-
     tar_bytes = pack_date(date_dir)
+    existing = s3_object_size(s3, s3_key)
+    if existing == len(tar_bytes):
+        shutil.rmtree(date_dir, ignore_errors=True)
+        return f"{date_str}: S3 已存在且大小一致 ({s3_key})，本地刪除"
+    # existing 不是 None 但大小不同：上次上傳驗證失敗留下的壞物件 → 用本地重傳
     s3.put_object(Bucket=BUCKET, Key=s3_key, Body=tar_bytes, ContentType="application/gzip")
     remote = s3_object_size(s3, s3_key)
     if remote != len(tar_bytes):
