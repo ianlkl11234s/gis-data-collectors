@@ -3796,10 +3796,16 @@ class SupabaseWriter:
                     )
 
                 # 2) 表格項次（機型／架次／時段）— PK (report_date, item_no)
-                #    同樣先清該日：重跑 OCR 項次變少時，舊的多餘 item_no 不可殘留
-                if days:
+                #    同樣先清該日：重跑 OCR 項次變少時，舊的多餘 item_no 不可殘留。
+                #    只清表格 OCR 成功（items_ok）的日子：OCR 拋例外或版型不認得時沒有新項次，
+                #    清了就把舊的機型／架次刪光且補不回 → 保留舊項次。
+                item_days = sorted({r['report_date'] for r in runs if r.get('items_ok') is True})
+                skipped = [d for d in days if d not in item_days]
+                if skipped:
+                    logger.warning(f"[pla_tracks_vectorize] 表格 OCR 未成功，保留舊項次: {skipped}")
+                if item_days:
                     cur.execute("DELETE FROM live.pla_activity_items WHERE report_date = ANY(%s::date[])",
-                                (days,))
+                                (item_days,))
                 if items:
                     cols = ['report_date', 'item_no', 'sorties', 'kinds',
                             'is_balloon', 'balloon_count', 'time_window', 'ocr_text']

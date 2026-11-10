@@ -125,8 +125,7 @@ def test_pending_query_gives_up_on_old_404(monkeypatch):
     assert m.ERROR_404_MARK in str(e.value)
 
 
-def test_writer_clears_items_of_rerun_days(monkeypatch):
-    """重跑某日時 pla_activity_items 也要先清該日，舊的多餘 item_no 不可殘留（review F054）。"""
+def _run_writer(monkeypatch, records):
     from contextlib import contextmanager
     import storage.supabase_writer as sw
 
@@ -144,12 +143,63 @@ def test_writer_clears_items_of_rerun_days(monkeypatch):
                         lambda cur, sql, values, **k: executed.append((" ".join(sql.split())[:40], None)))
     wr = sw.SupabaseWriter.__new__(sw.SupabaseWriter)
     monkeypatch.setattr(wr, "_txn", txn, raising=False)
+    wr._write_to_db(object(), "pla_tracks_vectorize", records, None)
+    return executed
+
+
+def test_writer_clears_items_of_rerun_days(monkeypatch):
+    """重跑某日時 pla_activity_items 也要先清該日，舊的多餘 item_no 不可殘留（review F054）。"""
     records = [
-        {"_type": "run", "report_date": "2026-11-01", "ok": True},
+        {"_type": "run", "report_date": "2026-11-01", "ok": True, "items_ok": True},
         {"_type": "item", "report_date": "2026-11-01", "item_no": 1, "sorties": 3},
     ]
-    wr._write_to_db(object(), "pla_tracks_vectorize", records, None)
+    executed = _run_writer(monkeypatch, records)
     sqls = [s for s, _ in executed]
     i_del = next(i for i, s in enumerate(sqls) if s.startswith("DELETE FROM live.pla_activity_items"))
     i_ins = next(i for i, s in enumerate(sqls) if s.startswith("INSERT INTO live.pla_activity_items"))
     assert i_del < i_ins and executed[i_del][1] == (["2026-11-01"],)
+
+
+def test_writer_keeps_items_when_ocr_failed(monkeypatch):
+    """表格 OCR 失敗（items_ok=False）的日子不可清項次，否則重跑會把舊機型／架次刪光；
+    同批 OCR 成功（含表格為空）的日子照常清除重寫。"""
+    records = [
+        {"_type": "run", "report_date": "2026-11-01", "ok": True, "items_ok": False},
+        {"_type": "run", "report_date": "2026-11-02", "ok": True, "items_ok": True},
+    ]
+    executed = _run_writer(monkeypatch, records)
+    dels = [p for s, p in executed if s.startswith("DELETE FROM live.pla_activity_items")]
+    assert dels == [(["2026-11-02"],)]
+    # 形狀照舊兩天都清
+    shape_dels = [p for s, p in executed if s.startswith("DELETE FROM spatial.pla_tracks ")]
+    assert shape_dels == [(["2026-11-01", "2026-11-02"],)]
+
+
+def _fake_vectorize(monkeypatch, read_items):
+    from collectors.pla_tracks import georef, items
+    import collectors.pla_tracks_vectorize as m
+
+    monkeypatch.setattr(georef, "vectorize_day", lambda img_dir, d: {
+        "plate_ok": True, "plate_size": (720, 1040), "georef_dev": 0.0, "expected": 1,
+        "shapes": [], "balloon_items": 0, "guided": False, "ok": True,
+        "edge_precision": None, "red_recall": None})
+    monkeypatch.setattr(items, "read_day_items", read_items)
+    col = m.PlaTracksVectorizeCollector.__new__(m.PlaTracksVectorizeCollector)
+    col.name = "pla_tracks_vectorize"
+    return col.vectorize_records("2026-11-01", "/nonexistent", None)
+
+
+def test_vectorize_marks_ocr_failure(monkeypatch):
+    def boom(img_dir, d):
+        raise RuntimeError("tesseract died")
+    recs = _fake_vectorize(monkeypatch, boom)
+    assert recs[0]["items_ok"] is False
+    assert not [r for r in recs if r["_type"] == "item"]
+
+
+def test_vectorize_marks_ocr_success_even_if_empty(monkeypatch):
+    recs = _fake_vectorize(monkeypatch, lambda img_dir, d: [])
+    assert recs[0]["items_ok"] is True
+    recs = _fake_vectorize(monkeypatch, lambda img_dir, d: [{"report_date": "2026-11-01", "item_no": 1}])
+    assert recs[0]["items_ok"] is True
+    assert [r["item_no"] for r in recs if r["_type"] == "item"] == [1]

@@ -184,6 +184,9 @@ class PlaTracksVectorizeCollector(BaseCollector):
             'red_recall': result['red_recall'],
             'chart_s3_key': s3_key,
             'error': None,
+            # 表格 OCR 是否跑完（沒拋例外）。writer 只對 True 的日子「先清項次再重寫」，
+            # 否則重跑時 OCR 失敗會把舊的機型／架次刪光。不寫進 ledger。
+            'items_ok': False,
         }]
         if not result['plate_ok']:
             # 版型不認得 —— 不產形狀也不讀表格，交給告警處理
@@ -209,11 +212,13 @@ class PlaTracksVectorizeCollector(BaseCollector):
             })
 
         try:
-            for row in read_day_items(img_dir, report_date):
-                records.append({'_type': 'item', **row})
+            item_rows = list(read_day_items(img_dir, report_date))
         except Exception as e:
-            # 表格 OCR 失敗只損失機型維度，形狀照樣入庫
-            print(f"[{self.name}] ⚠ {report_date} 表格 OCR 失敗: {type(e).__name__}: {e}")
+            # 表格 OCR 失敗只損失機型維度，形狀照樣入庫；該日舊項次保留不刪
+            print(f"[{self.name}] ⚠ {report_date} 表格 OCR 失敗，保留舊項次: {type(e).__name__}: {e}")
+        else:
+            records.extend({'_type': 'item', **row} for row in item_rows)
+            records[0]['items_ok'] = True
 
         return records
 
