@@ -979,6 +979,10 @@ class BackupSupabaseTask:
                 continue
 
             if not dates:
+                if not self._is_known_collector(collector):
+                    # 未登記又沒有任何歸檔 → 是 bucket 上別的用途的前綴，不是收集器（2026-11-12）
+                    skipped.append(f"{collector}(非收集器前綴)")
+                    continue
                 msg = f"collector {collector} archives/ 目錄為空"
                 self._audit(
                     run_kind="reconcile",
@@ -1063,8 +1067,39 @@ class BackupSupabaseTask:
         interval_days = -(-interval_min // 1440)  # ceil
         return max(self._ARCHIVE_LAG_DEFAULT_DAYS, interval_days + 1), None
 
+    # S3 bucket 頂層不是收集器歸檔的前綴（不做 archive freshness 檢查）。
+    # 2026-11-12 起補上後 9 個：之前每天各報一則「archives/ 目錄為空」missing_s3。
+    _NON_COLLECTOR_S3_PREFIXES = frozenset({
+        'supabase-snapshots', 'deploy-assets', 'flight-arc',
+        'mini-taipei', 'pulse-db', 'rail-data',
+        'supabase-export',     # 退役表整表冷存（collectors/launch.py、cross_layer_map 註解）
+        'trails',              # scripts/export_daily_trails.py 的每日軌跡匯出
+        'events',              # earthquake_shakemap_grid 的事件 JSON（events/shakemap/）
+        'migration',           # 主機搬遷的一次性打包（gis-agent-system zeabur-migration cutover_stage.py）
+        'warehouse-archive',   # pulse-data 倉庫舊版歸檔（mini-pulse-gis-mcp warehouse/README）
+        'archives',            # analytics／mini 的 sha256 手動備份（ADR-0019）
+        # 以下三個是 analytics 本機資料的手動上傳（gis-agent-system 2026-11-07 S3 盤點）
+        'manual-backups',
+        'source-archives',
+        'real_estate',
+    })
+
+    def _is_known_collector(self, name: str) -> bool:
+        """registry 有登記，或在 _ARCHIVE_LAG_BY_COLLECTOR 明列的才算收集器。"""
+        if name in self._ARCHIVE_LAG_BY_COLLECTOR:
+            return True
+        try:
+            from collectors.registry import get_entry_by_name
+            return get_entry_by_name(name) is not None
+        except Exception:
+            return True  # registry 載入失敗時寧可照舊告警
+
     def _list_archive_collectors_from_s3(self) -> list[str]:
-        """掃 S3 top-level，回傳所有有 archives/ 子目錄的 collector 名稱"""
+        """掃 S3 top-level，回傳可能是 collector 歸檔的前綴名稱。
+
+        已知的非收集器前綴直接排除；其他未登記前綴若 archives/ 為空，
+        由 _check_archive_freshness 略過（不寫 audit），有歸檔的照常檢查。
+        """
         if not self.s3 or not self.s3.s3:
             return []
         paginator = self.s3.s3.get_paginator('list_objects_v2')
@@ -1072,11 +1107,7 @@ class BackupSupabaseTask:
         for page in paginator.paginate(Bucket=self.s3.bucket, Delimiter='/'):
             for prefix in page.get('CommonPrefixes', []):
                 name = prefix['Prefix'].rstrip('/')
-                # 排除非 collector 目錄
-                if name.startswith('_') or name in (
-                    'supabase-snapshots', 'deploy-assets', 'flight-arc',
-                    'mini-taipei', 'pulse-db', 'rail-data',
-                ):
+                if name.startswith('_') or name in self._NON_COLLECTOR_S3_PREFIXES:
                     continue
                 collectors.add(name)
         return sorted(collectors)
@@ -1186,20 +1217,27 @@ class BackupSupabaseTask:
                     severity_counts["ok"] += 1
 
         # 4. 反向檢查 A：backup_state 有，但 DB 沒有（孤兒記錄）
-        for qualified in state_table_set:
-            if qualified not in db_table_set:
-                schema, table = qualified.split(".", 1)
-                msg = f"backup_state 記錄 {qualified} 在 DB 已不存在"
-                print(f"   ⚠️  {msg}")
-                self._audit(
-                    run_kind="reconcile",
-                    schema_name=schema,
-                    table_name=table,
-                    severity="warn",
-                    code="orphan_in_manifest",
-                    message=msg,
-                )
-                severity_counts["warn"] += 1
+        # 首次發現記 warn（可能是誤刪）；之前已報過的（多半是刻意刪表）降為 info，不再每天重複告警。
+        # 狀態紀錄本身不在排程裡刪：刪 metadata.backup_state 是寫入正式資料，要使用者拍板。
+        orphans = sorted(q for q in state_table_set if q not in db_table_set)
+        known_orphans = self._previously_reported_orphans() if orphans else set()
+        for qualified in orphans:
+            schema, table = qualified.split(".", 1)
+            first_seen = qualified not in known_orphans
+            msg = f"backup_state 記錄 {qualified} 在 DB 已不存在"
+            if not first_seen:
+                msg += "（先前已報過）"
+            print(f"   {'⚠️ ' if first_seen else 'ℹ️ '} {msg}")
+            severity = "warn" if first_seen else "info"
+            self._audit(
+                run_kind="reconcile",
+                schema_name=schema,
+                table_name=table,
+                severity=severity,
+                code="orphan_in_manifest",
+                message=msg,
+            )
+            severity_counts[severity] += 1
 
         # 5. 反向檢查 B：DB 有但既無 backup_state 也不在排除清單的新表
         for schema, table in all_tables_in_db:
@@ -1358,6 +1396,29 @@ class BackupSupabaseTask:
                 return cur.fetchone()[0] == 0
         except Exception:
             return False
+
+    def _previously_reported_orphans(self) -> set[str]:
+        """之前 reconcile 已記過 orphan_in_manifest 的 schema.table（audit log 保留 90 天內）。
+
+        降級為 info 後每天仍寫一筆 info，所以只要孤兒紀錄還在，就一直落在 90 天窗內。
+        必須在本輪 _flush_audit 之前呼叫；查詢失敗回空集合（全部照首次發現記 warn）。
+        """
+        if not self.db_conn:
+            return set()
+        try:
+            with self._cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT schema_name, table_name
+                    FROM   metadata.backup_audit_log
+                    WHERE  run_at > now() - interval '90 days'
+                      AND  code = 'orphan_in_manifest'
+                    """
+                )
+                return {f"{row[0]}.{row[1]}" for row in cur.fetchall()}
+        except Exception as exc:
+            print(f"   ⚠️  無法讀取先前的孤兒紀錄（全部照首次發現告警）: {exc}")
+            return set()
 
     def _get_all_backup_state_tables(self) -> set[str]:
         """讀 metadata.backup_state，回傳所有已知 schema.table 集合。"""

@@ -68,9 +68,12 @@ python3 /opt/external-health/health_report.py
   data_dir: /var/lib/new-collector/data/new_collector
   outbound:
     - {label: source_api, host: api.example.gov.tw, path: /endpoint}
+  run_pattern: '\[INFO\] snapshot → |\[ERROR\] FAILED: '   # 每輪恰好命中一行
   success_pattern: 'Supabase 寫入: (\d+) 筆'
   expected_interval_min: 5
 ```
+
+`run_pattern` 要挑「每一輪恰好印一行」的 log（成功與抓取失敗各一種），不能用每個城市各印一行的訊息。
 
 ## 維運
 
@@ -84,4 +87,5 @@ tail -f /var/log/external-health/health.log     # 每天 07:00 一段
 
 - snapshot 是「自己看自己」，VM 死透就不會 push。Zeabur 端用「snapshot age > 26h → 失聯」反推
 - 真要 ultra-paranoid 應該再加外部 ping（例如 Cloudflare cron Worker），但目前過剩
-- log 分析寫死 `[INFO] Supabase 寫入: ...` regex，collector 改變 log 格式要同步更新
+- log 分析靠各 target 的 `run_pattern`／`success_pattern`，collector 改 log 文字要同步更新（`tests/test_vm_health_log_parse.py` 從收集器原始碼取樣本行，改了會紅）
+- 有 logrotate 留下的 `collect.log.1`（或 `.1.gz`）時會一併讀，否則每日輪替後 07:00 只看得到午夜後 7 小時；snapshot 的 `earliest_log_at` 遠晚於 24 小時前代表 log 被截斷
