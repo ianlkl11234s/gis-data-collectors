@@ -228,9 +228,9 @@ def analyze_log(log_path: str, success_pattern: str, run_pattern: str | None = N
                 now: datetime | None = None) -> dict:
     """統計過去 24h 的 runs / success / last_success / last_count。
 
-    logrotate（daily + copytruncate + delaycompress）在午夜輪替，07:00 時 collect.log
-    只有當天 7 小時；前一天在 collect.log.1（或已壓縮的 .1.gz），所以兩個都讀，
-    再用 24h cutoff 濾掉更早的行。
+    若 VM 設了 logrotate（_vm_template/logrotate.example：daily + copytruncate），
+    07:00 時 collect.log 只有午夜後的 7 小時，前一天在 collect.log.1（或 .1.gz）。
+    所以輪替檔存在就一起讀，再用 24h cutoff 濾掉更早的行；沒有輪替檔就只讀本檔。
     """
     p = Path(log_path)
     if not p.exists():

@@ -21,10 +21,6 @@ def _task():
     return task
 
 
-def _codes(task):
-    return [(a["severity"], a["code"], a["details"]) for a in task.audit_buf]
-
-
 def test_unregistered_empty_prefix_is_not_a_collector():
     yesterday = (datetime.now(TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
     task = _task()

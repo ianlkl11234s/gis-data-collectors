@@ -88,4 +88,4 @@ tail -f /var/log/external-health/health.log     # 每天 07:00 一段
 - snapshot 是「自己看自己」，VM 死透就不會 push。Zeabur 端用「snapshot age > 26h → 失聯」反推
 - 真要 ultra-paranoid 應該再加外部 ping（例如 Cloudflare cron Worker），但目前過剩
 - log 分析靠各 target 的 `run_pattern`／`success_pattern`，collector 改 log 文字要同步更新（`tests/test_vm_health_log_parse.py` 從收集器原始碼取樣本行，改了會紅）
-- 會一併讀 logrotate 留下的 `collect.log.1`（或 `.1.gz`），否則 07:00 只看得到午夜後 7 小時；snapshot 的 `earliest_log_at` 遠晚於 24 小時前代表 log 被截斷
+- 有 logrotate 留下的 `collect.log.1`（或 `.1.gz`）時會一併讀，否則每日輪替後 07:00 只看得到午夜後 7 小時；snapshot 的 `earliest_log_at` 遠晚於 24 小時前代表 log 被截斷
