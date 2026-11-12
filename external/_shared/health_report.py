@@ -25,6 +25,7 @@
 """
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import re
@@ -66,6 +67,8 @@ DEFAULT_TARGETS: list[dict] = [
         "outbound": [
             {"label": "mpbais", "host": "mpbais.motcmpb.gov.tw", "path": "/aismpb/tools/geojsonais.ashx"},
         ],
+        # run_pattern：每一輪恰好命中一行（成功抓到或抓取失敗），對照 ship_ais_collect.py main()
+        "run_pattern": r"\[INFO\] 抓到 \d+ 艘船|\[ERROR\] FAILED: ",
         "success_pattern": r"Supabase 寫入: history=(\d+)",
         "expected_interval_min": 10,
     },
@@ -78,7 +81,10 @@ DEFAULT_TARGETS: list[dict] = [
             {"label": "ntpc",      "host": "data.ntpc.gov.tw",    "path": "/"},
             {"label": "tainan",    "host": "soa.tainan.gov.tw",   "path": "/"},
         ],
-        "success_pattern": r"Supabase 寫入: (\d+) 筆",
+        # 每城市各印一行，不能拿城市行算輪數；snapshot 行／FAILED 每輪恰好一行（quiet_hours 不算一輪）
+        "run_pattern": r"\[INFO\] snapshot → |\[ERROR\] FAILED: ",
+        # 收集器印「Supabase 送出: N 筆」；保留舊字樣「寫入」相容舊版
+        "success_pattern": r"Supabase (?:送出|寫入): (\d+) 筆",
         "expected_interval_min": 2,
     },
     {
@@ -88,7 +94,10 @@ DEFAULT_TARGETS: list[dict] = [
         "outbound": [
             {"label": "isohe_tp_wave", "host": "isohe.ihmt.gov.tw", "path": "/opendata/Wave?port=TP&format=JSON"},
         ],
-        "success_pattern": r"Supabase 寫入: stations=(\d+) readings=\d+",
+        "run_pattern": r"\[INFO\] Fetched stations=|\[ERROR\] Fetch or local snapshot failed"
+                       r"|\[ERROR\] Another collect run still holds the lock",
+        # 收集器印「readings_sent=a/b」（舊版 readings=）；本輪已由 buffer 補寫也算成功（沒有筆數）
+        "success_pattern": r"Supabase 寫入: stations=(\d+) readings(?:_sent)?=|Current batch was already written by buffer flush",
         "expected_interval_min": 10,
     },
 ]
@@ -205,26 +214,44 @@ def system_metrics() -> dict:
 # Collector log 分析（過去 24h）
 # ────────────────────────────────────────────────────────────────────
 LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s")
+# 舊版共用的輪數標記（沒有 run_pattern 的自訂 target 才用）
+LEGACY_RUN_PATTERN = r"\[INFO\] (抓到|高雄市|新北市|臺南市|開始)"
 
 
-def analyze_log(log_path: str, success_pattern: str) -> dict:
-    """tail 過去 24h 行數，統計 runs / success / last_success / last_count"""
+def _read_lines(path: Path) -> list[str]:
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", encoding="utf-8", errors="replace") as f:
+        return f.readlines()
+
+
+def analyze_log(log_path: str, success_pattern: str, run_pattern: str | None = None,
+                now: datetime | None = None) -> dict:
+    """統計過去 24h 的 runs / success / last_success / last_count。
+
+    logrotate（daily + copytruncate + delaycompress）在午夜輪替，07:00 時 collect.log
+    只有當天 7 小時；前一天在 collect.log.1（或已壓縮的 .1.gz），所以兩個都讀，
+    再用 24h cutoff 濾掉更早的行。
+    """
     p = Path(log_path)
     if not p.exists():
         return {"error": "log file not found"}
 
-    cutoff = datetime.now(TAIPEI_TZ) - timedelta(hours=24)
+    cutoff = (now or datetime.now(TAIPEI_TZ)) - timedelta(hours=24)
     runs = 0
     successes = 0
     last_success_at = None
     last_count = None
+    earliest_ts = None
     success_re = re.compile(success_pattern)
-    started_marker = re.compile(r"\[INFO\] (抓到|高雄市|新北市|臺南市|開始)")
+    run_re = re.compile(run_pattern or LEGACY_RUN_PATTERN)
 
     try:
-        with open(p, encoding="utf-8", errors="replace") as f:
-            # 簡單 tail：log 一天 < 100KB，直接讀全檔
-            lines = f.readlines()
+        lines: list[str] = []
+        for rotated in (Path(f"{log_path}.1"), Path(f"{log_path}.1.gz")):
+            if rotated.exists():
+                lines.extend(_read_lines(rotated))
+                break
+        lines.extend(_read_lines(p))
         for line in lines:
             m = LOG_TS_RE.match(line)
             if not m:
@@ -235,16 +262,16 @@ def analyze_log(log_path: str, success_pattern: str) -> dict:
                 continue
             if ts < cutoff:
                 continue
-            if started_marker.search(line):
+            if earliest_ts is None:
+                earliest_ts = ts
+            if run_re.search(line):
                 runs += 1
             sm = success_re.search(line)
             if sm:
                 successes += 1
                 last_success_at = ts
-                try:
-                    last_count = int(sm.group(1))
-                except (IndexError, ValueError):
-                    last_count = None
+                count = next((g for g in sm.groups() if g is not None), None)
+                last_count = int(count) if count is not None and count.isdigit() else None
     except Exception as exc:
         return {"error": f"log parse failed: {exc}"}
 
@@ -253,6 +280,8 @@ def analyze_log(log_path: str, success_pattern: str) -> dict:
         "success_24h": successes,
         "last_success_at": last_success_at.isoformat() if last_success_at else None,
         "last_count": last_count,
+        # 24h 窗內解析到的最早一行：遠晚於 cutoff 代表 log 被截斷／輪替，runs 會偏低
+        "earliest_log_at": earliest_ts.isoformat() if earliest_ts else None,
     }
 
 
@@ -312,7 +341,7 @@ def build_snapshot() -> dict:
     collectors_report: dict[str, dict] = {}
     outbound_report: dict[str, dict] = {}
     for t in targets:
-        c = analyze_log(t["log_path"], t["success_pattern"])
+        c = analyze_log(t["log_path"], t["success_pattern"], t.get("run_pattern"))
         c["snapshot_dir_mb"] = dir_size_mb(t["data_dir"])
         c["expected_interval_min"] = t.get("expected_interval_min")
         collectors_report[t["name"]] = c
