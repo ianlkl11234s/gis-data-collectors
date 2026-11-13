@@ -278,7 +278,7 @@ class PrecipitationRasterCollector(BaseCollector):
         # R2 每日幀清單（前端讀這份，不再經 DB RPC；best-effort）
         publish_frames(self._r2, "precip", manifest_entries, log_prefix="[precipitation_raster]   ")
 
-        return {
+        result = {
             "data":          frames,
             "fetch_time":    now.isoformat(),
             "frame_count":   len(frames),
@@ -286,6 +286,9 @@ class PrecipitationRasterCollector(BaseCollector):
             "ch_list":       self.ch_list,
             "errors":        errors,
         }
+        if not frames and errors:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result["_collector_error"] = f"0 幀且 {len(errors)} 個頻道失敗: " + "; ".join(errors)[:500]
+        return result
 
 
 # ============================================================

@@ -110,7 +110,7 @@ class YouBikeCollector(BaseCollector):
         print(f"\n   📊 總計: {total_stations} 站 | "
               f"可借 {total_bikes:,} | 空位 {total_spaces:,}")
 
-        return {
+        result = {
             'fetch_time': fetch_time.isoformat(),
             'total_stations': total_stations,
             'total_bikes': total_bikes,
@@ -118,3 +118,7 @@ class YouBikeCollector(BaseCollector):
             'by_city': city_stats,
             'data': all_stations
         }
+        failed = [c for c, s in city_stats.items() if 'error' in s]
+        if not all_stations and failed:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result['_collector_error'] = f"0 筆且 {len(failed)} 城市抓取失敗: {failed}"
+        return result

@@ -287,9 +287,13 @@ class WastePositionsCollector(BaseCollector):
         active = sum(1 for s in city_stats.values() if 'error' not in s)
         print(f"\n   📊 總計: {total} 筆，{active}/{len(self.cities)} 城市成功")
 
-        return {
+        result = {
             'fetch_time': fetch_time.isoformat(),
             'total': total,
             'by_city': city_stats,
             'data': all_records,
         }
+        failed = [c for c, s in city_stats.items() if 'error' in s]
+        if not all_records and failed:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result['_collector_error'] = f"0 筆且 {len(failed)} 城市抓取失敗: {failed}"
+        return result

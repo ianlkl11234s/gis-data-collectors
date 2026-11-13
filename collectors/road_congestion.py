@@ -119,10 +119,14 @@ class RoadCongestionCollector(BaseCollector):
         valid = sum(1 for s in all_sections if (s['travel_time'] or -99) >= 0)
         print(f"\n   📊 路況總計: {total} 段 ({valid} 有及時資料)")
 
-        return {
+        result = {
             'fetch_time': fetch_time.isoformat(),
             'total_sections': total,
             'valid_sections': valid,
             'by_variant': stats,
             'data': all_sections,
         }
+        failed = [k for k, s in stats.items() if 'error' in s]
+        if not all_sections and failed:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result['_collector_error'] = f"0 筆且 {len(failed)} 來源抓取失敗: {failed}"
+        return result

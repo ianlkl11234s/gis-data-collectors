@@ -230,12 +230,14 @@ class CWASatelliteCollector(BaseCollector):
         frames: list[dict] = []
         total_bytes = 0
         manifest_entries: list[dict] = []
+        failed: list[str] = []
 
         for dataset_id in self.datasets:
             try:
                 payload = self._fetch_metadata(dataset_id)
             except Exception as e:
                 print(f"[{self.name}]   ✗ {dataset_id} metadata 抓取失敗: {e}")
+                failed.append(dataset_id)
                 continue
 
             frame = self._extract_frame(dataset_id, payload)
@@ -244,6 +246,7 @@ class CWASatelliteCollector(BaseCollector):
 
             png = self._download_png(frame["product_url"])
             if not png:
+                failed.append(dataset_id)  # _download_png 吞了例外回 None
                 continue
 
             # R2 雙寫（best-effort，需在 observed_at 轉字串前算 key）
@@ -273,10 +276,13 @@ class CWASatelliteCollector(BaseCollector):
         # R2 每日幀清單（前端讀這份，不再經 DB RPC；best-effort）
         publish_frames(self._r2, "cwa", manifest_entries, log_prefix=f"[{self.name}]   ")
 
-        return {
+        result = {
             "fetch_time": fetch_time.strftime("%Y-%m-%dT%H:%M:%S"),
             "frame_count": len(frames),
             "total_bytes": total_bytes,
             "datasets": self.datasets,
             "data": frames,
         }
+        if not frames and failed:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result["_collector_error"] = f"0 幀且 {len(failed)} 個資料集抓取失敗: {failed}"
+        return result

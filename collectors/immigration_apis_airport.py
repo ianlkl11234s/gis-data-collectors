@@ -117,10 +117,13 @@ class ImmigrationApisAirportCollector(BaseCollector):
                 })
             endpoint_stats[code] = sum(1 for r in rows if _int(r.get("paxCnt", 0)))
 
-        return {
+        result = {
             "data":           records,
             "row_count":      len(records),
             "endpoint_stats": endpoint_stats,
             "failed":         failed,
             "collected_at":   now.isoformat(),
         }
+        if not records and failed:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result["_collector_error"] = f"0 筆且 {len(failed)} 個端點抓取失敗: {failed}"
+        return result

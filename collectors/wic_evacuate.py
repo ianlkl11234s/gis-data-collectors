@@ -126,6 +126,7 @@ class WicEvacuateCollector(BaseCollector):
                 "total_stations": 0,
                 "total_status": 0,
                 "error": str(e)[:200],
+                "_collector_error": f"擷取失敗：{str(e)[:200]}",  # 因例外而空 → 本輪算失敗、不寫成功心跳
                 "collected_at": now.isoformat(),
             }
 

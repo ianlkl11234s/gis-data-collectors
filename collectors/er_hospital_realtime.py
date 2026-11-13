@@ -113,6 +113,7 @@ class ERHospitalRealtimeCollector(BaseCollector):
 
         hosp: dict[str, dict] = {}      # hosp_id -> row（去重，後寫覆蓋）
         combos_with_data = 0
+        fetch_failures = 0
         for a in areas:
             area_code = (a.get("value") or "").strip()
             if not area_code:           # 跳過「請選擇」
@@ -125,6 +126,7 @@ class ERHospitalRealtimeCollector(BaseCollector):
                                    {"AREA_NO": area_code, "CONT_TYPE": level_code})
                 except requests.RequestException as e:
                     print(f"[{self.name}] ⚠ {area_name}/{level_map.get(level_code)} 抓取失敗: {e}")
+                    fetch_failures += 1
                     continue
                 observed_at = _parse_sysdate(r.get("sysdate")) or now
                 rows = r.get("data", []) or []
@@ -137,9 +139,12 @@ class ERHospitalRealtimeCollector(BaseCollector):
                         hosp[n["hosp_id"]] = n
 
         rows = list(hosp.values())
-        return {
+        result = {
             "data":           rows,
             "hospital_count": len(rows),
             "combo_count":    combos_with_data,
             "collected_at":   now.isoformat(),
         }
+        if not rows and fetch_failures:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result["_collector_error"] = f"0 筆且 {fetch_failures} 組縣市／層級抓取失敗"
+        return result

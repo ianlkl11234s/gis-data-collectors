@@ -75,7 +75,7 @@
 5. 結果帶 `_collector_error` → 視為失敗（完整快照型 collector 用它把失敗寫成 ledger，[principles W-09](principles.md)）。
 6. 成功：更新 in-memory 的 `last_run`／`last_success_at`，`consecutive_errors` 歸零，交給 `utils/alerting.py` 清掉失敗（送過 🔴 的才送恢復）。失敗：`consecutive_errors` 加一，交給 `utils/alerting.py` 計數（持久化在 `alert_state.json`，達門檻才告警；規則見 [operations.md](operations.md) §1）。
 
-第 4 點和 writer 的「零筆不寫心跳」合起來，就是 [operations.md](operations.md)「三個盲點」裡的兩個。
+第 4 點和 writer 的「零筆不寫心跳」合起來，就是 [operations.md](operations.md)「三個盲點」裡的兩個。零筆那個已在 2026-11-13 修掉（見 §4.5）；collect() 吞例外後回空結果的收集器要帶 `_collector_error`，否則會被記成 0 筆成功。
 
 ## 4. SupabaseWriter：寫入層
 
@@ -133,7 +133,7 @@
 
 - 成功寫入後，在同一條連線上開**獨立交易**呼叫 `report_collector_heartbeat(name, success, records, error)`，寫進 `metadata.collector_status`。心跳失敗只回滾心跳本身，例外吞掉。
 - 寫入失敗時用短逾時（1 秒）另借一條連線回報失敗心跳，借不到就放棄。
-- **零筆時 `write()` 在心跳之前就 return**，`last_success_at` 不會更新（見 [operations.md](operations.md)「三個盲點」）。
+- 零筆時（2026-11-13 起）：有 transformer 且 result 沒帶 `_collector_error` → 回報成功心跳（records=0，不算「新資料」）；帶 `_collector_error` → 不報成功，`run()` 因 writer 已呼叫也不補報失敗，這輪 `collector_status` 不動；沒有 transformer 的 collector（`tra_static`、`parking_ref`、`waste_match`、`global_climate_bake`）任何筆數都不經 writer 報成功，只有 collect() 拋例外時由 `run()` 報失敗（`satellite_passes_daily` 自報）。
 - 2026-10-16 起（gis-platform `migrations/465_heartbeat_clear_last_error_on_success.sql`）成功心跳會清掉舊的 `last_error`；之前成功時會保留上一次的錯誤。
 
 ### 4.6 亂碼防護 allowlist

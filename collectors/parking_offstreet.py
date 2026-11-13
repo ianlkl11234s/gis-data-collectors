@@ -128,9 +128,13 @@ class ParkingOffStreetCollector(BaseCollector):
         total = len(all_lots)
         print(f"\n   📊 OffStreet 總計: {total} 場館")
 
-        return {
+        result = {
             'fetch_time': self._fetch_time.isoformat(),
             'total_lots': total,
             'by_variant': stats,
             'data': all_lots,
         }
+        failed = [k for k, s in stats.items() if 'error' in s]
+        if not all_lots and failed:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result['_collector_error'] = f"0 筆且 {len(failed)} 來源抓取失敗: {failed}"
+        return result
