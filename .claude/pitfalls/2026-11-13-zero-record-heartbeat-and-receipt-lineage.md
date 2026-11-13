@@ -39,10 +39,24 @@ pulse-host log 從 03:05 起每 5 分一次：`Buffer 重試失敗：global_even
 
 ### 那個 buffer 檔
 
-payload 裡已經寫死 NULL，修程式救不了它。`flush_buffer` 對超過 `BUFFER_MAX_AGE_DAYS` 的檔會自動丟棄，所以不會無限重試。同一 batch 已由後一輪寫入，人工移除不會丟資料。
+payload 裡已經寫死 NULL，修程式救不了它。當時 `flush_buffer` 只會在超過 `BUFFER_MAX_AGE_DAYS`（3 天）後丟棄，期間每 5 分鐘重試失敗一次。同一 batch 已由後一輪寫入，人工移除不會丟資料。
+
+### 後續：資料不合法的 buffer 檔改為隔離（同日）
+
+`flush_buffer` 補寫失敗時先用 `classify_invalid_data_error()` 分類，只有資料庫明確回報「資料本身不合法」才隔離：
+
+- 依 `pgcode`：23514（CHECK）、23502（NOT NULL）、22P02、22007、22003、42804。拿不到 `pgcode` 才比對英文訊息。
+- 23514 另要求帶 constraint 名或訊息寫明 check constraint，且訊息不含 partition，因為分區表「找不到分區」也是 23514，屬暫時性問題。
+- 逾時、連線中斷、鎖等待、唯一鍵、外鍵、權限、writer 自己丟的 `ValueError` 等一律照舊重試（寧可漏判）。
+
+判定不合法的檔移到 `buffer/quarantine/`，log 一行（collector、檔名、類別、SQLSTATE、constraint／欄位名，不印整列資料），不算進「連續失敗」。`buffer/*.json` 不遞迴，所以隔離檔不會被重試、也不會被 3 天過期邏輯丟掉。隔離檔從移入時起保留 `BUFFER_QUARANTINE_MAX_AGE_DAYS`（30）天後刪除；亂碼防護的隔離檔共用同一資料夾，也一起適用。日報（精簡版「現在還壞的」）在有隔離檔時列一行 🟡 各 collector 檔數。
+
+要重試某個隔離檔：修好資料或 DB 後移回 `buffer/`；但 payload 時間超過 3 天會被當過期直接丟棄。
+
+HiCloud VM 的 `external/vm_common/vm_buffer.py` 是另一套補寫，這次沒改。
 
 ## 教訓
 
 - 「0 筆」要分成兩種：上游真的沒有事件（成功），以及上游有項目卻一筆都沒解析出來（失敗）。前者要寫成功心跳，後者要 raise。
 - 跨批次的彙總值（hash、計數）在所有批次結束後一次算；不要在迴圈裡邊做邊指派，否則最後一批的失敗路徑會把它留在中間狀態。
-- 資料本身違反 constraint 的 buffer 檔重試永遠不會成功，只是白白重試到過期；這類錯誤和「DB 暫時不可用」要分開處理（見 PR 的待決事項）。
+- 資料本身違反 constraint 的 buffer 檔重試永遠不會成功，只是白白重試到過期；這類錯誤和「DB 暫時不可用」要分開處理，現已改為依 SQLSTATE 隔離（見上方「後續」）。

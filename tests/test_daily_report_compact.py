@@ -398,3 +398,27 @@ def test_real_stall_still_dead_in_long_report(monkeypatch, tmp_path):
     out, _ = _real_yaml_long_sections(monkeypatch, tmp_path, now, ages)
     assert "youbike_current" in out["realtime"] and "DEAD" in out["realtime"]
     assert "youbike_current" in out["action"]
+
+
+# ─────────────────────────────────────────────────────────
+# buffer 隔離檔（補寫被拒、不再重試）
+# ─────────────────────────────────────────────────────────
+
+def test_quarantined_buffer_files_listed_as_attention(monkeypatch, tmp_path):
+    task = _setup(monkeypatch, tmp_path, problems=False)
+    qdir = tmp_path / "buffer" / "quarantine"
+    qdir.mkdir(parents=True)
+    for name in ("global_events_20261113_030518.json", "global_events_20261113_040518.json",
+                 "ncdr_alerts_20261001_000000.json"):
+        (qdir / name).write_text("{}")
+    report = task._build_compact_report(now=NOW)
+    assert "整體：🟡 有 1 件要處理" in report
+    assert "🟡 補寫隔離 3 檔" in report
+    assert "global_events 2" in report and "ncdr_alerts 1" in report
+
+
+def test_no_quarantine_line_when_empty(monkeypatch, tmp_path):
+    task = _setup(monkeypatch, tmp_path, problems=False)
+    (tmp_path / "buffer" / "quarantine").mkdir(parents=True)
+    report = task._build_compact_report(now=NOW)
+    assert "補寫隔離" not in report and "✅ 一切正常" in report

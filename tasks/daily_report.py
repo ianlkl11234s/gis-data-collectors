@@ -10,6 +10,7 @@
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
 import shutil
 
 import config
@@ -1305,6 +1306,14 @@ class DailyReportTask:
             red = red or severity == "critical"
             broken.append(("🔴 " if severity == "critical" else "🟡 ")
                           + message.lstrip("🚨⚠️ "))
+        try:  # 補寫被拒、移到 buffer/quarantine/ 的檔（資料不合法或亂碼；0 檔不顯示）
+            quarantined = _quarantined_buffer_counts(config.LOCAL_DATA_DIR / "buffer" / "quarantine")
+            if quarantined:
+                detail = "、".join(f"{alerting.display_name(n)} {c}" for n, c in sorted(quarantined.items()))
+                broken.append(f"🟡 補寫隔離 {sum(quarantined.values())} 檔（資料不合法、不再重試，30 天後自動刪）："
+                              f"{_clip(detail, 60)}")
+        except Exception as e:
+            print(f"⚠️ 日報讀 buffer 隔離檔失敗: {e}")
         try:
             cmap = monitoring.load_cross_layer_map()
             s3_dates = monitoring.list_archive_dates_per_collector()
@@ -1370,6 +1379,21 @@ class DailyReportTask:
         if problem and detail_key:
             lines.append(f"詳細：S3 {detail_key}")
         return "\n".join(lines)
+
+
+_BUFFER_FILE_RE = re.compile(r"^(?P<name>.+)_\d{8}_\d{6}\.json$")
+
+
+def _quarantined_buffer_counts(qdir: Path) -> dict[str, int]:
+    """buffer/quarantine/ 內各 collector 的檔數。檔名 <collector>_<YYYYmmdd>_<HHMMSS>.json，collector 名可含底線。"""
+    counts: dict[str, int] = {}
+    if not qdir.is_dir():
+        return counts
+    for f in qdir.glob("*.json"):
+        m = _BUFFER_FILE_RE.match(f.name)
+        name = m.group("name") if m else f.stem
+        counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def _event_driven_keys(tables: list[dict]) -> set[tuple[str, str]]:

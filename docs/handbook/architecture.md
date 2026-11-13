@@ -125,7 +125,7 @@
 | 過期 | 超過 `BUFFER_MAX_AGE_DAYS`（3 天）直接丟棄，因為對應分區可能已被清掉 | `flush_buffer()` |
 | 放棄本輪 | 連續 `BUFFER_FAIL_THRESHOLD`（5）筆失敗就判定 DB 還沒好，留到下輪 | `flush_buffer()` |
 | 上限 | `SUPABASE_BUFFER_MAX_FILES` 預設 500，超過先刪最舊 | `config.py` |
-| 壞檔 | 被亂碼防護拒絕的 buffer 檔移到 `buffer/quarantine/`，不擋後面的檔 | `flush_buffer()` |
+| 壞檔 | 被亂碼防護拒絕、或資料庫明確回報資料不合法（SQLSTATE 23514 CHECK〔排除分區錯誤〕、23502、22P02、22007、22003、42804）的 buffer 檔移到 `buffer/quarantine/`，不擋後面的檔、不再重試、不算連續失敗；其餘錯誤照舊重試。隔離檔保留 `BUFFER_QUARANTINE_MAX_AGE_DAYS`（30）天後刪，日報列檔數 | `flush_buffer()`、`classify_invalid_data_error()` |
 
 告警：交給 `utils/alerting.py`，與收集失敗共用 `collector:<name>` 與同一套門檻（見 [operations.md](operations.md) §1）；借不到連線屬「DB 暫時不可用」，短暫的不會到門檻。
 
