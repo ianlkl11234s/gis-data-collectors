@@ -352,9 +352,14 @@ def _real_yaml_long_sections(monkeypatch, tmp_path, now, ages):
     gb = 1024 ** 3
     monkeypatch.setattr(daily_report.shutil, "disk_usage", lambda _: DiskUsage(200 * gb, 124 * gb, 76 * gb))
     monkeypatch.setattr(monitoring, "list_vm_health_snapshots", lambda **_: [])
-    monkeypatch.setattr(monitoring, "list_archive_dates_per_collector", lambda: {})
+    class _AllCurrent(dict):  # S3 歸檔都是最新，讓跨層區塊只剩 SB 層的差異
+        def get(self, key, default=None):
+            return "9999-12-31"
+
+    monkeypatch.setattr(monitoring, "list_archive_dates_per_collector", lambda: _AllCurrent())
     def fake_health(tables):
-        return [{"schema": t["schema"], "table": t["table"], "error": None, "count_24h": 1,
+        return [{"schema": t["schema"], "table": t["table"], "error": None,
+                 "count_24h": 0 if t["table"] in ages else 1,
                  "max_time": now - timedelta(minutes=ages.get(t["table"], 1))} for t in tables]
 
     monkeypatch.setattr(monitoring, "query_realtime_health", fake_health)
@@ -363,6 +368,7 @@ def _real_yaml_long_sections(monkeypatch, tmp_path, now, ages):
         "summary": task._section_health_summary(),
         "realtime": task._section_supabase_realtime(),
         "action": task._section_today_action(),
+        "cross_layer": task._section_cross_layer(),
         "compact": task._build_compact_report(now=now),
     }, None
 
@@ -378,6 +384,11 @@ def test_20261113_event_driven_not_dead_in_long_report(monkeypatch, tmp_path):
     assert "0 DEAD" in out["summary"]
     assert "沒有需要立即處理的事" in out["action"]
     assert "不判停更" in out["realtime"]
+    # 跨層 [B]：事件驅動表不算 SB 斷層（S3 測試裡全缺，所以只看不是因 SB 斷）
+    for name in ("ncdr_alerts", "lightning_cwa"):
+        line = next((l for l in out["cross_layer"].splitlines() if f"`{name}`" in l), "")
+        flags = line.split("[")[-1].split("]")[0] if line else "ABC"
+        assert "b" not in flags, line
 
 
 def test_real_stall_still_dead_in_long_report(monkeypatch, tmp_path):
