@@ -599,6 +599,64 @@ def test_write_failure_heartbeat_still_borrows_own_conn(writer_with_mock_pool, t
 
 
 # ============================================================
+# 0 筆成功也要回報成功心跳（2026-11-13 lightning_cwa／ncdr_alerts 盲點）
+# ============================================================
+
+def _tracking_pool(mock_pool):
+    from contextlib import contextmanager
+    cursors = []
+
+    @contextmanager
+    def tracking_borrow(timeout=None):
+        conn = MagicMock()
+        cursor = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cursor
+        conn.cursor.return_value.__exit__.return_value = None
+        cursors.append(cursor)
+        yield conn
+
+    mock_pool.borrow.side_effect = tracking_borrow
+    return cursors
+
+
+def _heartbeats(cursors):
+    return [c.args[1] for cur in cursors for c in cur.execute.call_args_list
+            if 'report_collector_heartbeat' in str(c.args[0])]
+
+
+def test_write_zero_records_reports_success_heartbeat(writer_with_mock_pool):
+    """請求與解析成功、只是 0 筆 → 成功心跳（records=0），不記寫入、不進 buffer。"""
+    writer, mock_pool = writer_with_mock_pool
+    cursors = _tracking_pool(mock_pool)
+    from utils import alerting
+    with patch.object(alerting, 'mark_write') as mark_write:
+        assert writer.write('lightning_cwa', {'data': [], 'event_count': 0},
+                            datetime(2026, 11, 13, 9, 0, 0)) is True
+    assert _heartbeats(cursors) == [('lightning_cwa', True, 0, None)]
+    # 心跳只是單列 upsert：沒有任何資料表寫入
+    assert all('report_collector_heartbeat' in str(c.args[0]) or 'set_config' in str(c.args[0])
+               for cur in cursors for c in cur.execute.call_args_list)
+    mark_write.assert_not_called()  # staleness_watch 的「新資料」只算 ≥1 筆
+
+
+def test_write_zero_records_with_collector_error_sends_no_success(writer_with_mock_pool):
+    """result 帶 _collector_error（BaseCollector.run 之後會算失敗）→ 不可先報成功。"""
+    writer, mock_pool = writer_with_mock_pool
+    cursors = _tracking_pool(mock_pool)
+    writer.write('lightning_cwa', {'data': [], '_collector_error': 'boom'},
+                 datetime(2026, 11, 13, 9, 0, 0))
+    assert _heartbeats(cursors) == []
+
+
+def test_write_zero_records_without_transformer_sends_no_heartbeat(writer_with_mock_pool):
+    """沒有 transformer 的 collector（自己直寫 DB 並自報心跳）不重複回報。"""
+    writer, mock_pool = writer_with_mock_pool
+    cursors = _tracking_pool(mock_pool)
+    writer.write('satellite_passes_daily', {'data': []}, datetime(2026, 11, 13, 9, 0, 0))
+    assert _heartbeats(cursors) == []
+
+
+# ============================================================
 # Buffer 容量上限（SUPABASE_BUFFER_MAX_FILES）
 # ============================================================
 
@@ -888,3 +946,18 @@ def test_flush_buffer_quarantines_rejected_file_and_continues(writer_with_mock_p
 def test_cwa_uv_daily_keeps_existing_metadata_on_null():
     from storage.supabase_tables import TABLE_MAP
     assert {'station_name', 'county', 'lon', 'lat'} <= set(TABLE_MAP['cwa_uv_daily']['keep_on_null'])
+
+
+def test_write_transform_failure_still_reports_failure_not_success(writer_with_mock_pool, monkeypatch):
+    """真正的失敗（例：transformer 解析炸掉）行為不變：失敗心跳，不會被當 0 筆成功。"""
+    writer, mock_pool = writer_with_mock_pool
+    cursors = _tracking_pool(mock_pool)
+
+    def boom(name, result, ts):
+        raise ValueError('bad payload')
+
+    monkeypatch.setattr(writer, '_transform', boom)
+    assert writer.write('lightning_cwa', {'data': [{'x': 1}]},
+                        datetime(2026, 11, 13, 9, 0, 0)) is False
+    beats = _heartbeats(cursors)
+    assert len(beats) == 1 and beats[0][:3] == ('lightning_cwa', False, 0)

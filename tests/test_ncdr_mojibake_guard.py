@@ -101,3 +101,23 @@ class TestCapDecoding:
         # 用錯的編碼解出來的字串，中文已經變成西里爾字母
         assert "重大火災事件通報" not in wrongly_decoded
         assert _mojibake_fields({"headline": wrongly_decoded}) == ["headline"]
+
+
+class TestZeroRecordSemantics:
+    """0 筆成功會被 writer 當成功心跳（2026-11-13），所以「沒有示警」與「示警全部解析失敗」要分開。"""
+
+    def _collector(self, entries, cap_bytes):
+        from collectors.ncdr_alerts import NCDRAlertsCollector
+        c = NCDRAlertsCollector.__new__(NCDRAlertsCollector)
+        c._fetch_feed = lambda: entries
+        c._fetch_cap = lambda url: cap_bytes
+        return c
+
+    def test_empty_feed_is_a_successful_zero_record_run(self):
+        out = self._collector([], None).collect()
+        assert out['data'] == [] and out['total_alerts'] == 0
+
+    def test_feed_entries_but_every_cap_failed_raises(self):
+        entries = [{'link': {'@href': 'https://example.invalid/a.xml'}}]
+        with pytest.raises(RuntimeError, match='0 筆解析成功'):
+            self._collector(entries, None).collect()
