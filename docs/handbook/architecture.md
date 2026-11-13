@@ -176,6 +176,7 @@ ConnectTimeout（不是 403／404）、本機（台灣 ISP）連得到、Zeabur 
 | 存檔 | DB 寫入失敗時，該輪資料存成一輪一檔 JSON |
 | 重送 | 每輪開頭先 `flush_pending()` 補寫積壓檔，成功才刪 |
 | 失敗 | 單檔補寫失敗就中止本輪 flush（DB 大概率還沒恢復）；JSON 壞檔直接刪 |
+| 壞檔 | 資料庫明確回報資料不合法（與 §4.4 同一組 SQLSTATE，分類函式自備一份、須與 `storage/supabase_writer.py` 同步）→ 移到 `buffer/quarantine/`，繼續補後面的檔；隔離檔保留 30 天 |
 | 過期 | `BUFFER_MAX_AGE_DAYS` 預設 3 天（同主 repo）；週跑型可調大 |
 | 上限 | 目錄超過 `MAX_BUFFER_FILES` 先刪最舊 |
 | 連線 | `connect_with_retry()` 預設重試 2 次、間隔 5 秒 |

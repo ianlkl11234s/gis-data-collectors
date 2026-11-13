@@ -126,6 +126,10 @@ TODO：尚未設 logrotate。`/var/log/ship-ais/collect.log` 一年約 50MB，�
 所有 VM collector 都掛 `vm_buffer.py`：DB 寫入失敗 → 該輪資料存
 `<DATA_DIR>/buffer/*.json` → 下輪 cron 開頭自動補寫（成功才刪檔）。
 保留 3 天（cdc 週跑型 30 天）、單目錄上限 200 檔，超過丟最舊。
+補寫時資料庫明確回報資料不合法（SQLSTATE 23514 CHECK〔排除分區錯誤〕、23502、22P02、22007、22003、42804）
+的檔移到 `buffer/quarantine/`、不再重試，後面的檔照補；隔離檔保留 30 天後刪（2026-11-13 COL-GE-2，同主 repo #202）。
+**這項改動要部署才生效**：把新版 `external/vm_common/vm_buffer.py` 覆蓋到用它的四個 app dir
+（ship_ais、waste_positions、cdc_public_health_weekly、isohe_port_marine），collector 主檔不用動。
 
 驗證指令（VM 上）：
 ```bash

@@ -53,7 +53,12 @@ payload 裡已經寫死 NULL，修程式救不了它。當時 `flush_buffer` 只
 
 要重試某個隔離檔：修好資料或 DB 後移回 `buffer/`；但 payload 時間超過 3 天會被當過期直接丟棄。
 
-HiCloud VM 的 `external/vm_common/vm_buffer.py` 是另一套補寫，這次沒改。
+HiCloud VM 的 `external/vm_common/vm_buffer.py` 是另一套補寫，當時沒改；同日補上（COL-GE-2）：
+
+- VM 單檔部署、不帶 `storage/`，所以 `vm_buffer.py` 自備一份 `classify_invalid_data_error()`（同一組 SQLSTATE 與 23514 分區排除），不 import psycopg2、改看例外有沒有 `pgcode`。兩份要同步，`tests/test_vm_buffer.py` 有對照測試逐案比對結果。
+- `flush_pending()` 遇到判定不合法的檔：rollback、移到 `<buffer_dir>/quarantine/`、log 一行（檔名、類別、SQLSTATE、constraint／欄位名），繼續補後面的檔；其餘錯誤照舊「rollback＋中止本輪」。隔離檔不計入回傳的（成功數, 丟棄數），`has_pending()` 也看不到它們。
+- 隔離檔保留 `QUARANTINE_MAX_AGE_DAYS`（30）天，在 `flush_pending()` 開頭清理；collector 若因 `has_pending()` 為假而沒呼叫 flush，那輪就不清（最多晚幾輪）。
+- 要部署才生效：把新版 `vm_buffer.py` 覆蓋到 ship_ais、waste_positions、cdc_public_health_weekly、isohe_port_marine 四個 app dir。
 
 ## 教訓
 
