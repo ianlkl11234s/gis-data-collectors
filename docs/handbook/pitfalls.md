@@ -20,6 +20,7 @@
 | 2026-08-30 | TDX 重置共用 secret，16 支 collector 401 達 15.4 小時；retry storm 的 429 蓋住了 401，告警洗版讓人當雜訊 | D-07 | [2026-08-30-tdx-secret-reset-401](../../.claude/pitfalls/2026-08-30-tdx-secret-reset-401.md) |
 | 2026-09-04 | Disk IO 膨脹螺旋（第一輪）：先量 HOT 比例再決定要不要改程式；分項改善不能相加；平台重啟會清空統計 | L-03、M-05、M-06、R-09 | [2026-09-04-disk-io-bloat-spiral](../../.claude/pitfalls/2026-09-04-disk-io-bloat-spiral.md) |
 | 2026-10-21 | news_events 額度用完後，「一批 LLM 標註失敗就整輪放棄」讓積壓永遠寫不進去；`collect()` 失敗不寫心跳，停 4 天狀態表仍是 0 錯誤 | I-05、H-05 | [2026-10-21-news-llm-all-or-nothing](../../.claude/pitfalls/2026-10-21-news-llm-all-or-nothing.md) |
+| 2026-11-13 | 0 筆成功不寫心跳，偶發失敗累積的錯誤永遠不歸零；長版日報沒套事件驅動豁免。global_events 分批評估的彙總 hash 在迴圈內指派，最後一批失敗就留下 None，違反 receipt CHECK、buffer 每 5 分無望重試 | H-01、H-02、I-05 | [2026-11-13-zero-record-heartbeat-and-receipt-lineage](../../.claude/pitfalls/2026-11-13-zero-record-heartbeat-and-receipt-lineage.md) |
 
 ## 本 repo 的調查（`docs/investigations/`）
 
