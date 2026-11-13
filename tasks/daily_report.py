@@ -161,7 +161,7 @@ class DailyReportTask:
         sb_dead = sb_stale = sb_never = sb_err = 0
         sb_critical_bad = False
         try:
-            rt_tables = monitoring.load_realtime_tables()
+            rt_tables = self._freshness_checked(monitoring.load_realtime_tables())
             rt_meta = {(t["schema"], t["table"]): t for t in rt_tables}
             for r in monitoring.query_realtime_health(rt_tables) if rt_tables else []:
                 t = rt_meta.get((r["schema"], r["table"]), {})
@@ -230,12 +230,14 @@ class DailyReportTask:
             rt_results2 = monitoring.query_realtime_health(rt_tables2) if rt_tables2 else []
             rt_24h_count = {(r["schema"], r["table"]): r.get("count_24h", 0) for r in rt_results2}
             rt_max_time2 = {(r["schema"], r["table"]): r.get("max_time") for r in rt_results2}
+            event_keys2 = _event_driven_keys(rt_tables2)
             s3_dates2 = monitoring.list_archive_dates_per_collector()
             now_tw_c = datetime.now(TAIPEI_TZ)
             for name, cfg in cmap2.items():
                 if not cfg.get("enabled"):
                     continue
-                sb_tables = cfg.get("supabase_tables") or []
+                sb_tables = [t for t in cfg.get("supabase_tables") or []
+                             if tuple(t.split(".", 1)) not in event_keys2]
                 if sb_tables:
                     interval = cfg.get("expected_interval_min", 60)
                     if interval >= 720:
@@ -288,6 +290,23 @@ class DailyReportTask:
             parts.append(f"  檔案系統: {disk_message}")
         parts.append("  詳情見下方各區塊；待辦見「今日 Action」")
         return "\n".join(parts)
+
+    @staticmethod
+    def _freshness_checked(tables: list[dict], now: datetime | None = None) -> list[dict]:
+        """要做「多久沒新資料」停更判斷的表；口徑與精簡版 _stale_tables 相同
+        （monitoring.stale_check_skip_reason：事件驅動、季節外、已停用的不判）。
+
+        事件驅動表（災害示警、落雷、海嘯…）沒有事件就沒有新列，看表的最新時間
+        分不出「收集器正常、只是沒事件」與「停擺」；後者由即時告警
+        （tasks/staleness_watch 看最後成功執行）與「收集狀態」負責。
+        """
+        from tasks import monitoring
+        try:
+            cmap = monitoring.load_cross_layer_map()
+        except Exception as e:
+            print(f"⚠️ 讀 cross_layer_map 失敗，停用判斷略過: {e}")
+            cmap = {}
+        return [t for t in tables if monitoring.stale_check_skip_reason(t, cmap, now) is None]
 
     def _section_collector_status(self) -> str:
         """收集器狀態區塊"""
@@ -346,9 +365,11 @@ class DailyReportTask:
         """Supabase realtime 表寫入新鮮度（一次 RPC 撈全表）"""
         from tasks import monitoring
 
-        tables = monitoring.load_realtime_tables()
-        if not tables:
+        all_tables = monitoring.load_realtime_tables()
+        if not all_tables:
             return "\n📦 *Supabase realtime*\n  config/realtime_tables.yaml 為空"
+        tables = self._freshness_checked(all_tables)
+        skipped = len(all_tables) - len(tables)
 
         results = monitoring.query_realtime_health(tables)
         if not results:
@@ -404,6 +425,9 @@ class DailyReportTask:
 
         if not any(buckets[k] for k in ("DEAD", "STALE", "NEVER", "ERR")):
             parts.append("  ✅ 全部 OK")
+        if skipped:
+            parts.append(f"  ⏸ 另 {skipped} 表不判停更（事件驅動／季節外／停用；"
+                         "收集器有沒有在跑看「收集狀態」與即時告警）")
         return "\n".join(parts)
 
     def _section_gfw_hourly_publish(self) -> str:
@@ -599,6 +623,8 @@ class DailyReportTask:
         rt_24h_count = {(r["schema"], r["table"]): r.get("count_24h", 0) for r in rt_results}
         # 低頻 collector（>=12h）24h 窗常常 0 筆是正常；用 max_time 寬鬆判斷
         rt_max_time = {(r["schema"], r["table"]): r.get("max_time") for r in rt_results}
+        # 事件驅動表沒事件就沒新列，[B] 看不出停擺 → 不列入 [B]，收集器有沒有在跑由 [A] 判斷
+        event_keys = _event_driven_keys(rt_tables)
         s3_dates = monitoring.list_archive_dates_per_collector()
         now_tw = datetime.now(TAIPEI_TZ)
 
@@ -620,7 +646,8 @@ class DailyReportTask:
                     age_min = (now_tw - last).total_seconds() / 60
                     a_ok = age_min < cfg["expected_interval_min"] * 3
             # [B] SB 寫入：高頻看 24h count；低頻（interval >= 720 分）看 max_time 是否在 3x interval 內
-            sb_tables = cfg.get("supabase_tables") or []
+            sb_tables = [t for t in cfg.get("supabase_tables") or []
+                         if tuple(t.split(".", 1)) not in event_keys]
             if sb_tables:
                 interval = cfg.get("expected_interval_min", 60)
                 if interval >= 720:
@@ -777,8 +804,8 @@ class DailyReportTask:
         # 偵測本輪所有異常（與上面 sections 邏輯一致，重跑一次）
         current: set[str] = set()
 
-        # SB
-        rt_tables = monitoring.load_realtime_tables()
+        # SB（與精簡版同口徑：事件驅動／季節外／停用的表不判停更）
+        rt_tables = self._freshness_checked(monitoring.load_realtime_tables())
         rt_meta = {(t["schema"], t["table"]): t for t in rt_tables}
         for r in monitoring.query_realtime_health(rt_tables) if rt_tables else []:
             if r.get("error"):
@@ -1043,8 +1070,8 @@ class DailyReportTask:
         if disk_severity == "critical":
             actions.append(f"立即清理或擴充共享檔案系統（{disk_message}）")
 
-        # 1. SB DEAD 表（critical 優先）
-        rt_tables = monitoring.load_realtime_tables()
+        # 1. SB DEAD 表（critical 優先；事件驅動／季節外／停用的表不判停更）
+        rt_tables = self._freshness_checked(monitoring.load_realtime_tables())
         rt_meta = {(t["schema"], t["table"]): t for t in rt_tables}
         for r in monitoring.query_realtime_health(rt_tables) if rt_tables else []:
             if r.get("error"):
@@ -1343,6 +1370,11 @@ class DailyReportTask:
         if problem and detail_key:
             lines.append(f"詳細：S3 {detail_key}")
         return "\n".join(lines)
+
+
+def _event_driven_keys(tables: list[dict]) -> set[tuple[str, str]]:
+    """realtime_tables 標 event_driven 的 (schema, table)。"""
+    return {(t["schema"], t["table"]) for t in tables if t.get("event_driven")}
 
 
 def _human_interval(minutes: int | None) -> str:

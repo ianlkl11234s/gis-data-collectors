@@ -315,6 +315,15 @@ class NCDRAlertsCollector(BaseCollector):
             seen.add(a['identifier'])
             unique.append(a)
 
+        if entries and not unique:
+            # feed 有生效中示警、卻一筆都沒解析成功（CAP 全部下載失敗、XML 壞、亂碼全擋…）
+            # 不是「沒有示警」。0 筆會被 writer 當成功心跳，這裡必須算失敗，否則會把
+            # 真正的停擺藏起來（disaster_alerts 標 event_driven 後只看最後成功時間）。
+            raise RuntimeError(
+                f"feed 有 {len(entries)} 筆生效中示警，但 0 筆解析成功"
+                f"（亂碼擋下 {mojibake_rejected} 筆，其餘見上方 ⚠ 行）"
+            )
+
         with_geom = sum(1 for a in unique if a.get('geom'))
         print(f"   解析成功 {len(unique)} 筆 (含 polygon: {with_geom})")
         if mojibake_rejected:

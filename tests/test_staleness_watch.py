@@ -348,3 +348,17 @@ def test_writer_first_success_after_restart_clears_persisted_db_failure(monkeypa
     monkeypatch.setattr(wr, "_report_heartbeat", lambda *a, **k: None, raising=False)
     assert wr.write("youbike", {"data": [1]}, NOW) is True
     assert "collector:youbike" not in alerting.load_state()["entries"]
+
+
+def test_real_yaml_event_collectors_judge_by_last_success():
+    """2026-11-13：災害示警（ncdr_alerts）、氣象署落雷（lightning_cwa）的表都是事件驅動，
+    即時告警改看最後成功執行；收集器每輪成功但 0 筆不算停更，連續不成功才算。"""
+    tables = monitoring.load_realtime_tables()
+    cmap = monitoring.load_cross_layer_map()
+    for name, interval in (("ncdr_alerts", 15), ("lightning_cwa", 5)):
+        p = plan_collector(name, interval, tables, cmap, NOW)
+        assert p is not None and p["tables"] == [], name
+        ok = evaluate(p, NOW - timedelta(days=7), NOW - timedelta(minutes=interval), DAY_AGO, NOW)
+        assert ok["stale"] is False and ok["basis"] == "success"
+        dead = evaluate(p, NOW - timedelta(days=7), NOW - timedelta(hours=6), DAY_AGO, NOW)
+        assert dead["stale"] is True

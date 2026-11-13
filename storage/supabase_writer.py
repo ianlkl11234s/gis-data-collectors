@@ -277,6 +277,16 @@ class SupabaseWriter:
             records = self._transform(collector_name, result, timestamp)
             records = reject_mojibake_records(collector_name, records)
             if not records:
+                # 這輪抓取與解析都成功、只是 0 筆（沒有落雷、沒有生效中示警、上游沒變…）
+                # 也要回報成功心跳，否則 collector_status 的 last_success_at 停在最後一次
+                # 有資料的時候、偶發失敗累積的 consecutive_errors 永遠不歸零
+                # （2026-11-13 lightning_cwa：每輪正常卻顯示 error、連續 15 次）。
+                # 例外：沒有 transformer（不經 writer、自己直寫 DB 並自報心跳）、
+                # 或帶 _collector_error（BaseCollector.run 稍後會把這輪算失敗）。
+                # 不呼叫 alerting.mark_write：staleness_watch 把它當「寫入 ≥1 筆」。
+                if (collector_name in self.TRANSFORMERS
+                        and not result.get('_collector_error')):
+                    self._report_heartbeat(collector_name, True, 0)
                 return True
 
             # 借一條連線，把所有 DB 動作（含衛星 TLE 額外表）跑完才還

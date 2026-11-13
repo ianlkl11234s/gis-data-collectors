@@ -100,7 +100,9 @@ tables:
   - {schema: live, table: earthquake_town_intensity, label: 鄉鎮震度, event_driven: true, time_column: collected_at, owner_collector: earthquake_town_intensity, expected_interval_min: 10080, critical: false, notes: 368 鄉鎮震度；上游只留最新一次有感地震，無新震即不寫}
   - {schema: live, table: earthquake_shakemap_grid,  label: 震度網格圖, event_driven: true, time_column: collected_at, owner_collector: earthquake_shakemap_grid, expected_interval_min: 10080, critical: false, notes: NCDR 2.5km 網格 4,377 格/次；event_time 守門，無新震即不寫}
   - {schema: live, table: earthquake_moment_tensor,  label: 震源機制解, event_driven: true, time_column: collected_at, owner_collector: earthquake_moment_tensor, expected_interval_min: 43200, critical: false, notes: AutoBATS 只對規模較大事件出解；查無屬常態}
-  - {schema: live, table: disaster_alerts,           label: 災害示警, time_column: collected_at, owner_collector: ncdr_alerts, expected_interval_min: 15, critical: true}
+  # 2026-11-13 改 event_driven：feed 只列「生效中」示警，沒有示警就沒有新列（11-13 日報誤判 DEAD 715 分）。
+  # 收集器停擺改由 staleness_watch 看 ncdr_alerts 最後成功執行；feed 有示警卻 0 筆解析成功時 collector 會 raise。
+  - {schema: live, table: disaster_alerts,           label: 災害示警, event_driven: true, time_column: collected_at, owner_collector: ncdr_alerts, expected_interval_min: 15, critical: true, notes: 事件驅動（無生效中示警即無新列）}
   # 網路健康的 provider event 可能合法為空；source_runs 才是主要心跳。
   - {schema: live, table: internet_health_source_runs, label: 網路健康收集紀錄, time_column: finished_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: Cloudflare/IODA/RIPE Atlas/RIS production 5min 共用 run ledger；RIS 截至 2026-08-31 15:05 UTC 正式 3 runs（partial 1 / succeeded 2）已驗；status/error_code 區分 partial、empty、stale、config/http/parse/stream_gap}
   - {schema: live, table: internet_health_observations, label: 網路健康觀測, time_column: collected_at, owner_collector: cloudflare_radar, expected_interval_min: 5, critical: false, notes: canonical evidence history；RIPE 只寫 finite 5min aggregates，RIS gap/partial 保持 NULL/unknown、不補 0；RIS production current 6/6 fresh，public RPC 0}

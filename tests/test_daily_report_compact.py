@@ -331,3 +331,59 @@ def test_freshness_query_error_and_never_are_problems(monkeypatch, tmp_path):
     assert "🔴" in report.splitlines()[1]  # critical 表從未有資料
     assert "1 張表從未有資料：雙北公車位置" in report
     assert "1 張表查不到新鮮度（查詢失敗）：船舶位置" in report
+
+
+# ─────────────────────────────────────────────────────────
+# 2026-11-13：事件驅動表「收集器有成功、只是沒事件」不可被長版日報判 DEAD
+# （長版的健診摘要／Supabase realtime／異常趨勢／今日 Action 原本沒套 stale_check_skip_reason）
+# ─────────────────────────────────────────────────────────
+
+AGES_20261113 = {
+    "disaster_alerts": 715,                    # 無生效中示警（日報誤列 DEAD 715 分、今日 Action 第一項）
+    "lightning_events": 7 * 1440,              # 11 月少雷
+    "jma_tsunami_reports": 30 * 1440,
+    "jma_volcano_warnings": 5 * 1440,
+    "drought_alert_current": 177 * 1440,
+}
+
+
+def _real_yaml_long_sections(monkeypatch, tmp_path, now, ages):
+    monkeypatch.setattr(daily_report.config, "LOCAL_DATA_DIR", tmp_path)
+    gb = 1024 ** 3
+    monkeypatch.setattr(daily_report.shutil, "disk_usage", lambda _: DiskUsage(200 * gb, 124 * gb, 76 * gb))
+    monkeypatch.setattr(monitoring, "list_vm_health_snapshots", lambda **_: [])
+    monkeypatch.setattr(monitoring, "list_archive_dates_per_collector", lambda: {})
+    def fake_health(tables):
+        return [{"schema": t["schema"], "table": t["table"], "error": None, "count_24h": 1,
+                 "max_time": now - timedelta(minutes=ages.get(t["table"], 1))} for t in tables]
+
+    monkeypatch.setattr(monitoring, "query_realtime_health", fake_health)
+    task = DailyReportTask([])
+    return {
+        "summary": task._section_health_summary(),
+        "realtime": task._section_supabase_realtime(),
+        "action": task._section_today_action(),
+        "compact": task._build_compact_report(now=now),
+    }, None
+
+
+def test_20261113_event_driven_not_dead_in_long_report(monkeypatch, tmp_path):
+    # 長版各區塊內部用 datetime.now() 判新鮮度 → 用真實現在時間，只假造落後分鐘
+    now = datetime.now(TPE)
+    out, _ = _real_yaml_long_sections(monkeypatch, tmp_path, now, AGES_20261113)
+    for table in AGES_20261113:
+        for name, text in out.items():
+            assert table not in text, (name, text)
+    assert "DEAD" not in out["realtime"]
+    assert "0 DEAD" in out["summary"]
+    assert "沒有需要立即處理的事" in out["action"]
+    assert "不判停更" in out["realtime"]
+
+
+def test_real_stall_still_dead_in_long_report(monkeypatch, tmp_path):
+    """非事件驅動的 critical 表真的停了，長版仍要 DEAD＋今日 Action（豁免不可蓋掉真停擺）。"""
+    now = datetime.now(TPE)
+    ages = {**AGES_20261113, "youbike_current": 600}
+    out, _ = _real_yaml_long_sections(monkeypatch, tmp_path, now, ages)
+    assert "youbike_current" in out["realtime"] and "DEAD" in out["realtime"]
+    assert "youbike_current" in out["action"]
