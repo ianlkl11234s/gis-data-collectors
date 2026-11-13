@@ -24,6 +24,7 @@ import requests
 
 import config
 from .base import BaseCollector
+from utils.redact import redact_secrets
 from .earthquake_common import (
     as_list,
     intensity_to_value,
@@ -247,7 +248,7 @@ class EarthquakeCollector(BaseCollector):
                     stations_by_id[eid] = self._extract_stations(eq, parsed)
             except Exception as e:
                 print(f"   [{source_type}] 取得失敗: {e}")
-                fetch_errors.append(f"{source_type}: {str(e)[:200]}")
+                fetch_errors.append(f"{source_type}: {redact_secrets(e)[:200]}")
 
         unique_reports = sorted(
             parsed_by_id.values(), key=lambda x: x['origin_time'], reverse=True
@@ -281,7 +282,7 @@ class EarthquakeCollector(BaseCollector):
             print(f"   海嘯報告: {len(tsunami)} 筆")
         except Exception as e:
             print(f"   海嘯資訊取得失敗: {e}")
-            fetch_errors.append(f"tsunami: {str(e)[:200]}")
+            fetch_errors.append(f"tsunami: {redact_secrets(e)[:200]}")
 
         result = {
             'fetch_time': fetch_time.isoformat(),

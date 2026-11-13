@@ -42,6 +42,7 @@ import config
 from collectors.base import BaseCollector, TAIPEI_TZ
 from storage.imagery_manifest import frame_entry, publish_frames
 from storage.r2 import get_r2_storage
+from utils.redact import redact_secrets
 
 # 政府憑證缺 SKI（同 USWG / NHI ER 坑）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -287,7 +288,7 @@ class PrecipitationRasterCollector(BaseCollector):
             "errors":        errors,
         }
         if not frames and errors:  # 因例外而空 → 本輪算失敗、不寫成功心跳
-            result["_collector_error"] = f"0 幀且 {len(errors)} 個頻道失敗: " + "; ".join(errors)[:500]
+            result["_collector_error"] = f"0 幀且 {len(errors)} 個頻道失敗: " + redact_secrets("; ".join(errors))[:500]
         return result
 
 

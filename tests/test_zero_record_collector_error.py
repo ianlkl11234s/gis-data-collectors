@@ -136,3 +136,35 @@ def test_collector_error_with_zero_rows_writes_no_heartbeat_at_all(writer_with_m
     c._fetch = MagicMock(side_effect=requests.ConnectionError('reset'))
     _, hbs = _run(c, writer)
     assert hbs == []
+
+
+# ── 存檔不可帶金鑰：collect() 的 result 會原樣存本機 JSON 並歸檔 S3（base.run → storage.save）──
+
+_LEAKY = 'HTTPSConnectionPool: https://opendata.cwa.gov.tw/api?Authorization=SECRET123&format=JSON'
+
+
+def _saved_text(c):
+    import json
+    return json.dumps([call.args for call in c.storage.save.call_args_list], ensure_ascii=False, default=str)
+
+
+def test_wic_sewer_error_fields_redacted_in_saved_result(writer_with_mock_pool):  # noqa: F811
+    writer, _ = writer_with_mock_pool
+    from collectors.wic_sewer import WicSewerCollector
+    c = _prepare(WicSewerCollector, writer)
+    c._fetch = MagicMock(side_effect=requests.ConnectionError(_LEAKY))
+    stats, _ = _run(c, writer)
+    saved = _saved_text(c)
+    assert 'Authorization=' in saved          # 確實存了錯誤欄位
+    assert 'SECRET123' not in saved and 'SECRET123' not in str(stats)
+
+
+def test_pla_activity_list_error_redacted_in_saved_result(writer_with_mock_pool):  # noqa: F811
+    writer, _ = writer_with_mock_pool
+    from collectors.pla_activity_daily import PlaActivityDailyCollector
+    c = _prepare(PlaActivityDailyCollector, writer)
+    c._fetch_list_ids = MagicMock(side_effect=requests.ConnectionError(_LEAKY))
+    stats, _ = _run(c, writer)
+    saved = _saved_text(c)
+    assert '_collector_error' in saved
+    assert 'SECRET123' not in saved and 'SECRET123' not in str(stats)
