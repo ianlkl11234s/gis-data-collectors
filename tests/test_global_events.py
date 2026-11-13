@@ -2407,3 +2407,51 @@ def test_every_produced_place_satisfies_migration_399(monkeypatch, tmp_path):
     assert kinds == {"country_center", "city_center"}
     for record in records:
         _assert_migration_399_place_contract(record["places"], record["source_urls"])
+
+
+@pytest.mark.parametrize("truncated", [False, True])
+def test_last_chunk_failure_keeps_accepted_run_lineage_complete(
+    monkeypatch, tmp_path, truncated
+):
+    """2026-11-13 pulse-host：最後一個 chunk 失敗（provider 斷線或截斷回應）時，
+    accepted run 的 raw_response_sha256 不可變成 None 或失敗回應的 hash；
+    否則違反 migration 389 accepted_lineage CHECK，整包卡在 buffer 永遠補寫失敗。"""
+    payload = _zip(
+        [
+            _row(f"news{index}.example", f"Major earthquake kills dozens {index}")
+            for index in range(21)
+        ]
+    )
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    calls = []
+    ok_hashes = []
+
+    def assess(candidates):
+        calls.append(len(candidates))
+        digest = hashlib.sha256(f"provider-bytes-{len(calls)}".encode()).hexdigest()
+        if len(calls) == 3:
+            if truncated:
+                collector._raw_response_sha256 = digest  # 截斷回應也會先留 hash
+                raise ValueError("OpenRouter Stage1 incomplete response")
+            raise requests.ConnectionError("Response ended prematurely")
+        result = _fake_assessments(collector, candidates)
+        collector._raw_response_sha256 = digest
+        ok_hashes.append(digest)
+        return result
+
+    monkeypatch.setattr(collector, "_request_stage1", assess)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    result = collector.run()
+
+    assert "error" not in result and len(calls) == 3
+    assert result["stage1_chunks"]["failed_chunk_count"] == 1
+    run_receipt = next(
+        r for r in result["_supabase_receipts"] if r["_type"] == "collector_run"
+    )
+    assert run_receipt["status"] == "accepted"
+    for field in (
+        "input_content_sha256", "output_artifact_sha256", "raw_response_sha256",
+        "model", "prompt_version", "output_schema_version",
+    ):
+        assert run_receipt[field] is not None, field
+    assert run_receipt["raw_response_sha256"] == content_sha256(ok_hashes)

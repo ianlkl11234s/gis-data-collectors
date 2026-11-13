@@ -2208,13 +2208,20 @@ class GlobalEventsCollector(BaseCollector):
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     totals[key] = totals.get(key, 0) + value
             self._stage1_usage = totals
+        stage1 = {"assessments": results}
+        # The run-level digest is derived only after the loop. A cache miss
+        # resets self._raw_response_sha256 per chunk, so assigning the aggregate
+        # inside the loop let a later failed chunk (e.g. "Response ended
+        # prematurely") leave it None on an accepted partial run — violating
+        # migration 389's accepted_lineage CHECK and pinning the write in the
+        # buffer forever (2026-11-13 pulse-host incident).
+        if response_hashes:
             self._raw_response_sha256 = (
                 response_hashes[0]
                 if len(response_hashes) == 1
                 else content_sha256(response_hashes)
             )
-        stage1 = {"assessments": results}
-        if not response_hashes:
+        else:
             # Migration 389 requires every accepted run to carry a response
             # hash; with no complete provider output this is the canonical
             # digest of the (possibly empty) Stage1 artifact, never a fake one.
