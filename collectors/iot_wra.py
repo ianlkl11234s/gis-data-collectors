@@ -184,10 +184,14 @@ class IotWraCollector(BaseCollector):
             except Exception as e:
                 print(f"[iot_wra] 站點 metadata upsert 失敗：{e}")
 
-        return {
+        result = {
             "data":               measurements,   # 時序讀值 → live.iot_wra_measurements
             "per_type":           per_type_counts,
             "total_stations":     len(stations),
             "total_measurements": len(measurements),
             "collected_at":       now.isoformat(),
         }
+        failed = [t for t, s in per_type_counts.items() if "error" in s]
+        if not measurements and failed:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result["_collector_error"] = f"0 筆且 {len(failed)} 類站點擷取失敗: {failed}"
+        return result

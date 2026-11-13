@@ -53,7 +53,22 @@ payload 裡已經寫死 NULL，修程式救不了它。當時 `flush_buffer` 只
 
 要重試某個隔離檔：修好資料或 DB 後移回 `buffer/`；但 payload 時間超過 3 天會被當過期直接丟棄。
 
-HiCloud VM 的 `external/vm_common/vm_buffer.py` 是另一套補寫，這次沒改。
+HiCloud VM 的 `external/vm_common/vm_buffer.py` 是另一套補寫，當時沒改；同日補上（COL-GE-2）：
+
+- VM 單檔部署、不帶 `storage/`，所以 `vm_buffer.py` 自備一份 `classify_invalid_data_error()`（同一組 SQLSTATE 與 23514 分區排除），不 import psycopg2、改看例外有沒有 `pgcode`。兩份要同步，`tests/test_vm_buffer.py` 有對照測試逐案比對結果。
+- `flush_pending()` 遇到判定不合法的檔：rollback、移到 `<buffer_dir>/quarantine/`、log 一行（檔名、類別、SQLSTATE、constraint／欄位名），繼續補後面的檔；其餘錯誤照舊「rollback＋中止本輪」。隔離檔不計入回傳的（成功數, 丟棄數），`has_pending()` 也看不到它們。
+- 隔離檔保留 `QUARANTINE_MAX_AGE_DAYS`（30）天，在 `flush_pending()` 開頭清理；collector 若因 `has_pending()` 為假而沒呼叫 flush，那輪就不清（最多晚幾輪）。
+- 要部署才生效：把新版 `vm_buffer.py` 覆蓋到 ship_ais、waste_positions、cdc_public_health_weekly、isohe_port_marine 四個 app dir。
+
+### 後續：0 筆心跳的尾巴（COL-ZERO-1，同日）
+
+1. **吞例外後回空結果**：下列收集器在「本輪 0 筆且有來源拋例外」時帶 `_collector_error`，不再被記成 0 筆成功；正常抓到 0 筆、夜間暫停、已入庫略過等照舊成功。
+   - collect() 直接吞：`wic_sewer`、`wic_evacuate`、`wic_pumb`、`tpml_seat`、`uswg`、`pla_activity_daily`（列表抓取失敗）。
+   - 多來源迴圈全空且有來源失敗：`youbike`、`bus`、`parking`、`parking_offstreet`、`road_congestion`、`waste_positions`、`iot_wra`、`immigration_apis_airport`、`precipitation_raster`、`earthquake`（有感報告與海嘯都空）、`er_hospital_realtime`、`cwa_satellite`。
+   - helper 吞例外回 None：`global_climate_jtwc`（RSS 抓不到才算失敗；RSS 正常但沒有颱風仍是成功）。
+   - 沒改（helper 把「抓失敗」和「上游沒資料」混成同一個回傳值，要動 helper 才分得開）：`food_prices._get`、`earthquake_moment_tensor._fetch_cwa_events`、`air_quality_imagery._fetch_png`、`global_climate_cmems`、`global_climate_cams`、`global_climate_noaa_gfs`、`flight_fr24`（資料是當日累積清單）。
+   - 帶 `_collector_error` 且 0 筆時，writer 不報成功，`run()` 因 writer 已被呼叫也不補報失敗：DB 的 `collector_status` 這輪不動（`last_success_at` 停住），記憶體內的失敗計數與日報照常。
+2. **沒有 transformer 的 collector**（`tra_static`、`parking_ref`、`waste_match`、`global_climate_bake`；`ship_tdx`、`vd` 已停用）：不只 0 筆，任何筆數都不經 writer 報成功心跳；collect() 拋例外時 `run()` 卻會報失敗，所以一次失敗後 DB 上會一直是 error。日報與 `staleness_watch` 用記憶體狀態，不受影響。沒有改：通用修法需要排除自報的 `satellite_passes_daily`，records 也只能填 0；建議要 DB 狀態的那幾支比照 `satellite_passes_daily` 自報（`parking_ref`、`waste_match` 有真實筆數）。
 
 ## 教訓
 

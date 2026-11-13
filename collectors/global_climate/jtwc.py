@@ -205,7 +205,8 @@ class JtwcCollector(BaseCollector):
 
     def collect(self) -> dict:
         now = datetime.now(tz=TAIPEI_TZ)
-        rss = self._fetch_text(URL_JTWC_RSS) or ""
+        rss_raw = self._fetch_text(URL_JTWC_RSS)  # None＝例外或非 200（_fetch_text 吞掉）
+        rss = rss_raw or ""
         storms = self._list_active(rss)
 
         all_rows: list[dict] = []
@@ -216,13 +217,16 @@ class JtwcCollector(BaseCollector):
             rows = self._parse_warning(s["storm_id"], atcf, now)
             all_rows.extend(rows)
 
-        return {
+        result = {
             "data":           all_rows,
             "storm_count":    len(storms),
             "active_storms":  [s["storm_id"] for s in storms],
             "point_count":    len(all_rows),
             "collected_at":   now.isoformat(),
         }
+        if rss_raw is None:  # RSS 抓不到 → 0 個颱風不是「沒有颱風」；本輪算失敗、不寫成功心跳
+            result["_collector_error"] = "JTWC RSS 抓取失敗"
+        return result
 
 
 if __name__ == "__main__":

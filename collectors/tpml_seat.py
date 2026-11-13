@@ -40,6 +40,7 @@ import urllib3
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
+from utils.redact import redact_secrets
 
 # TWCA 憑證缺 SKI，verify=False 後關閉警告噪音（同 er_hospital / wic 慣例）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -109,7 +110,8 @@ class TpmlSeatCollector(BaseCollector):
                 "data": [],
                 "area_count": 0,
                 "branch_count": 0,
-                "error": str(e)[:200],
+                "error": redact_secrets(e)[:200],
+                "_collector_error": f"擷取失敗：{redact_secrets(e)[:200]}",  # 因例外而空 → 本輪算失敗、不寫成功心跳
                 "collected_at": now.isoformat(),
             }
 

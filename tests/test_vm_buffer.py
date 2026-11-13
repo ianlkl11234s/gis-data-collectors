@@ -144,3 +144,112 @@ def test_connect_with_retry_raises_after_exhaustion(monkeypatch):
     monkeypatch.setattr(vm_buffer.time, "sleep", lambda s: None)
     with pytest.raises(OSError):
         vm_buffer.connect_with_retry(lambda: (_ for _ in ()).throw(OSError("down")))
+
+
+# ─────────────────────────────────────────────────────────
+# 補寫遇資料不合法 → 隔離不再重試（COL-GE-2，比照主 repo #202）
+# ─────────────────────────────────────────────────────────
+
+import psycopg2  # noqa: E402
+
+
+def _pg_error(code, *, constraint=None, column=None, message='boom', base=psycopg2.DatabaseError):
+    """psycopg2 例外的 pgcode／diag 是唯讀，用子類別的類別屬性蓋掉（同 test_supabase_writer）。"""
+    diag = type('Diag', (), {'constraint_name': constraint, 'column_name': column})()
+    cls = type('FakePgError', (base,), {'pgcode': code, 'diag': diag})
+    return cls(message)
+
+
+_CLASSIFY_CASES = [
+    _pg_error('23514', constraint='c', message='new row for relation "x" violates check constraint "c"'),
+    _pg_error('23502', column='lat'),
+    _pg_error('22P02'), _pg_error('22007'), _pg_error('22003'), _pg_error('42804'),
+    _pg_error('57014', message='canceling statement due to statement timeout'),
+    _pg_error('55P03'), _pg_error('40P01'),
+    _pg_error('23505', constraint='pk'), _pg_error('23503', constraint='fk'), _pg_error('42501'),
+    _pg_error('08006', base=psycopg2.OperationalError),
+    _pg_error(None, message='server closed the connection unexpectedly', base=psycopg2.OperationalError),
+    _pg_error('23514', message='no partition of relation "x" found for row'),
+    _pg_error('23514', constraint='x', message='new row violates partition constraint'),
+    _pg_error(None, message='new row for relation "x" violates check constraint "c"'),
+    _pg_error(None, message='invalid input syntax for type integer: "abc"'),
+    ValueError('bad'), TimeoutError('timed out'), RuntimeError('db still down'),
+]
+
+
+@pytest.mark.parametrize('err', _CLASSIFY_CASES)
+def test_classify_matches_main_repo_writer(err):
+    """VM 自備的分類必須與 storage/supabase_writer.py 結果一致（兩份要同步）"""
+    from storage.supabase_writer import classify_invalid_data_error as main_classify
+    assert vm_buffer.classify_invalid_data_error(err) == main_classify(err)
+
+
+def test_classify_quarantine_and_retry_examples():
+    assert vm_buffer.classify_invalid_data_error(_pg_error('23502', column='lat')) == 'not_null_violation'
+    assert vm_buffer.classify_invalid_data_error(
+        _pg_error('23514', message='no partition of relation "x" found for row')) is None
+    assert vm_buffer.classify_invalid_data_error(RuntimeError('db still down')) is None
+
+
+def test_flush_quarantines_invalid_data_and_continues(tmp_path, caplog):
+    bad = vm_buffer.save_batch(tmp_path, "x", {"n": 1})
+    good = vm_buffer.save_batch(tmp_path, "x", {"n": 2})
+    conn = StubConn()
+    written = []
+    secret_row = 'Failing row contains (secret-value)'
+
+    def write_fn(_conn, payload):
+        if payload["n"] == 1:
+            raise _pg_error('23514', constraint='lineage_chk',
+                            message=f'new row violates check constraint "lineage_chk"\nDETAIL: {secret_row}')
+        written.append(payload)
+
+    with caplog.at_level("INFO", logger="vm_buffer"):
+        flushed, dropped = vm_buffer.flush_pending(conn, tmp_path, write_fn)
+    assert (flushed, dropped) == (1, 0)
+    assert written == [{"n": 2}]                     # 壞檔不擋後面的檔
+    assert conn.rollbacks == 1
+    assert not bad.exists() and (tmp_path / "quarantine" / bad.name).exists()
+    assert not good.exists()
+    assert not any(tmp_path.glob("*.json"))          # has_pending 不再看到隔離檔
+    assert vm_buffer.has_pending(tmp_path) is False
+    log_text = caplog.text
+    assert "SQLSTATE=23514" in log_text and "lineage_chk" in log_text
+    assert "secret-value" not in log_text            # 不印完整錯誤訊息
+
+
+def test_flush_transient_error_still_aborts_and_keeps_file(tmp_path):
+    vm_buffer.save_batch(tmp_path, "x", {"n": 1})
+    vm_buffer.save_batch(tmp_path, "x", {"n": 2})
+
+    def write_fn(_conn, _payload):
+        raise _pg_error('57014', message='canceling statement due to statement timeout')
+
+    flushed, dropped = vm_buffer.flush_pending(StubConn(), tmp_path, write_fn)
+    assert (flushed, dropped) == (0, 0)
+    assert len(list(tmp_path.glob("*.json"))) == 2
+    assert not (tmp_path / "quarantine").exists()
+
+
+def test_flush_does_not_retry_quarantined_files(tmp_path):
+    qdir = tmp_path / "quarantine"
+    qdir.mkdir(parents=True)
+    (qdir / "x_q.json").write_text(json.dumps(
+        {"name": "x", "saved_at": datetime.now(timezone.utc).isoformat(), "payload": {"n": 1}}))
+    written = []
+    assert vm_buffer.flush_pending(StubConn(), tmp_path, lambda c, p: written.append(p)) == (0, 0)
+    assert written == [] and (qdir / "x_q.json").exists()
+
+
+def test_flush_purges_old_quarantine_even_when_buffer_empty(tmp_path):
+    import os
+    import time as _time
+    qdir = tmp_path / "quarantine"
+    qdir.mkdir(parents=True)
+    old, fresh = qdir / "x_old.json", qdir / "x_new.json"
+    old.write_text("{}")
+    fresh.write_text("{}")
+    past = _time.time() - (vm_buffer.QUARANTINE_MAX_AGE_DAYS + 1) * 86400
+    os.utime(old, (past, past))
+    vm_buffer.flush_pending(StubConn(), tmp_path, lambda c, p: None)
+    assert not old.exists() and fresh.exists()

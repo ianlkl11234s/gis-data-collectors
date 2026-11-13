@@ -24,6 +24,7 @@ import requests
 
 import config
 from .base import BaseCollector
+from utils.redact import redact_secrets
 from .earthquake_common import (
     as_list,
     intensity_to_value,
@@ -233,6 +234,7 @@ class EarthquakeCollector(BaseCollector):
 
         parsed_by_id = {}       # event_id → 事件 dict
         stations_by_id = {}     # event_id → 逐站 list
+        fetch_errors = []       # 吞掉的例外；全部來源都空時用來區分「真的沒資料」與「抓失敗」
         for source_type, endpoint_id in self.ENDPOINTS.items():
             try:
                 reports = self._fetch_records(endpoint_id, 'Earthquake', limit=30)
@@ -246,6 +248,7 @@ class EarthquakeCollector(BaseCollector):
                     stations_by_id[eid] = self._extract_stations(eq, parsed)
             except Exception as e:
                 print(f"   [{source_type}] 取得失敗: {e}")
+                fetch_errors.append(f"{source_type}: {redact_secrets(e)[:200]}")
 
         unique_reports = sorted(
             parsed_by_id.values(), key=lambda x: x['origin_time'], reverse=True
@@ -279,8 +282,9 @@ class EarthquakeCollector(BaseCollector):
             print(f"   海嘯報告: {len(tsunami)} 筆")
         except Exception as e:
             print(f"   海嘯資訊取得失敗: {e}")
+            fetch_errors.append(f"tsunami: {redact_secrets(e)[:200]}")
 
-        return {
+        result = {
             'fetch_time': fetch_time.isoformat(),
             'total_reports': len(unique_reports),
             'today_reports': len(today_reports),
@@ -297,3 +301,6 @@ class EarthquakeCollector(BaseCollector):
                 'tsunami': tsunami,
             },
         }
+        if not unique_reports and not tsunami and fetch_errors:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result['_collector_error'] = "0 筆且來源抓取失敗: " + "; ".join(fetch_errors)
+        return result

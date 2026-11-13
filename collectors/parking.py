@@ -260,7 +260,7 @@ class ParkingCollector(BaseCollector):
               f"空位 {total_available:,}/{total_spaces:,} | "
               f"使用率 {occ_str} | 滿載 {total_full} 路段")
 
-        return {
+        result = {
             'fetch_time': fetch_time.isoformat(),
             'total_segments': total_segments,
             'total_spaces': total_spaces,
@@ -270,3 +270,7 @@ class ParkingCollector(BaseCollector):
             'by_city': city_stats,
             'data': all_segments
         }
+        failed = [c for c, s in city_stats.items() if 'error' in s]
+        if not all_segments and failed:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result['_collector_error'] = f"0 筆且 {len(failed)} 城市抓取失敗: {failed}"
+        return result

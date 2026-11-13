@@ -29,6 +29,7 @@ import urllib3
 
 import config
 from collectors.base import BaseCollector, TAIPEI_TZ
+from utils.redact import redact_secrets
 
 # mnd.gov.tw 同 NHI / CDC 憑證缺 SKI，verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -318,11 +319,13 @@ class PlaActivityDailyCollector(BaseCollector):
 
     def collect(self) -> dict:
         now = datetime.now(tz=TAIPEI_TZ)
+        list_error = None
         try:
             nids = self._fetch_list_ids()
         except requests.RequestException as e:
             print(f"[{self.name}] ⚠ 抓列表失敗: {e}")
             nids = []
+            list_error = f"抓列表失敗：{redact_secrets(e)[:200]}"
 
         # UPSERT by report_date：同日多則保留最新（list 順序新→舊，先寫新後寫舊）
         records: dict[str, dict] = {}
@@ -337,9 +340,12 @@ class PlaActivityDailyCollector(BaseCollector):
                 records[rd] = parsed
 
         rows = list(records.values())
-        return {
+        result = {
             "data":          rows,
             "list_ids":      nids,
             "parsed_count":  len(rows),
             "collected_at":  now.isoformat(),
         }
+        if list_error:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result["_collector_error"] = list_error
+        return result

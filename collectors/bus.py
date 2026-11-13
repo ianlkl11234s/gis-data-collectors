@@ -171,9 +171,12 @@ class BusCollector(BaseCollector):
         msg += "）"
         print(msg)
 
-        return {
+        result = {
             'fetch_time': fetch_iso,
             'total_active': total,
             'by_city': city_stats,
             'data': all_buses,
         }
+        if not all_buses and failed:  # 因例外而空 → 本輪算失敗、不寫成功心跳
+            result['_collector_error'] = f"0 台且 {failed} 城市抓取失敗"
+        return result
