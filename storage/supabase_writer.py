@@ -15,11 +15,13 @@ import json
 import logging
 import re
 import threading
+import time
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
+import psycopg2
 from psycopg2 import Binary as PgBinary
 from psycopg2.extras import Json
 
@@ -39,6 +41,46 @@ from tasks.mini_taipei_publish import (
 logger = logging.getLogger(__name__)
 
 BUFFER_DIR = config.LOCAL_DATA_DIR / 'buffer'
+
+# buffer 補寫時，資料庫明確回報「資料本身不合法」的 SQLSTATE：同一份內容重試永遠不會成功，
+# 移到 buffer/quarantine/ 不再重試（2026-11-13 global_events 違反 CHECK、每 5 分洗 log）。
+# 只列這幾個；逾時、連線、鎖等待、唯一鍵、外鍵、權限、不明錯誤一律照舊重試（寧可漏判）。
+INVALID_DATA_SQLSTATES = {
+    '23514': 'check_violation',
+    '23502': 'not_null_violation',
+    '22P02': 'invalid_text_representation',
+    '22007': 'invalid_datetime_format',
+    '22003': 'numeric_value_out_of_range',
+    '42804': 'datatype_mismatch',
+}
+# 拿不到 pgcode 時才比對訊息（psycopg2 正常都有 pgcode）
+_INVALID_DATA_MESSAGES = (
+    ('violates check constraint', '23514'),
+    ('violates not-null constraint', '23502'),
+    ('invalid input syntax for type', '22P02'),
+)
+
+
+def classify_invalid_data_error(err: BaseException) -> Optional[str]:
+    """資料庫明確回報資料不合法 → 回傳類別名；其餘（含非資料庫例外）回 None＝照舊重試。"""
+    if not isinstance(err, psycopg2.Error):
+        return None
+    msg = str(err)
+    code = getattr(err, 'pgcode', None)
+    if code is None:
+        code = next((c for needle, c in _INVALID_DATA_MESSAGES if needle in msg), None)
+    label = INVALID_DATA_SQLSTATES.get(code)
+    if label is None:
+        return None
+    if code == '23514':
+        # 23514 也用在分區表「找不到分區」「違反 partition constraint」，那是暫時性問題，不隔離；
+        # 只有帶 constraint 名或訊息明說 check constraint 的才算。
+        constraint = getattr(getattr(err, 'diag', None), 'constraint_name', None)
+        if 'partition' in msg.lower():
+            return None
+        if not (constraint or 'violates check constraint' in msg):
+            return None
+    return label
 
 
 # Chinese text decoded through a Cyrillic single-byte code page is a known NCDR
@@ -377,7 +419,8 @@ class SupabaseWriter:
         """重試 buffer 中的資料。一次借一條連線跑完整批，期間其他 collector 用別條 conn 不受影響。"""
         from datetime import timezone, timedelta as _td
 
-        buffer_files = sorted(BUFFER_DIR.glob("*.json"))
+        self._purge_old_quarantine()  # 不借連線；放在「沒有待補寫檔就返回」之前，buffer 空了也照清
+        buffer_files = sorted(BUFFER_DIR.glob("*.json"))  # 不遞迴：quarantine/ 內的檔不會被重試或過期丟棄
         if not buffer_files:
             return
 
@@ -421,14 +464,21 @@ class SupabaseWriter:
                         # 壞檔移到 quarantine/ 供事後鑑識，並繼續處理後面的檔案，
                         # 避免同一壞檔每輪擋住整批、讓其他 buffer 超過保留期被丟棄。
                         logger.error(f"Buffer 內容被亂碼防護拒絕，隔離 {f.name}: {e}")
-                        try:
-                            qdir = BUFFER_DIR / "quarantine"
-                            qdir.mkdir(parents=True, exist_ok=True)
-                            f.replace(qdir / f.name)
-                        except OSError as move_err:
-                            logger.warning(f"Buffer 隔離失敗 {f.name}: {move_err}")
+                        self._quarantine_buffer_file(f)
                         continue
                     except Exception as e:
+                        label = classify_invalid_data_error(e)
+                        if label:
+                            # 資料本身不合法：重試永遠失敗，移走不再重試，也不算進「連續失敗」。
+                            # 只記 SQLSTATE 與 constraint／欄位名，不印 str(e)（DETAIL 會帶整列資料）。
+                            diag = getattr(e, 'diag', None)
+                            logger.error(
+                                f"Buffer 資料不合法，隔離不再重試：collector={payload.get('collector')} "
+                                f"檔案={f.name} 類別={label} SQLSTATE={getattr(e, 'pgcode', None)} "
+                                f"constraint={getattr(diag, 'constraint_name', None)} "
+                                f"column={getattr(diag, 'column_name', None)}")
+                            self._quarantine_buffer_file(f)
+                            continue
                         consecutive_failures += 1
                         logger.warning(f"Buffer 重試失敗：{f.name}: {e}")
                         # 不再 break — 改為連續多筆失敗才放棄，避免單一爛檔卡住其他
@@ -445,6 +495,32 @@ class SupabaseWriter:
     # Buffer 檔最大保留天數：超過則直接丟棄
     # 因為分區表 retention 會自動刪舊分區，過期 buffer 已無處可寫，且會永久卡住其他檔案
     BUFFER_MAX_AGE_DAYS = 3
+
+    # buffer/quarantine/ 隔離檔保留天數（從移入時起算），超過刪除，避免磁碟無限長
+    BUFFER_QUARANTINE_MAX_AGE_DAYS = 30
+
+    @staticmethod
+    def _quarantine_buffer_file(f: Path) -> None:
+        """移到 buffer/quarantine/ 供事後鑑識；mtime 設為移入時間，保留期從此起算。"""
+        try:
+            qdir = BUFFER_DIR / "quarantine"
+            qdir.mkdir(parents=True, exist_ok=True)
+            dest = qdir / f.name
+            f.replace(dest)
+            dest.touch()
+        except OSError as move_err:
+            logger.warning(f"Buffer 隔離失敗 {f.name}: {move_err}")
+
+    def _purge_old_quarantine(self) -> None:
+        cutoff = time.time() - self.BUFFER_QUARANTINE_MAX_AGE_DAYS * 86400
+        qdir = BUFFER_DIR / "quarantine"
+        try:
+            for q in qdir.glob("*.json"):
+                if q.stat().st_mtime < cutoff:
+                    q.unlink(missing_ok=True)
+                    logger.info(f"Buffer 隔離檔超過 {self.BUFFER_QUARANTINE_MAX_AGE_DAYS} 天，刪除：{q.name}")
+        except OSError as e:
+            logger.warning(f"Buffer 隔離檔清理失敗: {e}")
 
     # 連續失敗多少筆後判定 DB 仍不可用、放棄本輪
     BUFFER_FAIL_THRESHOLD = 5

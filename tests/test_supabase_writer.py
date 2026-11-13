@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import psycopg2
 import pytest
 
 
@@ -961,3 +962,126 @@ def test_write_transform_failure_still_reports_failure_not_success(writer_with_m
                         datetime(2026, 11, 13, 9, 0, 0)) is False
     beats = _heartbeats(cursors)
     assert len(beats) == 1 and beats[0][:3] == ('lightning_cwa', False, 0)
+
+
+# ─────────────────────────────────────────────────────────
+# buffer 補寫：資料本身不合法（DB 明確回報）→ 隔離不再重試（2026-11-13 global_events CHECK）
+# ─────────────────────────────────────────────────────────
+
+
+def _pg_error(code, *, constraint=None, column=None, message='boom', base=psycopg2.DatabaseError):
+    """psycopg2 例外的 pgcode／diag 是唯讀，用子類別的類別屬性蓋掉。"""
+    diag = type('Diag', (), {'constraint_name': constraint, 'column_name': column})()
+    cls = type('FakePgError', (base,), {'pgcode': code, 'diag': diag})
+    return cls(message)
+
+
+@pytest.mark.parametrize('code,kwargs,label', [
+    ('23514', {'constraint': 'global_event_collector_runs_accepted_lineage',
+               'message': 'new row for relation "x" violates check constraint "c"'}, 'check_violation'),
+    ('23502', {'column': 'raw_response_sha256'}, 'not_null_violation'),
+    ('22P02', {}, 'invalid_text_representation'),
+    ('22007', {}, 'invalid_datetime_format'),
+    ('22003', {}, 'numeric_value_out_of_range'),
+    ('42804', {}, 'datatype_mismatch'),
+])
+def test_classify_invalid_data_error_quarantine_codes(code, kwargs, label):
+    from storage.supabase_writer import classify_invalid_data_error
+    assert classify_invalid_data_error(_pg_error(code, **kwargs)) == label
+
+
+@pytest.mark.parametrize('err', [
+    _pg_error('57014', message='canceling statement due to statement timeout'),   # 逾時
+    _pg_error('55P03', message='could not obtain lock'),                           # 鎖等待
+    _pg_error('40P01'),                                                            # deadlock
+    _pg_error('23505', constraint='pk', message='duplicate key value'),            # 唯一鍵
+    _pg_error('23503', constraint='fk'),                                           # 外鍵
+    _pg_error('42501', message='permission denied'),                               # 權限
+    _pg_error('08006', base=psycopg2.OperationalError),                            # 連線中斷
+    _pg_error(None, message='server closed the connection unexpectedly',
+              base=psycopg2.OperationalError),                                     # 沒 pgcode、訊息不符
+    # 23514 但是分區問題（暫時性）：沒有 constraint 名、或訊息提到 partition
+    _pg_error('23514', message='no partition of relation "x_snapshots" found for row'),
+    _pg_error('23514', constraint='x', message='new row violates partition constraint'),
+    ValueError('accepted global_events run requires one batch receipt'),           # 非 DB 例外
+    TimeoutError('timed out'),
+])
+def test_classify_invalid_data_error_keeps_retrying(err):
+    from storage.supabase_writer import classify_invalid_data_error
+    assert classify_invalid_data_error(err) is None
+
+
+def test_classify_invalid_data_error_message_fallback_without_pgcode():
+    from storage.supabase_writer import classify_invalid_data_error
+    err = _pg_error(None, message='new row for relation "x" violates check constraint "c"')
+    assert classify_invalid_data_error(err) == 'check_violation'
+    assert classify_invalid_data_error(
+        _pg_error(None, message='invalid input syntax for type integer: "abc"')) == 'invalid_text_representation'
+
+
+def _write_buffer(buffer_dir, name, collector='youbike'):
+    buffer_dir.mkdir(parents=True, exist_ok=True)
+    p = buffer_dir / name
+    p.write_text(json.dumps({'collector': collector,
+                             'timestamp': datetime.now(timezone.utc).isoformat(),
+                             'result': {'data': []}}))
+    return p
+
+
+def test_flush_buffer_quarantines_invalid_data_and_keeps_transient(writer_with_mock_pool, tmp_path):
+    writer, _ = writer_with_mock_pool
+    buffer_dir = tmp_path / 'buffer'
+    bad = _write_buffer(buffer_dir, 'global_events_20261113_030518.json', 'global_events')
+    flaky = _write_buffer(buffer_dir, 'youbike_20261113_030000.json')
+    good = _write_buffer(buffer_dir, 'bus_20261113_030000.json', 'bus')
+    writer._transform = lambda c, r, t: [{}]
+    seen = []
+
+    def fake_write(conn, name, recs, t):
+        if name == 'global_events':
+            raise _pg_error('23514', constraint='global_event_collector_runs_accepted_lineage',
+                            message='violates check constraint')
+        if name == 'youbike':
+            raise _pg_error('57014', message='statement timeout')
+        seen.append(name)
+
+    writer._write_to_db = fake_write
+    with patch('storage.supabase_writer.reject_mojibake_records', lambda c, r: r):
+        writer.flush_buffer()
+
+    assert seen == ['bus'] and not good.exists()
+    assert not bad.exists() and (buffer_dir / 'quarantine' / bad.name).exists()
+    assert flaky.exists()                       # 暫時性錯誤照舊留在 buffer 重試
+    assert not (buffer_dir / 'quarantine' / flaky.name).exists()
+
+
+def test_flush_buffer_does_not_retry_quarantined_files(writer_with_mock_pool, tmp_path):
+    writer, mock_pool = writer_with_mock_pool
+    qdir = tmp_path / 'buffer' / 'quarantine'
+    q = _write_buffer(qdir, 'global_events_20261113_030518.json', 'global_events')
+    normal = _write_buffer(tmp_path / 'buffer', 'bus_20261113_030000.json', 'bus')
+    writer._transform = lambda c, r, t: [{}]
+    calls = []
+    writer._write_to_db = lambda conn, name, recs, t: calls.append(name)
+    with patch('storage.supabase_writer.reject_mojibake_records', lambda c, r: r):
+        writer.flush_buffer()
+    assert calls == ['bus'] and not normal.exists()   # 只補寫 buffer/ 第一層
+    assert q.exists()
+
+
+def test_flush_buffer_old_quarantined_file_purged_not_treated_as_expired_buffer(writer_with_mock_pool, tmp_path):
+    """隔離檔超過 BUFFER_QUARANTINE_MAX_AGE_DAYS 才刪；buffer 空時也照清；內容時間戳過期也不會被當一般檔丟。"""
+    import os
+    import time as _time
+    writer, _ = writer_with_mock_pool
+    qdir = tmp_path / 'buffer' / 'quarantine'
+    old = _write_buffer(qdir, 'a_20261001_000000.json')
+    recent = _write_buffer(qdir, 'b_20261110_000000.json')
+    recent.write_text(json.dumps({'collector': 'b', 'timestamp': '2026-01-01T00:00:00+00:00',
+                                  'result': {}}))     # payload 時間早已超過 3 天
+    days = writer.BUFFER_QUARANTINE_MAX_AGE_DAYS
+    t_old = _time.time() - (days + 1) * 86400
+    os.utime(old, (t_old, t_old))
+    writer.flush_buffer()
+    assert not old.exists()
+    assert recent.exists()
