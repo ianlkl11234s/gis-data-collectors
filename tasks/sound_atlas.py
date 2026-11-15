@@ -12,6 +12,7 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import re
 import shutil
 import time
 from pathlib import Path
@@ -19,7 +20,7 @@ from typing import Optional
 
 import config
 from sound_atlas import aviation, daily, live, natural, publish, radar
-from sound_atlas.common import TPE, RawSource, contract_json, dumps_compact, grid_bbox, natural_static, shift, slot_of
+from sound_atlas.common import TPE, RawSource, contract_json, dumps_compact, grid_bbox, natural_static, now_tpe_iso, shift, slot_of
 
 log = logging.getLogger(__name__)
 
@@ -41,8 +42,8 @@ def _s3_fetch():
     return s3.get_file
 
 
-def _raw_source() -> RawSource:
-    return RawSource(local_dir=str(config.LOCAL_DATA_DIR), archive_fetch=_s3_fetch())
+def _raw_source(with_s3: bool = True) -> RawSource:
+    return RawSource(local_dir=str(config.LOCAL_DATA_DIR), archive_fetch=_s3_fetch() if with_s3 else None)
 
 
 def _static() -> Optional[dict]:
@@ -101,11 +102,13 @@ class SoundAtlasLive:
     """主程序內常駐（輕量：模擬實測每次 0.2 s 平均、浪解析那次約 0.4–0.9 s）"""
 
     def __init__(self, sink: Optional[publish.Sink] = None, inputs: Optional[live.LiveInputs] = None,
-                 root: Optional[Path] = None):
+                 root: Optional[Path] = None, history: Optional[RawSource] = None):
         self.root = root or _root()
         self.sink = sink or publish.make_sink(config.SOUND_ATLAS_UPLOAD_ENABLED, str(self.root / "out"))
+        # 河川基準要讀前 60 天（只在 S3）；即時本身只讀本機（今天、昨天都還在本機），S3 出錯不影響即時
+        self.history = history or (inputs.raw if inputs else _raw_source(with_s3=True))
         self.inputs = inputs or live.LiveInputs(
-            raw=_raw_source(),
+            raw=_raw_source(with_s3=False),
             # 即時用短逾時：影像主機掛掉時一次執行最多卡約 25 s（每日段用預設 3 次 × 30 s）
             radar_fetcher=radar.FrameFetcher(base_url=config.SOUND_ATLAS_RADAR_BASE_URL,
                                              getter=lambda u: radar.http_get(u, retries=2, timeout=10)),
@@ -136,7 +139,7 @@ class SoundAtlasLive:
         if p.exists():
             doc = json.loads(p.read_bytes())
         else:
-            cache = natural.RiverRowCache(self.inputs.raw)
+            cache = natural.RiverRowCache(self.history)
             doc = live.river_baseline_doc(date, grid_bbox(), cache.get)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(dumps_compact(doc))
@@ -151,7 +154,11 @@ class SoundAtlasLive:
         out = {}
         y = shift(today, -1)
         if slot_of(y, now) < 144 + live.TAIL_SLOTS:
-            out[y] = self.run_day(y, now)
+            try:
+                out[y] = self.run_day(y, now)
+            except Exception as e:  # noqa: BLE001 — 昨天的收尾片失敗不擋今天
+                log.warning("[sound_atlas] %s 收尾片失敗：%s", y, type(e).__name__)
+                out[y] = {"error": type(e).__name__}
         out[today] = self.run_day(today, now)
         self._prune(today)
         try:
@@ -165,8 +172,8 @@ class SoundAtlasLive:
         cutoff = shift(today, -KEEP_LOCAL_DAYS)
         st = self.root / "state"
         for p in list(st.glob("*")) if st.exists() else []:
-            d = p.name.split("-", 1)[-1][:10].replace(".pkl", "")
-            if len(d) == 10 and d < cutoff:
+            m = re.search(r"\d{4}-\d{2}-\d{2}", p.name)
+            if m and m.group(0) < cutoff:
                 shutil.rmtree(p) if p.is_dir() else p.unlink()
         if isinstance(self.sink, publish.LocalDirSink):
             for sub in ("live", "daily"):
@@ -202,10 +209,15 @@ class SoundAtlasLive:
         sp = self._spool(date)
         sp.mkdir(parents=True, exist_ok=True)
         (sp / f"slot-{k:03d}.json").write_bytes(dumps_compact(doc))
-        if k % 6 == 5:
-            shards = [json.loads((sp / f"slot-{j:03d}.json").read_bytes()) for j in range(k - 5, k + 1)
+        # 小時片：本槽是該小時最後一槽，或之前有小時因為那次執行沒跑而漏了 → 補
+        for h in range(0, k // 6 + (1 if k % 6 == 5 else 0)):
+            if h in day.hours_published:
+                continue
+            shards = [json.loads((sp / f"slot-{j:03d}.json").read_bytes()) for j in range(h * 6, h * 6 + 6)
                       if (sp / f"slot-{j:03d}.json").exists()]
-            self.sink.put_json(publish.live_hour_key(date, k // 6), live.rollup(date, k // 6, shards))
+            if shards:
+                self.sink.put_json(publish.live_hour_key(date, h), live.rollup(date, h, shards))
+            day.hours_published.add(h)
         day.save(self._state_path(date))  # 發布成功後才存狀態：上傳失敗 → 下一槽重送（合併規則冪等）
         return {"slot": k, "bytes": size, "status": {n: s.get("status") for n, s in doc["sources"].items()},
                 "timings_s": doc["timings_s"]}
@@ -240,23 +252,38 @@ def run_daily(date: Optional[str] = None, families: Optional[list[str]] = None) 
     inputs = daily.DailyInputs(raw=RawSource(local_dir=str(config.LOCAL_DATA_DIR), archive_fetch=s3.get_file if s3 else None),
                                radar_fetcher=radar.FrameFetcher(base_url=config.SOUND_ATLAS_RADAR_BASE_URL),
                                trails=trails, static=_static())
+    return publish_daily(date, inputs, sink, families)
+
+
+def publish_daily(date: str, inputs: "daily.DailyInputs", sink: publish.Sink, families: Optional[list[str]] = None) -> dict:
+    """建每日檔並發布；manifest 只記真的發布出去的檔（重跑沿用前次紀錄）。"""
     files, report = daily.build_all(date, inputs, set(families) if families else None)
     hold = daily.transient_gaps(files, report)
+    mkey = publish.daily_key(date, "manifest.json")
+    prev = sink.get_json(mkey) or {}
+    published: dict = dict(prev.get("files") or {})   # 只記真的在 R2 上的檔（沿用前次紀錄）
     written = {}
     for name, body in files.items():
         if any(name.startswith(prefix) for prefix in hold):
             written[name] = "held: " + hold[next(p for p in hold if name.startswith(p))]
             continue
         kind = "bin" if name.endswith(".bin") else "json"
-        written[name] = sink.put(publish.daily_key(date, name), body, kind)
-    manifest = {"schema": "pulse-sound-daily-manifest-v1", "date_taiwan": date,
-                "contract": contract_json("manifest.json"),
-                "files": {n: {"bytes": len(b), "sha256": hashlib.sha256(b).hexdigest()} for n, b in files.items()},
-                "held": hold, "report": report}
+        if sink.put(publish.daily_key(date, name), body, kind):
+            published[name] = {"bytes": len(body), "sha256": hashlib.sha256(body).hexdigest(), "published_at": now_tpe_iso()}
+            written[name] = "published"
+        else:
+            written[name] = "exists (kept earlier build)"
+            published.setdefault(name, {"bytes": None, "sha256": None, "note": "已存在、無前次紀錄"})
+    still_held = {p: r for p, r in hold.items() if not any(n.startswith(p) for n in published)}
+    manifest = {"schema": "pulse-sound-daily-manifest-v1", "date_taiwan": date, "updated_at": now_tpe_iso(),
+                "contract": contract_json("manifest.json"), "files": published, "held": still_held,
+                "report": report}
     # manifest 可覆寫（短快取）：重跑補上被擋下的族之後要更新
-    sink.put_json(publish.daily_key(date, "manifest.json"), manifest, immutable=False)
+    sink.put_json(mkey, manifest, immutable=False)
+    if report["errors"] or still_held:
+        log.warning("[sound_atlas] 每日 %s 未完整：errors=%s held=%s", date, list(report["errors"]), list(still_held))
     return {"date": date, "sink": publish.describe(sink), "written": written, "errors": report["errors"],
-            "timings_s": report["timings_s"]}
+            "held": still_held, "timings_s": report["timings_s"]}
 
 
 def run_daily_isolated() -> dict:

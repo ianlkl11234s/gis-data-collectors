@@ -444,3 +444,37 @@ def test_r2_sink_headers_and_no_overwrite():
 def test_archive_skips_sound_atlas_dir():
     from tasks.archive import ArchiveTask
     assert "sound_atlas" in ArchiveTask.INTERNAL_DATA_DIRS
+
+
+def test_daily_manifest_records_only_published_and_survives_rerun(tmp_path, monkeypatch):
+    from sound_atlas import daily
+    from tasks import sound_atlas as task
+    calls = {"n": 0}
+
+    def fake_build(date, inputs, families=None, generated_at=None):
+        calls["n"] += 1
+        av = {"health": "error" if calls["n"] == 1 else "ok", "n": calls["n"]}
+        return ({f"aviation-src-{date}.json": json.dumps(av).encode(),
+                 f"freeway-vd-{date}.json": json.dumps({"n": calls["n"]}).encode()},
+                {"errors": {}, "timings_s": {}})
+
+    monkeypatch.setattr(daily, "build_all", fake_build)
+    sink = publish.LocalDirSink(str(tmp_path))
+    r1 = task.publish_daily(DATE, None, sink)
+    m1 = sink.read_json(publish.daily_key(DATE, "manifest.json"))
+    assert set(m1["files"]) == {f"freeway-vd-{DATE}.json"} and "aviation-src-" in m1["held"]
+    sha_vd = m1["files"][f"freeway-vd-{DATE}.json"]["sha256"]
+    assert r1["held"]
+    r2 = task.publish_daily(DATE, None, sink)                      # 重跑：飛機補上、VD 已存在不覆寫
+    m2 = sink.read_json(publish.daily_key(DATE, "manifest.json"))
+    assert set(m2["files"]) == {f"freeway-vd-{DATE}.json", f"aviation-src-{DATE}.json"} and m2["held"] == {}
+    assert m2["files"][f"freeway-vd-{DATE}.json"]["sha256"] == sha_vd   # 記的是 R2 上那份，不是這次重建的
+    assert r2["written"][f"freeway-vd-{DATE}.json"].startswith("exists")
+    assert sink.read_json(publish.daily_key(DATE, f"freeway-vd-{DATE}.json")) == {"n": 1}
+
+
+def test_live_lists_next_day_only_after_midnight():
+    day = live.LiveDay(DATE)
+    start, end = day_window(DATE)
+    assert day._dates(end - 1) == [DATE]
+    assert day._dates(end + 60) == [DATE, "2026-11-10"]

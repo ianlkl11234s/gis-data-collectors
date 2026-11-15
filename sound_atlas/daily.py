@@ -116,6 +116,7 @@ def transient_gaps(files: dict[str, bytes], report: dict) -> dict[str, str]:
         elif name.startswith("natural-"):
             nat = json.loads(b).get("natural", {})
             bad = [k for k in ("wind", "wave", "river") if (nat.get(k) or {}).get("health") == "error"]
+            bad += [k for k in ("coast", "river_network") if not nat.get(k)]  # 靜態幾何沒載到（暫時性：補檔後重跑）
             if bad:
                 hold["natural-"] = "讀取失敗：" + "、".join(bad)
     for w in report.get("warnings", []):

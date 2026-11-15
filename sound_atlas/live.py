@@ -88,6 +88,7 @@ class LiveDay:
     aviation: Optional[aviation.AviationLive] = None
     aviation_watermark: int = 0
     aviation_after: set = field(default_factory=set)      # 已補過跨午夜終點的航班
+    hours_published: set = field(default_factory=set)
     slots_published: set = field(default_factory=set)
     baseline_published: bool = False
     parse_fail: dict = field(default_factory=dict)        # 檔案 key → 解析失敗次數
@@ -123,6 +124,10 @@ class LiveDay:
         return day
 
     # ── 共用：新到的原始檔 ──
+    def _dates(self, now: float) -> list[str]:
+        """D；過了午夜（收尾片）才加 D+1。之前不列 D+1，免得每次都去 archive 來源找一個還不存在的日期。"""
+        return [self.date, shift(self.date, 1)] if now >= day_window(self.date)[1] else [self.date]
+
     def _new_files(self, inputs: LiveInputs, collector: str, now: float, dates: Iterable[str]) -> Optional[list[RawFile]]:
         """還沒處理過的原始檔（不標已讀；由 _parsed 在處理完後才標）"""
         seen = self.seen_files.setdefault(collector, set())
@@ -240,7 +245,7 @@ class LiveDay:
         return {"status": "ok" if slots_out else "no_new_data", "vd_ids_sha256": vd_ids_sha(), "slots": slots_out, "null_reasons": reasons}
 
     def run_rain(self, inputs: LiveInputs, now: float) -> dict:
-        files = self._new_files(inputs, "rain_gauge_realtime", now, [self.date, shift(self.date, 1)])
+        files = self._new_files(inputs, "rain_gauge_realtime", now, self._dates(now))
         if files is None:
             return {"status": "no_new_data", "rows": []}
         sb = rain_gauge.station_bbox(self.bbox)
@@ -259,7 +264,7 @@ class LiveDay:
         if now - self.wave_parsed_at < WAVE_PARSE_EVERY_S:
             return {"status": "no_new_data", "stations": [], "obs": []}
         latest = None
-        for d in (self.date, shift(self.date, 1)):  # 滾動 48h 檔：D+1 的檔也含 D 的值（每日檔取 D+1 第一檔）
+        for d in self._dates(now):  # 滾動 48h 檔：D+1 的檔也含 D 的值（每日檔取 D+1 第一檔）
             files = inputs.raw.files("cwa_marine_observation", d)
             for f in files or []:
                 if inputs.visible(f, now):
@@ -285,7 +290,7 @@ class LiveDay:
         return {"status": "ok", "file": latest.name, "stations": stations, "obs": obs}
 
     def run_river(self, inputs: LiveInputs, now: float, baseline_ids: set[str]) -> dict:
-        files = self._new_files(inputs, "river_water_level", now, [self.date, shift(self.date, 1)])
+        files = self._new_files(inputs, "river_water_level", now, self._dates(now))
         if not files:
             return {"status": "no_new_data", "obs": []}
         start, end = day_window(self.date)

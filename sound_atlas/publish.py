@@ -53,6 +53,9 @@ class Sink:
     def put(self, key: str, body: bytes, kind: str = "json", immutable: bool = True) -> bool:  # pragma: no cover
         raise NotImplementedError
 
+    def get_json(self, key: str):  # pragma: no cover - 介面
+        raise NotImplementedError
+
     def put_json(self, key: str, doc, immutable: bool = True) -> int:
         b = dumps_compact(doc)
         self.put(key, b, "json", immutable)
@@ -87,6 +90,8 @@ class LocalDirSink(Sink):
         p = self._path(key, "json")
         return json.loads(gzip.decompress(p.read_bytes())) if p.exists() else None
 
+    get_json = read_json
+
 
 class R2Sink(Sink):
     """正式上傳（storage/r2.R2Storage）。預設關閉：只有 SOUND_ATLAS_UPLOAD_ENABLED=true 才會建立。"""
@@ -96,6 +101,17 @@ class R2Sink(Sink):
 
     def exists(self, key: str) -> bool:
         return self.r2.head(key) is not None
+
+    def get_json(self, key: str):
+        import gzip
+        try:
+            body = self.r2.s3.get_object(Bucket=self.r2.bucket, Key=key)["Body"].read()
+        except Exception:  # noqa: BLE001 — 不存在或讀不到 → 當沒有
+            return None
+        try:
+            return json.loads(gzip.decompress(body))
+        except OSError:
+            return json.loads(body)
 
     def put(self, key: str, body: bytes, kind: str = "json", immutable: bool = True) -> bool:
         if immutable and self.exists(key):
