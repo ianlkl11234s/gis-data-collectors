@@ -438,6 +438,28 @@ def run_trails_export_task():
         return None
 
 
+def run_sound_atlas_tasks():
+    """城市聲景：即時分片（每 10 分 :x9）＋每日檔（子行程）。兩個開關預設關；上傳 R2 另需 SOUND_ATLAS_UPLOAD_ENABLED。"""
+    live_on = getattr(config, 'SOUND_ATLAS_LIVE_ENABLED', False)
+    daily_on = getattr(config, 'SOUND_ATLAS_DAILY_ENABLED', False)
+    if not (live_on or daily_on):
+        print("\n⏸️  城市聲景已停用 (SOUND_ATLAS_LIVE_ENABLED / SOUND_ATLAS_DAILY_ENABLED=false)")
+        return None
+    from tasks import sound_atlas
+    sched = get_scheduler()
+    dest = "R2" if config.SOUND_ATLAS_UPLOAD_ENABLED else "本機 dry-run"
+    if live_on:
+        for minute in sound_atlas.live_schedule_minutes():
+            schedule.every().hour.at(f":{minute:02d}").do(
+                sched.submit, _as_task(sound_atlas.TASK_LIVE, sound_atlas.run_live, timeout=240))
+        print(f"\n✓ 城市聲景即時分片已設定 (每 10 分 :x{config.SOUND_ATLAS_LIVE_MINUTE_OFFSET % 10}；{dest})")
+    if daily_on:
+        schedule.every().day.at(config.SOUND_ATLAS_DAILY_TIME).do(
+            sched.submit, _as_task(sound_atlas.TASK_DAILY, sound_atlas.run_daily_isolated, timeout=1200, heavy=True))
+        print(f"\n✓ 城市聲景每日檔已設定 (每日 {config.SOUND_ATLAS_DAILY_TIME} Asia/Taipei；{dest})")
+    return True
+
+
 def run_gfw_hourly_publish_task():
     """Set the fixed-time unified GFW hourly release job without an immediate run."""
     if not getattr(config, 'GFW_HOURLY_PUBLISH_ENABLED', False):
@@ -520,6 +542,9 @@ def main():
     # 設定每日軌跡凍結匯出任務
     run_trails_export_task()
 
+    # 城市聲景即時分片＋每日檔（預設關）
+    sound_atlas_on = run_sound_atlas_tasks()
+
     # GFW AIS grid/tracks + SAR unmatched 共用單一 root manifest；僅固定每日排程。
     gfw_hourly_task = run_gfw_hourly_publish_task()
 
@@ -538,6 +563,8 @@ def main():
         from tasks.staleness_watch import StalenessWatch
         persistent = [n for n, w in (("aisstream", aisstream_worker),
                                      ("ripe_ris_live", ripe_ris_live_worker)) if w]
+        if sound_atlas_on and getattr(config, 'SOUND_ATLAS_LIVE_ENABLED', False):
+            persistent.append("sound_atlas_live")  # 每 10 分；門檻 30 分（alerting.staleness_threshold_min）
         staleness = StalenessWatch(collectors, persistent)
         sched = get_scheduler()
         schedule.every(config.STALE_CHECK_INTERVAL_MIN).minutes.do(
