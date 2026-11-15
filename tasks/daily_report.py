@@ -1395,8 +1395,8 @@ def _cost_trend_text(points: list[dict]) -> str:
     2026-11-16 起：
     - 週增／月增依時間戳找 7／30 天前的資料點（原本取第 -7 點，實際只隔 6 天；缺日時更偏）。
     - BucketSizeBytes 含舊版本（bucket 開了版本控制），標題寫明。
-    - 紅燈門檻不變（月增 > 20%），但月增若扣掉最大的單日跳升後 ≤ 20%，視為一次性歸檔／搬移
-      造成的跳升，降為 🟡 並列出跳升日期與量；否則一次性跳升會連紅一個月。
+    - 紅燈門檻不變（月增 > 20%），但最大的單日跳升佔月增量一半以上、且扣掉後月增 ≤ 20% 時，
+      視為一次性歸檔／搬移造成的跳升，降為 🟡 並列出跳升日期與量；否則一次性跳升會連紅一個月。
     """
     head = "\n💰 *成本趨勢* (StandardStorage，含舊版本)"
     if not points:
@@ -1418,8 +1418,10 @@ def _cost_trend_text(points: list[dict]) -> str:
     max_jump, jump_at = max(jumps, key=lambda j: j[0], default=(0, None))
     mom_excl = (latest_b - month_b - max(max_jump, 0)) / month_b * 100 if month_b else 0
 
+    growth = latest_b - month_b
     note = ""
-    if mom > 20 and mom_excl <= 20:
+    # 一次性：最大單日跳升佔整段月增量一半以上，且扣掉後 ≤ 20%（穩定成長剛過 20% 不算）
+    if mom > 20 and mom_excl <= 20 and growth > 0 and max_jump >= 0.5 * growth:
         emoji = "🟡"
         note = (f"\n  ↳ 月增主要來自 {jump_at.strftime('%m-%d')} 單日 +{max_jump / gb:.2f} GB，"
                 f"扣除後月增 {mom_excl:+.1f}%（疑一次性歸檔或搬移）")

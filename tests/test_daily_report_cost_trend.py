@@ -42,3 +42,10 @@ def test_flat_is_green_and_short_history_reported():
     assert "🟢" in _cost_trend_text(_points([100.0] * 35))
     assert "資料 < 7 天" in _cost_trend_text(_points([100.0] * 5))
     assert "無資料" in _cost_trend_text([])
+
+
+def test_steady_growth_just_over_threshold_stays_red():
+    """每天約 +0.62%，30 天約 +20.5%：扣掉任一天都 ≤ 20%，但不是一次性跳升。"""
+    sizes = [100.0 * (1.0062 ** i) for i in range(35)]
+    text = _cost_trend_text(_points(sizes))
+    assert "🔴" in text and "一次性" not in text
