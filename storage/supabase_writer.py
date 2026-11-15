@@ -326,9 +326,17 @@ class SupabaseWriter:
                 # 例外：沒有 transformer（不經 writer、自己直寫 DB 並自報心跳）、
                 # 或帶 _collector_error（BaseCollector.run 稍後會把這輪算失敗）。
                 # 不呼叫 alerting.mark_write：staleness_watch 把它當「寫入 ≥1 筆」。
-                if (collector_name in self.TRANSFORMERS
-                        and not result.get('_collector_error')):
-                    self._report_heartbeat(collector_name, True, 0)
+                if collector_name in self.TRANSFORMERS:
+                    collector_error = result.get('_collector_error')
+                    if collector_error:
+                        # BaseCollector.run 會把這輪算失敗，但它認定 writer 已回報心跳、不再補，
+                        # 所以這裡記一次失敗（last_run_at、error_count、consecutive_errors、
+                        # last_error），否則 collector_status 整輪不動（#203 的副作用）。
+                        from utils.redact import redact_secrets
+                        self._report_heartbeat(collector_name, False, 0,
+                                               redact_secrets(collector_error)[:200])
+                    else:
+                        self._report_heartbeat(collector_name, True, 0)
                 return True
 
             # 借一條連線，把所有 DB 動作（含衛星 TLE 額外表）跑完才還

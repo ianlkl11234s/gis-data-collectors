@@ -56,6 +56,13 @@ class BaseCollector(ABC):
     # 跑超過這個時間才觸發 GC，避免短任務頻繁觸發 stop-the-world GC
     GC_THRESHOLD_SEC: int = 30
 
+    # opt-in：這輪沒有經 writer 回報心跳時（collect() 回傳不帶 'data'，例如沒有颱風的
+    # no_active_storm；或沒有 transformer、不寫 DB 的 tra_static），由 base 在成功時補一則
+    # 成功心跳（last_success_at、consecutive_errors=0、清掉舊 last_error），失敗時補失敗心跳。
+    # 只能開給「抓取失敗一定 raise 或帶 _collector_error」的 collector：吞例外後照常 return
+    # 的 collector 開了會把失敗記成成功（COL-ZERO-1）。預設關閉，既有 collector 行為不變。
+    heartbeat_without_writer: bool = False
+
     def should_persist_local(self) -> bool:
         """Whether normalized collector output may be written to local storage."""
         return True
@@ -109,7 +116,9 @@ class BaseCollector(ABC):
 
                 # 旁路寫入 Supabase（不影響本地儲存流程）
                 if self.supabase_writer:
-                    writer_reported = True  # write() 成功或失敗都會自己回報心跳
+                    # write() 成功或失敗都會自己回報心跳；opt-in collector 只有在有 transformer 時才是
+                    writer_reported = (not self.heartbeat_without_writer
+                                       or self.name in getattr(self.supabase_writer, 'TRANSFORMERS', {}))
                     try:
                         db_written = self.supabase_writer.write(self.name, result, timestamp)
                         if self.require_db_write() and not db_written:
@@ -129,6 +138,9 @@ class BaseCollector(ABC):
             collector_error = result.get('_collector_error')
             if collector_error:
                 raise RuntimeError(str(collector_error))
+
+            if self.heartbeat_without_writer and self.supabase_writer and not writer_reported:
+                self.supabase_writer._report_heartbeat(self.name, True, 0)
 
             # 統計
             stats = {

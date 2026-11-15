@@ -20,6 +20,8 @@ class TRAStaticCollector(BaseCollector):
 
     name = "tra_static"
     interval_minutes = config.TRA_STATIC_INTERVAL
+    # 不寫 DB（沒有 transformer），collect() 失敗一律 raise → 由 base 補成功／失敗心跳
+    heartbeat_without_writer = True
 
     def __init__(self):
         super().__init__()

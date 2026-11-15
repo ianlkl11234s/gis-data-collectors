@@ -150,6 +150,8 @@ class NcdrTyphoonRoutesCollector(BaseCollector):
 
     name = "global_climate_ncdr_typhoon_routes"
     interval_minutes = config.GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES_INTERVAL
+    # 沒有颱風時不帶 data（writer 不回報心跳）；HTTP／KML 錯誤一律 raise → 由 base 補成功／失敗心跳
+    heartbeat_without_writer = True
 
     def __init__(self):
         super().__init__()
