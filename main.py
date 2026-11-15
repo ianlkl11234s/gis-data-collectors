@@ -81,6 +81,17 @@ def _init_collector_from_entry(entry, first: bool) -> "BaseCollector | None":
         return None
 
 
+def _jitter_cap_seconds(interval_minutes: int) -> int:
+    """interval 型排程首次觸發的隨機錯開上限（秒）。
+
+    每小時以上的 collector 最多錯開 15 分鐘：原本一律 ≤5 分鐘，16 支每小時 collector
+    擠在整點後 5 分鐘內齊跑，容器記憶體常頂到 cgroup 上限（2026-11-16 查證）。
+    短週期維持 min(interval, 5 分鐘)，不超過 interval 本身。
+    """
+    cap = 900 if interval_minutes >= 60 else 300
+    return min(interval_minutes * 60, cap)
+
+
 def _schedule_collector(collector, sched) -> None:
     """註冊 collector 的週期觸發。
 
@@ -95,7 +106,7 @@ def _schedule_collector(collector, sched) -> None:
         print(f"   ⏱ [{collector.name}] 固定分鐘 {','.join(f':{int(m):02d}' for m in fixed)}")
         return
     job = schedule.every(collector.interval_minutes).minutes.do(sched.submit, collector)
-    offset_sec = random.uniform(0, min(collector.interval_minutes * 60, 300))
+    offset_sec = random.uniform(0, _jitter_cap_seconds(collector.interval_minutes))
     job.next_run += timedelta(seconds=offset_sec)
     print(f"   ⏱ [{collector.name}] 排程 jitter +{offset_sec:.0f}s"
           f"（首次觸發 {job.next_run.strftime('%H:%M:%S')}）")
@@ -144,7 +155,8 @@ def run_collectors():
         sched.submit(collector)
 
     # 設定排程（schedule 庫只負責觸發，實際執行交給 CollectorScheduler）。
-    # 對 next_run 加一次性隨機 offset（0 ~ min(interval, 5 分鐘)），錯開同 interval
+    # 對 next_run 加一次性隨機 offset（0 ~ min(interval, 5 分鐘)；interval ≥ 60 分為 0 ~ 15 分鐘，
+    # 見 _jitter_cap_seconds），錯開同 interval
     # collector 全撞同一 tick 的連線尖峰；schedule 之後以實際執行時間推下一輪，
     # offset 自然保留，interval 語義不變。
     for collector in collectors:

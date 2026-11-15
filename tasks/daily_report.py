@@ -1046,20 +1046,7 @@ class DailyReportTask:
             return f"\n💰 *成本趨勢*\n  查詢失敗: {exc}"
 
         points = sorted(r.get("Datapoints", []), key=lambda x: x["Timestamp"])
-        if len(points) < 7:
-            return f"\n💰 *成本趨勢*\n  CloudWatch BucketSizeBytes 資料 < 7 天 ({len(points)} 點)"
-
-        latest_gb = points[-1]["Maximum"] / (1024 ** 3)
-        week_ago_gb = points[-7]["Maximum"] / (1024 ** 3)
-        month_ago_gb = points[0]["Maximum"] / (1024 ** 3)
-
-        wow = (latest_gb - week_ago_gb) / week_ago_gb * 100 if week_ago_gb else 0
-        mom = (latest_gb - month_ago_gb) / month_ago_gb * 100 if month_ago_gb else 0
-        emoji = "🔴" if mom > 20 else ("🟡" if mom > 10 else "🟢")
-        return (
-            "\n💰 *成本趨勢* (StandardStorage)\n"
-            f"  {emoji} 目前 {latest_gb:.2f} GB | 週增 {wow:+.1f}% | 月增 {mom:+.1f}%"
-        )
+        return _cost_trend_text(points)
 
     def _section_today_action(self) -> str:
         """規則式推薦：根據其他 section 偵測到的問題，給出 1-3 件今天最該做的事"""
@@ -1394,6 +1381,57 @@ def _quarantined_buffer_counts(qdir: Path) -> dict[str, int]:
         name = m.group("name") if m else f.stem
         counts[name] = counts.get(name, 0) + 1
     return counts
+
+
+def _point_at_or_before(points: list[dict], target: datetime) -> dict | None:
+    """時間 ≤ target（容許 12 小時誤差）的最後一個資料點。"""
+    cands = [p for p in points if p["Timestamp"] <= target + timedelta(hours=12)]
+    return cands[-1] if cands else None
+
+
+def _cost_trend_text(points: list[dict]) -> str:
+    """S3 BucketSizeBytes 趨勢（points 依 Timestamp 排序，Maximum 為 bytes）。
+
+    2026-11-16 起：
+    - 週增／月增依時間戳找 7／30 天前的資料點（原本取第 -7 點，實際只隔 6 天；缺日時更偏）。
+    - BucketSizeBytes 含舊版本（bucket 開了版本控制），標題寫明。
+    - 紅燈門檻不變（月增 > 20%），但最大的單日跳升佔月增量一半以上、且扣掉後月增 ≤ 20% 時，
+      視為一次性歸檔／搬移造成的跳升，降為 🟡 並列出跳升日期與量；否則一次性跳升會連紅一個月。
+    """
+    head = "\n💰 *成本趨勢* (StandardStorage，含舊版本)"
+    if not points:
+        return f"{head}\n  CloudWatch BucketSizeBytes 無資料"
+    latest = points[-1]
+    week = _point_at_or_before(points, latest["Timestamp"] - timedelta(days=7))
+    if week is None:
+        return f"{head}\n  CloudWatch BucketSizeBytes 資料 < 7 天 ({len(points)} 點)"
+    month = _point_at_or_before(points, latest["Timestamp"] - timedelta(days=30)) or points[0]
+
+    gb = 1024 ** 3
+    latest_b, week_b, month_b = latest["Maximum"], week["Maximum"], month["Maximum"]
+    wow = (latest_b - week_b) / week_b * 100 if week_b else 0
+    mom = (latest_b - month_b) / month_b * 100 if month_b else 0
+    month_days = (latest["Timestamp"] - month["Timestamp"]).days
+
+    window = [p for p in points if p["Timestamp"] >= month["Timestamp"]]
+    jumps = [(b["Maximum"] - a["Maximum"], b["Timestamp"]) for a, b in zip(window, window[1:])]
+    max_jump, jump_at = max(jumps, key=lambda j: j[0], default=(0, None))
+    mom_excl = (latest_b - month_b - max(max_jump, 0)) / month_b * 100 if month_b else 0
+
+    growth = latest_b - month_b
+    note = ""
+    # 一次性：最大單日跳升佔整段月增量一半以上，且扣掉後 ≤ 20%（穩定成長剛過 20% 不算）
+    if mom > 20 and mom_excl <= 20 and growth > 0 and max_jump >= 0.5 * growth:
+        emoji = "🟡"
+        note = (f"\n  ↳ 月增主要來自 {jump_at.strftime('%m-%d')} 單日 +{max_jump / gb:.2f} GB，"
+                f"扣除後月增 {mom_excl:+.1f}%（疑一次性歸檔或搬移）")
+    else:
+        emoji = "🔴" if mom > 20 else ("🟡" if mom > 10 else "🟢")
+    return (
+        f"{head}\n"
+        f"  {emoji} 目前 {latest_b / gb:.2f} GB | 週增 {wow:+.1f}% | 月增 {mom:+.1f}%（{month_days} 天）"
+        f"{note}"
+    )
 
 
 def _event_driven_keys(tables: list[dict]) -> set[tuple[str, str]]:

@@ -127,13 +127,93 @@ def test_jtwc_no_active_storm_success_heartbeat(writer_with_mock_pool):  # noqa:
     assert hbs == [(c.name, True, 0)]
 
 
-def test_collector_error_with_zero_rows_writes_no_heartbeat_at_all(writer_with_mock_pool):  # noqa: F811
-    """現況記錄：帶 _collector_error 且 0 筆時，writer 不報成功；run() 因 writer 已被呼叫
-    （writer_reported=True）也不補報失敗 → collector_status 這輪完全不動（last_success_at 停住）。"""
+def test_collector_error_with_zero_rows_writes_one_failure_heartbeat(writer_with_mock_pool):  # noqa: F811
+    """帶 _collector_error 且 0 筆：writer 記一次失敗心跳（原本整輪不動，#203 副作用），
+    run() 不再重複補報。"""
     writer, _ = writer_with_mock_pool
     from collectors.wic_pumb import WicPumbCollector
     c = _prepare(WicPumbCollector, writer)
     c._fetch = MagicMock(side_effect=requests.ConnectionError('reset'))
+    stats, hbs = _run(c, writer)
+    assert 'error' in stats and c.last_success_at is None
+    assert hbs == [(c.name, False, 0)]
+
+
+def test_zero_rows_failure_heartbeat_error_redacted_and_truncated(writer_with_mock_pool):  # noqa: F811
+    writer, _ = writer_with_mock_pool
+    with patch.object(writer, '_report_heartbeat') as hb:
+        assert writer.write('wic_pumb', {'data': [], '_collector_error': _LEAKY + 'x' * 500}, None) is True
+    (name, success, records, error), = [call.args for call in hb.call_args_list]
+    assert (name, success, records) == ('wic_pumb', False, 0)
+    assert 'SECRET123' not in error and len(error) <= 200
+
+
+# ── 不經 writer 回報心跳的 opt-in collector（heartbeat_without_writer）──
+
+def _jma_typhoon(writer, fetch_json):
+    from collectors.global_climate.jma_typhoon import JmaTyphoonCollector
+    c = _prepare(JmaTyphoonCollector, writer)
+    c._fetch_json = fetch_json
+    return c
+
+
+def test_typhoon_no_active_storm_success_heartbeat(writer_with_mock_pool):  # noqa: F811
+    writer, _ = writer_with_mock_pool
+    c = _jma_typhoon(writer, lambda url: [])
+    stats, hbs = _run(c, writer)
+    assert 'error' not in stats and stats['status'] == 'no_active_storm'
+    assert hbs == [(c.name, True, 0)]
+    c.storage.save.assert_not_called()
+
+
+def test_typhoon_fetch_exception_failure_heartbeat_only(writer_with_mock_pool):  # noqa: F811
+    writer, _ = writer_with_mock_pool
+    from collectors.global_climate.jma_typhoon import JmaFetchError
+
+    def fail(url):
+        raise JmaFetchError('timeout')
+    c = _jma_typhoon(writer, fail)
+    stats, hbs = _run(c, writer)
+    assert 'error' in stats and c.last_success_at is None
+    assert hbs == [(c.name, False, 0)]
+
+
+def test_typhoon_with_rows_heartbeat_from_writer_only(writer_with_mock_pool):  # noqa: F811
+    """有 data 且有 transformer → 心跳由 writer 發，base 不重複。"""
+    writer, _ = writer_with_mock_pool
+    c = _jma_typhoon(writer, lambda url: [])
+    c.collect = MagicMock(return_value={'status': 'ok', 'data': []})
+    _, hbs = _run(c, writer)
+    assert hbs == [(c.name, True, 0)]
+
+
+def test_tra_static_success_heartbeat_without_db_write(writer_with_mock_pool):  # noqa: F811
+    writer, _ = writer_with_mock_pool
+    from collectors.tra_static import TRAStaticCollector
+    c = _prepare(TRAStaticCollector, writer)
+    c.collect = MagicMock(return_value={'fetch_time': 't', 'data': {'stations': {'count': 0, 'data': []}}})
+    stats, hbs = _run(c, writer)
+    assert 'error' not in stats
+    assert hbs == [(c.name, True, 0)]
+
+
+def test_tra_static_exception_failure_heartbeat(writer_with_mock_pool):  # noqa: F811
+    writer, _ = writer_with_mock_pool
+    from collectors.tra_static import TRAStaticCollector
+    c = _prepare(TRAStaticCollector, writer)
+    c.collect = MagicMock(side_effect=requests.ConnectionError(_LEAKY))
+    stats, hbs = _run(c, writer)
+    assert 'error' in stats
+    assert hbs == [(c.name, False, 0)]
+
+
+def test_opt_out_collector_without_data_gets_no_base_heartbeat(writer_with_mock_pool):  # noqa: F811
+    """未 opt-in 的 collector 行為不變：不帶 data 的成功輪次不發心跳。"""
+    writer, _ = writer_with_mock_pool
+    from collectors.wic_pumb import WicPumbCollector
+    c = _prepare(WicPumbCollector, writer)
+    assert WicPumbCollector.heartbeat_without_writer is False
+    c.collect = MagicMock(return_value={'status': 'idle'})
     _, hbs = _run(c, writer)
     assert hbs == []
 

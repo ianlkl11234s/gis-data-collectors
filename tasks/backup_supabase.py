@@ -938,6 +938,16 @@ class BackupSupabaseTask:
         'flight_fr24': None,                    # 永久 None = 不檢查
     }
     _ARCHIVE_LAG_DEFAULT_DAYS = 2               # 大多 collector 預期 today-1，多給 1 天 grace
+    # 事件型、閒置時「不帶 data」的 collector：沒有颱風就不存本機檔，S3 歸檔本來就會停
+    # （2026-11-16：颱風結束 3 天後被標 upload_failed critical）。表層級的 event_driven
+    # 在 config/realtime_tables.yaml，但那份登記也涵蓋閒置時照常存檔的 earthquake、
+    # ncdr_alerts、lightning_events 等，一律放寬會讓它們失去 silent fail 偵測，所以這裡
+    # 只列閒置時確定不存檔的。collector 有沒有在跑改由 collector_status 的最後成功時間看。
+    _ARCHIVE_IDLE_EVENT_DRIVEN = frozenset({
+        'global_climate_jma_typhoon',
+        'global_climate_ncdr_typhoon_routes',
+        'global_climate_cwa_typhoon',
+    })
 
     def _check_archive_freshness(self) -> int:
         """檢查每個 collector S3 archive 最新日期是否 stale。
@@ -1036,7 +1046,8 @@ class BackupSupabaseTask:
         1. _ARCHIVE_LAG_BY_COLLECTOR 明列者照表（VM 自行歸檔的 ship_ais 等仍檢查）。
         2. registry 有登記、但本機 *_ENABLED=false → 不檢查（不是這台在收）。
         3. 本機啟用但季節外（env_jp_wbgt）→ 不檢查。
-        4. 長週期 collector（月更、年更）預期落後放寬為 interval 天數 + 1。
+        4. 事件型、閒置時不存檔（_ARCHIVE_IDLE_EVENT_DRIVEN，颱風）→ 不檢查。
+        5. 長週期 collector（月更、年更）預期落後放寬為 interval 天數 + 1。
         registry 查不到的 S3 prefix 維持預設檢查。
         """
         if collector in self._ARCHIVE_LAG_BY_COLLECTOR:
@@ -1054,6 +1065,9 @@ class BackupSupabaseTask:
         prefix = entry.config_prefix
         if not getattr(config, f"{prefix}_ENABLED", False):
             return None, "本機未啟用"
+
+        if collector in self._ARCHIVE_IDLE_EVENT_DRIVEN:
+            return None, "事件型，閒置不歸檔"
 
         if collector == "env_jp_wbgt":
             try:

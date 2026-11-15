@@ -230,6 +230,8 @@ class CwaTyphoonCollector(BaseCollector):
 
     name = "global_climate_cwa_typhoon"
     interval_minutes = config.GLOBAL_CLIMATE_CWA_TYPHOON_INTERVAL
+    # 沒有颱風時不帶 data（writer 不回報心跳）；HTTP／JSON 錯誤一律 raise → 由 base 補成功／失敗心跳
+    heartbeat_without_writer = True
 
     def __init__(self):
         super().__init__()

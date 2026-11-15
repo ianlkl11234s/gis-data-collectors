@@ -641,12 +641,13 @@ def test_write_zero_records_reports_success_heartbeat(writer_with_mock_pool):
 
 
 def test_write_zero_records_with_collector_error_sends_no_success(writer_with_mock_pool):
-    """result 帶 _collector_error（BaseCollector.run 之後會算失敗）→ 不可先報成功。"""
+    """result 帶 _collector_error（BaseCollector.run 之後會算失敗）→ 不可先報成功，
+    改記一次失敗心跳（2026-11-16 起；原本整輪不動）。"""
     writer, mock_pool = writer_with_mock_pool
     cursors = _tracking_pool(mock_pool)
     writer.write('lightning_cwa', {'data': [], '_collector_error': 'boom'},
                  datetime(2026, 11, 13, 9, 0, 0))
-    assert _heartbeats(cursors) == []
+    assert _heartbeats(cursors) == [('lightning_cwa', False, 0, 'boom')]
 
 
 def test_write_zero_records_without_transformer_sends_no_heartbeat(writer_with_mock_pool):

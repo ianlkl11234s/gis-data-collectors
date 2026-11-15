@@ -133,7 +133,8 @@
 
 - 成功寫入後，在同一條連線上開**獨立交易**呼叫 `report_collector_heartbeat(name, success, records, error)`，寫進 `metadata.collector_status`。心跳失敗只回滾心跳本身，例外吞掉。
 - 寫入失敗時用短逾時（1 秒）另借一條連線回報失敗心跳，借不到就放棄。
-- 零筆時（2026-11-13 起）：有 transformer 且 result 沒帶 `_collector_error` → 回報成功心跳（records=0，不算「新資料」）；帶 `_collector_error` → 不報成功，`run()` 因 writer 已呼叫也不補報失敗，這輪 `collector_status` 不動；沒有 transformer 的 collector（`tra_static`、`parking_ref`、`waste_match`、`global_climate_bake`）任何筆數都不經 writer 報成功，只有 collect() 拋例外時由 `run()` 報失敗（`satellite_passes_daily` 自報）。
+- 零筆時（2026-11-13 起）：有 transformer 且 result 沒帶 `_collector_error` → 回報成功心跳（records=0，不算「新資料」）；帶 `_collector_error` → 不報成功，改由 writer 記一次失敗心跳（2026-11-16 起，錯誤字串脫敏後取前 200 字；之前這輪 `collector_status` 完全不動），`run()` 不重複補報。沒有 transformer 的 collector（`parking_ref`、`waste_match`、`global_climate_bake`）任何筆數都不經 writer 報成功，只有 collect() 拋例外時由 `run()` 報失敗（`satellite_passes_daily` 自報）。
+- `heartbeat_without_writer = True`（2026-11-16 起，opt-in）：這輪沒經 writer 回報心跳時（不帶 `data`，例如颱風 `no_active_storm`；或沒有 transformer，例如 `tra_static`），由 `run()` 成功時補成功心跳、失敗時補失敗心跳。目前開給 `global_climate_jma_typhoon`、`global_climate_ncdr_typhoon_routes`、`global_climate_cwa_typhoon`、`tra_static`。只能開給抓取失敗一定 raise 或帶 `_collector_error` 的 collector，吞例外後照常 return 的開了會把失敗記成成功。
 - 2026-10-16 起（gis-platform `migrations/465_heartbeat_clear_last_error_on_success.sql`）成功心跳會清掉舊的 `last_error`；之前成功時會保留上一次的錯誤。
 
 ### 4.6 亂碼防護 allowlist

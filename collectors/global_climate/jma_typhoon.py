@@ -113,6 +113,8 @@ class JmaTyphoonCollector(BaseCollector):
 
     name = "global_climate_jma_typhoon"
     interval_minutes = config.GLOBAL_CLIMATE_JMA_TYPHOON_INTERVAL
+    # 沒有颱風時不帶 data（writer 不回報心跳）；抓取失敗一律 raise → 由 base 補成功／失敗心跳
+    heartbeat_without_writer = True
 
     def __init__(self):
         super().__init__()
