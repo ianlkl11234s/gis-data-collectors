@@ -552,3 +552,19 @@ def test_production_notify_routes_through_alerting(watch_env, monkeypatch):
     assert len(sent) == 1 and sent[0].startswith("🔴") and "Supabase 每日備份失敗" in sent[0]
     backup_watch.record_run(_ok_result(), now=t1 + timedelta(days=2))
     assert len(sent) == 2 and sent[1].startswith("✅")
+
+
+# 2026-11-16：颱風結束 3 天後被標 upload_failed critical（閒置時不帶 data，不存檔也不歸檔）
+def test_archive_lag_skips_idle_event_driven_typhoon(monkeypatch):
+    task = BackupSupabaseTask.__new__(BackupSupabaseTask)
+    for prefix in ("GLOBAL_CLIMATE_JMA_TYPHOON", "GLOBAL_CLIMATE_NCDR_TYPHOON_ROUTES",
+                   "GLOBAL_CLIMATE_CWA_TYPHOON", "EARTHQUAKE"):
+        monkeypatch.setattr(config, f"{prefix}_ENABLED", True, raising=False)
+    for name in ("global_climate_jma_typhoon", "global_climate_ncdr_typhoon_routes",
+                 "global_climate_cwa_typhoon"):
+        assert task._archive_expected_lag(name) == (None, "事件型，閒置不歸檔"), name
+    # 閒置時照常存檔的事件型（earthquake）仍檢查，保留 silent fail 偵測
+    assert task._archive_expected_lag("earthquake")[0] is not None
+    # 本機未啟用優先於事件型
+    monkeypatch.setattr(config, "GLOBAL_CLIMATE_JMA_TYPHOON_ENABLED", False, raising=False)
+    assert task._archive_expected_lag("global_climate_jma_typhoon") == (None, "本機未啟用")
