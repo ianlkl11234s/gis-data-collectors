@@ -318,3 +318,129 @@ def test_daily_parity_with_frontend_files(date):
             mine["qa"].pop("rules"); ref["qa"].pop("rules")
             mine.pop("source", None); ref.pop("source", None)
         assert _strip(mine) == _strip(ref), name
+
+
+# ── 補強：冷啟動、半寫檔、截斷、每日暫擋、R2 ────────────────────────
+
+def test_half_written_file_is_retried_not_skipped():
+    day = live.LiveDay(DATE)
+    good = json.dumps({"data": []}).encode()
+    state = {"body": b'{"data": ['}
+    f = RawFile("weather", DATE, "weather_0010.json", 10, lambda: state["body"])
+    assert list(day._parsed("weather", [f])) == []
+    assert "2026-11-09/weather_0010.json" not in day.seen_files["weather"]   # 寫一半：先不標已讀
+    state["body"] = good
+    assert list(day._parsed("weather", [f])) == [{"data": []}]
+    assert "2026-11-09/weather_0010.json" in day.seen_files["weather"]
+
+
+def test_permanently_bad_file_gives_up_after_retries():
+    day = live.LiveDay(DATE)
+    f = RawFile("weather", DATE, "weather_0020.json", 20, lambda: b"{")
+    for _ in range(live.PARSE_RETRIES):
+        list(day._parsed("weather", [f]))
+    assert "weather/2026-11-09/weather_0020.json" in day.bad_files
+
+
+def test_aviation_truncated_window_does_not_claim_completeness():
+    day = live.LiveDay(DATE)
+    start, _ = day_window(DATE)
+    day.aviation_watermark = start + 600
+    rows = [{"flight_id": f"f{i}", "pt": f"0,0,1000,{start + 600 + i // 100}", "ts": start + 600 + i // 100, "lat": 0.0, "lng": 0.0}
+            for i in range(aviation.POSITIONS_LIMIT)]
+    inp = live.LiveInputs(raw=RawSource(), radar_fetcher=FakeFetcher({}), positions=lambda t0, t1: rows)
+    out = day.run_aviation(inp, start + 5 * 3600)
+    assert out["truncated"] is True
+    assert day.aviation_watermark == rows[-1]["ts"]          # 只前進到截斷點
+    assert out["slots_complete"] == []                         # 不到一槽：不宣稱任何槽完整
+
+
+def test_aviation_cold_start_window_is_capped():
+    day = live.LiveDay(DATE)
+    start, _ = day_window(DATE)
+    seen = []
+    inp = live.LiveInputs(raw=RawSource(), radar_fetcher=FakeFetcher({}), positions=lambda t0, t1: seen.append((t0, t1)) or [])
+    day.run_aviation(inp, start + 13 * 3600)
+    assert seen[0][1] - start == live.AVIATION_MAX_WINDOW_S
+    assert day.aviation_watermark == start + live.AVIATION_MAX_WINDOW_S
+
+
+def test_radar_late_frame_after_purge_is_conservative():
+    """k−1 早已發布且碼被清掉，k 晚 3 槽以上才到 → 當作前一幀未知（強回波先標 255），不是當作「沒有前一幀」"""
+    frames = _frames(seed=3, missing=())
+    day = live.LiveDay(DATE)
+    start, _ = day_window(DATE)
+    late = 10
+    avail = {k: v for k, v in frames.items() if k != late}
+    inp = live.LiveInputs(raw=RawSource(), radar_fetcher=FakeFetcher(avail))
+    for k in range(0, 15):
+        day.run_radar(inp, start + k * 600 + 540, FakeDecoder())
+    assert late not in day.radar_missing
+    day.radar_codes.clear()  # 模擬重啟後碼不在
+    inp2 = live.LiveInputs(raw=RawSource(), radar_fetcher=FakeFetcher(frames))
+    out = day.run_radar(inp2, start + 15 * 600 + 540, FakeDecoder())  # 晚 55 分才到（< 1 小時）
+    f = next(x for x in out["frames"] if x["k"] == late)
+    cls = np.frombuffer(live.decode_b64gz(f["class_b64gz"]), np.uint8)
+    strong = (frames[late] != UNKNOWN) & (frames[late] != 0) & (frames[late].astype(float) - 1 >= radar.CLUTTER_MIN_DBZ)
+    assert (cls[strong] == UNKNOWN).all()
+
+
+def test_live_state_load_rejects_corrupt_or_old(tmp_path):
+    p = tmp_path / "s.pkl"
+    p.write_bytes(b"not a pickle")
+    assert live.LiveDay.load(p) is None
+    d = live.LiveDay(DATE)
+    d.version = 0
+    d.save(p)
+    assert live.LiveDay.load(p) is None
+
+
+def test_daily_holds_transient_failures():
+    from sound_atlas import daily
+    meta = {"frames_missing": [{"index": 4, "utc": "", "status": "fetch_error"}]}
+    files = {f"radar-rain-{DATE}.meta.json": json.dumps(meta).encode(),
+             f"aviation-src-{DATE}.json": json.dumps({"health": "error"}).encode(),
+             f"natural-{DATE}.json": json.dumps({"natural": {"wind": {"health": "ok"}, "river": {"health": "error"}}}).encode()}
+    hold = daily.transient_gaps(files, {"warnings": []})
+    assert set(hold) == {"radar-rain-", "aviation-src-", "natural-"}
+    ok = {f"radar-rain-{DATE}.meta.json": json.dumps({"frames_missing": [{"index": 4, "utc": "", "status": "missing"}]}).encode()}
+    assert daily.transient_gaps(ok, {}) == {}   # 上游 404＝真的沒有：照發布（整幀 255）
+
+
+class _FakeS3:
+    def __init__(self):
+        self.objs = {}
+
+    def put_object(self, **kw):
+        self.objs[kw["Key"]] = kw
+
+
+class _FakeR2:
+    bucket = "b"
+
+    def __init__(self):
+        self.s3 = _FakeS3()
+
+    def head(self, key):
+        return self.s3.objs.get(key)
+
+
+def test_r2_sink_headers_and_no_overwrite():
+    r2 = _FakeR2()
+    s = publish.R2Sink(r2)
+    k = publish.live_slot_key(DATE, 1)
+    assert s.put(k, b'{"a":1}') is True
+    o = r2.s3.objs[k]
+    assert o["ContentEncoding"] == "gzip" and o["CacheControl"] == publish.IMMUTABLE
+    assert gzip.decompress(o["Body"]) == b'{"a":1}'
+    assert s.put(k, b'{"a":2}') is False
+    assert gzip.decompress(r2.s3.objs[k]["Body"]) == b'{"a":1}'
+    s.put(publish.daily_key(DATE, "manifest.json"), b"{}", immutable=False)
+    assert r2.s3.objs[publish.daily_key(DATE, "manifest.json")]["CacheControl"] == publish.SHORT
+    s.put(publish.daily_key(DATE, "x.class.bin"), b"\x00", "bin")
+    assert "ContentEncoding" not in r2.s3.objs[publish.daily_key(DATE, "x.class.bin")]
+
+
+def test_archive_skips_sound_atlas_dir():
+    from tasks.archive import ArchiveTask
+    assert "sound_atlas" in ArchiveTask.INTERNAL_DATA_DIRS

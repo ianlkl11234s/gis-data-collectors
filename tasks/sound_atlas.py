@@ -12,6 +12,7 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import shutil
 import time
 from pathlib import Path
 from typing import Optional
@@ -24,6 +25,7 @@ log = logging.getLogger(__name__)
 
 TASK_LIVE = "sound_atlas_live"
 TASK_DAILY = "sound_atlas_daily"
+KEEP_LOCAL_DAYS = 3   # state／spool／本機 dry-run 輸出只留最近幾天（正本在 S3 原始檔；每日檔可重建）
 
 
 def _root() -> Path:
@@ -104,7 +106,9 @@ class SoundAtlasLive:
         self.sink = sink or publish.make_sink(config.SOUND_ATLAS_UPLOAD_ENABLED, str(self.root / "out"))
         self.inputs = inputs or live.LiveInputs(
             raw=_raw_source(),
-            radar_fetcher=radar.FrameFetcher(base_url=config.SOUND_ATLAS_RADAR_BASE_URL),
+            # 即時用短逾時：影像主機掛掉時一次執行最多卡約 25 s（每日段用預設 3 次 × 30 s）
+            radar_fetcher=radar.FrameFetcher(base_url=config.SOUND_ATLAS_RADAR_BASE_URL,
+                                             getter=lambda u: radar.http_get(u, retries=2, timeout=10)),
             positions=_positions if config.SOUND_ATLAS_AVIATION_LIVE_ENABLED else None,
         )
         self.decoder = radar.FrameDecoder()
@@ -149,6 +153,7 @@ class SoundAtlasLive:
         if slot_of(y, now) < 144 + live.TAIL_SLOTS:
             out[y] = self.run_day(y, now)
         out[today] = self.run_day(today, now)
+        self._prune(today)
         try:
             from utils import alerting
             alerting.mark_success(TASK_LIVE)
@@ -156,7 +161,29 @@ class SoundAtlasLive:
             pass
         return out
 
+    def _prune(self, today: str) -> None:
+        cutoff = shift(today, -KEEP_LOCAL_DAYS)
+        st = self.root / "state"
+        for p in list(st.glob("*")) if st.exists() else []:
+            d = p.name.split("-", 1)[-1][:10].replace(".pkl", "")
+            if len(d) == 10 and d < cutoff:
+                shutil.rmtree(p) if p.is_dir() else p.unlink()
+        if isinstance(self.sink, publish.LocalDirSink):
+            for sub in ("live", "daily"):
+                base = self.root / "out" / publish.PREFIX / sub
+                for p in list(base.iterdir()) if base.exists() else []:
+                    if p.name < cutoff:
+                        shutil.rmtree(p)
+
     def run_day(self, date: str, now: float) -> dict:
+        try:
+            return self._run_day(date, now)
+        except Exception:
+            # 記憶體裡的狀態可能已前進（例如上傳失敗）：丟掉，下次從上次存檔接續 → 這批資料下一槽重送
+            self._days.pop(date, None)
+            raise
+
+    def _run_day(self, date: str, now: float) -> dict:
         day = self._day(date)
         k = min(max(slot_of(date, now), 0), 143 + live.TAIL_SLOTS)
         if k in day.slots_published or self.sink.exists(publish.live_slot_key(date, k)):
@@ -214,15 +241,20 @@ def run_daily(date: Optional[str] = None, families: Optional[list[str]] = None) 
                                radar_fetcher=radar.FrameFetcher(base_url=config.SOUND_ATLAS_RADAR_BASE_URL),
                                trails=trails, static=_static())
     files, report = daily.build_all(date, inputs, set(families) if families else None)
+    hold = daily.transient_gaps(files, report)
     written = {}
     for name, body in files.items():
+        if any(name.startswith(prefix) for prefix in hold):
+            written[name] = "held: " + hold[next(p for p in hold if name.startswith(p))]
+            continue
         kind = "bin" if name.endswith(".bin") else "json"
         written[name] = sink.put(publish.daily_key(date, name), body, kind)
     manifest = {"schema": "pulse-sound-daily-manifest-v1", "date_taiwan": date,
                 "contract": contract_json("manifest.json"),
                 "files": {n: {"bytes": len(b), "sha256": hashlib.sha256(b).hexdigest()} for n, b in files.items()},
-                "report": report}
-    sink.put_json(publish.daily_key(date, "manifest.json"), manifest)
+                "held": hold, "report": report}
+    # manifest 可覆寫（短快取）：重跑補上被擋下的族之後要更新
+    sink.put_json(publish.daily_key(date, "manifest.json"), manifest, immutable=False)
     return {"date": date, "sink": publish.describe(sink), "written": written, "errors": report["errors"],
             "timings_s": report["timings_s"]}
 

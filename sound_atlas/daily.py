@@ -95,3 +95,30 @@ def build_all(date: str, inputs: DailyInputs, families: Optional[set[str]] = Non
         timed("aviation", do_av)
     report["bytes"] = {k: len(v) for k, v in out.items()}
     return out, report
+
+
+def transient_gaps(files: dict[str, bytes], report: dict) -> dict[str, str]:
+    """哪些族的輸入是「暫時」拿不到（重跑可能補齊）→ {檔名前綴: 理由}。每日檔不可覆寫，這些族先不發布。
+
+    真正沒有資料（上游 404、該日無檔）照發布：每日檔會寫 unknown／health，前端照缺處理。
+    """
+    import json
+
+    hold: dict[str, str] = {}
+    for name, b in files.items():
+        if name.startswith("radar-rain-") and name.endswith(".meta.json"):
+            errs = [f["index"] for f in json.loads(b).get("frames_missing", []) if f.get("status") == "fetch_error"]
+            if errs:
+                hold["radar-rain-"] = f"{len(errs)} 幀抓取失敗（非 404）"
+        elif name.startswith("aviation-src-"):
+            if json.loads(b).get("health") == "error":
+                hold["aviation-src-"] = "航跡檔讀取失敗"
+        elif name.startswith("natural-"):
+            nat = json.loads(b).get("natural", {})
+            bad = [k for k in ("wind", "wave", "river") if (nat.get(k) or {}).get("health") == "error"]
+            if bad:
+                hold["natural-"] = "讀取失敗：" + "、".join(bad)
+    for w in report.get("warnings", []):
+        if w.startswith("rain_gauge_realtime"):
+            hold["rain-gauge-"] = w
+    return hold

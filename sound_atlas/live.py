@@ -35,6 +35,11 @@ BASELINE_SCHEMA = "pulse-sound-river-baseline-v1"
 RADAR_MISSING_AFTER_S = 3600     # 槽起點後這麼久還抓不到 → 宣告缺幀（之後才到也不補，每日檔為準）
 WAVE_PARSE_EVERY_S = 3600        # 浪是逐時資料；海象原始檔約 27 MB，每小時最多解析一次
 AVIATION_INSERT_LAG_S = 120      # flight_positions 寫入延遲（buffer）緩衝：只讀到 now − lag
+RADAR_MAX_FRAMES_PER_RUN = 18     # 冷啟動補幀上限（每次最多 3 小時份，舊的先補；其餘下一次）
+RADAR_KEEP_CODES = RADAR_MISSING_AFTER_S // 600 + 2  # 幀可能晚到 1 小時：前一幀的碼至少留這麼多槽
+AVIATION_MAX_WINDOW_S = 3600     # 冷啟動補讀上限：每次最多讀 1 小時的位置點
+PARSE_RETRIES = 3                # 原始檔解析失敗（collector 寫到一半）先不標已讀，連續失敗這麼多次才放棄並回報
+STATE_VERSION = 1
 TAIL_SLOTS = 6                   # 收尾片：D+1 00:00–01:00 繼續替 D 跑（slot 144–149），補 D 末尾才到的雷達幀、雨量、河川、浪、航跡
 
 
@@ -82,8 +87,12 @@ class LiveDay:
     river_ids: Optional[set] = None
     aviation: Optional[aviation.AviationLive] = None
     aviation_watermark: int = 0
+    aviation_after: set = field(default_factory=set)      # 已補過跨午夜終點的航班
     slots_published: set = field(default_factory=set)
     baseline_published: bool = False
+    parse_fail: dict = field(default_factory=dict)        # 檔案 key → 解析失敗次數
+    bad_files: list = field(default_factory=list)         # 放棄的檔（回報用）
+    version: int = STATE_VERSION
 
     def __post_init__(self):
         if self.wind is None:
@@ -102,12 +111,20 @@ class LiveDay:
 
     @staticmethod
     def load(path: Path) -> Optional["LiveDay"]:
+        """讀不到、壞檔或版本不符 → None（呼叫端從頭建；冷啟動補讀有上限，見各族）"""
         if not path.exists():
             return None
-        return pickle.loads(path.read_bytes())
+        try:
+            day = pickle.loads(path.read_bytes())
+        except Exception:  # noqa: BLE001 — 部署改了類別、寫到一半
+            return None
+        if not isinstance(day, LiveDay) or getattr(day, "version", None) != STATE_VERSION:
+            return None
+        return day
 
     # ── 共用：新到的原始檔 ──
     def _new_files(self, inputs: LiveInputs, collector: str, now: float, dates: Iterable[str]) -> Optional[list[RawFile]]:
+        """還沒處理過的原始檔（不標已讀；由 _parsed 在處理完後才標）"""
         seen = self.seen_files.setdefault(collector, set())
         out: list[RawFile] = []
         found = False
@@ -117,12 +134,32 @@ class LiveDay:
                 continue
             found = True
             for f in files:
-                key = f"{d}/{f.name}"
-                if key in seen or not inputs.visible(f, now):
+                if f"{d}/{f.name}" in seen or not inputs.visible(f, now):
                     continue
-                seen.add(key)
                 out.append(f)
         return out if found else None
+
+    def _parsed(self, collector: str, files: list[RawFile]):
+        """逐檔解析並交給呼叫端處理；呼叫端處理完（取下一檔）才標已讀。
+
+        collector 寫檔不是原子操作，:x9 讀到寫一半的檔 → 解析失敗先跳過、下次再讀；
+        連續 PARSE_RETRIES 次才放棄並記在 bad_files。呼叫端處理到一半丟例外 → 該檔不標已讀，下次重做
+        （各族的合併規則冪等，重做不會重複計）。
+        """
+        seen = self.seen_files.setdefault(collector, set())
+        for f in files:
+            key = f"{f.date}/{f.name}"
+            try:
+                doc = f.json()
+            except Exception:  # noqa: BLE001
+                n = self.parse_fail.get(f"{collector}/{key}", 0) + 1
+                self.parse_fail[f"{collector}/{key}"] = n
+                if n >= PARSE_RETRIES:
+                    seen.add(key)
+                    self.bad_files.append(f"{collector}/{key}")
+                continue
+            yield doc
+            seen.add(key)
 
     # ── 各族 ──
     def run_radar(self, inputs: LiveInputs, now: float, decoder: radar.FrameDecoder) -> dict:
@@ -130,12 +167,18 @@ class LiveDay:
         frames_out, missing_out = [], []
         pending = [k for k in range(0, k_now + 1) if k not in self.radar_done and k not in self.radar_missing]
         errors = []
+        fetched = 0
         for k in pending:
             t = slot_start_utc(self.date, k)
+            if fetched >= RADAR_MAX_FRAMES_PER_RUN:
+                break  # 冷啟動：其餘下一次補（不宣告缺）
             st, body = inputs.radar_fetcher.get(radar.frame_key(t))
+            if st == "fetch_error":
+                errors.append(k)
+                break  # 影像主機連不上：不逐幀重試拖長這次執行；下一次再來（1 小時後才宣告缺）
+            if st == "ok":
+                fetched += 1
             if st != "ok":
-                if st == "fetch_error":
-                    errors.append(k)
                 if now - t.timestamp() >= RADAR_MISSING_AFTER_S:
                     self.radar_missing.add(k)
                     missing_out.append(k)
@@ -148,7 +191,8 @@ class LiveDay:
                 continue
             cls = radar.codes_to_class(codes)
             prev = self.radar_codes.get(k - 1)
-            prev_state_unknown = k > 0 and (k - 1) not in self.radar_done and (k - 1) not in self.radar_missing
+            # 前一幀還沒到也還沒宣告缺，或已發布但碼不在了（重啟／清掉）→ 當未知
+            prev_state_unknown = k > 0 and (k - 1) not in self.radar_missing and (prev is None)
             if prev_state_unknown:
                 # 前一幀還沒到也還沒宣告缺：每日包可能會判 → 強回波先標 255
                 flag = (codes != UNKNOWN) & (codes != 0) & (codes.astype(float) - 1 >= radar.CLUTTER_MIN_DBZ) if 0 < k < 143 else np.zeros(GRID_CELLS, bool)
@@ -161,9 +205,9 @@ class LiveDay:
             self.radar_codes[k] = codes.tobytes()
             frames_out.append({"k": k, "utc": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "class_b64gz": _b64gz(out.tobytes()),
                                "clutter_live_cells": int(flag.sum())})
-        for old in [x for x in self.radar_codes if x < k_now - 2]:
+        for old in [x for x in self.radar_codes if x < k_now - RADAR_KEEP_CODES]:
             del self.radar_codes[old]
-        status = "ok" if frames_out or missing_out else ("error" if errors else "no_new_data")
+        status = "error" if errors and not frames_out else ("ok" if frames_out or missing_out else "no_new_data")
         return {"status": status, "encoding": "gzip+base64 uint8[cells]", "frames": frames_out, "missing": missing_out}
 
     def run_vd(self, inputs: LiveInputs, now: float) -> dict:
@@ -174,8 +218,8 @@ class LiveDay:
         wanted = set(ids)
         new_slots: set[int] = set()
         fetch: dict[int, float] = {}
-        for f in files:
-            slot, t, rows = freeway_vd.rows_from_doc(f.json(), self.date, wanted)
+        for doc in self._parsed("freeway_vd", files):
+            slot, t, rows = freeway_vd.rows_from_doc(doc, self.date, wanted)
             if slot is None:
                 continue
             new_slots.add(slot)
@@ -200,15 +244,15 @@ class LiveDay:
         if files is None:
             return {"status": "no_new_data", "rows": []}
         sb = rain_gauge.station_bbox(self.bbox)
-        rows = rain_gauge.first_seen_readings((f.json() for f in files), self.date, sb, self.rain_seen)
+        rows = rain_gauge.first_seen_readings(self._parsed("rain_gauge_realtime", files), self.date, sb, self.rain_seen)
         return {"status": "ok" if files else "no_new_data", "files": len(files), "rows": rows}
 
     def run_wind(self, inputs: LiveInputs, now: float) -> dict:
         files = self._new_files(inputs, "weather", now, [self.date])
         if not files:
             return {"status": "no_new_data", "stations": [], "obs": []}
-        for f in files:
-            self.wind.feed(f.json())  # type: ignore[union-attr]
+        for doc in self._parsed("weather", files):
+            self.wind.feed(doc)  # type: ignore[union-attr]
         return {"status": "ok", "files": len(files), **self.wind.drain_delta()}  # type: ignore[union-attr]
 
     def run_wave(self, inputs: LiveInputs, now: float) -> dict:
@@ -246,8 +290,8 @@ class LiveDay:
             return {"status": "no_new_data", "obs": []}
         start, end = day_window(self.date)
         obs = []
-        for f in files:
-            for r in f.json().get("data", []) or []:
+        for doc in self._parsed("river_water_level", files):
+            for r in doc.get("data", []) or []:
                 if not r.get("observed_at") or r.get("station_id") not in baseline_ids:
                     continue
                 t = natural.unix_of(r["observed_at"])
@@ -261,7 +305,8 @@ class LiveDay:
     def run_aviation(self, inputs: LiveInputs, now: float) -> dict:
         start, end = day_window(self.date)
         t0 = self.aviation_watermark
-        t1 = int(min(now - AVIATION_INSERT_LAG_S, end))
+        # 讀到 end＋LOOKBACK：跨午夜那一段（D 最後一點 → D+1 第一點）每日檔也算在 D，收尾片要補上
+        t1 = int(min(now - AVIATION_INSERT_LAG_S, end + aviation.LOOKBACK_S, t0 + AVIATION_MAX_WINDOW_S))
         if inputs.positions is None:
             return {"status": "disabled", "rows": [], "window": [t0, t0]}
         if t1 <= t0:
@@ -271,14 +316,36 @@ class LiveDay:
         rows = inputs.positions(q0, t1)
         if rows is None:
             return {"status": "error", "rows": [], "window": [t0, t0]}
+        truncated = len(rows) >= aviation.POSITIONS_LIMIT
+        if truncated:
+            # 達 LIMIT：只信到最後一個時間點之前（同一秒可能沒讀完）；其餘下一次讀，不宣稱完整
+            cut = rows[-1]["ts"]
+            rows = [r for r in rows if r["ts"] < cut]
+            t1 = int(cut)
+            if t1 <= t0:
+                return {"status": "error", "error": "truncated", "rows": [], "window": [t0, t0]}
         if q0 < t0:
             self.aviation.window([r for r in rows if r["ts"] < t0])  # type: ignore[union-attr]  # 只建「上一點」，不發布
             self.aviation.emitted.clear()  # type: ignore[union-attr]
             rows = [r for r in rows if r["ts"] >= t0]
+        if any(r["ts"] >= end for r in rows):
+            # 午夜後的點只當「跨午夜那一段」的終點：每個航班取第一點，且距該航班 D 最後一點 ≤ LOOKBACK
+            last_d = {fid: p[0] for fid, p in self.aviation.last_pt.items()}  # type: ignore[union-attr]
+            for r in rows:
+                if r["ts"] < end:
+                    last_d[r["flight_id"]] = max(last_d.get(r["flight_id"], 0), r["ts"])
+            first_after: dict[str, dict] = {}
+            for r in rows:
+                fid = r["flight_id"]
+                if (r["ts"] >= end and fid not in first_after and fid not in self.aviation_after
+                        and r["ts"] - last_d.get(fid, -10**12) <= aviation.LOOKBACK_S):
+                    first_after[fid] = r
+            self.aviation_after |= set(first_after)
+            rows = [r for r in rows if r["ts"] < end] + list(first_after.values())
         frags = self.aviation.window(rows)  # type: ignore[union-attr]
         self.aviation_watermark = t1
         complete = [k for k in range((t0 - start) // SLOT_S, (t1 - start) // SLOT_S) if 0 <= k < 144]
-        return {"status": "ok", "window": [t0, t1], "slots_complete": complete, "rows": frags}
+        return {"status": "ok", "window": [t0, t1], "truncated": truncated, "slots_complete": complete, "rows": frags}
 
 
 def river_baseline_doc(date: str, bbox: list[float], rows_of: Callable[[str], Optional[list]]) -> dict:
