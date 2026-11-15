@@ -1,0 +1,44 @@
+{
+ "frontend_commit": "bfc37bda23c6bb82aa5b8553609eb5a2b71f5259",
+ "files": {
+  "grid_spec.json": {
+   "sha256": "03207205da287e572da3a1c54c5ba55f0b705ff067a9996d8eaa1bcc0de41a5b",
+   "source": "src/sound/grid/gridSpec.json",
+   "rule": "byte copy"
+  },
+  "rain_classes.json": {
+   "sha256": "5c4a6377ff7307fddfc67cf380fc527e4dd9d7448800677de21673c02c027e5b",
+   "source": "src/sound/grid/rainClasses.json",
+   "rule": "byte copy"
+  },
+  "cwa_radar_palette.json": {
+   "sha256": "bdc62f9c5ccee4865e61b69a11526995f1bae2afd9855f87ada508337d847c9c",
+   "source": "scripts/preprocess/sound/cwa-radar-palette.json",
+   "rule": "byte copy"
+  },
+  "grid_mask_spans.json": {
+   "sha256": "fd9968897b5ae14cb010e1443365996da4ff2f4c0a0f1681463d3356016bd364",
+   "source": "src/sound/grid/gridMask.generated.ts",
+   "source_sha256": "5a4241b0bfbfd0f1c9cac7bb2fe33fcfa1649b2733e1259c878c8d49c033e5f1",
+   "rule": "GRID_MASK_ROW_SPANS"
+  },
+  "freeway_vd_ids.json": {
+   "sha256": "28096a0c5212f1e41937c763c9af632cf2a0de3bd50dcc0cc077b51d1654e719",
+   "source": "public/sound-atlas/grid/road-network-v1.json",
+   "source_sha256": "5e2f74d571253c62c0652771ad1872a712f83cbb6938187074a5357aaa4a458f",
+   "rule": "sorted({p.vd for p in freeway if p.vd})（build-sound-road-grid.py vd 的 used）"
+  },
+  "river_stations.json": {
+   "sha256": "a9197c1d25580da8171b06e8d6744cf448021780dfb33d44df41c0533e415bd2",
+   "source": "public/geo/water_monitor_stations.geojson",
+   "source_sha256": "4f6ab8edb69b68e17ea15be500b117581869d1af71a0196b4ee72870326a2baf",
+   "rule": "station_type == river_level → {id: [lon, lat, name]}"
+  }
+ },
+ "natural_static": {
+  "file": "natural-static-v1.json",
+  "sha256": "884e60cbffb3cc261ec5bd0e322896e326db95e98a3ca3a9599372c0253ad043",
+  "bytes": 1122449,
+  "note": "不進 git；正式環境放 R2 sound-atlas/v1/static/natural-static-v1-<sha8>.json"
+ }
+}
