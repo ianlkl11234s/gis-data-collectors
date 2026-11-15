@@ -27,6 +27,7 @@ class DailyInputs:
     radar_fetcher: radar.FrameFetcher
     trails: Callable[[str], Optional[list[dict]]]   # date → trails/flights/<date>.json.gz 內容；None＝沒有
     static: Optional[dict]                          # natural-static-v1（coast＋river_network）
+    vd_available: Optional[set[str]] = None         # 只在測試用：重現舊 DB 匯出 CSV 的 VD 範圍（正式＝None）
 
 
 def build_all(date: str, inputs: DailyInputs, families: Optional[set[str]] = None,
@@ -58,7 +59,8 @@ def build_all(date: str, inputs: DailyInputs, families: Optional[set[str]] = Non
             files = inputs.raw.files("freeway_vd", date)
             if files is None:
                 raise FileNotFoundError(f"freeway_vd {date} 原始檔不存在")
-            doc = freeway_vd.build_daily(date, (f.json() for f in files), f"freeway_vd/archives/{date}.tar.gz", generated_at=ga.get("freeway_vd"))
+            doc = freeway_vd.build_daily(date, (f.json() for f in files), f"freeway_vd/archives/{date}.tar.gz", generated_at=ga.get("freeway_vd"),
+                                       available=inputs.vd_available)
             out[f"freeway-vd-{date}.json"] = dumps_compact(doc)
         timed("freeway_vd", do_vd)
     if "rain_gauge" in fam:

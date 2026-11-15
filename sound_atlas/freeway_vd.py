@@ -180,10 +180,14 @@ def _iso_utc_seconds(t: float) -> str:
     return dt.datetime.fromtimestamp(t, dt.timezone.utc).replace(microsecond=0).isoformat()
 
 
-def build_daily(date: str, docs: Iterable[dict], csv_name: str, generated_at: Optional[str] = None) -> dict:
-    """當日全部 freeway_vd 原始檔（依抓取順序）→ freeway-vd-<D>.json 文件。"""
+def build_daily(date: str, docs: Iterable[dict], csv_name: str, generated_at: Optional[str] = None,
+                available: Optional[set[str]] = None) -> dict:
+    """當日全部 freeway_vd 原始檔（依抓取順序）→ freeway-vd-<D>.json 文件。
+
+    available：只採用這些 VD 的列（測試用：重現舊 DB 匯出 CSV 的空間範圍；正式＝None，全部採用）。
+    """
     used = used_vd_ids()
-    wanted = set(used)
+    wanted = set(used) if available is None else set(used) & available
     by_vd: dict[str, list[VdRow]] = defaultdict(list)
     lanes_first: dict[str, int] = {}
     fetch_by_slot: dict[int, float] = {}
