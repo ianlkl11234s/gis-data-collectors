@@ -118,7 +118,12 @@ def effective_interval(src: dict, level: int) -> int:
 
 
 def is_due(name: str, now: datetime, last_fetch: dict, level: int) -> bool:
-    """phase 對到的那一分鐘到期；另外超過「間隔＋50 秒」沒抓（漏輪、被延後）也到期；剛抓過的不重抓。"""
+    """phase 對到的那一分鐘到期；剛抓過的不重抓。
+
+    被延後或在歸檔窗略過的來源，下一個 phase 分鐘就會補抓（最多隔 2×間隔−1 分）。
+    「超過 2×間隔＋50 秒」才不看 phase 直接抓，只當保險：門檻若設成「間隔＋50 秒」，
+    一次偏離 phase 的來源（第一輪、被延後）每次都會在 phase 分鐘之前先被這條抓走，永遠對不回 phase，
+    5 分鐘來源會變成 6 分鐘一次。last_fetch 一律記「本輪開始」的時間（見 run_round）。"""
     src = P.SOURCES[name]
     iv = effective_interval(src, level)
     last = last_fetch.get(name)
@@ -126,7 +131,7 @@ def is_due(name: str, now: datetime, last_fetch: dict, level: int) -> bool:
         age = (now - datetime.fromisoformat(last)).total_seconds()
         if age < iv * 60 - 20:
             return False
-        if age >= iv * 60 + 50:
+        if age >= 2 * iv * 60 + 50:
             return True
     else:
         return True
@@ -413,7 +418,9 @@ def run_round(args, now: datetime | None = None, session=None, sleep=time.sleep,
             sleep(gap)
         r = fetch(name, session, timeout)
         fetched_at = datetime.now(P.TZ) if not args.fixed_now else now
-        last_fetch[name] = fetched_at.isoformat(timespec="seconds")
+        # 排程錨定在「本輪開始」而不是實際抓取時間：輪尾才抓到的來源若記實際時間，
+        # 下一個到期分鐘會差 20 秒以上被判「剛抓過」，2 分鐘來源就變成 4 分鐘一次
+        last_fetch[name] = now.isoformat(timespec="seconds")
         info = dict(http=r["http"], ms=r["ms"], bytes=r["bytes"], rows=None, error=r["error"])
         recs = None
         if r["ok"]:

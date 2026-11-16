@@ -1316,3 +1316,20 @@ global_climate_ncdr_typhoon_routes:
     - {prefix: global_climate_ncdr_typhoon_routes/archives/, expected_daily: false}  # 只有颱風時才有 raw
   critical: false
   notes: NCDR 各國颱風預測 KML（mig 476）；事件驅動，interval 放寬 1440（collector 輪詢 30min）；同版重抓 DO NOTHING
+
+fire119:
+  label: 即時 119 案件＋警廣路況
+  enabled: false  # 尚未部署：等 gis-platform migration 555 套用與站主點頭；上線時改 true 並開 realtime_tables 兩列
+  deployment: hicloud_vm
+  expected_interval_min: 30
+  supabase_tables:
+    - live.fire119_incidents
+    - live.pbs_road_events
+  s3_prefixes:
+    - {prefix: fire119/archives/, expected_daily: true}
+    - {prefix: pbs_road_events/archives/, expected_daily: true}
+  critical: false
+  notes: >-
+    VM 專用（external/fire119_vm/），主 repo 沒有 collector，列在 sync_cross_layer_map.NON_COLLECTOR_TASKS。
+    cron 每分鐘一次、runner 內 1／2／5 分鐘分頻；只寫有變化的列，last_seen_at 每 30 分鐘批次推（新鮮度看它）。
+    站主限定（gated_layers）；VM 版不寫 collector_status，健康看 source_health.json（health_report）。

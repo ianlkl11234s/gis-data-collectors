@@ -27,7 +27,7 @@
 | `.env.example` | 環境變數名稱（值不進 repo） |
 
 另需：`external/vm_common/vm_buffer.py`、`external/vm_common/bulk.py`（同目錄部署），以及**不進 git** 的路名對照表
-`road_gazetteer_20261116.sqlite`（約 53 MB，analytics `data/processed/road_gazetteer/`，部署時改名 `road_gazetteer.sqlite`）。
+`road_gazetteer_20261116.sqlite`（約 53 MB，目前在 analytics worktree `.worktrees/realtime-incidents/data/processed/road_gazetteer/`，部署時改名 `road_gazetteer.sqlite`）。
 
 ## 來源與頻率
 
@@ -41,7 +41,8 @@
 | 5 分 | 屏東、澎湖（分鐘 %5＝1）；南投、宜蘭（=2）；桃園、警廣（=4） | 不用 %5＝0（ship_ais 的 :x0）與 =3（isohe 的 :x8） |
 
 單執行緒、來源間隔 2 秒、每次 timeout 20 秒、一般瀏覽器 UA。一輪超過 45 秒（`SOFT_DEADLINE_SEC`）就把剩下的來源留到下一分鐘。
-漏抓（超過「間隔＋50 秒」）的來源下一輪一定會抓。苗栗網址已改 `https`、無 port。
+被延後或在歸檔窗略過的來源，在下一個對到的分鐘補抓（排程以「本輪開始時間」計，不受輪內先後影響）；
+超過 2×間隔＋50 秒沒抓才不看分鐘直接抓（保險）。苗栗網址已改 `https`、無 port。
 
 ## VM 現有排程佔用表（2026-11-16 唯讀查 crontab）
 
@@ -119,7 +120,8 @@ collect.log 每輪恰好一行 `本輪結束 …`，health_report 用它算 24 �
 ```bash
 # 0. 本機：準備檔案（gazetteer sqlite 不進 git）
 mkdir -p /tmp/fire119 && cp external/fire119_vm/{*.py,*.sh,.env.example} external/vm_common/{vm_buffer.py,bulk.py} /tmp/fire119/
-cp ../taipei-gis-analytics/data/processed/road_gazetteer/road_gazetteer_20261116.sqlite /tmp/fire119/road_gazetteer.sqlite
+cp ../taipei-gis-analytics/.worktrees/realtime-incidents/data/processed/road_gazetteer/road_gazetteer_20261116.sqlite \
+   /tmp/fire119/road_gazetteer.sqlite
 scp -r /tmp/fire119 <帳號>@<VM_HOST>:/tmp/
 scp external/_shared/health_report.py <帳號>@<VM_HOST>:/tmp/health_report.py
 
@@ -127,7 +129,8 @@ scp external/_shared/health_report.py <帳號>@<VM_HOST>:/tmp/health_report.py
 ssh <帳號>@<VM_HOST>
 bash /tmp/fire119/setup_vm.sh
 #    編輯 /opt/fire119/.env：SUPABASE_DB_URL、S3_*（可從 /opt/waste-positions/ 的同名檔複製 key）
-systemd-run --scope --quiet -p MemoryMax=200M true && echo "systemd 模式可用"   # 不可用就在 crontab 行前加 FIRE119_MEM_MODE=ulimit
+# 和 run_fire119.sh 同樣的旗標；MemorySwapMax 需要 cgroup v2，失敗就在 crontab 那行前加 FIRE119_MEM_MODE=ulimit
+systemd-run --scope --quiet --collect -p MemoryMax=200M -p MemorySwapMax=0 /bin/true && echo "systemd 模式可用"
 
 # 2. VM：手動跑一輪 dry-run（不寫 DB），看各來源筆數與耗時
 cd /opt/fire119 && python3 fire119_collect.py --dry-run --all --deadline 120
@@ -179,7 +182,7 @@ DB 表與 RPC 的回滾在 gis-platform `scripts/rollback_555_fire119_pbs_live_o
 
 ## 已知限制
 
-- 本支沒有主 repo 對應的 `collectors/` 實作，也沒有登記 `cross_layer_map.yaml`／`realtime_tables.yaml`（那兩份由 registry／config 守門，
-  需要主 repo collector 才能登記）；寫入新鮮度要等表上線後另外決定怎麼接日報的 Supabase 區塊。VM 版不寫 `collector_status`。
+- 本支沒有主 repo 對應的 `collectors/` 實作：`cross_layer_map.yaml` 以 `enabled: false` 登記、列在 `sync_cross_layer_map.NON_COLLECTOR_TASKS`；`realtime_tables.yaml` 兩列也是 `enabled: false`，**上線時兩處都改 true** 才會進日報新鮮度檢查（
+  依 `last_seen_at`，30 分鐘批次推進）。VM 版不寫 `collector_status`。
 - 非救護車型別的新北 feature（實測未出現）語意未確認，當無位置處理、不猜。
 - `location_text` 保留來源原文（少數含門牌號），只給站主限定圖層用；要不要去門牌待站主決定。

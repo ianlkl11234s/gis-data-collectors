@@ -71,7 +71,7 @@ def gaz(tmp_path):
 # ── 座標轉換 ───────────────────────────────────────────────────────────
 @pytest.mark.parametrize("x,y,lon,lat", [
     # 期望值由 pyproj 3.8 Transformer(3826→4326, always_xy) 算出
-    (301786, 2770885, 121.513221, 25.045225),
+    (303512, 2771633, 121.530355, 25.051918),  # 虛構點（不用真實隱藏座標）
     (170000, 2540000, 120.219856, 22.959401),
     (330000, 2420000, 121.774115, 21.875735),
     (195000, 2780000, 120.454563, 25.127401),
@@ -312,8 +312,9 @@ def test_schedule_phases_and_overdue():
     assert "hsinchu_city" in due2 and "taipei" not in due2
     # 降頻一級：1 分鐘來源變 2 分鐘
     assert not C.is_due("taichung", odd, {"taichung": (odd - timedelta(seconds=60)).isoformat()}, 1)
-    # 漏抓太久一律到期
-    assert C.is_due("taoyuan", odd, {"taoyuan": (odd - timedelta(minutes=6)).isoformat()}, 0)
+    # 偏離 phase 的來源等下一個 phase 分鐘（不提前補抓，才對得回 phase）；超過 2×間隔才不看 phase
+    assert not C.is_due("taoyuan", odd, {"taoyuan": (odd - timedelta(minutes=6)).isoformat()}, 0)
+    assert C.is_due("taoyuan", odd, {"taoyuan": (odd - timedelta(minutes=11)).isoformat()}, 0)
 
 
 def test_archive_window_only_one_minute_sources_and_disabled():
@@ -361,6 +362,47 @@ def env(tmp_path, monkeypatch, gaz):
 def _round(env, now=NOW, session=None, meminfo=lambda: 900):
     return C.run_round(env.args, now=now, session=session or FakeSession(), sleep=lambda _s: None,
                        meminfo=meminfo)
+
+
+def test_schedule_simulation_every_source_keeps_its_interval(env):
+    """跑 40 分鐘真實 run_round（實際抓取時間＝真實時鐘，和模擬時間差很遠；cron 抖動 0–2 秒）：
+    第一輪全抓，之後每個來源最多一次偏離後回到 phase，且穩定後的間隔恰等於設定值。"""
+    env.args.all, env.args.fixed_now = False, False
+    seen: dict[str, list[int]] = {}
+    start = NOW.replace(second=25)
+    for m in range(40):
+        sess = FakeSession()
+        _round(env, now=start + timedelta(minutes=m, seconds=(m * 7) % 3), session=sess)
+        for name in sess.calls:
+            seen.setdefault(name, []).append(m)
+    for name, src in P.SOURCES.items():
+        mins = seen[name]
+        iv = src["interval"]
+        gaps = [b - a for a, b in zip(mins, mins[1:])]
+        assert gaps[-3:] == [iv] * 3, (name, mins)              # 穩定後恰等於間隔
+        assert all(g <= 2 * iv - 1 for g in gaps), (name, mins)   # 對回 phase 的那一次也不超過 2×間隔
+        assert all((start.minute + x) % iv == src["phase"] % iv for x in mins[2:]), (name, mins)
+
+
+@pytest.mark.parametrize("level", [1, 2])
+def test_schedule_simulation_degraded_and_archive_window(level):
+    """降頻 ×2／×4 時間隔跟著放大；03:00–03:25 歸檔窗略過的來源在窗後第一個對到的分鐘補抓。"""
+    last: dict[str, str] = {}
+    seen: dict[str, list[int]] = {}
+    start = datetime(2026, 11, 17, 2, 30, 25, tzinfo=TZ)
+    for m in range(200):
+        now = start + timedelta(minutes=m)
+        for name in C.due_sources(now, last, level, "03:00-03:25", set()):
+            last[name] = now.isoformat()
+            seen.setdefault(name, []).append(m)
+    for name, src in P.SOURCES.items():
+        iv = src["interval"] * 2 ** level
+        mins = seen[name]
+        gaps = [b - a for a, b in zip(mins, mins[1:])]
+        assert gaps[-2:] == [iv] * 2, (name, mins)
+        assert all(b - a <= 2 * iv - 1 for a, b in zip(mins, mins[1:]) if b < 30 or a >= 55), (name, mins)
+        window = [x for x in mins if 30 <= x < 55]
+        assert src["interval"] == 1 or not window, (name, window)
 
 
 def test_memory_threshold_skips_round(env, caplog):

@@ -142,8 +142,8 @@ YouTube 14 家新聞台直播 videoId（YouTube Data API v3）。
 ### foursquare_poi
 Foursquare 開放 POI（Hugging Face `foursquare/fsq-os-places`，DuckDB 讀遠端 Parquet）。每 30 日，清冊標停用；需 `HF_TOKEN`；寫 `reference.foursquare_poi`（約 42 萬列）。
 
-### fire119（即時 119 案件＋警廣路況，VM 專用）
-18 縣市 119 民眾版案件清單（DTS 系統與各縣市自家頁面，多為 HTML）、新北送醫中救護車、警廣即時路況。**只有 VM 版**（`external/fire119_vm/`），主 repo 沒有 collector，所以不在 [collectors.md](../collectors.md)。
+### fire119
+即時 119 案件＋警廣路況：18 縣市 119 民眾版案件清單（DTS 系統與各縣市自家頁面，多為 HTML）、新北送醫中救護車、警廣即時路況。**只有 VM 版**（`external/fire119_vm/`），主 repo 沒有 collector；[collectors.md](../collectors.md) 以排程 task 列出（`NON_COLLECTOR_TASKS`）。
 
 - 頻率／位置：HiCloud VM，cron 每分鐘一次、runner 內依來源 1／2／5 分鐘分頻；寫 `live.fire119_incidents`、`live.pbs_road_events`（gis-platform migration 555，站主限定）。**尚未部署**。
 - 寫入：只寫新案件或有變化的列，`last_seen_at` 每 30 分鐘批次推；DB 端 `status_history` append、分隊聯集、`WHERE EXCLUDED.updated_at > t.updated_at` 擋重放。
