@@ -1319,7 +1319,7 @@ global_climate_ncdr_typhoon_routes:
 
 fire119:
   label: 即時 119 案件＋警廣路況
-  enabled: false  # 尚未部署：等 gis-platform migration 555 套用與站主點頭；上線時改 true 並開 realtime_tables 兩列
+  enabled: true  # 2026-11-16 部署到 HiCloud VM（mig 555 已套用）；18:10 起 cron 每分鐘
   deployment: hicloud_vm
   expected_interval_min: 30
   supabase_tables:

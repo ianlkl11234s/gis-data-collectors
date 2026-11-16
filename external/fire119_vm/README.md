@@ -6,7 +6,7 @@
 落地前先剔除隱私欄位，只把「新案件或有變化」的列寫進 `live.fire119_incidents`／`live.pbs_road_events`（gis-platform migration 555），
 解析後的列每日打包上 S3。
 
-**狀態（2026-11-16）**：程式與測試完成，**未部署、migration 555 未套用**。部署與套用都要站主點頭。
+**狀態**：2026-11-16 部署到 HiCloud VM（migration 555 已套用），18:10 起 cron 每分鐘執行；第一天監測開著。
 
 - 計畫與決策：taipei-gis-analytics `docs/topic-research/realtime_incidents/`（`PLAN.md` 階段 3、`decision-log.md`、`sources-119.md`、`sources-traffic.md`）
 - 表與保留期：gis-platform `migrations/555_fire119_pbs_live_owner.sql`（14 天依 `last_seen_at` 清；站主限定 RPC）
@@ -75,7 +75,7 @@ VM 規格：1 vCPU、記憶體 920 MB（當時 used 392／available 377）、swa
 | 時間上限 | `timeout -k 10 90`；runner 自己 45 秒軟期限 |
 | 低優先 | `nice -n 10`、`ionice -c3`（idle） |
 | 記憶體門檻 | 啟動先讀 `/proc/meminfo`，`MemAvailable < 150 MB`（`MIN_MEM_AVAILABLE_MB`）就跳過本輪並記錄 |
-| 單行程上限 | 預設 `systemd-run --scope -p MemoryMax=200M -p MemorySwapMax=0`（cgroup 限實際記憶體、不准用 swap，超過由 OOM 殺掉該輪而不是拖垮整台）。VM 沒有 systemd 或 cgroup v2 時改 `FIRE119_MEM_MODE=ulimit`：`ulimit -v 400 MB`。`ulimit -v` 限的是虛擬位址空間（libssl、libpq 會先映射一大段），所以數字比實際用量大；CI 有一條 Linux 測試證明整條解析在 400 MB 位址空間內跑得完 |
+| 單行程上限 | 預設 `systemd-run --scope -p MemoryMax=200M -p MemorySwapMax=0`（cgroup 限實際記憶體、不准用 swap，超過由 OOM 殺掉該輪而不是拖垮整台）。VM 沒有 systemd 或 cgroup v2 時改 `FIRE119_MEM_MODE=ulimit`：`ulimit -v 400 MB`。`ulimit -v` 限的是虛擬位址空間（libssl、libpq 會先映射一大段），所以數字比實際用量大；CI 有一條 Linux 測試證明整條解析在 400 MB 位址空間內跑得完。**正式 VM（2026-11-16 實測）**：systemd 249、cgroup v2，`MemoryMax=30M` 跑 80 MB 配置會被砍（exit 137），所以用預設 systemd 模式 |
 | 自動降頻 | 上一輪沒正常結束（被 timeout 或 OOM 砍掉，runner 會在下一輪看到「開始但沒結束」的標記）或本輪超過 75 秒，各算一次逾時；**連續 3 次**就把所有間隔 ×2（最多 ×4），寫 `/var/lib/fire119/state/ALERT_degraded`，日報紅燈；連續 60 輪正常回升一級 |
 | 不常駐 | 每分鐘一個短命行程；路名對照表走 sqlite 索引查詢（cache 2 MB），不載入記憶體 |
 
@@ -182,7 +182,7 @@ DB 表與 RPC 的回滾在 gis-platform `scripts/rollback_555_fire119_pbs_live_o
 
 ## 已知限制
 
-- 本支沒有主 repo 對應的 `collectors/` 實作：`cross_layer_map.yaml` 以 `enabled: false` 登記、列在 `sync_cross_layer_map.NON_COLLECTOR_TASKS`；`realtime_tables.yaml` 兩列也是 `enabled: false`，**上線時兩處都改 true** 才會進日報新鮮度檢查（
+- 本支沒有主 repo 對應的 `collectors/` 實作：`cross_layer_map.yaml` 登記為 VM 部署、列在 `sync_cross_layer_map.NON_COLLECTOR_TASKS`；`realtime_tables.yaml` 兩列進日報新鮮度檢查（
   依 `last_seen_at`，30 分鐘批次推進）。VM 版不寫 `collector_status`。
 - 非救護車型別的新北 feature（實測未出現）語意未確認，當無位置處理、不猜。
 - `location_text` 保留來源原文（少數含門牌號），只給站主限定圖層用；要不要去門牌待站主決定。
