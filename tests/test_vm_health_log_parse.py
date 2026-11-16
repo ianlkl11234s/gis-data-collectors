@@ -143,3 +143,34 @@ def test_custom_target_without_run_pattern_uses_legacy_marker(health, tmp_path):
     log.write_text(_line(NOW, "INFO", "開始抓取") + _line(NOW, "INFO", "Supabase 寫入: 5 筆"), encoding="utf-8")
     r = health.analyze_log(str(log), r"Supabase 寫入: (\d+) 筆", now=NOW)
     assert (r["runs_24h"], r["success_24h"], r["last_count"]) == (1, 1, 5)
+
+
+def test_fire119_one_summary_line_per_round(health, tmp_path):
+    src = _src("fire119_vm/fire119_collect.py")
+    assert 'log.info(f"本輪結束 sources={len(per_source)}' in src
+    assert 'f"db={db_state} written={written} elapsed={elapsed}s rss={rss}MB")' in src
+    assert 'log.error(f"FAILED: {type(exc).__name__}: {exc}", exc_info=True)' in src
+    assert "記憶體不足（MemAvailable=" in src
+
+    lines = []
+    ts = NOW - timedelta(hours=24) + timedelta(seconds=30)
+    i = 0
+    while ts <= NOW:
+        if i % 100 == 7:  # 記憶體不足跳過：不算一輪
+            lines.append((ts, _line(ts, "WARNING", "記憶體不足（MemAvailable=120 MB < 150），跳過本輪")))
+        elif i % 100 == 9:  # DB 寫入失敗、已存 buffer：算一輪、不算成功
+            lines.append((ts, _line(ts, "INFO", "本輪結束 sources=9 ok=9 rows119=80 pbs=0 changed=3+0 "
+                                                "downgraded=0 deferred=0 db=buffered written=0 elapsed=20.1s rss=58MB")))
+        else:
+            db = "none written=0" if i % 2 else "ok written=4"
+            lines.append((ts, _line(ts, "INFO", f"本輪結束 sources=9 ok=9 rows119=80 pbs=0 changed=4+0 "
+                                                f"downgraded=0 deferred=0 db={db} elapsed=21.0s rss=58MB")))
+        ts += timedelta(minutes=1)
+        i += 1
+    log = tmp_path / "collect.log"
+    _write_rotated(log, lines)
+
+    r = _analyze(health, _target(health, "fire119"), log)
+    assert r["runs_24h"] == 1440 - 15
+    assert r["success_24h"] == 1440 - 30
+    assert r["last_count"] in (0, 4)

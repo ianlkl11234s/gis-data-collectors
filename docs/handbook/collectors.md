@@ -4,7 +4,7 @@
 > **自動產生，勿手改**；跑 `python3 scripts/gen_handbook_catalog.py` 重產，`--check` 檢查是否最新（CI：`tests/test_handbook_catalog.py`）。
 > 來源：`collectors/registry.py`、`config.py` 的 `_COLLECTOR_TOGGLES`、`config/cross_layer_map.yaml`、`storage/supabase_tables.py` 的 `TABLE_MAP`、`config/realtime_tables.yaml`。要改內容就改這些來源（備註取自 cross_layer_map 的 notes）。
 
-共 104 筆（含排程 task），production 應在跑 96 筆。
+共 105 筆（含排程 task），production 應在跑 96 筆。
 
 欄位說明：
 
@@ -120,6 +120,7 @@
 | `immigration_apis_airport` | 政府雜項 | 1 小時 | VM | live.border_airport_snapshot | history | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#immigration_apis_airport) | 跑在 HiCloud VM（external/immigration_apis_airport_vm/），Zeabur 端 env 維持 false |
 | `npa_traffic_accident_a1` | 政府雜項 | 12 小時 | pulse-host | live.traffic_accidents_a1 | history | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#npa_traffic_accident_a1) |  |
 | `tpml_seat` | 政府雜項 | 10 分 | pulse-host | live.tpml_seat_status<br>live.tpml_seat_current | current＋history | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#tpml_seat) | 北市圖 6 分館 29 區座位（seat.tpml.edu.tw，無金鑰） |
+| `fire119` | 政府雜項 | 30 分 | 停用（VM） | live.fire119_incidents<br>live.pbs_road_events | history | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#fire119) | 排程 task（非 registry）；VM 專用（external/fire119_vm/），主 repo 沒有 collector，列在 sync_cross_layer_map.NON_COLLECTOR_TASK… |
 
 ## 清冊不一致（產生時偵測）
 

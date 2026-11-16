@@ -110,6 +110,7 @@ SOURCES_DOC = {
     "foursquare_poi": "gov-misc", "waste_positions": "gov-misc", "waste_match": "gov-misc",
     # 非 collector 的排程 task（cross_layer_map 有、registry 沒有）
     "gfw_hourly_publish": "marine-air-space",
+    "fire119": "gov-misc",  # HiCloud VM 專用 runner
 }
 
 DEPLOYMENT_LABEL = {"pulse_host": "pulse-host", "hicloud_vm": "VM", "disabled": "停用"}

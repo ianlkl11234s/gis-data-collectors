@@ -67,7 +67,8 @@ HICLOUD_VM_COLLECTORS = frozenset({
 
 # Fixed-time production tasks live outside _COLLECTOR_TOGGLES/registry but still
 # need cross-layer inventory and health ownership.
-NON_COLLECTOR_TASKS = frozenset({"gfw_hourly_publish"})
+# fire119：HiCloud VM 專用 runner（external/fire119_vm/），主 repo 沒有 collector／toggle。
+NON_COLLECTOR_TASKS = frozenset({"gfw_hourly_publish", "fire119"})
 
 # 自動管理區塊的標記（用來判斷是否已寫過區塊標頭，維持冪等）
 _AUTO_SECTION_MARKER = "# 自動同步補回（scripts/sync_cross_layer_map.py）"

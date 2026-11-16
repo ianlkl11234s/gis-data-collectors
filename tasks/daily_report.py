@@ -732,12 +732,17 @@ class DailyReportTask:
             up = sys_.get("uptime_days")
             egress = snap.get("egress_ip", "?")
             alerts = snap.get("alerts") or []
+            warnings = snap.get("warnings") or []
+            flag = "🔴" if alerts else ("🟡" if warnings else "🟢")
             parts.append(
-                f"  {'🔴' if alerts else '🟢'} `{host}` ({egress}) up {up}d / load {load} / disk {disk}%"
+                f"  {flag} `{host}` ({egress}) up {up}d / load {load} / disk {disk}%"
             )
-            # VM 端告警（health_report.run_checks：磁碟 >80%、歸檔滯留）
+            # VM 端告警（health_report.run_checks：磁碟 >80%、歸檔滯留；收集器 status_file 的紅燈）
             for alert in alerts:
                 parts.append(f"    🔴 {alert}")
+            # 黃燈（收集器 status_file 的 warnings，例：fire119 解析失敗、連續 0 筆）
+            for warning in warnings:
+                parts.append(f"    🟡 {warning}")
 
             for cname, c in (snap.get("collectors") or {}).items():
                 if "error" in c:
