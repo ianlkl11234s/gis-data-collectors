@@ -115,6 +115,8 @@ class SoundAtlasLive:
             positions=_positions if config.SOUND_ATLAS_AVIATION_LIVE_ENABLED else None,
         )
         self.decoder = radar.FrameDecoder()
+        self._err_runs: dict[str, int] = {}     # 族 → 連續 error 次數（只看今天的片）
+        self._alerting: set[str] = set()
         self._days: dict[str, live.LiveDay] = {}
         self._baseline: dict[str, dict] = {}
 
@@ -160,6 +162,7 @@ class SoundAtlasLive:
                 log.warning("[sound_atlas] %s 收尾片失敗：%s", y, type(e).__name__)
                 out[y] = {"error": type(e).__name__}
         out[today] = self.run_day(today, now)
+        self._family_alerts(out[today].get("status") or {})
         self._prune(today)
         try:
             from utils import alerting
@@ -167,6 +170,23 @@ class SoundAtlasLive:
         except Exception:  # noqa: BLE001
             pass
         return out
+
+    def _family_alerts(self, status: dict[str, str]) -> None:
+        """某一族連續 SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS 次 error → 🔴 一次；之後 ok／no_new_data → 清除（送過才送恢復）"""
+        from utils import alerting
+        need = max(1, config.SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS)
+        for fam, st in status.items():
+            key = f"sound_atlas_live:{fam}"
+            if st == "error":
+                n = self._err_runs[fam] = self._err_runs.get(fam, 0) + 1
+                if n >= need and fam not in self._alerting:
+                    alerting.raise_alert(key, alerting.RED, f"城市聲景即時：{fam} 連續 {n} 次失敗（約 {n * 10} 分鐘）")
+                    self._alerting.add(fam)
+            elif st in ("ok", "no_new_data"):
+                self._err_runs[fam] = 0
+                if fam in self._alerting:
+                    alerting.clear_alert(key, f"城市聲景即時：{fam}")
+                    self._alerting.discard(fam)
 
     def _prune(self, today: str) -> None:
         cutoff = shift(today, -KEEP_LOCAL_DAYS)
@@ -233,8 +253,11 @@ def run_live() -> dict:
     return _LIVE.run()
 
 
-def run_daily(date: Optional[str] = None, families: Optional[list[str]] = None) -> dict:
-    """子行程進入點（utils.isolated_task）：重建臺灣日 date（預設昨天）的每日檔並發布。"""
+def run_daily(date: Optional[str] = None, families: Optional[list[str]] = None, revise: bool = False) -> dict:
+    """子行程進入點（utils.isolated_task）：重建臺灣日 date（預設昨天）的每日檔並發布。
+
+    revise=True（人工重跑修正用）：已發布的檔改發下一個修訂號（-r2、-r3…），manifest 指向最新。
+    """
     date = date or shift(_today(time.time()), -1)
     root = _root()
     sink = publish.make_sink(config.SOUND_ATLAS_UPLOAD_ENABLED, str(root / "out"))
@@ -252,11 +275,23 @@ def run_daily(date: Optional[str] = None, families: Optional[list[str]] = None) 
     inputs = daily.DailyInputs(raw=RawSource(local_dir=str(config.LOCAL_DATA_DIR), archive_fetch=s3.get_file if s3 else None),
                                radar_fetcher=radar.FrameFetcher(base_url=config.SOUND_ATLAS_RADAR_BASE_URL),
                                trails=trails, static=_static())
-    return publish_daily(date, inputs, sink, families)
+    res = publish_daily(date, inputs, sink, families, revise=revise)
+    if config.SOUND_ATLAS_UPLOAD_ENABLED:
+        try:
+            res["prune"] = publish.prune_remote(sink, _today(time.time()), config.SOUND_ATLAS_LIVE_RETENTION_DAYS,
+                                                config.SOUND_ATLAS_DAILY_RETENTION_DAYS, config.SOUND_ATLAS_PRUNE_MAX_DATES)
+        except Exception as e:  # noqa: BLE001 — 清理失敗不影響發布結果
+            res["prune"] = {"error": type(e).__name__}
+    return res
 
 
-def publish_daily(date: str, inputs: "daily.DailyInputs", sink: publish.Sink, families: Optional[list[str]] = None) -> dict:
-    """建每日檔並發布；manifest 只記真的發布出去的檔（重跑沿用前次紀錄）。"""
+def publish_daily(date: str, inputs: "daily.DailyInputs", sink: publish.Sink, families: Optional[list[str]] = None,
+                  revise: bool = False) -> dict:
+    """建每日檔並發布；manifest 只記真的發布出去的檔（重跑沿用前次紀錄）。
+
+    檔名規則：首版用前端同名檔；revise=True 時已發布的檔改發 -r<n>（n＝前次＋1）。
+    被暫擋的族補發時還沒有首版 → 直接發首版（同一套紀錄：manifest files[name].key 指向實際檔名）。
+    """
     files, report = daily.build_all(date, inputs, set(families) if families else None)
     hold = daily.transient_gaps(files, report)
     mkey = publish.daily_key(date, "manifest.json")
@@ -268,12 +303,20 @@ def publish_daily(date: str, inputs: "daily.DailyInputs", sink: publish.Sink, fa
             written[name] = "held: " + hold[next(p for p in hold if name.startswith(p))]
             continue
         kind = "bin" if name.endswith(".bin") else "json"
-        if sink.put(publish.daily_key(date, name), body, kind):
-            published[name] = {"bytes": len(body), "sha256": hashlib.sha256(body).hexdigest(), "published_at": now_tpe_iso()}
-            written[name] = "published"
-        else:
+        cur = published.get(name)
+        if cur is None and sink.exists(publish.daily_key(date, name)):
+            cur = published[name] = {"key": name, "rev": 1, "bytes": None, "sha256": None, "note": "已存在、無前次紀錄"}
+        if cur is not None and not revise:
             written[name] = "exists (kept earlier build)"
-            published.setdefault(name, {"bytes": None, "sha256": None, "note": "已存在、無前次紀錄"})
+            continue
+        rev = 1 if cur is None else int(cur.get("rev", 1)) + 1
+        fname = publish.revision_name(name, date, rev)
+        if sink.put(publish.daily_key(date, fname), body, kind):
+            published[name] = {"key": fname, "rev": rev, "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest(),
+                               "published_at": now_tpe_iso()}
+            written[name] = f"published {fname}"
+        else:
+            written[name] = f"exists {fname} (kept)"
     still_held = {p: r for p, r in hold.items() if not any(n.startswith(p) for n in published)}
     manifest = {"schema": "pulse-sound-daily-manifest-v1", "date_taiwan": date, "updated_at": now_tpe_iso(),
                 "contract": contract_json("manifest.json"), "files": published, "held": still_held,
@@ -286,9 +329,35 @@ def publish_daily(date: str, inputs: "daily.DailyInputs", sink: publish.Sink, fa
             "held": still_held, "timings_s": report["timings_s"]}
 
 
+ALERT_DAILY = "sound_atlas_daily"
+
+
+def daily_alert(result: Optional[dict], error: Optional[str] = None) -> None:
+    """每日段失敗、或有族出錯／被暫擋 → 🔴 一次（alerting 去重）；完整發布 → 清除（送過才送恢復）。"""
+    from utils import alerting
+    problems = []
+    if error:
+        problems.append(f"任務中止：{error}")
+    if result:
+        problems += [f"{k} 失敗" for k in (result.get("errors") or {})]
+        problems += [f"{p.rstrip('-')} 暫擋（{why}）" for p, why in (result.get("held") or {}).items()]
+    date = (result or {}).get("date", "")
+    alerting.record_routine(TASK_DAILY, not problems, "；".join(problems)[:120] if problems else f"{date} 已發布")
+    if problems:
+        alerting.raise_alert(ALERT_DAILY, alerting.RED, f"城市聲景每日檔 {date} 未完整：" + "；".join(problems))
+    else:
+        alerting.clear_alert(ALERT_DAILY, "城市聲景每日檔")
+
+
 def run_daily_isolated() -> dict:
     from utils.isolated_task import run_isolated
-    return run_isolated(TASK_DAILY, "tasks.sound_atlas:run_daily", timeout=config.SOUND_ATLAS_DAILY_KILL_TIMEOUT_SEC)
+    try:
+        res = run_isolated(TASK_DAILY, "tasks.sound_atlas:run_daily", timeout=config.SOUND_ATLAS_DAILY_KILL_TIMEOUT_SEC)
+    except Exception as e:
+        daily_alert(None, type(e).__name__)
+        raise
+    daily_alert(res)
+    return res
 
 
 def live_schedule_minutes() -> list[int]:

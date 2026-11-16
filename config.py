@@ -148,9 +148,16 @@ SOUND_ATLAS_LIVE_MINUTE_OFFSET = int(os.getenv('SOUND_ATLAS_LIVE_MINUTE_OFFSET',
 SOUND_ATLAS_DAILY_TIME = os.getenv('SOUND_ATLAS_DAILY_TIME', '02:40')
 SOUND_ATLAS_DAILY_KILL_TIMEOUT_SEC = int(os.getenv('SOUND_ATLAS_DAILY_KILL_TIMEOUT_SEC', '1800'))
 # 即時讀 live.flight_positions（唯讀、有時間窗與 LIMIT）；關掉＝飛機族標 disabled（前端無法判斷）
-SOUND_ATLAS_AVIATION_LIVE_ENABLED = os.getenv('SOUND_ATLAS_AVIATION_LIVE_ENABLED', 'true').lower() in ('true', '1', 'yes')
+# 預設關（2026-11-16 使用者決定：要讀，但部署時明確開）
+SOUND_ATLAS_AVIATION_LIVE_ENABLED = os.getenv('SOUND_ATLAS_AVIATION_LIVE_ENABLED', 'false').lower() in ('true', '1', 'yes')
 # 雷達幀公開網址（O-A0058-005 已由 cwa_satellite 收集器上傳 R2 公開網域）
 SOUND_ATLAS_RADAR_BASE_URL = os.getenv('SOUND_ATLAS_RADAR_BASE_URL', 'https://data.itsmigu.com/imagery/cwa')
+# R2 保留（只在 SOUND_ATLAS_UPLOAD_ENABLED 時由每日段清理；只刪 sound-atlas/v1/live|daily/<日期>/ 前綴）
+SOUND_ATLAS_LIVE_RETENTION_DAYS = int(os.getenv('SOUND_ATLAS_LIVE_RETENTION_DAYS', '14'))
+SOUND_ATLAS_DAILY_RETENTION_DAYS = int(os.getenv('SOUND_ATLAS_DAILY_RETENTION_DAYS', '180'))
+SOUND_ATLAS_PRUNE_MAX_DATES = int(os.getenv('SOUND_ATLAS_PRUNE_MAX_DATES', '7'))
+# 即時某一族連續 error 幾次才告警（6 次＝1 小時）
+SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS = int(os.getenv('SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS', '6'))
 
 # 歸檔設定
 ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').lower() in ('true', '1', 'yes')

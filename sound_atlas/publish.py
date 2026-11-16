@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -31,12 +32,42 @@ def live_baseline_key(date: str) -> str:
     return f"{PREFIX}/live/{date}/river-baseline.json"
 
 
-def live_index_key(date: str) -> str:
-    return f"{PREFIX}/live/{date}/index.json"
-
-
 def daily_key(date: str, name: str) -> str:
     return f"{PREFIX}/daily/{date}/{name}"
+
+
+def revision_name(name: str, date: str, rev: int) -> str:
+    """每日檔修訂：首版不帶、之後在日期後加 -r2、-r3…（radar-rain-D.class.bin → radar-rain-D-r2.class.bin）"""
+    if rev <= 1:
+        return name
+    i = name.index(date) + len(date)
+    return f"{name[:i]}-r{rev}{name[i:]}"
+
+
+_DATE_DIR = re.compile(r"^(\d{4}-\d{2}-\d{2})/$")
+
+
+def prune_remote(sink: "Sink", today: str, live_days: int, daily_days: int, max_dates: int = 7) -> dict:
+    """刪 R2 上過期的日期目錄：只動 sound-atlas/v1/live/<D>/（D 早於 today−live_days）與 daily/<D>/（早於 daily_days）。
+
+    只對 R2Sink 有作用（本機 dry-run 另有清理）；每次最多處理 max_dates 個日期，舊的先。
+    """
+    import datetime as dt
+    if not isinstance(sink, R2Sink):
+        return {"skipped": "not r2"}
+    out: dict = {"deleted_dates": [], "objects": 0}
+    budget = max_dates
+    for sub, days in (("live", live_days), ("daily", daily_days)):
+        cutoff = (dt.date.fromisoformat(today) - dt.timedelta(days=days)).isoformat()
+        base = f"{PREFIX}/{sub}/"
+        for child in sorted(sink.list_dirs(base)):
+            m = _DATE_DIR.match(child[len(base):]) if child.startswith(base) else None
+            if not m or m.group(1) >= cutoff or budget <= 0:
+                continue
+            out["objects"] += sink.delete_prefix(f"{base}{m.group(1)}/")
+            out["deleted_dates"].append(f"{sub}/{m.group(1)}")
+            budget -= 1
+    return out
 
 
 def static_key(name: str, sha256: str) -> str:
@@ -45,7 +76,7 @@ def static_key(name: str, sha256: str) -> str:
 
 
 class Sink:
-    """put(key, body, kind)；kind：json（gzip＋Content-Encoding）、bin（原樣）。immutable=False 只給 index。"""
+    """put(key, body, kind)；kind：json（gzip＋Content-Encoding）、bin（原樣）。immutable=False 只給每日 manifest。"""
 
     def exists(self, key: str) -> bool:  # pragma: no cover - 介面
         raise NotImplementedError
@@ -101,6 +132,24 @@ class R2Sink(Sink):
 
     def exists(self, key: str) -> bool:
         return self.r2.head(key) is not None
+
+    def list_dirs(self, prefix: str) -> list[str]:
+        out: list[str] = []
+        for page in self.r2.s3.get_paginator("list_objects_v2").paginate(Bucket=self.r2.bucket, Prefix=prefix, Delimiter="/"):
+            out += [p["Prefix"] for p in page.get("CommonPrefixes", [])]
+        return out
+
+    def delete_prefix(self, prefix: str) -> int:
+        """刪一個日期目錄底下的物件。前綴必須是 sound-atlas/v1/(live|daily)/YYYY-MM-DD/，否則拒絕。"""
+        if not re.fullmatch(rf"{re.escape(PREFIX)}/(live|daily)/\d{{4}}-\d{{2}}-\d{{2}}/", prefix):
+            raise ValueError(f"拒絕刪除前綴外的 key：{prefix!r}")
+        n = 0
+        for page in self.r2.s3.get_paginator("list_objects_v2").paginate(Bucket=self.r2.bucket, Prefix=prefix):
+            keys = [o["Key"] for o in page.get("Contents", []) if o["Key"].startswith(prefix)]
+            for i in range(0, len(keys), 1000):
+                self.r2.s3.delete_objects(Bucket=self.r2.bucket, Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]], "Quiet": True})
+                n += len(keys[i:i + 1000])
+        return n
 
     def get_json(self, key: str):
         import gzip

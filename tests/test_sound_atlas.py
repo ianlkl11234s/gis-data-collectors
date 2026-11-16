@@ -478,3 +478,140 @@ def test_live_lists_next_day_only_after_midnight():
     start, end = day_window(DATE)
     assert day._dates(end - 1) == [DATE]
     assert day._dates(end + 60) == [DATE, "2026-11-10"]
+
+
+# ── 第二輪：修訂號、R2 清理、告警 ───────────────────────────────
+
+def test_revision_name():
+    assert publish.revision_name(f"radar-rain-{DATE}.class.bin", DATE, 1) == f"radar-rain-{DATE}.class.bin"
+    assert publish.revision_name(f"radar-rain-{DATE}.class.bin", DATE, 2) == f"radar-rain-{DATE}-r2.class.bin"
+    assert publish.revision_name(f"natural-{DATE}.json", DATE, 3) == f"natural-{DATE}-r3.json"
+
+
+def test_daily_revise_publishes_next_revision(tmp_path, monkeypatch):
+    from sound_atlas import daily
+    from tasks import sound_atlas as task
+    n = {"i": 0}
+
+    def fake_build(date, inputs, families=None, generated_at=None):
+        n["i"] += 1
+        return {f"freeway-vd-{date}.json": json.dumps({"n": n["i"]}).encode()}, {"errors": {}, "timings_s": {}}
+
+    monkeypatch.setattr(daily, "build_all", fake_build)
+    sink = publish.LocalDirSink(str(tmp_path))
+    task.publish_daily(DATE, None, sink)
+    task.publish_daily(DATE, None, sink)                      # 一般重跑：不改
+    task.publish_daily(DATE, None, sink, revise=True)         # 修正 → -r2
+    task.publish_daily(DATE, None, sink, revise=True)         # 再修正 → -r3
+    m = sink.read_json(publish.daily_key(DATE, "manifest.json"))
+    e = m["files"][f"freeway-vd-{DATE}.json"]
+    assert e["key"] == f"freeway-vd-{DATE}-r3.json" and e["rev"] == 3
+    assert sink.read_json(publish.daily_key(DATE, f"freeway-vd-{DATE}.json")) == {"n": 1}   # 首版不動
+    assert sink.read_json(publish.daily_key(DATE, f"freeway-vd-{DATE}-r2.json")) == {"n": 3}
+    assert sink.read_json(publish.daily_key(DATE, f"freeway-vd-{DATE}-r3.json")) == {"n": 4}
+
+
+class _PagedS3:
+    def __init__(self, keys):
+        self.keys = set(keys)
+        self.deleted = []
+
+    def get_paginator(self, _name):
+        s3 = self
+
+        class P:
+            def paginate(self, Bucket, Prefix, Delimiter=None):
+                ks = sorted(k for k in s3.keys if k.startswith(Prefix))
+                if Delimiter:
+                    pre = sorted({Prefix + k[len(Prefix):].split(Delimiter, 1)[0] + Delimiter for k in ks if Delimiter in k[len(Prefix):]})
+                    yield {"CommonPrefixes": [{"Prefix": p} for p in pre]}
+                else:
+                    yield {"Contents": [{"Key": k} for k in ks]}
+        return P()
+
+    def delete_objects(self, Bucket, Delete):
+        for o in Delete["Objects"]:
+            self.keys.discard(o["Key"])
+            self.deleted.append(o["Key"])
+
+
+class _PagedR2:
+    bucket = "b"
+
+    def __init__(self, keys):
+        self.s3 = _PagedS3(keys)
+
+    def head(self, key):
+        return {} if key in self.s3.keys else None
+
+
+def test_prune_remote_only_touches_dated_prefixes():
+    P = publish.PREFIX
+    keep = [f"{P}/static/natural-static-v1-884e60cb.json", f"{P}/live/notadate/slot-000.json", f"{P}/live/2026-10-01x/slot-000.json",
+            f"{P}/live/2026-11-05/slot-000.json",                      # 14 天內
+            f"{P}/daily/2026-06-01/manifest.json",                     # 180 天內
+            "sound-atlas/v2/live/2026-01-01/slot-000.json", "imagery/cwa/x.png", f"{P}/live/2026-01-01"]   # 前綴外／不是目錄
+    old = [f"{P}/live/2026-10-0{d}/slot-00{i}.json" for d in range(1, 4) for i in range(3)] + \
+          [f"{P}/daily/2026-01-0{d}/natural-2026-01-0{d}.json" for d in range(1, 7)]
+    r2 = _PagedR2(keep + old)
+    sink = publish.R2Sink(r2)
+    res = publish.prune_remote(sink, "2026-11-16", 14, 180, max_dates=7)
+    assert len(res["deleted_dates"]) == 7                          # 上限
+    assert set(keep) <= r2.s3.keys                                  # 前綴外一個都不動
+    assert all(k.startswith(f"{P}/live/2026-10-0") or k.startswith(f"{P}/daily/2026-01-0") for k in r2.s3.deleted)
+    publish.prune_remote(sink, "2026-11-16", 14, 180, max_dates=7)
+    assert r2.s3.keys == set(keep)                                  # 第二次清完剩下的
+    with pytest.raises(ValueError):
+        sink.delete_prefix(f"{P}/static/")
+    with pytest.raises(ValueError):
+        sink.delete_prefix(f"{P}/live/")
+    assert publish.prune_remote(publish.LocalDirSink("/nonexistent"), "2026-11-16", 14, 180) == {"skipped": "not r2"}
+
+
+@pytest.fixture
+def alert_sent(monkeypatch, tmp_path):
+    import config
+    from utils import alerting
+    out = []
+    monkeypatch.setattr(config, "LOCAL_DATA_DIR", tmp_path)
+    monkeypatch.setattr(alerting, "_sender", lambda text: out.append(text) or True)
+    return out
+
+
+def test_live_family_error_alert_once_and_recover(alert_sent, tmp_path, monkeypatch):
+    import config
+    from tasks import sound_atlas as task
+    monkeypatch.setattr(config, "SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS", 6)
+    t = task.SoundAtlasLive(sink=publish.LocalDirSink(str(tmp_path / "o")),
+                            inputs=live.LiveInputs(raw=RawSource(), radar_fetcher=FakeFetcher({})), root=tmp_path)
+    for _ in range(5):
+        t._family_alerts({"radar": "error", "wind": "ok"})
+    assert alert_sent == []
+    for _ in range(4):
+        t._family_alerts({"radar": "error", "wind": "ok"})
+    assert len(alert_sent) == 1 and "radar" in alert_sent[0]          # 第 6 次一則，之後不洗版
+    t._family_alerts({"radar": "no_new_data"})
+    assert len(alert_sent) == 2 and "恢復" in alert_sent[1]
+    t._family_alerts({"radar": "ok"})
+    t._family_alerts({"radar": "disabled"})
+    assert len(alert_sent) == 2
+
+
+def test_daily_alert_raise_dedupe_and_clear(alert_sent):
+    from tasks import sound_atlas as task
+    bad = {"date": DATE, "errors": {}, "held": {"aviation-src-": "航跡檔讀取失敗"}}
+    task.daily_alert(bad)
+    task.daily_alert(bad)
+    assert len(alert_sent) == 1 and "aviation-src" in alert_sent[0]
+    task.daily_alert({"date": DATE, "errors": {}, "held": {}})
+    assert len(alert_sent) == 2 and "恢復" in alert_sent[1]
+    task.daily_alert(None, "IsolatedTaskError")
+    assert len(alert_sent) == 3
+
+
+def test_aviation_live_default_off(monkeypatch):
+    import importlib
+    import config
+    monkeypatch.delenv("SOUND_ATLAS_AVIATION_LIVE_ENABLED", raising=False)
+    importlib.reload(config)
+    assert config.SOUND_ATLAS_AVIATION_LIVE_ENABLED is False

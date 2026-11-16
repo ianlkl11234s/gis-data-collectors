@@ -28,7 +28,8 @@
                          │                       │                     └─ 失敗 → buffer/     │
                          │                       │                          sb_flush 每 5 分 │
                          │  每日 task：archive、backup_supabase、daily_report、trails_export、 │
-                         │            mini_taipei_publish、gfw_hourly_publish（子行程）       │
+                         │            mini_taipei_publish、gfw_hourly_publish（子行程）、     │
+                         │            sound_atlas_daily（子行程）；每 10 分 sound_atlas_live │
                          │  長駐 worker：AISStream、RIPE RIS Live（獨立執行緒，不進排程器）     │
                          │  Flask API（/health 等）＋ 主迴圈 heartbeat ＋ watchdog            │
                          └───────────────┬────────────────────────────┬────────────────────────┘
@@ -59,7 +60,8 @@
 | 執行 | `scheduler.py::CollectorScheduler` | `ThreadPoolExecutor`，`max_workers = min(max(10, collector 數 + 8), 32)`（`COLLECTOR_POOL_MAX_WORKERS` 可覆寫，計算依據見 `main.py`）；同一 collector 上一輪沒跑完就 skip 這一輪並記 warning；排隊超過 30 秒記 warning，`get_status()['pending']` 是排隊數 |
 | 逾時 | `BaseCollector.COLLECT_TIMEOUT`（預設 300 秒） | **只記 warning，不中斷**。Python 執行緒無法強制停止，真正的保護是各 HTTP 呼叫自己的 timeout |
 | 每日 task | `main.py::_as_task` | archive、backup、daily_report 等包成假 collector 丟進同一個排程器，避免堵主迴圈觸發 watchdog |
-| 重任務道 | `_as_task(..., heavy=True)` → `HEAVY_TASK` | trails_export、archive、backup_supabase、gfw_hourly_publish 同時只跑一個；後到的在執行緒內排隊等（不 skip）。60 分鐘級的網格 collector 刻意不加入，避免被 2 小時的 GFW 擋住而缺小時資料 |
+| 城市聲景 | `main.py::run_sound_atlas_tasks`、`tasks/sound_atlas.py` | 即時分片每 10 分（:x9，主程序）＋每日檔 02:40（子行程、重任務道）；開關預設全關、預設不上傳 R2。設計、R2 保留與部署步驟見 [`docs/sound-atlas-live/DESIGN.md`](../sound-atlas-live/DESIGN.md) |
+| 重任務道 | `_as_task(..., heavy=True)` → `HEAVY_TASK` | trails_export、archive、backup_supabase、gfw_hourly_publish、sound_atlas_daily 同時只跑一個；後到的在執行緒內排隊等（不 skip）。60 分鐘級的網格 collector 刻意不加入，避免被 2 小時的 GFW 擋住而缺小時資料 |
 
 ## 3. BaseCollector.run()：一輪做什麼
 
