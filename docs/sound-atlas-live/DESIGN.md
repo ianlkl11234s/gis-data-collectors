@@ -1,0 +1,196 @@
+# 城市聲景：即時分片＋隔日每日包（設計）
+
+> 狀態：**實作完成、預設全關、未部署**（2026-11-16；D1–D8 已決定，見 §9）。程式在 `sound_atlas/`、`tasks/sound_atlas.py`，測試在 `tests/test_sound_atlas.py`。
+> 數字標記：**〔實測〕**＝本機用真實原始匯出量到；**〔估〕**＝推算或未在正式環境量過。
+
+## 0. 一句話
+
+collector 每 10 分把「這 10 分新到的資料」整理成一個不可變的小分片（slot shard），每整點再併成一份小時片；隔天 02:40 在子行程用同一批純函式重建前一天的每日檔（格式與前端現有 `public/sound-atlas/grid/` 相同）。**每日檔是正本**；即時合併結果對每一格只會「等於每日值」或「無法判斷」，不會出現與每日檔不同的已知值。
+
+## 1. 原則
+
+1. **每日檔＝正本，即時 ⊑ 每日**：即時段用的是每日段的同一組函式；看不到未來資料的規則（雷達雜波要看下一幀、VD 瞬斷要看下一筆）一律往「無法判斷」偏。11-09 跑了四種情境（正常、幀隨機晚到＋每次重啟、槽 80 冷啟動、經排程任務包裝端到端），10-24 跑正常情境，都沒有違反（§7）。
+2. **缺＝無法判斷，不是 0**：缺幀、缺片、族失敗、讀取逾時都明確標出（`missing`、`status: error`、`slots_complete`），前端不得補 0。
+3. **不可變物件**：分片、小時片、每日檔的 key 寫了就不覆寫（R2 先 head 再 put）；只有 `daily/<D>/manifest.json` 可覆寫、短快取；修正走修訂號（§9 D3）。
+4. **預設不動任何正式資源**：三個開關都預設關；開了即時／每日也只寫本機 `<LOCAL_DATA_DIR>/sound_atlas/out/`，要另開 `SOUND_ATLAS_UPLOAD_ENABLED` 才上傳 R2。
+5. **單一實例**：分片 key 由時間決定，兩個實例會搶同一個 key（第二個會被「不覆寫」擋下，但狀態會分岔）。
+
+## 2. 資料流
+
+```
+collector 原始檔（本機 /data/<collector>/YYYY/MM/DD/<collector>_HHMM.json；2 天後只剩 S3 archives）
+  │                     雷達 PNG（R2 公開網域 imagery/cwa/O-A0058-005/…）   live.flight_positions（唯讀）
+  ▼                                  ▼                                        ▼
+┌───────────── 即時（主程序，每 10 分 :x9）─────────────┐   ┌──── 每日（子行程，每天 02:40）────┐
+│ LiveDay 狀態（pickle，本機 state/）                     │   │ daily.build_all(D)                 │
+│ run_slot → slot-<kkk>.json（新到的資料）                │   │  原始檔：本機，沒有就 S3 archive   │
+│ 每整點 → hour-<HH>.json（該小時 6 片串接）              │   │  航跡：S3 trails/flights/<D±1>     │
+│ 每天第一次 → river-baseline.json（前 60 天分位數）      │   │ transient_gaps → 暫時失敗的族先不發 │
+│ D+1 00:00–01:00 → D 的收尾片 slot-144…149              │   │ manifest.json（可覆寫）            │
+└──────────────────────────┬──────────────────────────────┘   └────────────────┬───────────────────┘
+                           ▼                                                     ▼
+        R2 sound-atlas/v1/live/<D>/…（或本機 dry-run）          R2 sound-atlas/v1/daily/<D>/…
+                           └──────────────► 前端：今天＝live；D＜今天且 daily 有＝daily ◄──────┘
+```
+
+## 3. 各來源
+
+| 族 | 輸入 | 即時（每 10 分） | 每日（D 過完） | 即時與每日的差別（只會往「無法判斷」偏） |
+|---|---|---|---|---|
+| 雷達雨 | 公開 PNG `O-A0058-005/<UTC日>/<HHMMSS>.png`（每 10 分一幀） | 抓還沒處理的幀（最多 18 幀／次，舊的先）；幀時刻後 1 小時還沒有＝宣告缺 | 144 幀整日重算，含雜波遮罩（要看前後幀） | 幀 k 看不到 k+1：前一幀條件成立（或前一幀狀態未知）就先標 255 |
+| 國道 VD | `freeway_vd` 原始檔（=寫進 `live.freeway_vd_traffic` 的同一份值） | 新到的檔 → 該槽 366 支 VD 的值 | `clean_vd_day`（4 條規則） | 整日全零、瞬斷要看「之後」→ 先給 None（附原因） |
+| 雨量站 | `rain_gauge_realtime` 原始檔（D＋D+1 凌晨） | 「第一次看到」的讀數（=DB ON CONFLICT DO NOTHING） | 每站每整點取最晚（=RPC `get_rain_gauge_day`） | 無（合併時同規則）；午夜後才到的讀數由收尾片補 |
+| 風 | `weather` 原始檔 | 新增或改變的 (站, 整點) 值；後到覆寫先到 | 同 | 無 |
+| 浪 | `cwa_marine_observation`（滾動 48h、約 27 MB/檔） | 每小時最多解析一次最新檔（D 或 D+1），送新增或改變的值 | D+1 第一檔 | 無（收尾片會讀到 D+1 第一檔） |
+| 河川 | `river_water_level`（D＋D+1）；基準＝前 60 天 S3 archives | 第一次看到的讀數；基準檔每天一份 | 每站每小時取最晚、分位數 | 無 |
+| 飛機（來源） | 即時：`live.flight_positions` 有界查詢；每日：S3 `trails/flights/<D±1>.json.gz` | 時間窗內的點 → 碰到外擴 23 km 外框的航班片段（附窗前最後一點） | 整條航跡（任一點或連線碰到外框） | 只發外框附近的片段（每日檔整條）；點字串格式相同，所以合併後的點是每日點的子集 |
+| 飛機（網格包） | `aviation-<D>.class.bin` | — | **不產**：前端 TS kernel 繼續算，改讀 R2 `aviation-src`（§9 D1） | — |
+
+即時飛機查詢（`aviation.POSITIONS_SQL`）：`collected_at` 時間窗＋`altitude ≥ 100`＋`ORDER BY collected_at`＋`LIMIT 20000`，在 `BEGIN READ ONLY`＋`SET LOCAL statement_timeout='20s'` 內執行。冷啟動每次最多讀 1 小時；達 LIMIT 只前進到截斷點、不宣稱該段完整。正式 DB 白天實測每 10 分窗 306–542 列、2.7–6.7 ms（§6）。開關 `SOUND_ATLAS_AVIATION_LIVE_ENABLED` **預設關**，部署時明確開（§9 D8）；關著時飛機族標 `disabled`（前端無法判斷）。
+
+## 4. 物件規格
+
+前綴 `sound-atlas/v1/`（R2 公開網域 `data.itsmigu.com`）。保留：`live/<D>/` 14 天、`daily/<D>/` 180 天，只放 R2、不另存 S3（原始輸入在 S3 永久，可重建）；清理由每日段在 `SOUND_ATLAS_UPLOAD_ENABLED` 時執行，只刪這兩種日期目錄，每次最多 7 個日期（天數與上限可用 `SOUND_ATLAS_LIVE_RETENTION_DAYS`／`SOUND_ATLAS_DAILY_RETENTION_DAYS`／`SOUND_ATLAS_PRUNE_MAX_DATES` 調）。JSON 一律 gzip＋`Content-Encoding: gzip`；不可變物件 `Cache-Control: public, max-age=31536000, immutable`；可覆寫物件 `public, max-age=60`。
+
+| key | 內容 | schema | 可覆寫 |
+|---|---|---|---|
+| `live/<D>/slot-<kkk>.json`（k=0–149） | 第 k 次執行新到的資料；144–149＝D+1 00:00–01:00 的收尾片 | `pulse-sound-live-slot-v1` | 否 |
+| `live/<D>/hour-<HH>.json`（HH=00–24） | 該小時各片原樣串接＋`slots_missing` | `pulse-sound-live-hour-v1` | 否 |
+| `live/<D>/river-baseline.json` | 河川站 8 個分位數（前 60 天每小時最後一筆） | `pulse-sound-river-baseline-v1` | 否 |
+| `daily/<D>/<前端同名檔>`（首版）、`daily/<D>/<名稱>-<D>-r<n>.<副檔名>`（修訂） | `radar-rain-<D>.class.bin`＋`.meta.json`、`freeway-vd-<D>.json`、`rain-gauge-<D>.json`、`natural-<D>.json`、`aviation-src-<D>.json`；修訂例：`radar-rain-<D>-r2.class.bin` | 同前端現有 | 否 |
+| `daily/<D>/manifest.json` | **只列真的已發布的檔**：`files[<前端檔名>] = {key（實際檔名，最新修訂）, rev, sha256, bytes, published_at}`；重跑沿用前次紀錄；仍被暫擋的族與理由、契約版本、建檔報告 | `pulse-sound-daily-manifest-v1` | 是 |
+| `static/natural-static-v1-<sha8>.json` | 海岸線＋河道（1,122,449 B） | — | 否 |
+
+slot 分片欄位：`slot`、`run_at`、`grid{id,sha256}`、`sources.<族>`。每族都有 `status`（`ok`／`no_new_data`／`error`／`disabled`），另外：
+
+- `radar`：`frames[{k, utc, class_b64gz, clutter_live_cells}]`（gzip＋base64 的 uint8[格數]）、`missing[k]`
+- `freeway_vd`：`vd_ids_sha256`、`slots{k: {fetch_unix, v[366]}}`、`null_reasons`
+- `rain_gauge`：`rows[]`（同每日檔列格式）
+- `wind`／`wave`：`stations[]`（第一次出現才送）、`obs[[站, unix, …]]`
+- `river`：`obs[[站, unix, 水位]]`（站資料在 baseline）
+- `aviation`：`window[t0,t1]`、`truncated`、`slots_complete[k]`、`rows[{flight_id, callsign, …, trail}]`
+
+## 5. 前端接線規格（本輪不改前端）
+
+**網址**：今天＝`live/<今天>/`；D＜今天時，先讀 `daily/<D>/manifest.json`，200 且 `files[<前端檔名>]` 存在 → 用 `daily/<D>/<files[…].key>`（最新修訂）；該族不在 `files`（被暫擋或還沒發）→ 退回 `live/<D>/`（含收尾片，14 天內）；都沒有＝無法判斷。前端現有 `soundGridClient.ts` 的檔名規則不變，只換前綴並經 manifest 取實際檔名。不提供 `index.json`：即時分片依時鐘推 key。
+
+**載入**：已過完的小時讀 `hour-<HH>.json`（最多 24＋1 次請求），當前小時讀 `slot-<kkk>.json`。小時片 404 → 改讀該小時 6 個 slot（小時片由下一次執行補寫，但可能晚到）。分片 404 的判斷：槽起點＋20 分還 404＝缺片；之前＝尚未發布（顯示「更新中」，不當缺）。
+
+**合併**（參考實作 `live.merge_day`，前端照寫 TS）：
+
+| 族 | 規則 |
+|---|---|
+| 雷達 | 幀 k 取分片內容；`missing` 或沒出現＝整幀 255 |
+| VD | 同槽多片取已知值的最大；沒有片給值＝None |
+| 雨量站 | 全部列合併後每站每整點取 `observed_at` 最晚 |
+| 風／浪 | (站, 時刻) 後片覆寫前片；站序＝第一次出現 |
+| 河川 | 每站每整點取時刻最晚（同時刻先到為準）；站資訊與分位數取 baseline |
+| 飛機 | 同 flight_id 的點依時間排序、同字串去重；文字欄取非空最大（=`COALESCE(MAX(x),'')`）；`slots_complete` 以外的槽＝無法判斷 |
+
+所有規則冪等：同一批資料重送（上傳成功但狀態沒存到）不改結果（測試 `test_merge_is_idempotent_on_resend`）。
+
+**缺片怎麼當無法判斷**：雷達、VD、飛機有逐槽／逐幀的明確覆蓋，缺片只影響那幾槽。雨量、風、浪、河川是「讀數陸續到」：若槽 k 的分片缺或該族 `error`，把 obs 時刻落在 `[run_at(k) − 2h, run_at(k)]` 的 (站, 小時) 當無法判斷，直到後續片再送到或每日檔出現。（2 小時是保守窗：模擬中讀數最晚在觀測後約 1 小時內到〔估，未逐筆統計〕。）
+
+**之後前端腳本怎麼收斂**：現在 `scripts/preprocess/build-sound-*.py` 的每日建檔邏輯已原樣搬進 `sound_atlas/`（逐位元比對見 §7）。正式上線後：(1) 前端只保留讀取與 TS kernel；(2) `build-sound-grid-packs.ts` 繼續在前端算 `aviation-<D>.class.bin`，改讀 R2 的 `aviation-src`（§9 D1；綁定的 sha 要用 manifest 裡的 sha256）；(3) 契約檔（grid、色表、mask、VD 清單、河川站）以前端為正本，`scripts/sound_atlas_build_contract.py` 從前端重產，`test_contract_matches_frontend_checkout` 擋漂移。**注意：契約檔目前複製自前端尚未 push 的分支 `feat/city-sound-atlas-mvp`（commit bfc37bda）**，前端合併前若再改格網或色表要重產。
+
+## 6. 資源
+
+### 即時（主程序內）
+
+| 項目 | 數字 | 依據 |
+|---|---|---|
+| 每次耗時（只算 `run_slot`） | 最終版 11-09：平均 0.16 s、p95 0.66 s、最大 1.1 s（浪解析那次）；前一版每次都去翻 D+1 的 archive 時是平均 0.27 s | 〔實測〕150 次（本機原始檔、雷達讀本機快取） |
+| 其中浪（每小時一次） | 本機檔 0.40 s；模擬裡讀 tar 時約 1.0 s | 〔實測〕 |
+| 冷啟動第一次（槽 80 才開） | 3.4 s、分片 6.3 MB／gzip 563 KB；之後追平 | 〔實測〕 |
+| 經排程任務包裝（含 gzip、spool、存狀態、小時片、清理） | 平均 0.36 s、p95 0.74 s；每天第一次另算河川基準檔（前 60 天，本機約 6 s；午夜那次同時算昨天收尾與今天基準，最長 14 s） | 〔實測〕11-09 00:09 → 11-10 00:59 共 150 次；正式環境基準檔另需約 60 次 S3 GET〔估〕 |
+| 雷達網路 | 每次約 1 張 PNG（平均 224 KB），一天約 32 MB 下載 | 〔實測〕幀大小；〔估〕流量 |
+| 影像主機掛掉 | 一次執行最多卡約 25 s（2 次 × 10 s 逾時＋退避），之後停止本次抓幀 | 〔估〕由逾時設定推算 |
+| DB 查詢 | 每 10 分一次、窗 10 分：白天 306–542 列、執行 2.7–6.7 ms、約 15 個 buffer；冷啟動 1 小時窗 2,844 列、17 ms；凌晨 202 列、往返 0.14 s；走 `flight_positions` 當日分區的 `collected_at` 索引，沒有 lat／lng 為空的列 | 〔實測〕正式 DB 唯讀：11-15 08／12／15／18／21 時與 11-16 10:00 的 10 分窗、11-16 03:18 凌晨 |
+| 記憶體增量 | import 約 20 MB；雷達解一幀 PNG 暫存約 +58 MB；浪解析 +30 MB；狀態 pickle 最大 7.9 MB（記憶體內約數十 MB〔估〕）→ **主程序尖峰增量約 100–150 MB〔估〕** | 各元件〔實測〕；總和〔估〕。模擬整體 RSS 600–700 MB 主要是模擬器本身（記憶體內位置點約 130 MB、整包 tar），不能當正式數字 |
+| 本機磁碟 | state＋spool 約 20 MB／天，只留 3 天 | 〔實測〕pickle＋spool；保留天數為設計值 |
+
+### 每日（子行程）
+
+| 項目 | 數字 | 依據 |
+|---|---|---|
+| 耗時 | 雷達 3.3 s、VD 1.0 s、雨量 1.4 s、自然 6.7 s（含 60 天河川 archive）、飛機 0.1 s；合計約 13 s | 〔實測〕本機檔；正式環境多 S3 下載約 60×0.5 MB 河川 archive〔估〕 |
+| 尖峰記憶體 | 368 MB（全族同一行程） | 〔實測〕`/usr/bin/time -l` |
+| 輸出 | 每天 6 檔：原始 4.2–4.7 MB／gzip 0.85–0.90 MB | 〔實測〕 |
+
+### R2
+
+| 項目 | 數字 |
+|---|---|
+| 物件數 | 即時 150 slot＋25 小時片＋1 基準 ≈ 176／天；每日 7 檔 → 約 5,500 次 PUT／月、同數量 HEAD〔估〕；保留期內常駐約 14×176＋180×7 ≈ 3,700 個物件〔估〕 |
+| 容量 | 即時 slot 1.6–1.8 MB＋小時片 1.5–1.7 MB（gzip）≈ 3.4 MB／天；每日 ≈ 0.9 MB／天 → 照保留期常駐約 14×3.4＋180×0.9 ≈ 210 MB〔估，由兩天實測外推〕 |
+| 單檔 | slot 最大 17 KB、小時片最大 82 KB（gzip）〔實測〕 |
+
+## 7. 一致性（實測）
+
+**每日段 vs 前端現有每日檔**（`test_daily_parity_with_frontend_files`，11-09 與 10-24）：雷達 `class.bin` **逐位元相同**；雷達 meta、雨量站、自然三族（含河川 60 天分位數）、航跡來源除 `generated_at`／`notes_zh`／`origin` 外**逐值相同**；VD 在重現舊匯出範圍後逐值相同（只差 `qa.rules` 說明文字）。
+VD 的唯一實質差異：前端舊檔來自 DB 匯出 CSV 的外框，39 支 VD（例：國道 5 號 49–53 km、國道 3 號 60–69 km、國道 2 號 6–7.9 km）標 `not_in_export`；collector 直接讀原始檔所以有值（11-09 已知值 49,854 vs 44,538）。這是改善，不是錯誤。
+
+**02:40 當下的輸入 vs 完整輸入**：D+1 原始檔只看 02:40 前抵達、D+1 航跡檔尚不存在，兩天六檔全部相同、沒有被暫擋的族。
+
+**即時合併 vs 每日**（150 次執行合併後逐格比對；「違反」＝即時有值但與每日不同）：
+
+| 族 | 11-09 | 10-24 | 說明 |
+|---|---|---|---|
+| 雷達 | 違反 0；104 格即時 255、每日有值 | 違反 0；330 格 | 即時雜波保守標記（佔約 0.001%） |
+| 雷達（幀晚到 5–55 分隨機＋每次重啟） | 違反 0；136 格 | — | |
+| 雷達（槽 80 冷啟動） | 違反 0；68 格 | — | |
+| VD | 違反 0；135 格即時 None、每日有值（0.26%） | 違反 0；366 格（0.7%） | 原因：至今全零、瞬斷待確認 |
+| 雨量站 | 6,336 列全同 | 6,009 列全同 | |
+| 風／浪／河川 | 全同（3,528／768／2,349） | 全同 | 沒有收尾片時（11-09）浪差 37 筆、河川差 48 筆 → 加收尾片後歸零 |
+| 飛機 | 外框內 D 時段的點 5,043 個全到；即時航班點都是每日點的子集 | 3,662 個全到 | 見下 |
+
+**經排程任務包裝端到端**（`SoundAtlasLive.run`＋本機 dry-run 目錄，11-09 00:09 → 11-10 00:59，再跑 `publish_daily`）：磁碟上 150 個 slot、25 個小時片、1 個基準檔；「全部 slot 合併」與「全部小時片合併」完全相同；與同次產生的每日檔比，雷達、VD 違反 0，風、浪、河川相同；本機目錄共 26 MB（含前後日的狀態與收尾片）。
+
+飛機逐項：每日檔多 84（11-09）／56（10-24）個航班——其中 81／53 個只在 D 以外的時間碰到外框（每日檔整條保留，前端 D 時段不畫）；3／3 個只靠「間隔 > 600 s 的連線」碰到外框（前端 `maxInterpolationGapS=600` 不內插，不畫）。另 18／2 個航班的文字欄（callsign 等）不同：即時取「外框附近片段」的最大值，每日取整天最大值；模擬的位置點由三天航跡檔反推，這個差異有一部分是模擬造成，正式環境未驗證（§10 R2）。
+
+## 8. 部署與回滾
+
+部署（每一步都要使用者拍板；本輪都沒做）：
+1. 上傳 `static/natural-static-v1-<sha8>.json`（或在主機 `<LOCAL_DATA_DIR>/sound_atlas/static/` 放檔，sha 不符會拒用）。
+2. 開 `SOUND_ATLAS_DAILY_ENABLED=true`（dry-run）跑一晚，核對 `out/sound-atlas/v1/daily/<D>/manifest.json` 與前端檔。
+3. 開 `SOUND_ATLAS_LIVE_ENABLED=true`（dry-run）跑一天，看停更告警、主程序 RSS、每次耗時（log 的 timings）。
+4. 開 `SOUND_ATLAS_UPLOAD_ENABLED=true`，先只開每日；穩定後再開即時。
+5. 開 `SOUND_ATLAS_AVIATION_LIVE_ENABLED=true`（即時讀 DB 飛機位置；預設關）。
+6. 前端換讀取前綴、經 manifest 取實際檔名（另一個 PR）。
+
+人工重跑（在 collector 容器內）：補發被暫擋的族 → `python3 -c "from tasks.sound_atlas import run_daily; print(run_daily('<D>'))"`（缺的族發首版，已發的不動）；修正已發布的檔 → `run_daily('<D>', families=['natural'], revise=True)`（發 `-r<n>`，manifest 指到最新）。
+
+告警（照 `utils/alerting` 慣例：🔴 開始一次、恢復一次，中間不洗版）：每日段中止、有族失敗或被暫擋 → `sound_atlas_daily`；即時某一族連續 `SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS`（預設 6＝1 小時）次 `error` → `sound_atlas_live:<族>`。每日段結果另記進日報的「例行」行。
+
+回滾：關掉開關即停（排程不註冊）。R2 物件不刪也不影響其他圖層；要清就刪 `sound-atlas/v1/` 前綴。本機 `sound_atlas/` 目錄可整個搬走（歸檔任務已略過它）。
+
+## 9. 已決定（使用者 2026-11-16）
+
+| # | 題目 | 決定 | 實作 |
+|---|---|---|---|
+| D1 | 飛機網格包 `aviation-<D>.class.bin` 誰算 | 前端 TS kernel 繼續算，改讀 R2 `aviation-src` | 本管線不產（前端另一個 PR） |
+| D2 | `index.json` | 不要 | 規格已刪；前端依時鐘推 key |
+| D3 | 每日檔修正 | 檔名加修訂號：首版不帶，之後 `-r2`、`-r3`…；manifest 指向各檔最新修訂；被暫擋的族補發走同一套（補發＝發首版） | `publish.revision_name`、`publish_daily(revise=…)` |
+| D4 | 保留 | 即時物件 14 天、每日檔 180 天，都只放 R2 | `publish.prune_remote`（只在上傳開啟時，前綴寫死，每次最多 7 個日期） |
+| D5 | 每日檔另存 S3 | 不存（原始輸入在 S3 永久，可重建） | — |
+| D6 | `natural-<D>.json` 內嵌海岸線與河道 | 維持內嵌（與前端相同格式） | — |
+| D7 | 跨午夜往後的航班（D+1 航跡檔要到 D+2 才有） | 不補 | — |
+| D8 | 即時讀 DB 飛機位置 | 要讀，但 `SOUND_ATLAS_AVIATION_LIVE_ENABLED` 預設關，部署時明確開 | config 預設 false |
+
+## 10. 風險與未驗證
+
+- **R1 DB 查詢**：〔實測〕白天每 10 分窗 306–542 列、2.7–6.7 ms、約 15 個 buffer、走當日分區 `collected_at` 索引；冷啟動 1 小時窗 2,844 列、17 ms（遠低於 LIMIT 20,000）。查詢若「必然失敗」，飛機族每次 `error`、水位線不前進 → 連續 6 次會發 `sound_atlas_live:aviation` 告警。
+- **R2 飛機文字欄**：即時與每日的 callsign 等可能不同（§7），影響 popup 文字，不影響聲音。
+- **R3 雷達發布延遲**：模擬假設幀時刻後 10 分可抓（另跑 5–55 分隨機）；實際延遲沒逐幀量。超過 1 小時才公開的幀即時會宣告缺，只有每日檔有。
+- **R4 主程序記憶體**：增量是元件相加的估計；開即時後要看實際 RSS（watchdog／記憶體上限）。浪檔若變大，可改到子行程解析。
+- **R5 雨量站外的讀數晚到**：缺片時用 2 小時保守窗，是估計值。
+- **R6 狀態檔與程式版本**：改了 `LiveDay` 欄位要升 `STATE_VERSION`；舊狀態會被丟掉並冷啟動（冷啟動已實測可追平）。
+- **R7 契約漂移**：前端分支還沒合併；合併前若改格網等契約，要重產 `sound_atlas/contract/`。
+- **R8 每日段讀 S3 河川 archive**：每天約 60 次 GET；S3 若暫時失敗，自然族會被暫擋並告警，要人工重跑（§8；沒有自動重跑）。
+- 沒有量：正式主機上的整體耗時、R2 上傳時間、停更告警實際觸發。
+- **未做**：被暫擋的族沒有自動重跑（有告警，人工重跑見 §8）。即時只讀本機原始檔（今天、昨天都還在本機）；只有河川基準與每日段會讀 S3。
+
+## 11. 測試
+
+`tests/test_sound_atlas.py`（CI 自動跑合成資料部分）：契約 sha、缺幀整幀 255、雷達即時 ⊑ 每日（含晚到幀與重啟）、VD 即時 ⊑ 每日（30 組亂數）、飛機讀取失敗＝error／截斷不宣稱完整／冷啟動窗有上限、單族失敗不影響其他族、缺片＝None、合併冪等、半寫檔重讀、壞狀態檔重建、每日暫擋、R2 標頭與不覆寫、排程時間、開關預設關（含即時飛機）、每日修訂號、R2 清理只動日期前綴且有上限、即時族連續失敗與每日未完整的告警（去重、恢復一次）。
+需本機原始匯出的比對（`SOUND_ATLAS_TEST_RAW`、`SOUND_ATLAS_FRONTEND`）：與前端 11-09／10-24 每日檔逐值比對、契約與前端檔一致。

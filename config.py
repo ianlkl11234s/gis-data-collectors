@@ -136,6 +136,29 @@ TRAILS_EXPORT_TIME = os.getenv('TRAILS_EXPORT_TIME', '02:00')
 # 軌跡匯出在子行程跑；超過此秒數強制結束（排程的 1200s 只告警）
 TRAILS_EXPORT_KILL_TIMEOUT_SEC = int(os.getenv('TRAILS_EXPORT_KILL_TIMEOUT_SEC', '3600'))
 
+# === 城市聲景（sound_atlas/；設計見 docs/sound-atlas-live/DESIGN.md）===
+# 兩個開關預設都關。開了也只寫本機目錄（dry-run），要上傳 R2 另開 SOUND_ATLAS_UPLOAD_ENABLED。
+# ⚠️ 只能在單一實例開：分片 key 依時間決定，兩個實例會搶同一個 key。
+SOUND_ATLAS_LIVE_ENABLED = os.getenv('SOUND_ATLAS_LIVE_ENABLED', 'false').lower() in ('true', '1', 'yes')
+SOUND_ATLAS_DAILY_ENABLED = os.getenv('SOUND_ATLAS_DAILY_ENABLED', 'false').lower() in ('true', '1', 'yes')
+SOUND_ATLAS_UPLOAD_ENABLED = os.getenv('SOUND_ATLAS_UPLOAD_ENABLED', 'false').lower() in ('true', '1', 'yes')
+# 即時每 10 分在 :x9 跑（雨量站、VD 都在 :x0 前後收、雷達幀約晚 5–10 分才公開）
+SOUND_ATLAS_LIVE_MINUTE_OFFSET = int(os.getenv('SOUND_ATLAS_LIVE_MINUTE_OFFSET', '9'))
+# 每日檔：等 02:00 軌跡凍結匯出（trails/flights/<D>.json.gz）之後
+SOUND_ATLAS_DAILY_TIME = os.getenv('SOUND_ATLAS_DAILY_TIME', '02:40')
+SOUND_ATLAS_DAILY_KILL_TIMEOUT_SEC = int(os.getenv('SOUND_ATLAS_DAILY_KILL_TIMEOUT_SEC', '1800'))
+# 即時讀 live.flight_positions（唯讀、有時間窗與 LIMIT）；關掉＝飛機族標 disabled（前端無法判斷）
+# 預設關（2026-11-16 使用者決定：要讀，但部署時明確開）
+SOUND_ATLAS_AVIATION_LIVE_ENABLED = os.getenv('SOUND_ATLAS_AVIATION_LIVE_ENABLED', 'false').lower() in ('true', '1', 'yes')
+# 雷達幀公開網址（O-A0058-005 已由 cwa_satellite 收集器上傳 R2 公開網域）
+SOUND_ATLAS_RADAR_BASE_URL = os.getenv('SOUND_ATLAS_RADAR_BASE_URL', 'https://data.itsmigu.com/imagery/cwa')
+# R2 保留（只在 SOUND_ATLAS_UPLOAD_ENABLED 時由每日段清理；只刪 sound-atlas/v1/live|daily/<日期>/ 前綴）
+SOUND_ATLAS_LIVE_RETENTION_DAYS = int(os.getenv('SOUND_ATLAS_LIVE_RETENTION_DAYS', '14'))
+SOUND_ATLAS_DAILY_RETENTION_DAYS = int(os.getenv('SOUND_ATLAS_DAILY_RETENTION_DAYS', '180'))
+SOUND_ATLAS_PRUNE_MAX_DATES = int(os.getenv('SOUND_ATLAS_PRUNE_MAX_DATES', '7'))
+# 即時某一族連續 error 幾次才告警（6 次＝1 小時）
+SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS = int(os.getenv('SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS', '6'))
+
 # 歸檔設定
 ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').lower() in ('true', '1', 'yes')
 ARCHIVE_RETENTION_DAYS = int(os.getenv('ARCHIVE_RETENTION_DAYS', '7'))  # 本地保留天數（預設全域）

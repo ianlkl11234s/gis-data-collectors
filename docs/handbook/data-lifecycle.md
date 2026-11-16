@@ -109,6 +109,7 @@ S3 規則（正本 [AWS_INVENTORY.md](../AWS_INVENTORY.md)）：不設 expiratio
 網站要大量讀、而且每個人讀的都一樣的資料，做成共用快照放 R2，不要每個訪客都打 DB。
 
 - **影像雙寫**：`cwa_satellite`、`air_quality_imagery` 等影像 collector 除了寫 DB，另寫一份到 R2（`storage/r2.py`，key 由 `(dataset, observed_at)` 決定、永不變，所以設 immutable 長快取）。R2 憑證沒設時跳過上傳、`image_key` 為 NULL，DB 照寫。
+- **城市聲景發布檔**（`sound-atlas/v1/`）：保留不是 R2 lifecycle，而是每日段在上傳開啟時自己清（只刪 `live/<日期>/`、`daily/<日期>/`），天數看 `config.py` 的 `SOUND_ATLAS_*_RETENTION_DAYS`，規則見 [`docs/sound-atlas-live/DESIGN.md`](../sound-atlas-live/DESIGN.md) §4。
 - **影像清理守衛**：DB 影像表的清理條件一律加 `image_key IS NOT NULL`——沒上 R2 的幀永不刪，寧可留著也不丟（[principles R-04](principles.md)；gis-platform `migrations/282…`、`388_aqi_imagery_cleanup_cron.sql`）。
 - **氣象網格發布幀**：`jma_raster` 等依 ADR-0021 分 T0–T3 四層，發布幀放 R2。R2 bucket `mini-tw-pulse` 的 lifecycle 規則 `jma-imagery-expire-*`（前綴 `imagery/jma/`；另有較長的 `imagery-expire-*` 涵蓋整個 `imagery/`，短的先生效）刪除物件；`get_weather_imagery_manifest` 只回傳 `published_at` 在回看窗內的幀（gis-platform mig 462），**回看窗刻意比 R2 規則少一天**當安全邊際，避免前端拿到已被 R2 刪掉的 key；更舊的幀從 S3 的 T2 重新發布（重發會更新 `published_at`，R2 物件也重新起算）。兩邊天數不抄在這裡：R2 用 `get_bucket_lifecycle_configuration`（唯讀）查，RPC 看 mig 462 的 `interval`。改任何一邊都要同時改另一邊，維持「RPC 窗 < R2 天數」。
 - **凍結匯出**：DB 的 trails 是滾動視窗，`trails_export`（`scripts/export_daily_trails.py`，每日 `TRAILS_EXPORT_TIME` 預設 02:00 台北）把昨天凍結成 S3 靜態檔。資料在 D+1 01:00–01:20 才定版，太早會匯出半成品；漏跑不會自動補，超出 DB 保留窗就救不回（[principles R-08](principles.md)）。預設關閉，**只能開單一實例**（共用 manifest 是 get→merge→put，非原子）。
