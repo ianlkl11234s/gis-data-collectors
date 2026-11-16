@@ -14,6 +14,7 @@
   - 告警檢查（2026-11-08 加，結果放 snapshot["alerts"]，daily_report 會在 Telegram 日報標 🔴）：
       · 根目錄磁碟使用率 > DISK_ALERT_PCT（80%）
       · 有日期目錄超過「保留天數 + 2 天」仍留在本機（歸檔卡住）
+      · target 有 status_file（收集器自己寫的紅黃燈，fire119 起）：alerts 併入紅燈、warnings 另列黃燈
 
 部署：
   - 程式位置 : /opt/external-health/health_report.py
@@ -100,6 +101,23 @@ DEFAULT_TARGETS: list[dict] = [
         "success_pattern": r"Supabase 寫入: stations=(\d+) readings(?:_sent)?=|Current batch was already written by buffer flush",
         "expected_interval_min": 10,
     },
+    {
+        "name": "fire119",
+        "log_path": "/var/log/fire119/collect.log",
+        "data_dir": "/var/lib/fire119/data/fire119",
+        "outbound": [
+            {"label": "tfd119", "host": "service119.tfd.gov.tw", "path": "/"},
+            {"label": "pbs", "host": "rtr.pbs.gov.tw", "path": "/"},
+        ],
+        # 每輪恰好一行「本輪結束」（記憶體不足跳過、flock 被占用不算一輪）；致命錯誤印 FAILED
+        "run_pattern": r"\[INFO\] 本輪結束 |\[ERROR\] FAILED: ",
+        # db=ok（寫入成功）或 db=none（沒有變化、不必連 DB）才算成功；buffered／fail 不算
+        "success_pattern": r"\[INFO\] 本輪結束 .* db=(?:ok|none) written=(\d+)",
+        "expected_interval_min": 1,
+        # runner 自己算好的各來源紅黃燈（fire119_collect.evaluate_health），超過 15 分鐘沒更新＝runner 停了
+        "status_file": "/var/lib/fire119/state/source_health.json",
+        "status_stale_min": 15,
+    },
 ]
 
 
@@ -118,6 +136,9 @@ ARCHIVE_TARGETS: list[dict] = [
      "collectors": ["cdc_public_health_weekly"], "default_retention": 1},
     # moa-opendata：data/ 底下每個子目錄都是一支 collector（buffer、.archive-receipts 除外）
     {"app": "moa-opendata", "root": "/var/lib/moa-opendata/data", "collectors": "*", "default_retention": 7},
+    # fire119：解析後的列（原始回應在 /var/lib/fire119/raw，不歸檔、3 天後刪，不在這裡檢查）
+    {"app": "fire119", "root": "/var/lib/fire119/data", "collectors": ["fire119", "pbs_road_events"],
+     "default_retention": 2},
 ]
 _NON_COLLECTOR_DIRS = {"buffer", "state", ".archive-receipts", "weather_raw"}
 
@@ -174,6 +195,36 @@ def run_checks(system: dict, targets: list[dict] | None = None, today: datetime 
                 shown = ", ".join(dates[:5]) + (f" …共 {len(dates)} 天" if len(dates) > 5 else "")
                 alerts.append(f"{name} 有日期目錄超過保留 {keep}+{STALE_GRACE_DAYS} 天未清：{shown}")
     return {"disk_alert_pct": DISK_ALERT_PCT, "stale_date_dirs": stale}, alerts
+
+
+def status_file_checks(targets: list[dict], now: datetime | None = None) -> tuple[dict, list[str], list[str]]:
+    """讀 target 的 status_file（收集器自己算好的紅黃燈）；回 (明細, alerts 紅, warnings 黃)。
+
+    檔案不存在：該收集器還沒部署，略過。超過 status_stale_min 分鐘沒更新：runner 停了 → 紅。
+    """
+    now = now or datetime.now(TAIPEI_TZ)
+    detail: dict[str, dict] = {}
+    alerts: list[str] = []
+    warnings: list[str] = []
+    for t in targets:
+        path = t.get("status_file")
+        if not path or not Path(path).exists():
+            continue
+        name = t["name"]
+        try:
+            status = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            alerts.append(f"{name} 狀態檔讀取失敗：{exc}")
+            continue
+        age_min = (now.timestamp() - Path(path).stat().st_mtime) / 60
+        stale = t.get("status_stale_min", 15)
+        if age_min > stale:
+            alerts.append(f"{name} 狀態檔 {age_min:.0f} 分鐘沒更新（> {stale}），runner 可能停了")
+        alerts.extend(f"{name}: {a}" for a in status.get("alerts") or [])
+        warnings.extend(f"{name}: {w}" for w in status.get("warnings") or [])
+        detail[name] = {"updated_at": status.get("updated_at"),
+                        "last_round": (status.get("runner") or {}).get("last_round")}
+    return detail, alerts, warnings
 
 
 def load_targets() -> list[dict]:
@@ -351,6 +402,8 @@ def build_snapshot() -> dict:
 
     system = system_metrics()
     checks, alerts = run_checks(system)
+    checks["status_files"], st_alerts, warnings = status_file_checks(targets)
+    alerts.extend(st_alerts)
     return {
         "host": os.environ.get("VM_HOSTNAME") or socket.gethostname(),
         "generated_at": datetime.now(TAIPEI_TZ).isoformat(),
@@ -360,6 +413,8 @@ def build_snapshot() -> dict:
         "outbound_health": outbound_report,
         "checks": checks,
         "alerts": alerts,
+        # 黃燈（2026-11-16 加，fire119 起）：日報標 🟡，不讓 host 變紅
+        "warnings": warnings,
     }
 
 
@@ -383,6 +438,8 @@ def main() -> int:
     print(json.dumps(snapshot, ensure_ascii=False, indent=2))
     for alert in snapshot["alerts"]:
         print(f"⚠️ ALERT: {alert}")
+    for warning in snapshot.get("warnings") or []:
+        print(f"🟡 WARNING: {warning}")
     if not snapshot["alerts"]:
         print("✓ checks: 磁碟與歸檔滯留皆正常")
     try:

@@ -140,3 +140,42 @@ def test_daily_report_shows_vm_alerts(monkeypatch):
     text = DailyReportTask([])._section_external_vm_health()
     assert "🔴 `vm1`" in text
     assert "🔴 磁碟使用率 85%" in text
+
+
+def test_health_status_file_alerts_and_warnings(health, tmp_path):
+    import json
+    import os
+    status = tmp_path / "source_health.json"
+    status.write_text(json.dumps({"updated_at": "2026-11-16T07:00:00+08:00", "alerts": ["runner 降頻中"],
+                                  "warnings": ["臺中市（taichung）解析成功但連續 0 筆 4 小時"]}), encoding="utf-8")
+    targets = [{"name": "fire119", "status_file": str(status), "status_stale_min": 15},
+               {"name": "not_deployed", "status_file": str(tmp_path / "missing.json")}]
+    now = datetime.fromtimestamp(status.stat().st_mtime, TZ)
+    detail, alerts, warnings = health.status_file_checks(targets, now=now)
+    assert alerts == ["fire119: runner 降頻中"]
+    assert warnings == ["fire119: 臺中市（taichung）解析成功但連續 0 筆 4 小時"]
+    assert set(detail) == {"fire119"}
+    old = status.stat().st_mtime - 3600
+    os.utime(status, (old, old))
+    _, alerts, _ = health.status_file_checks(targets, now=now)
+    assert any("60 分鐘沒更新" in a for a in alerts)
+
+
+def test_health_targets_include_fire119(health):
+    t = next(t for t in health.DEFAULT_TARGETS if t["name"] == "fire119")
+    assert t["status_file"].endswith("source_health.json")
+    a = next(t for t in health.ARCHIVE_TARGETS if t["app"] == "fire119")
+    assert a["collectors"] == ["fire119", "pbs_road_events"]
+
+
+def test_daily_report_shows_vm_warnings_yellow(monkeypatch):
+    from tasks import monitoring
+    from tasks.daily_report import DailyReportTask
+
+    snap = {"system": {"disk_used_pct": 30}, "egress_ip": "1.2.3.4", "collectors": {}, "outbound_health": {},
+            "alerts": [], "warnings": ["fire119: 宜蘭縣（yilan）HTTP／解析失敗 24h 3/288 次"]}
+    monkeypatch.setattr(monitoring, "list_vm_health_snapshots", lambda **_: [
+        {"host": "vm1", "is_lost": False, "snapshot": snap, "age_hours": 1}])
+    text = DailyReportTask([])._section_external_vm_health()
+    assert "🟡 `vm1`" in text
+    assert "🟡 fire119: 宜蘭縣" in text
