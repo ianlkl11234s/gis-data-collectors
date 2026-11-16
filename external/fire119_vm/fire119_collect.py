@@ -477,8 +477,9 @@ def run_round(args, now: datetime | None = None, session=None, sleep=time.sleep,
 
     # 5) 寫入
     buffer_dir = data_dir / "buffer"
+    dry_out = Path(args.out or (data_dir.parent / "dryrun"))
     if args.dry_run:
-        _dry_write(Path(args.out or (data_dir.parent / "dryrun")), now, payload, last_seen)
+        _dry_write(dry_out, now, payload, last_seen)
         db_state, stats = "dry", {}
     elif inc_changed or pbs_changed or last_seen or (buffer_dir.is_dir() and any(buffer_dir.glob("*.json"))):
         db_state, stats = _db_write(payload, last_seen, buffer_dir)
@@ -502,14 +503,15 @@ def run_round(args, now: datetime | None = None, session=None, sleep=time.sleep,
     inc_state.save()
     pbs_state.save()
 
-    # 6) 本機快照（解析後的列；119 存本輪全部列，警廣只存有變化的列）
+    # 6) 本機快照（解析後的列；119 存本輪全部列，警廣只存有變化的列）。dry-run 寫到輸出目錄，不進歸檔
+    snap_dir = dry_out / "data" if args.dry_run else data_dir
     fetched_119 = [n for n in per_source if n != "pbs"]
     if fetched_119:
-        write_snapshot(data_dir, "fire119", now, {
+        write_snapshot(snap_dir, "fire119", now, {
             "collected_at": now.isoformat(timespec="seconds"),
             "sources": {n: per_source[n] for n in fetched_119}, "row_count": len(inc_rows), "data": inc_rows})
     if "pbs" in per_source:
-        write_snapshot(data_dir, "pbs_road_events", now, {
+        write_snapshot(snap_dir, "pbs_road_events", now, {
             "collected_at": now.isoformat(timespec="seconds"), "sources": {"pbs": per_source["pbs"]},
             "seen": len(pbs_rows), "row_count": len(pbs_changed), "data": pbs_changed})
 

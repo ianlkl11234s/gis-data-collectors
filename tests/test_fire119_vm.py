@@ -387,7 +387,8 @@ def test_full_dry_round_then_only_changes(env, caplog):
     import gzip
     raw_ntpc = next((env.tmp / "raw" / "new_taipei").rglob("*.gz"))
     assert "path" not in gzip.decompress(raw_ntpc.read_bytes()).decode()
-    assert list((env.tmp / "data" / "fire119").rglob("fire119_*.json"))
+    assert list((env.tmp / "out" / "data" / "fire119").rglob("fire119_*.json"))
+    assert not (env.tmp / "data" / "fire119").exists()  # dry-run 不進歸檔目錄
     assert "本輪結束 sources=19 ok=19" in caplog.text
     # 第二輪內容不變 → 0 列要寫
     caplog.clear()

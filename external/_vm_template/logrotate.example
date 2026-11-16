@@ -7,6 +7,7 @@
 /var/log/cdc-public-health/*.log
 /var/log/external-health/*.log
 /var/log/pulse-detect/*.log
+/var/log/fire119/*.log
 /var/log/<app>/*.log
 {
     daily

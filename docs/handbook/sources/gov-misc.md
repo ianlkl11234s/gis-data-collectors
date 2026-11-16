@@ -1,4 +1,4 @@
-# 政府雜項與其他：急診、台電、新聞、國際事件、股市、農產價格、共機、公衛、移民、矯正、交通事故、動保、圖書館、垃圾車、POI
+# 政府雜項與其他：急診、台電、新聞、國際事件、股市、農產價格、共機、公衛、移民、矯正、交通事故、動保、圖書館、垃圾車、POI、即時 119
 
 **一句話**：這一類來源各自獨立、格式五花八門（HTML、CSV、XML、RSS、LLM 抽取），沒有共用機制可依賴；最大的坑是「低頻、事件型或只在特定時段有資料」的來源停擺沒人發現，以及政府網站擋雲端 IP，必須改跑 HiCloud VM。
 
@@ -141,6 +141,14 @@ YouTube 14 家新聞台直播 videoId（YouTube Data API v3）。
 
 ### foursquare_poi
 Foursquare 開放 POI（Hugging Face `foursquare/fsq-os-places`，DuckDB 讀遠端 Parquet）。每 30 日，清冊標停用；需 `HF_TOKEN`；寫 `reference.foursquare_poi`（約 42 萬列）。
+
+### fire119（即時 119 案件＋警廣路況，VM 專用）
+18 縣市 119 民眾版案件清單（DTS 系統與各縣市自家頁面，多為 HTML）、新北送醫中救護車、警廣即時路況。**只有 VM 版**（`external/fire119_vm/`），主 repo 沒有 collector，所以不在 [collectors.md](../collectors.md)。
+
+- 頻率／位置：HiCloud VM，cron 每分鐘一次、runner 內依來源 1／2／5 分鐘分頻；寫 `live.fire119_incidents`、`live.pbs_road_events`（gis-platform migration 555，站主限定）。**尚未部署**。
+- 寫入：只寫新案件或有變化的列，`last_seen_at` 每 30 分鐘批次推；DB 端 `status_history` append、分隊聯集、`WHERE EXCLUDED.updated_at > t.updated_at` 擋重放。
+- 精度：只有臺北給座標（精確／站方模糊點），其他來源靠路名對照表給路段中點（`road`，不是事發地），對不到降行政區級，不猜。
+- 已知坑：原始回應含隱私欄位（臺北隱藏點、新北救護車軌跡），落地前就剔除；解析器先找表頭／容器，版面改了算「解析失敗」，不會變成 0 筆；宜蘭、澎湖、臺東常態 0 筆。來源細節在 analytics `docs/topic-research/realtime_incidents/`；部署與保護措施見該目錄 README。
 
 ## 收這類資料要注意
 
