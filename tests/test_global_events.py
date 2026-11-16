@@ -15,6 +15,7 @@ from collectors.global_events import (
     GKGArtifact,
     GKGIndexGap,
     GlobalEventsCollector,
+    ambiguous_congo_evidence_ids,
     artifact_sha256,
     batch_country_anchors,
     build_compact_batch,
@@ -2455,3 +2456,136 @@ def test_last_chunk_failure_keeps_accepted_run_lineage_complete(
     ):
         assert run_receipt[field] is not None, field
     assert run_receipt["raw_response_sha256"] == content_sha256(ok_hashes)
+
+
+# --- FIPS CF/CG Congo ambiguity (DRC Ebola shown as "CF · Congo") ---------
+
+_CONGO_URL = "https://wire.example/ebola"
+
+
+def _congo_evidence(evidence_id, location_type, name, country_code, lon, lat):
+    return {
+        **_gkg_location(location_type, name, country_code, lon, lat),
+        "country_code_scheme": "fips10",
+        "source_url": _CONGO_URL,
+        "source_kind": "gdelt_metadata_mention",
+        "evidence_id": evidence_id,
+    }
+
+
+CF_CONGO = ("loc_cf_country", 1, "Congo", "CF", 15.0, -1.0)
+CG_DRC = ("loc_cg_country", 1, "Democratic Republic Of The Congo", "CG", 25.0, 0.0)
+CG_KINSHASA = (
+    "loc_cg_kinshasa", 4, "Kinshasa, Kinshasa, Democratic Republic Of The Congo",
+    "CG", 15.315, -4.32972,
+)
+CF_BRAZZAVILLE = (
+    "loc_cf_brazzaville", 4, "Brazzaville, Brazzaville, Congo", "CF", 15.28, -4.26,
+)
+
+
+def _congo_records(evidence, selected_ids=(), gazetteer=None):
+    candidate = {
+        "candidate_id": "cand_" + "c" * 24,
+        "routing_rank": 1,
+        "observation_window": {
+            "first_slot": "20261115230000",
+            "last_slot": "20261115230000",
+        },
+        "representative_documents": [
+            {"title": "Ebola outbreak spreads in Congo", "url": _CONGO_URL}
+        ],
+        "location_evidence": [_congo_evidence(*item) for item in evidence],
+    }
+    batch = {"batch_id": "batch_" + "c" * 24, "payload": {"candidates": [candidate]}}
+    assessments = []
+    if selected_ids:
+        assessments.append(
+            {
+                **_stage1_assessment(candidate),
+                "location_evidence_ids": [
+                    {"evidence_id": evidence_id, "basis": "Congo"}
+                    for evidence_id in selected_ids
+                ],
+            }
+        )
+    (record,) = candidate_display_records(
+        batch,
+        {"assessments": assessments},
+        "2026-11-16T00:00:00+00:00",
+        None,
+        gazetteer,
+    )
+    return record
+
+
+def _place_codes(record):
+    return [(place["country_code"], place["name"]) for place in record["places"]]
+
+
+def test_bare_congo_country_dropped_when_candidate_has_drc_evidence():
+    record = _congo_records([CF_CONGO, CG_KINSHASA, CG_DRC])
+    assert ("CF", "Congo") not in _place_codes(record)
+    assert [code for code, _ in _place_codes(record)] == ["CG", "CG"]
+    _assert_migration_399_place_contract(record["places"], record["source_urls"])
+
+
+def test_bare_congo_country_kept_without_drc_evidence():
+    # Really about the Republic of the Congo: nothing to disambiguate.
+    record = _congo_records([CF_CONGO])
+    assert _place_codes(record) == [("CF", "Congo")]
+
+
+def test_republic_of_congo_city_kept_alongside_drc_evidence():
+    record = _congo_records([CF_BRAZZAVILLE, CF_CONGO, CG_KINSHASA])
+    codes = _place_codes(record)
+    assert ("CF", "Brazzaville, Brazzaville, Congo") in codes
+    assert ("CF", "Congo") not in codes
+    assert ("CG", "Kinshasa, Kinshasa, Democratic Republic Of The Congo") in codes
+
+
+@pytest.mark.parametrize("name", ["CONGO", " congo ", "Congo"])
+def test_bare_congo_match_is_case_insensitive(name):
+    cf = ("loc_cf_country", 1, name, "CF", 15.0, -1.0)
+    assert ambiguous_congo_evidence_ids(
+        [_congo_evidence(*cf), _congo_evidence(*CG_DRC)]
+    ) == {"loc_cf_country"}
+    # A longer CF name is not the ambiguous bare reading.
+    other = ("loc_cf_other", 1, "Congo River", "CF", 15.0, -1.0)
+    assert ambiguous_congo_evidence_ids(
+        [_congo_evidence(*other), _congo_evidence(*CG_DRC)]
+    ) == set()
+
+
+def test_model_selected_only_bare_congo_falls_back_to_drc_metadata():
+    record = _congo_records([CF_CONGO, CG_KINSHASA], selected_ids=["loc_cf_country"])
+    assert record["assessment_status"] == "assessed"
+    assert _place_codes(record) == [
+        ("CG", "Kinshasa, Kinshasa, Democratic Republic Of The Congo")
+    ]
+    assert record["places"][0]["location_lineage"] == (
+        "city_center:gdelt:metadata_fallback_loc_cg_kinshasa"
+    )
+
+
+def test_headline_gazetteer_never_restores_dropped_bare_congo():
+    # The DRC evidence exists but is unpublishable (no coordinates), so the
+    # headline path runs; its "Congo" must not reappear as the CF point.
+    cg_no_coords = ("loc_cg_country", 1, "Democratic Republic Of The Congo", "CG", None, None)
+    gazetteer = _gazetteer(_gkg_location(1, "Congo", "CF", 15.0, -1.0))
+    record = _congo_records([CF_CONGO, cg_no_coords], gazetteer=gazetteer)
+    assert record["places"] == []
+    # Without DRC evidence the headline match still works as before.
+    record = _congo_records([], gazetteer=gazetteer)
+    assert _place_codes(record) == [("CF", "Congo")]
+
+
+def test_republic_of_congo_admin1_still_downgrades_to_cf_anchor():
+    # ADM1 mentions are real CF evidence and keep the existing downgrade, even
+    # though the published anchor point is named "Congo".
+    cf_adm1 = ("loc_cf_adm1", 2, "Kouilou, Congo", "CF", 12.0, -4.5)
+    record = _congo_records([cf_adm1, CF_CONGO, CG_KINSHASA])
+    codes = _place_codes(record)
+    assert ("CF", "Congo") in codes
+    downgraded = next(p for p in record["places"] if p["country_code"] == "CF")
+    assert "Kouilou" in downgraded["evidence_basis"]

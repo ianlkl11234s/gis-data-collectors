@@ -93,6 +93,7 @@ GDELT masterfilelist（只取 metadata）＋OpenRouter Qwen 第一階段評估�
 - 已知坑：
   - 2026-09-05 前清冊把它標 `enabled: false`，結果 pipeline 停滯 29 小時，日報完全沒掃到。清冊的 enabled 要反映 production 實況。
   - 國際新聞標題可能合法含西里爾字母，不可放進寫入層亂碼防護名單（見 [cwa-ncdr.md#ncdr_alerts](cwa-ncdr.md#ncdr_alerts)）。
+  - GDELT 國碼是 FIPS 10-4，兩個剛果和 ISO 相反：FIPS `CF`＝剛果共和國（ISO CG）、FIPS `CG`＝剛果民主共和國（ISO CD）。標題只寫「Congo」時 GDELT 給國家層級 `1#Congo#CF`，剛果民主共和國的新聞會被畫到剛果共和國。候選同時有 FIPS `CG` 證據時，公開地點會丟掉這個單獨的 CF「Congo」國家點（`ambiguous_congo_evidence_ids`）；CF 城市與沒有 CG 證據的候選不動。
   - 固定 publisher、GitHub archive 與 production gate 尚未完成，handoff 維持 `production_publishable=false`（清冊 notes）。
 - 調查（時點性）：[地理品質調查](../../investigations/GLOBAL_EVENTS_GEO_QUALITY.md)、[prompt v4 評測](../../investigations/GLOBAL_EVENTS_PROMPT_V4_EVAL.md)。後者引用的 `scripts/eval_global_event_prompt_ab.py` 不在 repo 內。
 

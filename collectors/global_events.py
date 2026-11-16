@@ -781,6 +781,54 @@ def candidate_batch_slice(
     }
 
 
+# GDELT country codes are FIPS 10-4, which disagrees with ISO 3166 on the two
+# Congos: FIPS "CF" is the Republic of the Congo (ISO CG, Brazzaville) and FIPS
+# "CG" is the Democratic Republic of the Congo (ISO CD, Kinshasa). A headline
+# that only says "Congo" is geocoded by GDELT as the country-level point
+# ``1#Congo#CF`` (about 15E, 1S) even when the article is about the DRC, so a
+# DRC Ebola story was published as "CF · Congo". When the same candidate also
+# carries FIPS CG evidence, that bare country-level CF point is the ambiguous
+# reading and is dropped; CF cities (Brazzaville, Pointe-Noire, …) and
+# candidates with no CG evidence at all are left exactly as GDELT gave them.
+FIPS_REPUBLIC_OF_CONGO = "CF"  # ISO 3166 CG
+FIPS_DR_CONGO = "CG"  # ISO 3166 CD
+
+
+def is_bare_congo_country(location: dict[str, Any]) -> bool:
+    """GDELT's country-level FIPS CF point named just "Congo"."""
+    name = location.get("name")
+    return (
+        location.get("location_type") == 1
+        and location.get("country_code") == FIPS_REPUBLIC_OF_CONGO
+        and isinstance(name, str)
+        and name.strip().casefold() == "congo"
+    )
+
+
+def has_dr_congo_evidence(location_evidence: Iterable[dict[str, Any]]) -> bool:
+    return any(
+        evidence.get("country_code") == FIPS_DR_CONGO
+        for evidence in location_evidence or []
+    )
+
+
+def ambiguous_congo_evidence_ids(
+    location_evidence: Iterable[dict[str, Any]],
+) -> set[str]:
+    """Evidence ids of bare "Congo" (FIPS CF) country points to drop.
+
+    Only non-empty when the same candidate also has FIPS CG (DRC) evidence.
+    """
+    location_evidence = list(location_evidence or [])
+    if not has_dr_congo_evidence(location_evidence):
+        return set()
+    return {
+        evidence["evidence_id"]
+        for evidence in location_evidence
+        if is_bare_congo_country(evidence)
+    }
+
+
 def batch_country_anchors(batch: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Country representative points GDELT published anywhere in this batch.
 
@@ -908,6 +956,10 @@ def candidate_display_records(
         evidence_by_id = {
             item["evidence_id"]: item for item in candidate.get("location_evidence", [])
         }
+        # Checked for both model-selected and fallback evidence, so a model
+        # that picked only the bare "Congo" point falls through to the
+        # metadata fallback (which then carries the DRC evidence).
+        ambiguous_congo_ids = ambiguous_congo_evidence_ids(evidence_by_id.values())
         places = []
         seen_places = set()
         selected_place_found = False
@@ -932,6 +984,8 @@ def candidate_display_records(
                 break
             evidence = evidence_by_id[selection["evidence_id"]]
             if evidence["source_url"] not in source_urls:
+                continue
+            if evidence["evidence_id"] in ambiguous_congo_ids:
                 continue
             if (
                 not isinstance(evidence.get("name"), str)
@@ -996,6 +1050,18 @@ def candidate_display_records(
             )
         if not places and gazetteer:
             places = headline_gazetteer_places(documents, source_urls, gazetteer)
+            # A headline "Congo" would map straight back to the FIPS CF country
+            # point just dropped above; unlocated beats the wrong country.
+            if ambiguous_congo_ids:
+                places = [
+                    place
+                    for place in places
+                    if not (
+                        place["location_kind"] == "country_center"
+                        and place["country_code"] == FIPS_REPUBLIC_OF_CONGO
+                        and place["name"].strip().casefold() == "congo"
+                    )
+                ]
         record = {
             "candidate_id": candidate["candidate_id"],
             "observed_at": parse_gdelt_ts(
