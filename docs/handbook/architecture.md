@@ -134,6 +134,11 @@
 ### 4.5 Heartbeat
 
 - 成功寫入後，在同一條連線上開**獨立交易**呼叫 `report_collector_heartbeat(name, success, records, error)`，寫進 `metadata.collector_status`。心跳失敗只回滾心跳本身，例外吞掉。
+- 2026-11-18 起（gis-platform `migrations/558_collector_run_receipt.sql`）`_report_heartbeat` 先呼叫執行收據 `report_collector_run(name, payload)`，新函式不存在（migration 未套用，SQLSTATE 42883）時同一輪退回舊心跳，1 小時後再試。收據多帶（`storage/run_receipt.py`）：
+  - `new_rows`／`rows_basis`：`_write_to_db` 用 RETURNING 算的實際新增列數。`ON CONFLICT DO NOTHING` 用 `RETURNING 1`、`DO UPDATE` 用 `RETURNING (xmax = 0)`（更新到既有列不算新增）；單純 INSERT 記 `append`（每輪都會新增，DB 不拿來判定新資料）；history dedup 的每日全量快照、多表寫入（`is_multi_table`）、時刻表記未知。
+  - `upstream_max_at`：TABLE_MAP 選填 `upstream_time_col` 的本輪最大值，或 collector 結果帶的 `_upstream_max_at`；`source_date`：結果帶 `_source_date`；`parse_ok`：結果帶 `_parse`。沒填＝未知，不用 0 代替。
+  - `expected_interval_min`／`freshness_kind`：依 `config/realtime_tables.yaml`（同 `staleness_watch` 規則）；pulse-data 以「×3」判「有跑但沒新資料」。
+  - 第一批帶上游時間／來源日期的 collector：`weather`、`freeway_vd`、`water_reservoir`、`npa_traffic_accident_a1`、`wra_drought_alert`。
 - 寫入失敗時用短逾時（1 秒）另借一條連線回報失敗心跳，借不到就放棄。
 - 零筆時（2026-11-13 起）：有 transformer 且 result 沒帶 `_collector_error` → 回報成功心跳（records=0，不算「新資料」）；帶 `_collector_error` → 不報成功，改由 writer 記一次失敗心跳（2026-11-16 起，錯誤字串脫敏後取前 200 字；之前這輪 `collector_status` 完全不動），`run()` 不重複補報。沒有 transformer 的 collector（`parking_ref`、`waste_match`、`global_climate_bake`）任何筆數都不經 writer 報成功，只有 collect() 拋例外時由 `run()` 報失敗（`satellite_passes_daily` 自報）。
 - `heartbeat_without_writer = True`（2026-11-16 起，opt-in）：這輪沒經 writer 回報心跳時（不帶 `data`，例如颱風 `no_active_storm`；或沒有 transformer，例如 `tra_static`），由 `run()` 成功時補成功心跳、失敗時補失敗心跳。目前開給 `global_climate_jma_typhoon`、`global_climate_ncdr_typhoon_routes`、`global_climate_cwa_typhoon`、`tra_static`。只能開給抓取失敗一定 raise 或帶 `_collector_error` 的 collector，吞例外後照常 return 的開了會把失敗記成成功。

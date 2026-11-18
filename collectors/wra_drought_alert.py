@@ -219,4 +219,7 @@ class WraDroughtAlertCollector(BaseCollector):
             'published_date': published_date_str,
             'n_alerts': n_alerts,
             'unchanged': unchanged,
+            # 執行收據：發布日期（HTML 沒變的輪次也帶）；頁面找不到發布日期＝解析失敗
+            '_source_date': published_date_str,
+            '_parse': parsed['published_date'] is not None,
         }

@@ -31,6 +31,7 @@ import config
 from storage.db import SupabaseConnectionPool, PoolBorrowTimeout, PoolBreakerOpen
 from storage.supabase_tables import TABLE_MAP
 from storage import marine_write
+from storage import run_receipt
 from utils import alerting
 from tasks.mini_taipei_publish import (
     build_track_index,
@@ -334,14 +335,17 @@ class SupabaseWriter:
                         # last_error），否則 collector_status 整輪不動（#203 的副作用）。
                         from utils.redact import redact_secrets
                         self._report_heartbeat(collector_name, False, 0,
-                                               redact_secrets(collector_error)[:200])
+                                               redact_secrets(collector_error)[:200],
+                                               run=run_receipt.run_info(result))
                     else:
-                        self._report_heartbeat(collector_name, True, 0)
+                        # 0 筆＝這輪沒有寫入任何列：新增 0 列是已知事實（不是未知）
+                        self._report_heartbeat(collector_name, True, 0,
+                                               run=run_receipt.run_info(result, rows=(0, 'dedup')))
                 return True
 
             # 借一條連線，把所有 DB 動作（含衛星 TLE 額外表）跑完才還
             with self._pool.borrow() as conn:
-                self._write_to_db(conn, collector_name, records, timestamp)
+                rows = self._write_to_db(conn, collector_name, records, timestamp)
                 if collector_name == 'satellite':
                     self._write_satellite_tle(conn, result, timestamp)
 
@@ -350,7 +354,9 @@ class SupabaseWriter:
                 # 主寫入的 _txn 已各自 commit，這裡開的是【獨立 transaction】：
                 # 心跳失敗只會 rollback 心跳本身，絕不影響已寫入的資料；
                 # 例外在 _report_heartbeat 內吞掉（best-effort 語義不變）。
-                self._report_heartbeat(collector_name, True, len(records), conn=conn)
+                upstream_col = (TABLE_MAP.get(collector_name) or {}).get('upstream_time_col')
+                self._report_heartbeat(collector_name, True, len(records), conn=conn,
+                                       run=run_receipt.run_info(result, records, upstream_col, rows))
 
             # 停更告警（tasks/staleness_watch）只看這裡記的寫入時間，不另外查 DB
             alerting.mark_write(collector_name, len(records))
@@ -2772,22 +2778,27 @@ class SupabaseWriter:
     # ============================================================
 
     def _write_to_db(self, conn, collector_name: str, records: list[dict], timestamp: datetime):
+        """寫入 history（＋current）。回傳 (實際新增列數, 'dedup'|'append')，算不出來回 None（＝未知，不是 0）。
+
+        'dedup'：history 有 ON CONFLICT 或 history dedup，新增列數代表新資料；
+        'append'：單純 INSERT（多半以收集時間為時間欄），每輪都會新增列，不能拿來判定新資料。
+        """
         # Direct callers (including multi-table writers) bypass write(), so this
         # is the non-bypassable DB boundary as well as the main-path guard.
         records = reject_mojibake_records(collector_name, records)
         table_config = TABLE_MAP.get(collector_name)
         if not table_config:
-            return
+            return None
 
         # 特殊處理：時刻表寫入 reference schema
         if table_config.get('is_reference'):
             self._write_schedules(conn, records)
-            return
+            return None
 
-        # 特殊處理：多表寫入（freeway_vd, flight_fr24）
+        # 特殊處理：多表寫入（freeway_vd, flight_fr24）——新增列數未計（未知）
         if table_config.get('is_multi_table'):
             self._write_multi_table(conn, collector_name, records)
-            return
+            return None
 
         columns = table_config['columns']
 
@@ -2850,6 +2861,13 @@ class SupabaseWriter:
                 row = tuple(r.get(c) for c in columns)
                 values.append(row)
 
+            # 收據：實際新增列數（RETURNING 計數；ON CONFLICT 略過或更新的不算新增）
+            dedup_active = bool(dedup_cols and table_config.get('current') and table_config.get('current_key'))
+            has_conflict = bool(table_config.get('upsert_key'))
+            rows_basis = 'dedup' if (dedup_active or has_conflict) else 'append'
+            new_rows: Optional[int] = 0
+            returning = None
+
             if values:
                 placeholders = ','.join(['%s'] * len(columns))
                 col_names = ','.join(columns)
@@ -2863,7 +2881,8 @@ class SupabaseWriter:
                         # uk_eventid + uk_dedup 雙 unique，feed 用新 event_id 重發
                         # 同一筆落雷時 dedup_hash 撞上第二個 index 會炸掉整批
                         # （2026-07-03 事故：寫入連續失敗、資料卡 buffer）。
-                        sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s ON CONFLICT DO NOTHING"
+                        sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s ON CONFLICT DO NOTHING RETURNING 1"
+                        returning = 'count'
                     else:
                         key_set = {k.strip() for k in key.split(',')}
                         update_cols = [c for c in columns if c not in key_set]
@@ -2875,11 +2894,28 @@ class SupabaseWriter:
                             else f'{c}=EXCLUDED.{c}'
                             for c in update_cols
                         )
-                        sql = f"INSERT INTO {hist} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
+                        # xmax = 0 ＝這列是新插入的；DO UPDATE 改到既有列時 xmax ≠ 0
+                        sql = (f"INSERT INTO {hist} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
+                               " RETURNING (xmax = 0)")
+                        returning = 'inserted'
                 else:
                     sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s"
 
-                execute_values(cur, sql, values, page_size=1000)
+                if returning is None:
+                    fetched = execute_values(cur, sql, values, page_size=1000)
+                else:
+                    fetched = execute_values(cur, sql, values, page_size=1000, fetch=True)
+                if returning is None:
+                    new_rows = len(values)
+                elif not isinstance(fetched, list):
+                    new_rows = None
+                elif returning == 'count':
+                    new_rows = len(fetched)
+                else:
+                    new_rows = sum(1 for row in fetched if row and row[0] is True)
+            if dedup_active and is_heartbeat and returning is None:
+                # 每日全量快照：這輪寫入的列數不代表新資料 → 記未知
+                new_rows = None
 
             if dedup_cols:
                 if is_heartbeat:
@@ -2929,6 +2965,7 @@ class SupabaseWriter:
 
         record_count = len(records)
         logger.info(f"[{collector_name}] ✓ DB 寫入 {record_count} 筆")
+        return new_rows, rows_basis
 
     def _write_marine(self, conn, collector_name: str, records: list[dict]) -> None:
         """Marine canonical tables; contract in collectors/marine_write.py.
@@ -4102,9 +4139,17 @@ class SupabaseWriter:
     # 心跳回報
     # ============================================================
 
+    # report_collector_run（gis-platform mig 558）不存在時，多久後再試一次新函式。
+    # migration 套用後不必重啟 collector，最多這麼久就會改用新函式。
+    RUN_RPC_RETRY_SEC = 3600
+    _run_rpc_retry_at: float = 0.0
+
     def _report_heartbeat(self, collector_name: str, success: bool, records: int = 0,
-                          error: str = None, conn=None):
-        """Best-effort 心跳回報。借不到連線或失敗都靜默 — 不能影響主寫入路徑。
+                          error: str = None, conn=None, run: Optional[dict] = None):
+        """Best-effort 執行收據（舊名沿用，呼叫端不必改）。借不到連線或失敗都靜默 — 不能影響主寫入路徑。
+
+        先呼叫 report_collector_run（mig 558，帶 run 裡的實際新增列數／上游時間／解析結果）；
+        新函式不存在或失敗時，同一輪改呼叫舊的 report_collector_heartbeat，所以 migration 未套用時部署也不會壞。
 
         conn 給定時（write() 成功路徑）：直接在該連線上以獨立 transaction 跑，
         不另外 borrow — 主寫入已 commit，心跳失敗只 rollback 心跳自己。
@@ -4115,13 +4160,34 @@ class SupabaseWriter:
             error = redact_secrets(error)
         try:
             if conn is not None:
-                self._exec_heartbeat(conn, collector_name, success, records, error)
+                self._exec_receipt(conn, collector_name, success, records, error, run)
             else:
                 # 短 timeout：心跳只是觀測，不該為了它等很久
                 with self._pool.borrow(timeout=1) as borrowed:
-                    self._exec_heartbeat(borrowed, collector_name, success, records, error)
+                    self._exec_receipt(borrowed, collector_name, success, records, error, run)
         except Exception as e:
             logger.debug(f"心跳回報失敗: {e}")
+
+    def _exec_receipt(self, conn, collector_name: str, success: bool, records: int, error: str,
+                      run: Optional[dict]):
+        """新函式優先，失敗退回舊心跳（各自獨立 transaction，失敗只 rollback 自己）。"""
+        if time.monotonic() >= self._run_rpc_retry_at:
+            try:
+                payload = run_receipt.build_payload(collector_name, success, records, error, run)
+                with self._txn(conn) as cur:
+                    cur.execute(
+                        "SELECT report_collector_run(%s, %s::jsonb)",
+                        (collector_name, json.dumps(payload, ensure_ascii=False, default=str)),
+                    )
+                return
+            except Exception as e:
+                if getattr(e, 'pgcode', None) == '42883':  # undefined_function：mig 558 尚未套用
+                    self._run_rpc_retry_at = time.monotonic() + self.RUN_RPC_RETRY_SEC
+                    logger.info(f"report_collector_run 不存在（gis-platform mig 558 未套用），"
+                                f"改用舊心跳，{self.RUN_RPC_RETRY_SEC} 秒後再試")
+                else:
+                    logger.debug(f"[{collector_name}] report_collector_run 失敗，改用舊心跳: {e}")
+        self._exec_heartbeat(conn, collector_name, success, records, error)
 
     def _exec_heartbeat(self, conn, collector_name: str, success: bool, records: int, error: str):
         """在給定連線上執行心跳 SQL（獨立 transaction，失敗 raise 由呼叫端吞）。"""

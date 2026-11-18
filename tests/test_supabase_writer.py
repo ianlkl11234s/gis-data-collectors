@@ -374,7 +374,7 @@ def test_do_nothing_upsert_is_targetless(writer_with_mock_pool, monkeypatch):
     captured = []
     monkeypatch.setattr(
         'storage.supabase_writer.execute_values',
-        lambda cur, sql, values, page_size=100: captured.append(sql),
+        lambda cur, sql, values, page_size=100, fetch=False: captured.append(sql) or ([] if fetch else None),
     )
     conn = MagicMock()
     cursor = MagicMock()
@@ -524,11 +524,11 @@ def test_write_success_single_borrow_heartbeat_same_conn(writer_with_mock_pool):
 
     # 心跳 SQL 必須跑在同一條 conn 的 cursor 上
     _, cursor = borrowed_conns[0]
-    heartbeat_calls = [c for c in cursor.execute.call_args_list
-                       if 'report_collector_heartbeat' in str(c.args[0])]
+    heartbeat_calls = [_receipt_args(c) for c in cursor.execute.call_args_list
+                       if 'report_collector' in str(c.args[0])]
     assert heartbeat_calls, '心跳 SQL 應在主寫入的 conn 上執行'
-    assert heartbeat_calls[0].args[1][0] == 'youbike'
-    assert heartbeat_calls[0].args[1][1] is True
+    assert heartbeat_calls[0][0] == 'youbike'
+    assert heartbeat_calls[0][1] is True
 
 
 def test_write_heartbeat_failure_does_not_affect_main_write(writer_with_mock_pool, tmp_path):
@@ -544,7 +544,7 @@ def test_write_heartbeat_failure_does_not_affect_main_write(writer_with_mock_poo
         cursor = MagicMock()
 
         def execute(sql, params=None):
-            if 'report_collector_heartbeat' in str(sql):
+            if 'report_collector' in str(sql):  # 新收據與退回的舊心跳都壞
                 raise RuntimeError('heartbeat proc exploded')
 
         cursor.execute.side_effect = execute
@@ -620,9 +620,18 @@ def _tracking_pool(mock_pool):
     return cursors
 
 
+def _receipt_args(call):
+    """report_collector_run(name, payload) 或舊 report_collector_heartbeat(name, ok, n, err) → (name, ok, n, err)。"""
+    sql, args = str(call.args[0]), call.args[1]
+    if 'report_collector_run' in sql:
+        payload = json.loads(args[1])
+        return (args[0], payload['success'], payload['records'], payload['error'])
+    return tuple(args)
+
+
 def _heartbeats(cursors):
-    return [c.args[1] for cur in cursors for c in cur.execute.call_args_list
-            if 'report_collector_heartbeat' in str(c.args[0])]
+    return [_receipt_args(c) for cur in cursors for c in cur.execute.call_args_list
+            if 'report_collector' in str(c.args[0])]
 
 
 def test_write_zero_records_reports_success_heartbeat(writer_with_mock_pool):
@@ -635,7 +644,7 @@ def test_write_zero_records_reports_success_heartbeat(writer_with_mock_pool):
                             datetime(2026, 11, 13, 9, 0, 0)) is True
     assert _heartbeats(cursors) == [('lightning_cwa', True, 0, None)]
     # 心跳只是單列 upsert：沒有任何資料表寫入
-    assert all('report_collector_heartbeat' in str(c.args[0]) or 'set_config' in str(c.args[0])
+    assert all('report_collector' in str(c.args[0]) or 'set_config' in str(c.args[0])
                for cur in cursors for c in cur.execute.call_args_list)
     mark_write.assert_not_called()  # staleness_watch 的「新資料」只算 ≥1 筆
 

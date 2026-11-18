@@ -95,6 +95,8 @@ external/<name>_vm/
 連線 retry，DB 掛掉時該輪資料存本地、下輪自動補寫）。collector 內用
 `from vm_buffer import ...` import，部署時跟主檔放同一個 app dir 即可。
 
+選用：**`external/vm_common/run_receipt.py`**（2026-11-18，gis-platform mig 558）提供 `report_run(conn, name, success, records, error, run)`，回報執行收據（實際新增列數、上游資料時間、來源日期、解析結果；沒填記未知），新函式不存在時自動退回舊 `report_collector_heartbeat`。VM 腳本目前仍呼叫舊心跳（558 起它是相容包裝，新增列數記未知），改用 `report_run` 時要一起 scp 這個檔。
+
 ### Step 4：部署到 VM
 - 共用同一台 HiCloud VM（資源充足前都堆同台、降低成本）
 - App dir 分開：`/opt/<name>/`

@@ -193,4 +193,7 @@ class NpaTrafficAccidentA1Collector(BaseCollector):
             "total_upstream": result.get("total"),
             "source_date":  result.get("資料提供日期"),
             "collected_at": now.isoformat(),
+            # 執行收據：來源提供日期；上游有列卻一筆都解析不出來＝解析失敗
+            "_source_date": result.get("資料提供日期"),
+            "_parse":       not (records_raw and not out),
         }

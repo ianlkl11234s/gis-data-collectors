@@ -18,6 +18,7 @@ import config
 from utils.auth import TDXAuth
 from utils.tdx_session import TDXSession
 from .base import BaseCollector
+from storage.run_receipt import max_upstream_iso
 
 # 車種代碼（國道無機車）
 VEHICLE_TYPES = {
@@ -177,6 +178,9 @@ class FreewayVDCollector(BaseCollector):
                 CONGESTION_LABELS.get(k, f'Level {k}'): v
                 for k, v in sorted(levels.items()) if k > 0
             },
+            # 執行收據：上游 DataCollectTime（三張表的時間欄都是收集時間）
+            '_upstream_max_at': max_upstream_iso(
+                [d.get('DataCollectTime') for d in vd_data] + [s.get('DataCollectTime') for s in section_data]),
             'data': {
                 'sections': section_data,
                 'vd': vd_data,

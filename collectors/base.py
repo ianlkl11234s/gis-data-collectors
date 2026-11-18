@@ -140,7 +140,15 @@ class BaseCollector(ABC):
                 raise RuntimeError(str(collector_error))
 
             if self.heartbeat_without_writer and self.supabase_writer and not writer_reported:
-                self.supabase_writer._report_heartbeat(self.name, True, 0)
+                # _report_heartbeat 會先呼叫執行收據 report_collector_run（gis-platform mig 558），
+                # 不存在時退回舊心跳。這條路徑沒經 writer，新增列數記未知；結果帶的
+                # _source_date／_upstream_max_at／_parse 照樣送。
+                from storage.run_receipt import run_info
+                run = run_info(result)
+                if run:
+                    self.supabase_writer._report_heartbeat(self.name, True, 0, run=run)
+                else:
+                    self.supabase_writer._report_heartbeat(self.name, True, 0)
 
             # 統計
             stats = {

@@ -49,7 +49,7 @@ def capture(monkeypatch):
     captured: list[tuple[str, list]] = []
     monkeypatch.setattr(
         "storage.supabase_writer.execute_values",
-        lambda cur, sql, values, page_size=100: captured.append((sql, list(values))),
+        lambda cur, sql, values, page_size=100, fetch=False: captured.append((sql, list(values))) or ([] if fetch else None),
     )
     conn = MagicMock()
     conn.cursor.return_value.__enter__.return_value = MagicMock()

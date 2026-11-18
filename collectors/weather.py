@@ -11,6 +11,7 @@ import requests
 
 import config
 from .base import BaseCollector
+from storage.run_receipt import max_upstream_iso
 
 
 class WeatherCollector(BaseCollector):
@@ -210,5 +211,7 @@ class WeatherCollector(BaseCollector):
                 }
                 for county, stats in county_stats.items()
             },
+            # 執行收據：上游觀測時間（weather_observations 的時間欄是收集時間，看不出上游停更）
+            '_upstream_max_at': max_upstream_iso(s.get('obs_time') for s in parsed_stations),
             'data': parsed_stations
         }
