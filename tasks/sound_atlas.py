@@ -172,12 +172,12 @@ class SoundAtlasLive:
         return out
 
     def _family_alerts(self, status: dict[str, str]) -> None:
-        """某一族連續 SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS 次 error → 🔴 一次；之後 ok／no_new_data → 清除（送過才送恢復）"""
+        """某一族連續 SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS 次 error（或 partial：部分幀解碼失敗）→ 🔴 一次；之後 ok／no_new_data → 清除（送過才送恢復）"""
         from utils import alerting
         need = max(1, config.SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS)
         for fam, st in status.items():
             key = f"sound_atlas_live:{fam}"
-            if st == "error":
+            if st in ("error", "partial"):
                 n = self._err_runs[fam] = self._err_runs.get(fam, 0) + 1
                 if n >= need and fam not in self._alerting:
                     alerting.raise_alert(key, alerting.RED, f"城市聲景即時：{fam} 連續 {n} 次失敗（約 {n * 10} 分鐘）")

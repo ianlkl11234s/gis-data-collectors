@@ -664,9 +664,40 @@ def test_radar_frame_decode_failure_keeps_earlier_frames_and_retries_failed_one(
     now = start + 2 * 600 + 540
     out = day.run_radar(inp, now, _FailOnDecoder({frames[1].tobytes()}))
     assert [f["k"] for f in out["frames"]] == [0, 2]              # 前後幀照常輸出
+    assert out["status"] == "partial" and out["decode_errors"] == [1]  # 部分失敗不算恢復
     assert 1 not in day.radar_done and 0 in day.radar_done        # 失敗幀未標已發布
     out = day.run_radar(inp, now, FakeDecoder())                  # 下次重試成功
     assert [f["k"] for f in out["frames"]] == [1]
+    assert out["status"] == "ok" and "decode_errors" not in out
+
+
+def test_live_family_partial_counts_toward_alert(alert_sent, tmp_path, monkeypatch):
+    """雷達持續有壞幀、其他幀照常成功（partial）時，仍要累計到告警，不可被當恢復。"""
+    import config
+    from tasks import sound_atlas as task
+    monkeypatch.setattr(config, "SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS", 3)
+    t = task.SoundAtlasLive(sink=publish.LocalDirSink(str(tmp_path / "o")),
+                            inputs=live.LiveInputs(raw=RawSource(), radar_fetcher=FakeFetcher({})), root=tmp_path)
+    for _ in range(3):
+        t._family_alerts({"radar": "partial"})
+    assert len(alert_sent) == 1 and "radar" in alert_sent[0]
+    t._family_alerts({"radar": "ok"})
+    assert len(alert_sent) == 2 and "恢復" in alert_sent[1]
+
+
+def test_run_slot_family_error_message_is_redacted(monkeypatch):
+    """分片會公開發布：族例外訊息裡的金鑰要遮掉。"""
+    start, _ = day_window(DATE)
+    day = live.LiveDay(DATE)
+
+    def boom(self, inputs, now, baseline_ids):
+        raise RuntimeError("GET https://x.example/api?api_key=SECRET123 failed")
+
+    monkeypatch.setattr(live.LiveDay, "run_river", boom)
+    inp = live.LiveInputs(raw=RawSource(), radar_fetcher=FakeFetcher({}), positions=lambda a, b: [])
+    doc = live.run_slot(day, inp, start + 3 * 600 + 540, set(), FakeDecoder(), families={"river"})
+    assert doc["sources"]["river"]["status"] == "error"
+    assert "SECRET123" not in doc["sources"]["river"]["error"]
 
 
 def test_run_slot_restores_family_state_when_family_raises(monkeypatch):
