@@ -15,6 +15,8 @@ SupabaseWriter class 拆出，讓 writer 專注在寫入邏輯、設定集中管
 - current_prune_by: 寫完 current 後刪掉該欄位 < 本批次 ts 的 stale rows
 - is_reference: True 代表 collector 走自訂的 reference 寫入流程（不用此 map）
 - is_multi_table: True 代表 collector 有特殊多表寫入邏輯（由 writer 內 _write_multi_table 處理）
+- upstream_time_col: 選填。上游資料本身的時間欄（不是收集時間）；writer 取本輪最大值放進執行收據的
+  upstream_max_at（gis-platform mig 558），pulse-data 用它分辨「有跑但沒新資料」。沒填＝未知
 """
 
 
@@ -322,6 +324,7 @@ TABLE_MAP = {
         ],
         'upsert_key': 'reservoir_id,snapshot_at',
         'upsert_strategy': 'do_nothing',
+        'upstream_time_col': 'snapshot_at',  # 執行收據：水庫觀測時間
     },
     'river_water_level': {
         'history': 'live.river_water_level',
@@ -353,6 +356,7 @@ TABLE_MAP = {
         ],
         'upsert_key': 'dedup_hash',
         'upsert_strategy': 'do_nothing',
+        'upstream_time_col': 'occurred_at',  # 執行收據：事故發生時間
     },
     'immigration_apis_airport': {
         'history': 'live.border_airport_snapshot',
