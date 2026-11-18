@@ -166,6 +166,11 @@ def save_snapshot(data_dir: Path, timestamp: datetime, raw: dict) -> Path:
     return path
 
 
+def was_quarantined(buffer_dir: Path, pending: Path) -> bool:
+    """pending 檔消失時，區分「已被 flush 寫入」與「被 flush 隔離到 quarantine/」。"""
+    return (buffer_dir / "quarantine" / pending.name).exists()
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     log = logging.getLogger("isohe_port_marine")
@@ -205,6 +210,10 @@ def main() -> int:
         # attempts a write so a transient bad historical row cannot block recovery.
         flush_pending(conn, buffer_dir, lambda c, p: _flush_write(c, p, state_path), log=log)
         if pending is not None and not pending.exists():
+            if was_quarantined(buffer_dir, pending):
+                # flush_pending 把本批判為資料不合法而隔離：檔案消失不等於已寫入
+                log.error("Current batch was quarantined by buffer flush (invalid data); not written")
+                return 1
             log.info("Current batch was already written by buffer flush")
             return 0
         sent = write(conn, stations, readings, state_path)
