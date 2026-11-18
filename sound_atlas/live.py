@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import gzip
 import pickle
 import time
@@ -167,6 +168,29 @@ class LiveDay:
             seen.add(key)
 
     # ── 各族 ──
+    # 各族會在執行中改的狀態欄位（run_slot 失敗還原用）；seen_files 以 collector 名取子集
+    _FAMILY_STATE = {
+        "radar": (("radar_done", "radar_missing", "radar_codes"), ()),
+        "freeway_vd": (("vd_rows", "vd_slots_done"), ("freeway_vd",)),
+        "rain_gauge": (("rain_seen",), ("rain_gauge_realtime",)),
+        "wind": (("wind",), ("weather",)),
+        "wave": (("wave_emitted", "wave_parsed_at", "wave_last_file"), ()),
+        "river": (("river_seen",), ("river_water_level",)),
+        "aviation": (("aviation", "aviation_watermark", "aviation_after"), ()),
+    }
+
+    def snapshot_family(self, family: str) -> dict:
+        attrs, collectors = self._FAMILY_STATE[family]
+        return {"attrs": {a: copy.deepcopy(getattr(self, a)) for a in attrs},
+                "seen": {c: set(self.seen_files.get(c, set())) for c in collectors}}
+
+    def restore_family(self, snap: dict) -> None:
+        """族執行丟例外時還原：輸出整族丟棄，狀態就不能先前進（否則該段資料永久漏掉）。"""
+        for a, v in snap["attrs"].items():
+            setattr(self, a, v)
+        for c, v in snap["seen"].items():
+            self.seen_files[c] = v
+
     def run_radar(self, inputs: LiveInputs, now: float, decoder: radar.FrameDecoder) -> dict:
         k_now = min(slot_of(self.date, now), 143)
         frames_out, missing_out = [], []
@@ -188,7 +212,11 @@ class LiveDay:
                     self.radar_missing.add(k)
                     missing_out.append(k)
                 continue
-            codes, bad, _seen = decoder.decode(body)  # type: ignore[arg-type]
+            try:
+                codes, bad, _seen = decoder.decode(body)  # type: ignore[arg-type]
+            except Exception:  # noqa: BLE001 — 單幀解碼失敗：不動狀態、留待下次，不拖累已處理的前幀
+                errors.append(k)
+                continue
             if bad:
                 # 表外顏色：每日包整日報錯；即時這一幀當缺（不硬配）
                 self.radar_missing.add(k)
@@ -383,9 +411,11 @@ def run_slot(day: LiveDay, inputs: LiveInputs, now: float, baseline_ids: set[str
             out["sources"][name] = {"status": "disabled"}
             continue
         t = time.perf_counter()
+        snap = day.snapshot_family(name)
         try:
             out["sources"][name] = fn()
         except Exception as e:  # noqa: BLE001 — 單族失敗只記錄；該族本片標 error
+            day.restore_family(snap)   # 輸出丟了，狀態不可先前進
             out["sources"][name] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:200]}"}
         timings[name] = round(time.perf_counter() - t, 3)
     out["timings_s"] = timings

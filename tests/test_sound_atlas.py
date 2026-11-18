@@ -615,3 +615,77 @@ def test_aviation_live_default_off(monkeypatch):
     monkeypatch.delenv("SOUND_ATLAS_AVIATION_LIVE_ENABLED", raising=False)
     importlib.reload(config)
     assert config.SOUND_ATLAS_AVIATION_LIVE_ENABLED is False
+
+
+def test_daily_revise_adopts_or_skips_orphan_revision(tmp_path, monkeypatch):
+    """F022: 目標 rev 物件已上傳但 manifest 沒存 → 內容相符採用；不符則 rev+1；不會永遠卡在同一 rev。"""
+    from sound_atlas import daily
+    from tasks import sound_atlas as task
+    n = {"i": 0}
+
+    def fake_build(date, inputs, families=None, generated_at=None):
+        n["i"] += 1
+        return {f"freeway-vd-{date}.json": json.dumps({"n": n["i"]}).encode()}, {"errors": {}, "timings_s": {}}
+
+    monkeypatch.setattr(daily, "build_all", fake_build)
+    sink = publish.LocalDirSink(str(tmp_path))
+    task.publish_daily(DATE, None, sink)                                   # r1, body n=1
+    # 孤兒：r2 已上傳（內容 n=2，與下一次 revise 的 build 相同），但 manifest 沒記
+    sink.put(publish.daily_key(DATE, f"freeway-vd-{DATE}-r2.json"), json.dumps({"n": 2}).encode(), "json")
+    task.publish_daily(DATE, None, sink, revise=True)                      # build n=2 → 與孤兒相同 → 採用 r2
+    m = sink.read_json(publish.daily_key(DATE, "manifest.json"))
+    assert m["files"][f"freeway-vd-{DATE}.json"]["rev"] == 2
+    # 孤兒：r3 內容不同 → 應改發 r4
+    sink.put(publish.daily_key(DATE, f"freeway-vd-{DATE}-r3.json"), b'{"other": 1}', "json")
+    task.publish_daily(DATE, None, sink, revise=True)                      # build n=3 ≠ 孤兒 r3
+    m = sink.read_json(publish.daily_key(DATE, "manifest.json"))
+    e = m["files"][f"freeway-vd-{DATE}.json"]
+    assert e["rev"] == 4 and e["key"] == f"freeway-vd-{DATE}-r4.json"
+    assert sink.read_json(publish.daily_key(DATE, f"freeway-vd-{DATE}-r4.json")) == {"n": 3}
+
+
+# ── F023：族失敗時狀態不先前進 ───────────────────────────────────
+
+class _FailOnDecoder(FakeDecoder):
+    def __init__(self, bad_bodies):
+        self.bad = bad_bodies
+
+    def decode(self, body):
+        if bytes(body) in self.bad:
+            raise ValueError("bad frame")
+        return super().decode(body)
+
+
+def test_radar_frame_decode_failure_keeps_earlier_frames_and_retries_failed_one():
+    frames = _frames(seed=3, missing=())
+    day = live.LiveDay(DATE)
+    inp = live.LiveInputs(raw=RawSource(), radar_fetcher=FakeFetcher({k: frames[k] for k in range(3)}))
+    start, _ = day_window(DATE)
+    now = start + 2 * 600 + 540
+    out = day.run_radar(inp, now, _FailOnDecoder({frames[1].tobytes()}))
+    assert [f["k"] for f in out["frames"]] == [0, 2]              # 前後幀照常輸出
+    assert 1 not in day.radar_done and 0 in day.radar_done        # 失敗幀未標已發布
+    out = day.run_radar(inp, now, FakeDecoder())                  # 下次重試成功
+    assert [f["k"] for f in out["frames"]] == [1]
+
+
+def test_run_slot_restores_family_state_when_family_raises(monkeypatch):
+    """輸出整族丟棄時，狀態（river_seen、seen_files）必須還原，下次才會再送。"""
+    start, end = day_window(DATE)
+    t = start + 3600
+    day = live.LiveDay(DATE)
+    snap = day.snapshot_family("river")
+    day.river_seen.add(("S1", t))
+    day.seen_files.setdefault("river_water_level", set()).add(f"{DATE}/a.json")
+    day.restore_family(snap)
+    assert day.river_seen == set() and day.seen_files["river_water_level"] == set()
+
+    def boom(self, inputs, now, baseline_ids):
+        self.river_seen.add(("S1", t))
+        raise RuntimeError("late failure")
+
+    monkeypatch.setattr(live.LiveDay, "run_river", boom)
+    inp = live.LiveInputs(raw=RawSource(), radar_fetcher=FakeFetcher({}), positions=lambda a, b: [])
+    doc = live.run_slot(day, inp, start + 3 * 600 + 540, set(), FakeDecoder(), families={"river"})
+    assert doc["sources"]["river"]["status"] == "error"
+    assert day.river_seen == set()
