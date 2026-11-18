@@ -122,17 +122,18 @@ def test_do_nothing_counts_returned_rows(writer, monkeypatch):
     assert seen[0][0].endswith('ON CONFLICT DO NOTHING RETURNING 1') and seen[0][1] is True
 
 
-def test_do_update_counts_only_inserted(writer, monkeypatch):
+def test_do_update_is_unknown(writer, monkeypatch):
+    """DO UPDATE 分不出新增與更新（xmax 在分區表不能 RETURNING）→ 未知，不加 RETURNING。"""
     from storage.supabase_tables import TABLE_MAP
     name = next(k for k, v in TABLE_MAP.items()
                 if v.get('upsert_key') and v.get('upsert_strategy') != 'do_nothing'
                 and not v.get('is_multi_table') and not v.get('is_reference') and not v.get('history_dedup_cols'))
     w, _ = writer
-    seen = _fake_execute_values(monkeypatch, [(True,), (False,), (True,)])
+    seen = _fake_execute_values(monkeypatch, None)
     conn, _ = _conn()
     got = w._write_to_db(conn, name, [{c: None for c in TABLE_MAP[name]['columns']}], datetime(2026, 11, 18))
-    assert got == (2, 'dedup')
-    assert seen[0][0].endswith('RETURNING (xmax = 0)')
+    assert got == (None, 'dedup')
+    assert 'RETURNING' not in seen[0][0] and seen[0][1] is False
 
 
 def test_plain_insert_is_append(writer, monkeypatch):

@@ -2861,7 +2861,7 @@ class SupabaseWriter:
                 row = tuple(r.get(c) for c in columns)
                 values.append(row)
 
-            # 收據：實際新增列數（RETURNING 計數；ON CONFLICT 略過或更新的不算新增）
+            # 收據：實際新增列數（DO NOTHING 用 RETURNING 計數；DO UPDATE 記未知；單純 INSERT＝送出列數）
             dedup_active = bool(dedup_cols and table_config.get('current') and table_config.get('current_key'))
             has_conflict = bool(table_config.get('upsert_key'))
             rows_basis = 'dedup' if (dedup_active or has_conflict) else 'append'
@@ -2894,25 +2894,19 @@ class SupabaseWriter:
                             else f'{c}=EXCLUDED.{c}'
                             for c in update_cols
                         )
-                        # xmax = 0 ＝這列是新插入的；DO UPDATE 改到既有列時 xmax ≠ 0
-                        sql = (f"INSERT INTO {hist} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
-                               " RETURNING (xmax = 0)")
-                        returning = 'inserted'
+                        sql = f"INSERT INTO {hist} ({col_names}) VALUES %s ON CONFLICT ({key}) DO UPDATE SET {update_set}"
+                        # DO UPDATE 分不出新增與更新：RETURNING (xmax = 0) 在分區表會報
+                        # 「cannot retrieve a system column in this context」（2026-11-18 PG17 實測）→ 記未知
+                        returning = 'unknown'
                 else:
                     sql = f"INSERT INTO {table_config['history']} ({col_names}) VALUES %s"
 
-                if returning is None:
-                    fetched = execute_values(cur, sql, values, page_size=1000)
-                else:
+                if returning == 'count':
                     fetched = execute_values(cur, sql, values, page_size=1000, fetch=True)
-                if returning is None:
-                    new_rows = len(values)
-                elif not isinstance(fetched, list):
-                    new_rows = None
-                elif returning == 'count':
-                    new_rows = len(fetched)
+                    new_rows = len(fetched) if isinstance(fetched, list) else None
                 else:
-                    new_rows = sum(1 for row in fetched if row and row[0] is True)
+                    execute_values(cur, sql, values, page_size=1000)
+                    new_rows = None if returning == 'unknown' else len(values)
             if dedup_active and is_heartbeat and returning is None:
                 # 每日全量快照：這輪寫入的列數不代表新資料 → 記未知
                 new_rows = None
