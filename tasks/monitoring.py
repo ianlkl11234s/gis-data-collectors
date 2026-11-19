@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 import config
+from tasks.archive import is_host_copy_key
 
 TAIPEI_TZ = timezone(timedelta(hours=8))
 log = logging.getLogger(__name__)
@@ -336,6 +337,9 @@ def list_archive_dates_per_collector(prefix_filter: str | None = None) -> dict[s
                     continue
                 for page in paginator.paginate(Bucket=config.S3_BUCKET, Prefix=prefix):
                     for obj in page.get("Contents", []):
+                        # 歸檔衝突另存的 <date>.<host>.tar.gz 不算正式歸檔（tasks/archive.py）
+                        if is_host_copy_key(obj["Key"]):
+                            continue
                         # Covers archive tarballs, raw partition manifests,
                         # derived release directories, and dated JPG charts.
                         for date_part in _extract_key_dates(obj["Key"]):
