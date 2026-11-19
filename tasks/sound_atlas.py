@@ -172,12 +172,12 @@ class SoundAtlasLive:
         return out
 
     def _family_alerts(self, status: dict[str, str]) -> None:
-        """某一族連續 SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS 次 error → 🔴 一次；之後 ok／no_new_data → 清除（送過才送恢復）"""
+        """某一族連續 SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS 次 error（或 partial：部分幀解碼失敗）→ 🔴 一次；之後 ok／no_new_data → 清除（送過才送恢復）"""
         from utils import alerting
         need = max(1, config.SOUND_ATLAS_FAMILY_ERROR_ALERT_RUNS)
         for fam, st in status.items():
             key = f"sound_atlas_live:{fam}"
-            if st == "error":
+            if st in ("error", "partial"):
                 n = self._err_runs[fam] = self._err_runs.get(fam, 0) + 1
                 if n >= need and fam not in self._alerting:
                     alerting.raise_alert(key, alerting.RED, f"城市聲景即時：{fam} 連續 {n} 次失敗（約 {n * 10} 分鐘）")
@@ -285,6 +285,9 @@ def run_daily(date: Optional[str] = None, families: Optional[list[str]] = None, 
     return res
 
 
+MAX_REV_PROBE = 20   # revise 時最多往後找幾個 rev 才放棄
+
+
 def publish_daily(date: str, inputs: "daily.DailyInputs", sink: publish.Sink, families: Optional[list[str]] = None,
                   revise: bool = False) -> dict:
     """建每日檔並發布；manifest 只記真的發布出去的檔（重跑沿用前次紀錄）。
@@ -310,13 +313,25 @@ def publish_daily(date: str, inputs: "daily.DailyInputs", sink: publish.Sink, fa
             written[name] = "exists (kept earlier build)"
             continue
         rev = 1 if cur is None else int(cur.get("rev", 1)) + 1
-        fname = publish.revision_name(name, date, rev)
-        if sink.put(publish.daily_key(date, fname), body, kind):
-            published[name] = {"key": fname, "rev": rev, "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest(),
-                               "published_at": now_tpe_iso()}
-            written[name] = f"published {fname}"
+        sha = hashlib.sha256(body).hexdigest()
+        # 目標 rev 的物件可能已上傳但 manifest 沒存到（中途失敗）：內容相符就採用，不符就試下一個 rev，
+        # 否則會永遠卡在同一個 rev（put 回 False、manifest 不前進）
+        for _ in range(MAX_REV_PROBE):
+            fname = publish.revision_name(name, date, rev)
+            fkey = publish.daily_key(date, fname)
+            if sink.put(fkey, body, kind):
+                note = f"published {fname}"
+                break
+            existing = sink.get_body(fkey, kind)
+            if existing is not None and hashlib.sha256(existing).hexdigest() == sha:
+                note = f"published {fname} (already uploaded, adopted)"
+                break
+            rev += 1
         else:
-            written[name] = f"exists {fname} (kept)"
+            written[name] = f"exists {fname} (kept; no free revision within {MAX_REV_PROBE})"
+            continue
+        published[name] = {"key": fname, "rev": rev, "bytes": len(body), "sha256": sha, "published_at": now_tpe_iso()}
+        written[name] = note
     still_held = {p: r for p, r in hold.items() if not any(n.startswith(p) for n in published)}
     manifest = {"schema": "pulse-sound-daily-manifest-v1", "date_taiwan": date, "updated_at": now_tpe_iso(),
                 "contract": contract_json("manifest.json"), "files": published, "held": still_held,

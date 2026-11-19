@@ -1419,7 +1419,9 @@ def _cost_trend_text(points: list[dict]) -> str:
     month_days = (latest["Timestamp"] - month["Timestamp"]).days
 
     window = [p for p in points if p["Timestamp"] >= month["Timestamp"]]
-    jumps = [(b["Maximum"] - a["Maximum"], b["Timestamp"]) for a, b in zip(window, window[1:])]
+    # 只計相鄰樣本間隔 ≤ 1 天的跳升；缺日造成的多日累積不是「單日跳升」
+    jumps = [(b["Maximum"] - a["Maximum"], b["Timestamp"]) for a, b in zip(window, window[1:])
+             if b["Timestamp"] - a["Timestamp"] <= timedelta(days=1)]
     max_jump, jump_at = max(jumps, key=lambda j: j[0], default=(0, None))
     mom_excl = (latest_b - month_b - max(max_jump, 0)) / month_b * 100 if month_b else 0
 

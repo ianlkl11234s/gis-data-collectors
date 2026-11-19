@@ -162,3 +162,28 @@ def test_cron_offsets_avoid_db_peaks_and_cwa_minutes():
     minutes = set(range(8, 60, 10))
     assert not minutes & {14, 15, 40, 7, 22, 37, 52}
     assert "timeout -k 30 540" in line
+
+
+def test_was_quarantined_distinguishes_isolation_from_flush_success(tmp_path):
+    """F014: pending 檔消失可能是被隔離（資料不合法），不可當成已寫入。"""
+    buffer_dir = tmp_path / "buffer"
+    pending = vm_buffer.save_batch(buffer_dir, "isohe_port_marine", {"stations": [], "readings": []})
+
+    class InvalidErr(Exception):
+        pgcode = "23502"
+
+    def bad_write(conn, payload):
+        raise InvalidErr("null value violates not-null constraint")
+
+    class Conn:
+        def rollback(self):
+            pass
+
+    vm_buffer.flush_pending(Conn(), buffer_dir, bad_write)
+    assert not pending.exists()
+    assert vm.was_quarantined(buffer_dir, pending)
+
+    ok = vm_buffer.save_batch(buffer_dir, "isohe_port_marine", {"stations": [], "readings": []})
+    vm_buffer.flush_pending(Conn(), buffer_dir, lambda c, p: None)
+    assert not ok.exists()
+    assert not vm.was_quarantined(buffer_dir, ok)

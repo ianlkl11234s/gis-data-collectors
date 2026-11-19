@@ -31,6 +31,7 @@ from storage.bulk import execute_values  # 固定形狀批次寫入（鐵則 R5�
 import config
 from storage.db import connect_supabase
 from utils.auth import TDXAuth
+from utils.redact import redact_secrets
 from utils.tdx_session import TDXSession
 from .base import BaseCollector
 
@@ -168,7 +169,7 @@ class ParkingRefCollector(BaseCollector):
                 stats['segments_with_geom'] += with_geom
                 print(f"   ✓ OnStreet {city}: {len(recs)} 段（geom {with_geom}）")
             except Exception as e:
-                stats['segments_by_city'][city] = {'error': str(e)}
+                stats['segments_by_city'][city] = {'error': redact_secrets(e)[:200]}
                 print(f"   ✗ OnStreet {city}: {e}")
         return list(rows.values())
 
@@ -191,7 +192,7 @@ class ParkingRefCollector(BaseCollector):
                     'authority': authority, 'fetched': len(recs), 'kept': added}
                 print(f"   ✓ OffStreet {label}: {len(recs)} 場（authority={authority}）")
             except Exception as e:
-                stats['lots_by_source'][label] = {'error': str(e)}
+                stats['lots_by_source'][label] = {'error': redact_secrets(e)[:200]}
                 print(f"   ✗ OffStreet {label}: {e}")
 
         for city in config.PARKING_REF_OFFSTREET_CITIES:
