@@ -86,6 +86,7 @@ current 表一個物件一列，物件只增不減時表會一直變大，每次
 1. 逐 collector 掃 `YYYY/MM/DD` 目錄，跳過今天。
 2. 每天的 JSON 壓成一個 `<collector>/archives/YYYY-MM-DD.tar.gz`（決定性 tar，串流寫到磁碟不佔記憶體），一次 PUT。每日一個 tar 是刻意的：物件數比容量貴（[principles R-07](principles.md)）。
 3. 上傳後**全量讀回驗證**才寫 receipt，有 receipt 才刪本地（下節）。
+   - 衝突（S3 已有同一個 key、內容和本機不同，例：collector 搬主機那天兩台都跑過）：**不覆蓋原檔**，本機內容另存成 `<collector>/archives/YYYY-MM-DD.<INSTANCE_NAME>.tar.gz`，receipt 記這個 key，之後照常清理。`INSTANCE_NAME` 沒設就維持失敗、保留本機。讀歸檔的程式只認 `YYYY-MM-DD.tar.gz`，另存檔用 `tasks.archive.is_host_copy_key()` 略過（2026-11-19，correctional 11-07 案）。
 4. 超過保留天數的日期目錄才刪。
 
 S3 規則（正本 [AWS_INVENTORY.md](../AWS_INVENTORY.md)）：不設 expiration；每新增一個 collector 要補一條 `archive-deep-270d:{name}` 規則，而 `put-bucket-lifecycle-configuration` 是整份覆寫（[principles R-06](principles.md)）。

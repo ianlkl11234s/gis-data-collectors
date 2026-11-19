@@ -19,6 +19,7 @@ class FakeS3:
 def make_task(monkeypatch, tmp_path, status='verified'):
     monkeypatch.setattr(config, 'LOCAL_DATA_DIR', tmp_path)
     monkeypatch.setattr(config, 'ARCHIVE_RETENTION_DAYS', 0)
+    monkeypatch.setattr(config, 'INSTANCE_NAME', '')  # 未設主機名：衝突時維持失敗（另存見 test_archive_host_copy.py）
     task = ArchiveTask.__new__(ArchiveTask); task.s3 = FakeS3(status)
     return task
 

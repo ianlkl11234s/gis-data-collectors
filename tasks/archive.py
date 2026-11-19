@@ -9,18 +9,40 @@
 3. 將該日所有 JSON 壓成 collector/archives/YYYY-MM-DD.tar.gz
 4. 上傳 1 個 PUT 到 S3
 5. 清理：驗證封存內容 receipt 與遠端 identity 後，才刪除符合 retention 的日期目錄
+
+衝突（S3 已有同一個 key、內容和本機不同，例：collector 搬主機那天兩台都跑過）：
+  不覆蓋原檔，改把本機內容另存成 collector/archives/YYYY-MM-DD.<INSTANCE_NAME>.tar.gz，
+  receipt 記這個 key，之後清理照常。INSTANCE_NAME 沒設 → 維持失敗、保留本機。
+  下游讀歸檔一律只認 YYYY-MM-DD.tar.gz；另存檔用 is_host_copy_key() 判斷、略過。
 """
 
 import gc
 import gzip
 import hashlib
 import json
+import re
 import shutil
 import tarfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import config
+
+HOST_COPY_KEY_RE = re.compile(r'(?:^|/)archives/\d{4}-\d{2}-\d{2}\.[^/]+\.tar\.gz$')
+
+
+def host_label() -> str:
+    """INSTANCE_NAME 轉成可放進 S3 key 的標籤（保留中英數、_、-；其他字元換成 -）。"""
+    return re.sub(r'[^\w-]+', '-', getattr(config, 'INSTANCE_NAME', '') or '').strip('-')
+
+
+def archive_key(collector_name: str, date_str: str, label: str = '') -> str:
+    return f"{collector_name}/archives/{date_str}.{label}.tar.gz" if label else f"{collector_name}/archives/{date_str}.tar.gz"
+
+
+def is_host_copy_key(key: str) -> bool:
+    """衝突時另存的 <date>.<host>.tar.gz；讀歸檔的程式應略過。"""
+    return bool(HOST_COPY_KEY_RE.search(key))
 
 
 class ArchiveTask:
@@ -153,10 +175,17 @@ class ArchiveTask:
         except OSError:
             return False
 
-    def _receipt_matches(self, collector_name: str, date_str: str, s3_key: str, members: list[dict]) -> dict | None:
+    def _receipt_keys(self, collector_name: str, date_str: str) -> set[str]:
+        keys = {archive_key(collector_name, date_str)}
+        if host_label():
+            keys.add(archive_key(collector_name, date_str, host_label()))
+        return keys
+
+    def _receipt_matches(self, collector_name: str, date_str: str, s3_keys: str | set[str], members: list[dict]) -> dict | None:
+        keys = {s3_keys} if isinstance(s3_keys, str) else s3_keys
         try:
             receipt = json.loads(self._receipt_path(collector_name, date_str).read_text())
-            return receipt if receipt.get('s3_key') == s3_key and receipt.get('members') == members and isinstance(receipt.get('remote_identity'), dict) else None
+            return receipt if receipt.get('s3_key') in keys and receipt.get('members') == members and isinstance(receipt.get('remote_identity'), dict) else None
         except (OSError, ValueError, json.JSONDecodeError):
             return None
 
@@ -185,7 +214,7 @@ class ArchiveTask:
             date_dirs = self._find_date_dirs(collector_dir)
 
             for date_str, date_dir in date_dirs:
-                s3_key = f"{collector_name}/archives/{date_str}.tar.gz"
+                s3_key = archive_key(collector_name, date_str)
 
                 # 確認目錄中有 JSON 檔案
                 json_files = list(date_dir.glob('*.json'))
@@ -198,9 +227,9 @@ class ArchiveTask:
                     print(f"   ✗ {collector_name}/{date_str}: 壓縮失敗 - {e}")
                     stats['failed'] += 1
                     continue
-                receipt = self._receipt_matches(collector_name, date_str, s3_key, members)
+                receipt = self._receipt_matches(collector_name, date_str, self._receipt_keys(collector_name, date_str), members)
                 if receipt is not None:
-                    identity = self.s3.archive_identity(s3_key)
+                    identity = self.s3.archive_identity(receipt['s3_key'])
                     if identity['status'] == 'present' and identity['identity'] == receipt['remote_identity']:
                         stats['skipped'] += 1
                         continue
@@ -209,6 +238,16 @@ class ArchiveTask:
                 tmp_path = config.LOCAL_DATA_DIR / f".tmp_{collector_name}_{date_str}.tar.gz"
                 try:
                     verification = self.s3.verify_archive(s3_key, members)
+                    if verification['status'] == 'mismatch':
+                        # 遠端已有同 key、內容不同：原檔不動，本機內容另存成帶主機名的歸檔
+                        label = host_label()
+                        if not label:
+                            print(f"   ✗ {collector_name}/{date_str}: S3 已有內容不同的 {s3_key}，INSTANCE_NAME 未設、無法另存，保留本機")
+                            stats['failed'] += 1
+                            continue
+                        s3_key = archive_key(collector_name, date_str, label)
+                        print(f"   ⚠️ {collector_name}/{date_str}: S3 原檔內容與本機不同，不覆蓋，另存 {s3_key}")
+                        verification = self.s3.verify_archive(s3_key, members)
                     uploaded = False
                     if verification['status'] == 'missing':
                         if not self._has_archive_space(json_files):
@@ -284,17 +323,16 @@ class ArchiveTask:
                     continue
 
                 try:
-                    s3_key = f"{collector_name}/archives/{date_str}.tar.gz"
                     json_files = list(date_dir.glob('*.json'))
                     if not json_files:
                         continue
                     members = self._member_manifest(date_dir)
                     if not self._has_only_manifest_files(date_dir, members):
                         continue
-                    receipt = self._receipt_matches(collector_name, date_str, s3_key, members)
+                    receipt = self._receipt_matches(collector_name, date_str, self._receipt_keys(collector_name, date_str), members)
                     if receipt is None:
                         continue
-                    identity = self.s3.archive_identity(s3_key)
+                    identity = self.s3.archive_identity(receipt['s3_key'])
                     if identity['status'] != 'present' or identity['identity'] != receipt['remote_identity']:
                         continue
 
@@ -356,7 +394,7 @@ class ArchiveTask:
             # 如果 S3 可用，統計歸檔數量
             if self.s3:
                 archive_prefix = f"{collector_dir.name}/archives/"
-                archive_files = self.s3.list_files(archive_prefix)
+                archive_files = [f for f in self.s3.list_files(archive_prefix) if not is_host_copy_key(f.get('key', ''))]
                 collector_status['s3_archives'] = len(archive_files)
                 s3_size = sum(f['size'] for f in archive_files)
                 collector_status['s3_size_mb'] = round(s3_size / (1024 * 1024), 2)
