@@ -1211,7 +1211,7 @@ jma_warnings:
 
 metoffice_warnings:
   label: 英國 Met Office 天氣警報（NSWWS）
-  enabled: false  # 尚未部署：等 gis-platform migration 562 套用；上線時設 pulse-host METOFFICE_WARNINGS_ENABLED=true 後改 true
+  enabled: true  # 2026-11-20 mig 562 套用、METOFFICE_WARNINGS_ENABLED=true、部署 8b21cf2
   deployment: pulse_host
   expected_interval_min: 1440
   supabase_tables: [live.metoffice_warning_events]
@@ -1222,7 +1222,7 @@ metoffice_warnings:
 
 metoffice_obs:
   label: 英國 Met Office 陸地測站觀測
-  enabled: false  # 尚未部署：等 gis-platform migration 562 套用；上線時設 pulse-host METOFFICE_OBS_ENABLED=true 後改 true
+  enabled: true  # 2026-11-20 mig 562 套用、METOFFICE_OBS_ENABLED=true、部署 8b21cf2
   deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.metoffice_obs_measurements, live.metoffice_obs_stations]
