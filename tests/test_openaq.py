@@ -208,8 +208,11 @@ def test_upsert_locations_sql_only_updates_changed_rows(monkeypatch):
     sql = captured["sql"]
     assert "INSERT INTO live.openaq_locations" in sql
     assert "ON CONFLICT (location_id) DO UPDATE" in sql and "IS DISTINCT FROM" in sql
-    assert "ST_MakePoint(v.lon, v.lat)" in sql
-    assert "%s::jsonb" in captured["template"] and "%s::timestamptz" in captured["template"]
+    # 必須是 storage.bulk 能解析的形狀（上線首輪曾因 INSERT ... SELECT 被拒）
+    from storage.bulk import _INSERT_RE
+    assert _INSERT_RE.match(sql), sql[:120]
+    assert "geom = EXCLUDED.geom" in sql
     assert len(captured["values"]) == 3
     clarity = next(v for v in captured["values"] if v[0] == 2812740)
     assert json.loads(clarity[12]) == [{"id": 8966895, "parameter": "pm25", "units": "µg/m³"}]
+    assert clarity[-1].startswith("SRID=4326;POINT(")

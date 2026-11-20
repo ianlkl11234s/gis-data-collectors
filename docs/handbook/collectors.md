@@ -4,7 +4,7 @@
 > **自動產生，勿手改**；跑 `python3 scripts/gen_handbook_catalog.py` 重產，`--check` 檢查是否最新（CI：`tests/test_handbook_catalog.py`）。
 > 來源：`collectors/registry.py`、`config.py` 的 `_COLLECTOR_TOGGLES`、`config/cross_layer_map.yaml`、`storage/supabase_tables.py` 的 `TABLE_MAP`、`config/realtime_tables.yaml`。要改內容就改這些來源（備註取自 cross_layer_map 的 notes）。
 
-共 108 筆（含排程 task），production 應在跑 97 筆。
+共 108 筆（含排程 task），production 應在跑 98 筆。
 
 欄位說明：
 
@@ -64,7 +64,7 @@
 | `nusc_gamma_radiation` | 水利／環境 | 15 分 | pulse-host | live.nusc_gamma_measurements<br>live.nusc_gamma_stations | history＋reference | 見 retention_policies | [sources/water-env](sources/water-env.md#nusc_gamma_radiation) | 核安會全國環境輻射 63 站（datagov 119233，免金鑰） |
 | `water_effluent_monitoring` | 水利／環境 | 1 小時 | pulse-host | live.water_effluent_readings<br>live.water_effluent_current | current＋history | 見 retention_policies | [sources/water-env](sources/water-env.md#water_effluent_monitoring) | 需 MOENV_API_KEY；放流水 CWMS 22 縣市 wqx_p_47..67 + wqx_p_126 |
 | `cems_stack_monitoring` | 水利／環境 | 1 小時 | pulse-host | live.cems_stack_readings<br>live.cems_stack_current | current＋history | 見 retention_policies | [sources/water-env](sources/water-env.md#cems_stack_monitoring) | 需 MOENV_API_KEY；CEMS 煙道 aqx_p_187 + 燃燒塔 aqx_p_493 1h 值 |
-| `openaq` | 水利／環境 | 1 小時 | 停用 | live.openaq_measurements<br>live.openaq_locations | history | 見 retention_policies | [sources/water-env](sources/water-env.md#openaq) | 需 OPENAQ_API_KEY；OpenAQ v3，國家 OPENAQ_COUNTRIES 預設 PH（菲律賓 C098） |
+| `openaq` | 水利／環境 | 1 小時 | pulse-host | live.openaq_measurements<br>live.openaq_locations | history | 見 retention_policies | [sources/water-env](sources/water-env.md#openaq) | 需 OPENAQ_API_KEY；OpenAQ v3，國家 OPENAQ_COUNTRIES 預設 PH（菲律賓 C098） |
 | `ship_tdx` | 海空太空 | 2 分 | 停用 | — | 不寫 DB | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#ship_tdx) | 改走 ship_ais（覆蓋面更廣） |
 | `ship_ais` | 海空太空 | 10 分 | VM | live.ship_positions<br>live.ship_current | current＋history | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#ship_ais) | critical |
 | `aisstream` | 海空太空 | 1 分 | pulse-host（長駐 worker） | live.aisstream_ingest_runs<br>live.aisstream_archive_manifests<br>live.aisstream_position_observations<br>live.aisstream_vessel_current<br>live.aisstream_ingest_health | current＋history＋ledger | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#aisstream) | 長駐 WebSocket worker；需 AISSTREAM_API_KEY；獨立 provider 的常駐 WebSocket |
