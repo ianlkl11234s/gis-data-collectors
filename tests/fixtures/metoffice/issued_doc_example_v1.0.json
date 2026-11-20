@@ -1,0 +1,113 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "issuedDate": "2022-06-22T11:54:17Z",
+    "weatherType": [
+     "THUNDERSTORM"
+    ],
+    "warningLikelihood": 4,
+    "warningLevel": "YELLOW",
+    "warningStatus": "ISSUED",
+    "warningHeadline": "Thunderstorms may bring some disruption on Wednesday afternoon and evening",
+    "whatToExpect": [
+     "Some flooding of a few homes and businesses, leading to some damage to buildings or structures",
+     "Some damage to a few buildings and structures from lightning strikes",
+     "Driving conditions will be affected by spray, standing water and/or hail, leading to longer journey times by car and bus",
+     "Delays to train services",
+     "Some short term loss of power and other services"
+    ],
+    "warningId": "79bb1df2-8983-4bbd-888a-66da9c099a1c",
+    "warningVersion": "1.0",
+    "warningFurtherDetails": "Thunderstorms are expected to develop across northern parts of Scotland during Wednesday afternoon then slowly die out during Wednesday evening.\n\nDespite many areas seeing some showers most sites will see only small amounts of rainfall. However, there is a chance of a few sites seeing 20 mm of rain in an hour and 30-40 mm in 3 hours as well as lightning and some hail.",
+    "modifiedDate": "2022-06-22T11:54:17Z",
+    "validFromDate": "2022-06-22T11:54:00Z",
+    "affectedAreas": [
+     {
+      "regionName": "Highlands & Eilean Siar",
+      "regionCode": "HE",
+      "subRegions": [
+       "Highland"
+      ]
+     },
+     {
+      "regionName": "Orkney & Shetland",
+      "regionCode": "OS",
+      "subRegions": [
+       "Orkney Islands"
+      ]
+     }
+    ],
+    "warningImpact": 2,
+    "validToDate": "2022-06-22T22:59:59Z"
+   },
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        -4.3726,
+        58.7226
+       ],
+       [
+        -4.8779,
+        58.7796
+       ],
+       [
+        -5.2734,
+        58.7796
+       ],
+       [
+        -5.8008,
+        58.1243
+       ],
+       [
+        -5.8447,
+        57.8915
+       ],
+       [
+        -5.647,
+        57.7745
+       ],
+       [
+        -4.5264,
+        57.7041
+       ],
+       [
+        -3.1421,
+        57.8214
+       ],
+       [
+        -2.7466,
+        57.9148
+       ],
+       [
+        -2.4609,
+        58.0895
+       ],
+       [
+        -2.2852,
+        58.4592
+       ],
+       [
+        -2.5049,
+        58.6312
+       ],
+       [
+        -2.8125,
+        58.6884
+       ],
+       [
+        -4.3726,
+        58.7226
+       ]
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

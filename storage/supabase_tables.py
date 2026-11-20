@@ -710,6 +710,29 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
         'upstream_time_col': 'observed_at',
     },
+    'metoffice_warnings': {
+        # 英國 Met Office NSWWS 警報版本 — gis-platform migration 562（只寫沒見過的版本，DO NOTHING）
+        'history': 'live.metoffice_warning_events',
+        'columns': ['modified_at', 'warning_id', 'warning_version', 'warning_status', 'warning_level',
+                    'weather_types', 'warning_likelihood', 'warning_impact', 'valid_from', 'valid_to',
+                    'issued_at', 'headline', 'update_description', 'region_codes', 'affected_areas',
+                    'properties', 'geom', 'geometry_type', 'source', 'source_uuid', 'feed_updated_at',
+                    'collected_at'],
+        'upsert_key': 'modified_at,warning_id,warning_version,warning_status',
+        'upsert_strategy': 'do_nothing',
+        'upstream_time_col': 'modified_at',
+    },
+    'metoffice_obs': {
+        # 英國 Met Office 陸地測站逐時觀測 — gis-platform migration 562
+        # 站表由 collector 呼叫 writer._upsert_metoffice_obs_stations() 寫 live.metoffice_obs_stations（有變才 UPDATE）
+        'history': 'live.metoffice_obs_measurements',
+        'columns': ['observed_at', 'geohash', 'temperature', 'humidity', 'mslp', 'visibility',
+                    'wind_speed', 'wind_gust', 'weather_code', 'wind_direction', 'pressure_tendency',
+                    'extra', 'collected_at'],
+        'upsert_key': 'observed_at,geohash',
+        'upsert_strategy': 'do_nothing',
+        'upstream_time_col': 'observed_at',
+    },
     'nusc_gamma_radiation': {
         # 核安會全國環境輻射 datagov 119233 — gis-platform migration 419
         'history': 'live.nusc_gamma_measurements',

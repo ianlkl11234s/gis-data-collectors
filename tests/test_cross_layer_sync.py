@@ -111,6 +111,8 @@ _REALTIME_TABLES_EXEMPT = {
         "water_effluent_current 代監控",
     "live.cems_stack_readings":            # 由 cems_stack_current（updated_at touch 心跳）代監控；collected_at 無索引
         "cems_stack_current 代監控",
+    "live.metoffice_obs_stations":         # 只在發現新站時寫，不是心跳；新鮮度看 metoffice_obs_measurements.observed_at
+        "metoffice_obs_measurements（observed_at，主鍵開頭）代監控",
     "live.openaq_locations":               # 測站 metadata 有變才 UPDATE，不是心跳；新鮮度看 openaq_measurements.observed_at
         "openaq_measurements（observed_at，主鍵開頭）代監控",
     "live.flight_trails":                  # partitioned parent 恆空，NEVER 是預期，已刻意移除

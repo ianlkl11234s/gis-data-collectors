@@ -2554,6 +2554,45 @@ class SupabaseWriter:
             with self._txn(conn) as cur:
                 execute_values(cur, sql, values, page_size=500)
 
+    def _transform_metoffice_warnings(self, result: dict, ts: datetime) -> list[dict]:
+        """Met Office 警報版本：collector 已產出 TABLE_MAP 同名欄位；鍵欄缺的列不寫。"""
+        cols = TABLE_MAP['metoffice_warnings']['columns']
+        keys = ('modified_at', 'warning_id', 'warning_version', 'warning_status')
+        return [{c: (r.get(c) if c != 'collected_at' else (r.get(c) or ts.isoformat())) for c in cols}
+                for r in result.get('data', []) if all(r.get(k) for k in keys)]
+
+    def _transform_metoffice_obs(self, result: dict, ts: datetime) -> list[dict]:
+        """Met Office 陸地觀測：collector 已產出 TABLE_MAP 同名欄位；缺值 None 照寫（缺值≠0）。"""
+        cols = TABLE_MAP['metoffice_obs']['columns']
+        return [{c: (r.get(c) if c != 'collected_at' else (r.get(c) or ts.isoformat())) for c in cols}
+                for r in result.get('data', []) if r.get('observed_at') and r.get('geohash')]
+
+    def _upsert_metoffice_obs_stations(self, rows: list[dict]) -> None:
+        """Met Office 測站 upsert 到 live.metoffice_obs_stations（gis-platform mig 562），沒變的站不 UPDATE。
+
+        lon／lat＝geohash 格中心（近似位置，不是精確站址）。
+        """
+        if not rows:
+            return
+        cols = ['geohash', 'area', 'region', 'country', 'olson_time_zone', 'lon', 'lat', 'geom']
+        dedup = {r['geohash']: r for r in rows if r.get('geohash')}
+        values = []
+        for r in dedup.values():
+            lon, lat = r.get('lon'), r.get('lat')
+            geom = f'SRID=4326;POINT({lon} {lat})' if lon is not None and lat is not None else None
+            values.append(tuple(r.get(c) for c in cols[:-1]) + (geom,))
+        update_cols = [c for c in cols if c != 'geohash']
+        update_set = ', '.join(f"{c} = EXCLUDED.{c}" for c in update_cols)
+        # storage.bulk 只接受 INSERT ... VALUES %s 形狀；geom 以 EWKT 文字傳入、由欄位型別轉成 geometry
+        sql = (
+            f"INSERT INTO live.metoffice_obs_stations AS s ({','.join(cols)}) VALUES %s "
+            f"ON CONFLICT (geohash) DO UPDATE SET {update_set}, updated_at = now() "
+            f"WHERE {_station_changed_cond(update_cols)}"
+        )
+        with self._pool.borrow() as conn:
+            with self._txn(conn) as cur:
+                execute_values(cur, sql, values, page_size=500)
+
     def _transform_water_effluent_monitoring(self, result: dict, ts: datetime) -> list[dict]:
         """放流水：collector 已產出 TABLE_MAP 同名欄位（已去重、升冪）。"""
         cols = TABLE_MAP['water_effluent_monitoring']['columns']
@@ -2812,6 +2851,8 @@ class SupabaseWriter:
         'nuclear_radiation': _transform_nuclear_radiation,
         'nusc_gamma_radiation': _transform_nusc_gamma_radiation,
         'openaq': _transform_openaq,
+        'metoffice_warnings': _transform_metoffice_warnings,
+        'metoffice_obs': _transform_metoffice_obs,
         'water_effluent_monitoring': _transform_water_effluent_monitoring,
         'cems_stack_monitoring': _transform_cems_stack_monitoring,
         'cwa_uv_daily': _transform_cwa_uv_daily,

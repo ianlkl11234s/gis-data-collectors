@@ -209,6 +209,9 @@ archive_py_covered:
   - live.cwa_uv_daily               # cwa_uv_daily，migration 422，待 Zeabur 啟用
   - live.openaq_measurements       # openaq，migration 561，待 pulse-host 啟用（JSON 歸檔 openaq/archives/）
   - live.openaq_locations          # 同上（每輪 JSON 的 stations 段）
+  - live.metoffice_warning_events  # metoffice_warnings，migration 562，待 pulse-host 啟用（JSON 歸檔 metoffice_warnings/archives/）
+  - live.metoffice_obs_measurements  # metoffice_obs，migration 562，待 pulse-host 啟用（JSON 歸檔 metoffice_obs/archives/）
+  - live.metoffice_obs_stations    # 同上（每輪 JSON 的 stations 段）
   - live.jma_amedas_observations   # jma_amedas，migration 435，2026-10-09 起
   - live.jma_amedas_current        # 同上
   - live.jma_warnings              # jma_warnings，migration 435，2026-10-09 起；438 起停寫（7 天自然清空，另案刪表）

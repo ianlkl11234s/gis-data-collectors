@@ -93,6 +93,7 @@ SOURCES_DOC = {
     "jma_warnings": "jma-global", "jma_quake": "jma-global", "jma_raster": "jma-global",
     "jma_seasonal": "jma-global", "jma_lightning": "jma-global",
     "jma_forecast": "jma-global", "env_jp_wbgt": "jma-global", "jma_ocean_env": "jma-global",
+    "metoffice_warnings": "jma-global", "metoffice_obs": "jma-global",
     # 網路健康
     "cloudflare_radar": "internet-health", "ioda_internet_health": "internet-health",
     "ripe_atlas_internet_health": "internet-health", "ripe_ris_live": "internet-health",

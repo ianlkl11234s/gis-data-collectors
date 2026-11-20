@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 改寫自官方 v1.0 文件範例 https://metoffice.github.io/nswws-public-api/atom-feed.html（base path 換成 v1.1 實際網域；uuid 照抄）。真實 v1.1 entry 尚未見過。 -->
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <title>Met Office Warnings Feed</title>
+    <link rel="self" type="application/atom+xml" href="https://data.hub.api.metoffice.gov.uk/nswws/v1.1/objects/feed/" />
+    <link rel="related" type="application/vnd.geo+json" href="https://data.hub.api.metoffice.gov.uk/nswws/v1.1/objects/issued/3f4ca4cf-32ea-4eef-aed0-75db50d94e02/" title="Latest version of all issued warnings" />
+    <id>urn:uuid:f6b54389-c75c-4f23-aa21-88ef3481761a</id>
+    <updated>2022-06-22T12:07:40Z</updated>
+    <entry>
+        <title>Update</title>
+        <link rel="alternate" type="application/vnd.geo+json" href="https://data.hub.api.metoffice.gov.uk/nswws/v1.1/objects/updated/c9ce3dca-13e0-4eaf-8f74-cf44ec04279c/" title="Warnings Updated" />
+        <id>urn:uuid:c9ce3dca-13e0-4eaf-8f74-cf44ec04279c</id>
+        <updated>2022-06-22T12:07:38Z</updated>
+        <summary>Warnings update that can include new warnings and warnings state changes from ISSUED to CANCELLED or EXPIRED.</summary>
+    </entry>
+</feed>
