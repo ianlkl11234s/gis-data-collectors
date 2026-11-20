@@ -1,0 +1,135 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "issuedDate": "2022-06-22T11:54:17Z",
+    "weatherType": [
+     "THUNDERSTORM"
+    ],
+    "warningLikelihood": 4,
+    "warningUpdateDescription": "Warning no longer required.",
+    "warningLevel": "YELLOW",
+    "warningStatus": "CANCELLED",
+    "warningHeadline": "Thunderstorms may bring some disruption on Wednesday afternoon and evening",
+    "whatToExpect": [
+     "Some flooding of a few homes and businesses, leading to some damage to buildings or structures",
+     "Some damage to a few buildings and structures from lightning strikes",
+     "Driving conditions will be affected by spray, standing water and/or hail, leading to longer journey times by car and bus",
+     "Delays to train services",
+     "Some short term loss of power and other services"
+    ],
+    "warningId": "79bb1df2-8983-4bbd-888a-66da9c099a1c",
+    "warningVersion": "3.0",
+    "warningFurtherDetails": "Thunderstorms are expected to develop across northern parts of Scotland during Wednesday afternoon then slowly die out during Wednesday evening.\n\nDespite many areas seeing some showers most sites will see only small amounts of rainfall. However, there is a chance of a few sites seeing 20 mm of rain in an hour and 30-40 mm in 3 hours as well as lightning and some hail.",
+    "modifiedDate": "2022-06-22T12:07:38Z",
+    "validFromDate": "2022-06-22T11:54:00Z",
+    "affectedAreas": [
+     {
+      "regionName": "Grampian",
+      "regionCode": "GR",
+      "subRegions": [
+       "Aberdeenshire",
+       "Moray"
+      ]
+     },
+     {
+      "regionName": "Highlands & Eilean Siar",
+      "regionCode": "HE",
+      "subRegions": [
+       "Highland"
+      ]
+     }
+    ],
+    "warningImpact": 2,
+    "validToDate": "2022-06-22T22:59:59Z"
+   },
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        -3.4277,
+        58.7568
+       ],
+       [
+        -4.6802,
+        58.7682
+       ],
+       [
+        -5.1855,
+        58.6655
+       ],
+       [
+        -5.6909,
+        58.3672
+       ],
+       [
+        -5.7349,
+        58.1823
+       ],
+       [
+        -5.3174,
+        57.7511
+       ],
+       [
+        -4.9878,
+        57.5512
+       ],
+       [
+        -4.7461,
+        57.3028
+       ],
+       [
+        -4.3506,
+        57.0766
+       ],
+       [
+        -4.1748,
+        57.0168
+       ],
+       [
+        -3.208,
+        56.9689
+       ],
+       [
+        -2.9883,
+        57.0049
+       ],
+       [
+        -2.373,
+        57.2672
+       ],
+       [
+        -2.2192,
+        57.6454
+       ],
+       [
+        -2.395,
+        57.7511
+       ],
+       [
+        -2.9883,
+        57.9498
+       ],
+       [
+        -2.6367,
+        58.5167
+       ],
+       [
+        -3.0981,
+        58.7112
+       ],
+       [
+        -3.4277,
+        58.7568
+       ]
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

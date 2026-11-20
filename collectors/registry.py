@@ -72,6 +72,8 @@ from .water_effluent_monitoring import WaterEffluentMonitoringCollector
 from .cems_stack_monitoring import CemsStackMonitoringCollector
 from .cwa_uv_daily import CwaUvDailyCollector
 from .openaq import OpenAQCollector
+from .metoffice_warnings import MetofficeWarningsCollector
+from .metoffice_obs import MetofficeObsCollector
 from .tra_static import TRAStaticCollector
 from .tra_train import TRATrainCollector
 from .vd import VDCollector
@@ -222,6 +224,11 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(CwaUvDailyCollector, "CWA 每日紫外線指數收集器", "CWA_UV_DAILY", ("CWA_API_KEY",)),
     # === OpenAQ 多國空品測站（2026-11-20，gis-platform migration 561；PH C098 起）===
     CollectorEntry(OpenAQCollector, "OpenAQ 多國空品測站收集器", "OPENAQ", ("OPENAQ_API_KEY",)),
+    # === 英國 Met Office（2026-11-20，gis-platform migration 562）===
+    CollectorEntry(MetofficeWarningsCollector, "Met Office NSWWS 天氣警報收集器", "METOFFICE_WARNINGS",
+                   ("METOFFICE_WARNINGS_API_KEY",)),
+    CollectorEntry(MetofficeObsCollector, "Met Office 陸地測站逐時觀測收集器", "METOFFICE_OBS",
+                   ("METOFFICE_OBS_API_KEY",)),
     # === 全球氣候（plan-misty-fog 2026-06-28）===
     CollectorEntry(UsgsEarthquakeCollector, "USGS 全球地震 hourly 收集器", "GLOBAL_CLIMATE_USGS_EARTHQUAKE"),
     CollectorEntry(JmaTyphoonCollector, "JMA RSMC Tokyo 颱風收集器", "GLOBAL_CLIMATE_JMA_TYPHOON"),

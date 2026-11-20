@@ -1209,6 +1209,28 @@ jma_warnings:
   critical: false
   notes: R8 警報・注意報；438 起只記變動（start/status_change/end）→ live.jma_warning_events（永久）；整份有效快照只進本地 JSON raw_payload → 每日 archives；舊 live.jma_warnings 停寫
 
+metoffice_warnings:
+  label: 英國 Met Office 天氣警報（NSWWS）
+  enabled: false  # 尚未部署：等 gis-platform migration 562 套用；上線時設 pulse-host METOFFICE_WARNINGS_ENABLED=true 後改 true
+  deployment: pulse_host
+  expected_interval_min: 1440
+  supabase_tables: [live.metoffice_warning_events]
+  s3_prefixes:
+    - {prefix: metoffice_warnings/archives/, expected_daily: false}
+  critical: false
+  notes: 需 METOFFICE_WARNINGS_API_KEY；每 10 分看 Atom feed，有變才抓 issued／新 entry 的 updated；只寫沒見過的警報版本（DO NOTHING）；沒有警報時整天無新列屬預期
+
+metoffice_obs:
+  label: 英國 Met Office 陸地測站觀測
+  enabled: false  # 尚未部署：等 gis-platform migration 562 套用；上線時設 pulse-host METOFFICE_OBS_ENABLED=true 後改 true
+  deployment: pulse_host
+  expected_interval_min: 60
+  supabase_tables: [live.metoffice_obs_measurements, live.metoffice_obs_stations]
+  s3_prefixes:
+    - {prefix: metoffice_obs/archives/, expected_daily: true}
+  critical: false
+  notes: 需 METOFFICE_OBS_API_KEY；免費每日 360 次、程式硬上限 330；約 150 站各每日抓 1 次 48 小時逐時值，依站分散在 24 個時段；站座標＝geohash 格中心（近似）
+
 jma_quake:
   label: 日本地震・海嘯・火山
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_QUAKE_ENABLED=true + restart 生效

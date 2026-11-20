@@ -153,6 +153,23 @@ NOAA GFS 全球風場（AWS Open Data S3，免認證）。每日，Zeabur；用 
 
 - 已知坑：**沒有表級監控**，也沒有 TABLE_MAP。停了只能從心跳或前端圖層過期發現。全桶 lifecycle 規則會波及 `deploy-assets/`（部署用 `aws s3 sync` 會產生取回費），見 [`docs/AWS_INVENTORY.md`](../../AWS_INVENTORY.md)。
 
+### metoffice_warnings
+英國 Met Office 國家惡劣天氣警報 NSWWS v1.1（需 `METOFFICE_WARNINGS_API_KEY`，header `apikey`；免費 20,000 次/日）。
+
+- 頻率／位置：每 10 分鐘，pulse-host，預設關閉（gis-platform mig 562 套用後才開）。設 `require_db_write`、`heartbeat_without_writer`。
+- 呼叫：每輪 1 次 Atom `objects/feed`；`rel="related"` 的 issued 連結或 `<updated>` 變了才抓 issued（目前全部已發布警報，不含取消／過期）；每個沒看過的 `<entry>` 抓一次 `rel="alternate"` 的 updated（含 CANCELLED／EXPIRED，只在 feed 留 24 小時）。只對以 API base 開頭的連結送金鑰。
+- 寫入：`live.metoffice_warning_events`，自然鍵 `(modified_at, warning_id, warning_version, warning_status)`，`DO NOTHING`；state（`state/metoffice_warnings_state.json`）記已寫過的版本，只送新版本。完整 properties 存 jsonb、geometry 存 MultiPolygon。有效與否看 `valid_from`／`valid_to` 與最新版本的 status，事件列不刪改。
+- 已知坑：鍵一定要含 status——官方範例的 EXPIRED 與 ISSUED 共用 version 2.0。2026-11-20 上線前沒有真實警報，欄位依官方 v1.0 文件範例（`tests/fixtures/metoffice/`），v1.1 真實欄位待第一次警報驗證。
+
+### metoffice_obs
+英國 Met Office Land Observations（需 `METOFFICE_OBS_API_KEY`，header `apikey`；**免費每日 360 次**）。約 150 站、9 個逐時參數，每站一次回近 48 小時。
+
+- 頻率／位置：每 60 分鐘，pulse-host，預設關閉（mig 562 套用後才開）。
+- 額度守門（fail closed）：每 UTC 日 ≤ `METOFFICE_OBS_DAILY_CAP`（預設 330）。計數在 `state/metoffice_obs_quota.json`，每次呼叫前先 +1 寫檔成功才打；額度檔遺失而站表已存在時，當天視為用滿。探站永遠先保留今天還沒抓的站所需次數。
+- 站表：沒有列站端點，收集器用 `config/metoffice_obs_grid.json`（581 個英國陸地網格點，約 22 km 間距）逐點打 `/nearest` 累積 geohash，約 3–4 天掃完；之後每週重掃 30 點（半格偏移、輪流）。`/nearest` 的 lat／lon 最多 2 位小數，3 位會回 400。
+- 量測：每站每 UTC 日抓 1 次 `/{geohash}`，依 geohash 雜湊分散在 0–23 時；寫 `live.metoffice_obs_measurements`（自然鍵 `(observed_at, geohash)`，`DO NOTHING`，缺值 NULL）。站表 `live.metoffice_obs_stations` 只在新站時寫，座標是 **geohash 格中心（近似位置）**，不可當精確站址。
+- 用量：穩定後約每日 150–160 次（站數＋每週重掃攤提）；首次掃描期間會用到上限 330。
+
 ## 收這類資料要注意
 
 - 先算物件數與請求數，再算容量：圖磚一律每日打包，不可逐張存 Deep Archive。

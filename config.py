@@ -61,6 +61,12 @@ MOENV_API_KEY = os.getenv('MOENV_API_KEY')
 OPENAQ_API_KEY = os.getenv('OPENAQ_API_KEY')
 
 # ============================================================
+# 英國 Met Office Weather DataHub（header apikey；警報與陸地觀測是兩把不同的 key）
+# ============================================================
+METOFFICE_WARNINGS_API_KEY = os.getenv('METOFFICE_WARNINGS_API_KEY')  # NSWWS 警報，免費 20,000 次/日
+METOFFICE_OBS_API_KEY = os.getenv('METOFFICE_OBS_API_KEY')            # Land Observations，免費 360 次/日
+
+# ============================================================
 # 水利署 IoT 水資源物聯網 OAuth2（都市淹水感知器 USWG）
 # ============================================================
 # 註冊：https://iot.wra.gov.tw/SignUp.jsp
@@ -443,7 +449,9 @@ _COLLECTOR_TOGGLES = (
     ('NUSC_GAMMA_RADIATION',         False, 15),   # 核安會全國環境輻射 63 站（datagov 119233，上游 5 分；與台電 NUCLEAR_RADIATION 不同網路）；measurements 30 天
     ('WATER_EFFLUENT_MONITORING',    False, 60),   # 放流水 CWMS 22 縣市 wqx_p_*（需 MOENV_API_KEY；滾動視窗 1–2h）；readings 7 天
     ('CEMS_STACK_MONITORING',        False, 60),   # CEMS 煙道 aqx_p_187 + 燃燒塔 aqx_p_493 1h 值（需 MOENV_API_KEY；上游延遲 4–5h，回看 6h）；readings 7 天
-    ('OPENAQ',                       False, 60),   # OpenAQ v3 多國空品測站（需 OPENAQ_API_KEY；國家 OPENAQ_COUNTRIES 預設 PH；PH 每輪約 86 次呼叫）；gis-platform mig 561
+    ('OPENAQ',                       False, 60),
+    ('METOFFICE_WARNINGS',           False, 10),   # 英國 NSWWS 天氣警報（需 METOFFICE_WARNINGS_API_KEY；feed 有變才抓 issued／updated，約 150 次/日）；gis-platform mig 562
+    ('METOFFICE_OBS',                False, 60),   # 英國 Met Office 陸地測站逐時觀測（需 METOFFICE_OBS_API_KEY；每日硬上限 METOFFICE_OBS_DAILY_CAP）；gis-platform mig 562   # OpenAQ v3 多國空品測站（需 OPENAQ_API_KEY；國家 OPENAQ_COUNTRIES 預設 PH；PH 每輪約 86 次呼叫）；gis-platform mig 561
     ('CWA_UV_DAILY',                 False, 720),  # CWA 每日紫外線最大值 O-A0005-001（前一日值，需 CWA_API_KEY）；730 天
     ('FOOD_PRICES',                  False, 1440), # 農業部四類批發價（蔬果/漁產/毛豬/家禽，無金鑰）；T+1 更新故每日 1 次即可，約 52 次請求/日、~2,000 row/日
     # === 全球氣候（plan-misty-fog 2026-06-28）===
@@ -784,6 +792,11 @@ AIR_QUALITY_IMAGERY_PRODUCTS = (
 OPENAQ_COUNTRIES = os.getenv('OPENAQ_COUNTRIES', 'PH')
 OPENAQ_MAX_AGE_HOURS = int(os.getenv('OPENAQ_MAX_AGE_HOURS', '48'))       # 超過的「最新值」不寫、測站不打 /latest
 OPENAQ_MIN_INTERVAL_SEC = float(os.getenv('OPENAQ_MIN_INTERVAL_SEC', '1.1'))  # 60 次/分限流 → 至少 1 秒
+# Met Office 陸地觀測（collectors/metoffice_obs.py）：免費版每日 360 次，程式硬上限預設 330（留 30 給人工）
+METOFFICE_OBS_DAILY_CAP = min(int(os.getenv('METOFFICE_OBS_DAILY_CAP', '330')), 360)
+METOFFICE_OBS_DISCOVERY_PER_RUN = int(os.getenv('METOFFICE_OBS_DISCOVERY_PER_RUN', '20'))  # 每輪最多打幾次 /nearest
+METOFFICE_OBS_RESCAN_PER_WEEK = int(os.getenv('METOFFICE_OBS_RESCAN_PER_WEEK', '30'))      # 首次掃描完後每週重掃點數
+METOFFICE_OBS_MIN_INTERVAL_SEC = float(os.getenv('METOFFICE_OBS_MIN_INTERVAL_SEC', '1.0'))
 AIR_QUALITY_MICROSENSORS_PM25_OUTLIER = float(os.getenv('AIR_QUALITY_MICROSENSORS_PM25_OUTLIER', '500'))  # μg/m³ 超過此值視為異常
 
 # 垃圾車 GPS — 城市清單與 quiet hours
