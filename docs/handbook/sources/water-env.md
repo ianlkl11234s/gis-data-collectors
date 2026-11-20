@@ -102,6 +102,14 @@ LASS AirBox 微型感測器（約 500 點）。每 5 分鐘，Zeabur；寫 `live
 - 寫入：`live.nusc_gamma_measurements`、`live.nusc_gamma_stations`（站表代監控）。
 - 已知坑：與台電 `nuclear_radiation` 是**不同監測網**，不可用距離把兩邊的站合併。
 
+### openaq
+OpenAQ v3 多國空品測站（PH C098 起；國家 `OPENAQ_COUNTRIES`，預設 `PH`；需 `OPENAQ_API_KEY`）。
+
+- 頻率／位置：每 60 分鐘，pulse-host，預設關閉（gis-platform mig 561 套用後才開）。
+- 呼叫：每國 1 次 `/locations?iso=XX`，再對 `datetimeLast` 有前進、且在 48 小時內的測站各 1 次 `/locations/{id}/latest`；PH 每輪約 86 次（限流 60 次/分、2,000 次/時，呼叫間隔 ≥1.1 秒）。`/parameters/{id}/latest` 不能用國家篩選（iso、countries_id 都被忽略），不要改用。
+- 寫入：`live.openaq_measurements`（自然鍵 `(observed_at, sensor_id)`，DO NOTHING）、`live.openaq_locations`（有變才 UPDATE，由量測表 `observed_at` 代監控）。
+- 已知坑：PH 幾乎全是低價感測器（`is_monitor=false`），前端要標示；授權每站不同，依 `attribution_name` 署名。`/latest` 只有 `sensorsId`，參數與單位要用 `/locations` 的 sensors 對回。部分 sensor 的「最新值」停在一年前，超過 48 小時的不寫。上游比實際晚約 1–2 小時。
+
 ## 收這類資料要注意
 
 - 不定期更新的來源（水情燈號、每日營運）要有「解析成功」與「有新資料」兩種訊號；hash 沒變就跳過時，也要留下「這輪有跑、內容沒變」的紀錄，否則停擺看起來和沒變一樣。

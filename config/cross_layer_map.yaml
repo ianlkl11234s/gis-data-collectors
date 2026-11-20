@@ -1175,6 +1175,17 @@ cwa_uv_daily:
   critical: false
   notes: CWA O-A0005-001 前一日紫外線最大值（約 30 站）；observed_at=obs_date 00:00，落後 24–48h 屬預期
 
+openaq:
+  label: OpenAQ 空品測站（多國）
+  enabled: false  # 尚未部署：等 gis-platform migration 561 套用；上線時設 pulse-host OPENAQ_ENABLED=true 後改 true
+  deployment: pulse_host
+  expected_interval_min: 60
+  supabase_tables: [live.openaq_measurements, live.openaq_locations]
+  s3_prefixes:
+    - {prefix: openaq/archives/, expected_daily: true}
+  critical: false
+  notes: OpenAQ v3，國家 OPENAQ_COUNTRIES 預設 PH（菲律賓 C098）；PH 幾乎全是低價感測器（Clarity、AirGradient，is_monitor=false）；每站授權不同（CC0／CC BY 4.0）；上游晚 1–2h
+
 jma_amedas:
   label: 日本 AMeDAS 氣象站
   enabled: true  # 2026-10-09 merge 後設 Zeabur env JAPAN_JMA_AMEDAS_ENABLED=true + restart 生效

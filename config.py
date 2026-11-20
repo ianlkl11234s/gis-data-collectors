@@ -56,6 +56,11 @@ CWA_FILE_API_BASE = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi"
 MOENV_API_KEY = os.getenv('MOENV_API_KEY')
 
 # ============================================================
+# OpenAQ v3（多國空品測站；X-API-Key，限流 60 次/分、2,000 次/時）
+# ============================================================
+OPENAQ_API_KEY = os.getenv('OPENAQ_API_KEY')
+
+# ============================================================
 # 水利署 IoT 水資源物聯網 OAuth2（都市淹水感知器 USWG）
 # ============================================================
 # 註冊：https://iot.wra.gov.tw/SignUp.jsp
@@ -438,6 +443,7 @@ _COLLECTOR_TOGGLES = (
     ('NUSC_GAMMA_RADIATION',         False, 15),   # 核安會全國環境輻射 63 站（datagov 119233，上游 5 分；與台電 NUCLEAR_RADIATION 不同網路）；measurements 30 天
     ('WATER_EFFLUENT_MONITORING',    False, 60),   # 放流水 CWMS 22 縣市 wqx_p_*（需 MOENV_API_KEY；滾動視窗 1–2h）；readings 7 天
     ('CEMS_STACK_MONITORING',        False, 60),   # CEMS 煙道 aqx_p_187 + 燃燒塔 aqx_p_493 1h 值（需 MOENV_API_KEY；上游延遲 4–5h，回看 6h）；readings 7 天
+    ('OPENAQ',                       False, 60),   # OpenAQ v3 多國空品測站（需 OPENAQ_API_KEY；國家 OPENAQ_COUNTRIES 預設 PH；PH 每輪約 86 次呼叫）；gis-platform mig 561
     ('CWA_UV_DAILY',                 False, 720),  # CWA 每日紫外線最大值 O-A0005-001（前一日值，需 CWA_API_KEY）；730 天
     ('FOOD_PRICES',                  False, 1440), # 農業部四類批發價（蔬果/漁產/毛豬/家禽，無金鑰）；T+1 更新故每日 1 次即可，約 52 次請求/日、~2,000 row/日
     # === 全球氣候（plan-misty-fog 2026-06-28）===
@@ -774,6 +780,10 @@ AIR_QUALITY_IMAGERY_PRODUCTS = (
 )  # 空 list = 使用 DEFAULT_PRODUCTS (AQI/PM25/PM10/O3/NO2)
 
 # 空氣品質 - LASS AirBox 微型感測器
+# OpenAQ（collectors/openaq.py）：國家清單（ISO 3166-1 alpha-2，逗號分隔）、最新值最長回看、呼叫最小間隔
+OPENAQ_COUNTRIES = os.getenv('OPENAQ_COUNTRIES', 'PH')
+OPENAQ_MAX_AGE_HOURS = int(os.getenv('OPENAQ_MAX_AGE_HOURS', '48'))       # 超過的「最新值」不寫、測站不打 /latest
+OPENAQ_MIN_INTERVAL_SEC = float(os.getenv('OPENAQ_MIN_INTERVAL_SEC', '1.1'))  # 60 次/分限流 → 至少 1 秒
 AIR_QUALITY_MICROSENSORS_PM25_OUTLIER = float(os.getenv('AIR_QUALITY_MICROSENSORS_PM25_OUTLIER', '500'))  # μg/m³ 超過此值視為異常
 
 # 垃圾車 GPS — 城市清單與 quiet hours

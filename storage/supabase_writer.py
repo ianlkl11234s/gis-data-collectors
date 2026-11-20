@@ -2506,6 +2506,57 @@ class SupabaseWriter:
             })
         return records
 
+    def _transform_openaq(self, result: dict, ts: datetime) -> list[dict]:
+        """OpenAQ 量測：collector 已產出 TABLE_MAP 同名欄位；缺鍵的列不寫，value None 照寫（缺值≠0）。"""
+        cols = TABLE_MAP['openaq']['columns']
+        return [{c: (r.get(c) if c != 'collected_at' else (r.get(c) or ts.isoformat())) for c in cols}
+                for r in result.get('data', [])
+                if r.get('observed_at') and r.get('sensor_id') is not None and r.get('parameter')]
+
+    def _upsert_openaq_locations(self, rows: list[dict]) -> None:
+        """OpenAQ 測站 metadata upsert 到 live.openaq_locations（gis-platform mig 561），沒變的站不 UPDATE。"""
+        if not rows:
+            return
+        cols = [
+            'location_id', 'name', 'locality', 'country_code', 'timezone',
+            'provider_id', 'provider_name', 'owner_name', 'is_monitor', 'is_mobile',
+            'instruments', 'parameters', 'sensors', 'license_names',
+            'attribution_name', 'attribution_url', 'licenses',
+            'lon', 'lat', 'datetime_first', 'datetime_last',
+        ]
+        dedup: dict = {}
+        for r in rows:
+            if r.get('location_id') is not None and r.get('country_code'):
+                dedup[r['location_id']] = r
+        values = []
+        for r in dedup.values():
+            row = []
+            for c in cols:
+                v = r.get(c)
+                if c in ('sensors', 'licenses') and v is not None:
+                    v = json.dumps(v, ensure_ascii=False)
+                row.append(v)
+            values.append(tuple(row))
+        update_cols = [c for c in cols if c != 'location_id']
+        # geom 由 lon/lat 推出（缺座標 → NULL，不合成）；updated_at＝最後一次異動
+        update_set = ', '.join(f"{c} = EXCLUDED.{c}" for c in update_cols)
+        # VALUES 子查詢的型別由第一列推定（NULL／字串會變 text），所以每欄明寫轉型
+        casts = {'location_id': 'bigint', 'provider_id': 'integer', 'is_monitor': 'boolean', 'is_mobile': 'boolean',
+                 'instruments': 'text[]', 'parameters': 'text[]', 'sensors': 'jsonb', 'licenses': 'jsonb',
+                 'lon': 'float8', 'lat': 'float8', 'datetime_first': 'timestamptz', 'datetime_last': 'timestamptz'}
+        template = '(' + ', '.join(f"%s::{casts.get(c, 'text')}" for c in cols) + ')'
+        sql = (
+            f"INSERT INTO live.openaq_locations AS s ({','.join(cols)}, geom) "
+            f"SELECT v.*, CASE WHEN v.lon IS NOT NULL AND v.lat IS NOT NULL "
+            f"THEN ST_SetSRID(ST_MakePoint(v.lon, v.lat), 4326) END "
+            f"FROM (VALUES %s) AS v({','.join(cols)}) "
+            f"ON CONFLICT (location_id) DO UPDATE SET {update_set}, geom = EXCLUDED.geom, updated_at = now() "
+            f"WHERE {_station_changed_cond(update_cols)}"
+        )
+        with self._pool.borrow() as conn:
+            with self._txn(conn) as cur:
+                execute_values(cur, sql, values, template=template, page_size=500)
+
     def _transform_water_effluent_monitoring(self, result: dict, ts: datetime) -> list[dict]:
         """放流水：collector 已產出 TABLE_MAP 同名欄位（已去重、升冪）。"""
         cols = TABLE_MAP['water_effluent_monitoring']['columns']
@@ -2763,6 +2814,7 @@ class SupabaseWriter:
         'global_climate_noaa_gfs': _transform_global_climate_grids,
         'nuclear_radiation': _transform_nuclear_radiation,
         'nusc_gamma_radiation': _transform_nusc_gamma_radiation,
+        'openaq': _transform_openaq,
         'water_effluent_monitoring': _transform_water_effluent_monitoring,
         'cems_stack_monitoring': _transform_cems_stack_monitoring,
         'cwa_uv_daily': _transform_cwa_uv_daily,

@@ -218,6 +218,9 @@ tables:
   - {schema: live, table: water_effluent_current,      label: 放流水監測, time_column: updated_at,   owner_collector: water_effluent_monitoring, expected_interval_min: 60, critical: false, notes: updated_at 每輪 touch＝心跳}
   - {schema: live, table: cems_stack_current,          label: 煙道排放監測, time_column: updated_at,   owner_collector: cems_stack_monitoring, expected_interval_min: 60, critical: false, notes: updated_at 每輪 touch＝心跳；observed_at 上游延遲 4–5h}
   - {schema: live, table: cwa_uv_daily,                label: 紫外線日最大值, time_column: collected_at, owner_collector: cwa_uv_daily, expected_interval_min: 720, critical: false, notes: 同日重抓 DO UPDATE 會推進 collected_at}
+  # OpenAQ 多國空品（2026-11-20；gis-platform migration 561）。observed_at 是主鍵開頭，max() 走索引；上游晚 1–2h。
+  # live.openaq_locations 有變才 UPDATE，不當心跳（見 tests 豁免清單）。
+  - {schema: live, table: openaq_measurements,         label: OpenAQ 空品量測, time_column: observed_at, owner_collector: openaq, expected_interval_min: 180, critical: false, notes: 上游量測時間；DO NOTHING 沒變不寫；上游約晚 1–2h，故門檻 180 分}
 
   # ── 日本氣象廳 JMA P0（2026-10-09；gis-platform migration 435）──
   - {schema: live, table: jma_amedas_current,          label: 日本 AMeDAS 即時, time_column: updated_at,   owner_collector: jma_amedas, expected_interval_min: 10, critical: false, notes: AMeDAS 約 1,286 站；updated_at 每輪 touch＝心跳；來源 stale 看 source_time（>40 分 collector 會 log）}

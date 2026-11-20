@@ -77,7 +77,7 @@ SOURCES_DOC = {
     "air_quality": "water-env", "air_quality_imagery": "water-env",
     "air_quality_microsensors": "water-env", "water_effluent_monitoring": "water-env",
     "cems_stack_monitoring": "water-env", "nuclear_radiation": "water-env",
-    "nusc_gamma_radiation": "water-env",
+    "nusc_gamma_radiation": "water-env", "openaq": "water-env",
     # 海空太空
     "ship_ais": "marine-air-space", "ship_tdx": "marine-air-space",
     "aisstream": "marine-air-space", "gfw_vessel_presence": "marine-air-space",
