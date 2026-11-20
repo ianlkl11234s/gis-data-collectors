@@ -1177,7 +1177,7 @@ cwa_uv_daily:
 
 openaq:
   label: OpenAQ 空品測站（多國）
-  enabled: false  # 尚未部署：等 gis-platform migration 561 套用；上線時設 pulse-host OPENAQ_ENABLED=true 後改 true
+  enabled: true  # 2026-11-20 mig 561 套用、pulse-host OPENAQ_ENABLED=true、部署 1d48820（#213 修測站寫入）
   deployment: pulse_host
   expected_interval_min: 60
   supabase_tables: [live.openaq_measurements, live.openaq_locations]
