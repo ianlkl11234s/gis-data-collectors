@@ -1,0 +1,254 @@
+{
+ "meta": {
+  "name": "openaq-api",
+  "website": "/",
+  "page": 1,
+  "limit": 1000,
+  "found": 3
+ },
+ "results": [
+  {
+   "id": 11568,
+   "name": "SPARTAN - Manila Observatory",
+   "locality": null,
+   "timezone": "Asia/Manila",
+   "country": {
+    "id": 183,
+    "code": "PH",
+    "name": "Philippines"
+   },
+   "owner": {
+    "id": 4,
+    "name": "Unknown Governmental Organization"
+   },
+   "provider": {
+    "id": 226,
+    "name": "Spartan"
+   },
+   "isMobile": false,
+   "isMonitor": true,
+   "instruments": [
+    {
+     "id": 2,
+     "name": "Government Monitor"
+    }
+   ],
+   "sensors": [
+    {
+     "id": 39285,
+     "name": "pm25 µg/m³",
+     "parameter": {
+      "id": 2,
+      "name": "pm25",
+      "units": "µg/m³",
+      "displayName": "PM2.5"
+     }
+    }
+   ],
+   "coordinates": {
+    "latitude": 14.635,
+    "longitude": 121.08
+   },
+   "licenses": null,
+   "bounds": [
+    121.08,
+    14.635,
+    121.08,
+    14.635
+   ],
+   "distance": null,
+   "datetimeFirst": null,
+   "datetimeLast": null
+  },
+  {
+   "id": 2812740,
+   "name": "Quezon Rd, San Simon",
+   "locality": null,
+   "timezone": "Asia/Manila",
+   "country": {
+    "id": 183,
+    "code": "PH",
+    "name": "Philippines"
+   },
+   "owner": {
+    "id": 9,
+    "name": "Clarity"
+   },
+   "provider": {
+    "id": 166,
+    "name": "Clarity"
+   },
+   "isMobile": false,
+   "isMonitor": false,
+   "instruments": [
+    {
+     "id": 4,
+     "name": "Clarity Sensor"
+    }
+   ],
+   "sensors": [
+    {
+     "id": 8966895,
+     "name": "pm25 µg/m³",
+     "parameter": {
+      "id": 2,
+      "name": "pm25",
+      "units": "µg/m³",
+      "displayName": "PM2.5"
+     }
+    }
+   ],
+   "coordinates": {
+    "latitude": 15.00045,
+    "longitude": 120.7505
+   },
+   "licenses": [
+    {
+     "id": 38,
+     "name": "CC0 1.0",
+     "attribution": {
+      "name": "Clarity",
+      "url": null
+     },
+     "dateFrom": "2021-10-20",
+     "dateTo": null
+    }
+   ],
+   "bounds": [
+    120.7505,
+    15.00045,
+    120.7505,
+    15.00045
+   ],
+   "distance": null,
+   "datetimeFirst": {
+    "utc": "2024-04-24T16:00:00Z",
+    "local": "2024-04-25T00:00:00+08:00"
+   },
+   "datetimeLast": {
+    "utc": "2026-11-20T05:06:49Z",
+    "local": "2026-11-20T13:06:49+08:00"
+   }
+  },
+  {
+   "id": 2879671,
+   "name": "Iloilo City, Augustine Grove Subd.",
+   "locality": null,
+   "timezone": "Asia/Manila",
+   "country": {
+    "id": 183,
+    "code": "PH",
+    "name": "Philippines"
+   },
+   "owner": {
+    "id": 16720,
+    "name": "Amihan Initiative"
+   },
+   "provider": {
+    "id": 66,
+    "name": "AirGradient"
+   },
+   "isMobile": false,
+   "isMonitor": false,
+   "instruments": [
+    {
+     "id": 12496918,
+     "name": "AirGradient Open Air (O-1PS)"
+    }
+   ],
+   "sensors": [
+    {
+     "id": 9466052,
+     "name": "pm1 µg/m³",
+     "parameter": {
+      "id": 19,
+      "name": "pm1",
+      "units": "µg/m³",
+      "displayName": "PM1"
+     }
+    },
+    {
+     "id": 9466058,
+     "name": "pm10 µg/m³",
+     "parameter": {
+      "id": 1,
+      "name": "pm10",
+      "units": "µg/m³",
+      "displayName": "PM10"
+     }
+    },
+    {
+     "id": 9466036,
+     "name": "pm25 µg/m³",
+     "parameter": {
+      "id": 2,
+      "name": "pm25",
+      "units": "µg/m³",
+      "displayName": "PM2.5"
+     }
+    },
+    {
+     "id": 9466064,
+     "name": "relativehumidity %",
+     "parameter": {
+      "id": 98,
+      "name": "relativehumidity",
+      "units": "%",
+      "displayName": "RH"
+     }
+    },
+    {
+     "id": 9466035,
+     "name": "temperature c",
+     "parameter": {
+      "id": 100,
+      "name": "temperature",
+      "units": "c",
+      "displayName": "Temperature (C)"
+     }
+    },
+    {
+     "id": 9466070,
+     "name": "um003 particles/cm³",
+     "parameter": {
+      "id": 125,
+      "name": "um003",
+      "units": "particles/cm³",
+      "displayName": "PM0.3 count"
+     }
+    }
+   ],
+   "coordinates": {
+    "latitude": 10.735369779100294,
+    "longitude": 122.53702703753301
+   },
+   "licenses": [
+    {
+     "id": 41,
+     "name": "CC BY 4.0",
+     "attribution": {
+      "name": "Amihan Initiative",
+      "url": null
+     },
+     "dateFrom": "2023-07-15",
+     "dateTo": null
+    }
+   ],
+   "bounds": [
+    122.53702703753301,
+    10.735369779100294,
+    122.53702703753301,
+    10.735369779100294
+   ],
+   "distance": null,
+   "datetimeFirst": {
+    "utc": "2024-06-05T03:00:00Z",
+    "local": "2024-06-05T11:00:00+08:00"
+   },
+   "datetimeLast": {
+    "utc": "2026-11-20T06:00:00Z",
+    "local": "2026-11-20T14:00:00+08:00"
+   }
+  }
+ ]
+}

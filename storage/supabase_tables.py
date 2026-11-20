@@ -701,6 +701,15 @@ TABLE_MAP = {
         'upsert_strategy': 'do_nothing',
         'current_touch_updated_at': True,
     },
+    'openaq': {
+        # OpenAQ v3 多國空品測站 — gis-platform migration 561
+        # 測站 metadata 由 collector 呼叫 writer._upsert_openaq_locations() 寫 live.openaq_locations（有變才 UPDATE）
+        'history': 'live.openaq_measurements',
+        'columns': ['observed_at', 'sensor_id', 'location_id', 'parameter', 'units', 'value', 'collected_at'],
+        'upsert_key': 'observed_at,sensor_id',
+        'upsert_strategy': 'do_nothing',
+        'upstream_time_col': 'observed_at',
+    },
     'nusc_gamma_radiation': {
         # 核安會全國環境輻射 datagov 119233 — gis-platform migration 419
         'history': 'live.nusc_gamma_measurements',
