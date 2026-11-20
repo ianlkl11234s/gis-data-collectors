@@ -44,7 +44,6 @@ def _collector(monkeypatch, routes, countries="PH"):
     c._now = lambda: NOW
     c._last_call = 0.0
     c.calls = 0
-    c._polled_last = {}
     c.supabase_writer = MagicMock()
     c.requested = []
 
@@ -108,15 +107,17 @@ def test_collect_polls_only_active_and_drops_stale_latest(monkeypatch):
     assert len(result["stations"]) == 3
 
 
-def test_second_run_skips_unchanged_locations(monkeypatch):
+def test_second_run_polls_again_and_db_dedups(monkeypatch):
+    """/locations 的 datetimeLast 會落後 /latest，所以每輪都打 /latest；重複值交給 DB DO NOTHING。"""
     routes = _routes()
     routes["/locations"] = [_Resp(_load("locations_ph_sample.json")), _Resp(_load("locations_ph_sample.json"))]
+    routes["/locations/2812740/latest"] = [_Resp(_load("latest_2812740.json"))] * 2
+    routes["/locations/2879671/latest"] = [_Resp(_load("latest_2879671.json"))] * 2
     c = _collector(monkeypatch, routes)
-    c.collect()
+    first = c.collect()
     second = c.collect()
-    assert second["api_calls"] == 1  # 只打 /locations
-    assert second["skipped_unchanged"] == 2
-    assert second["data"] == []
+    assert second["api_calls"] == 3
+    assert second["data"] == first["data"]
 
 
 def test_missing_values_stay_null_not_zero():
@@ -175,6 +176,12 @@ def test_transformer_matches_table_map(monkeypatch):
     assert recs and all(list(r) == cols for r in recs)
     assert TABLE_MAP["openaq"]["upsert_key"] == "observed_at,sensor_id"
     assert TABLE_MAP["openaq"]["upsert_strategy"] == "do_nothing"
+    # write() 的亂碼防護與執行收據（µg/m³ 不可被誤判；upstream_max_at 取 observed_at 最大值）
+    from storage.supabase_writer import reject_mojibake_records
+    from storage import run_receipt
+    assert len(reject_mojibake_records("openaq", recs)) == len(recs)
+    info = run_receipt.run_info(result, recs, TABLE_MAP["openaq"]["upstream_time_col"], (len(recs), "dedup"))
+    assert info["upstream_max_at"] == datetime(2026, 11, 20, 6, 0, tzinfo=timezone.utc)
 
 
 def test_upsert_locations_sql_only_updates_changed_rows(monkeypatch):

@@ -6,8 +6,10 @@ OpenAQ v3 空品測站收集器（菲律賓 PH C098 起，國家清單可擴充�
 
 每輪呼叫：
   1. 每個國家 1 次 `GET /locations?iso=XX&limit=1000`（測站 metadata、授權、sensors、datetimeLast）
-  2. 對「datetimeLast 比上次看到的新、且在 OPENAQ_MAX_AGE_HOURS 內」的測站各 1 次
+  2. 對 datetimeLast 在 OPENAQ_MAX_AGE_HOURS 內的測站，每輪各 1 次
      `GET /locations/{id}/latest`（回應只有 sensorsId／value／datetime，參數與單位由 1. 的 sensors 對回）
+     不用「datetimeLast 沒前進就跳過」：2026-11-20 實測 /locations 的 datetimeLast 落後 /latest
+     （同一時刻 AirGradient 站 /locations 仍是 06:00Z、/latest 已有 07:00Z），跳過會漏掉整點值。
   `/parameters/{id}/latest` 不支援國家篩選（2026-11-20 實測 iso、countries_id 都被忽略、回全球 2.1 萬筆），不用。
   PH 實測：116 站、近 7 天有更新 85 站 → 每小時約 86 次呼叫。呼叫間隔至少 OPENAQ_MIN_INTERVAL_SEC 秒。
 
@@ -175,8 +177,6 @@ class OpenAQCollector(BaseCollector):
         self._now = now
         self._last_call = 0.0
         self.calls = 0
-        # location_id → 上次成功抓 /latest 時看到的 datetimeLast（沒前進就不打）
-        self._polled_last: dict[int, str] = {}
         self._session = requests.Session()
         self._session.headers.update({
             "User-Agent": "GIS-DataCollectors/1.0 (openaq)",
@@ -239,15 +239,12 @@ class OpenAQCollector(BaseCollector):
                     stations.append(st)
 
         rows: list[dict] = []
-        polled = skipped_unchanged = skipped_inactive = failed = 0
+        polled = skipped_inactive = failed = 0
         stale_dropped = unknown_sensor = 0
         for st in stations:
             last = _parse_ts(st["datetime_last"])
             if last is None or last < cutoff:
                 skipped_inactive += 1
-                continue
-            if self._polled_last.get(st["location_id"]) == st["datetime_last"]:
-                skipped_unchanged += 1
                 continue
             try:
                 body = self._get(f"/locations/{st['location_id']}/latest")
@@ -260,7 +257,6 @@ class OpenAQCollector(BaseCollector):
             rows.extend(r)
             stale_dropped += s
             unknown_sensor += u
-            self._polled_last[st["location_id"]] = st["datetime_last"]
 
         if failed and polled == 0:
             raise RuntimeError(f"OpenAQ /latest 全部失敗（{failed} 站）")
@@ -274,7 +270,7 @@ class OpenAQCollector(BaseCollector):
 
         low_cost = sum(1 for s in stations if s.get("is_monitor") is False)
         print(f"[{self.name}]   ✓ {len(stations)} 站（低價感測器 {low_cost}），"
-              f"打 latest {polled} 站、沒變略過 {skipped_unchanged}、停更 {skipped_inactive}、失敗 {failed}；"
+              f"打 latest {polled} 站、停更略過 {skipped_inactive}、失敗 {failed}；"
               f"{len(rows)} 筆量測（過舊丟棄 {stale_dropped}），API {self.calls} 次")
 
         return {
@@ -283,7 +279,6 @@ class OpenAQCollector(BaseCollector):
             "total_locations": len(stations),
             "low_cost_locations": low_cost,
             "polled_locations": polled,
-            "skipped_unchanged": skipped_unchanged,
             "skipped_inactive": skipped_inactive,
             "failed_locations": failed,
             "stale_readings_dropped": stale_dropped,
