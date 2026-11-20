@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import requests
+from shapely.geometry import MultiPolygon, shape  # import 失敗要大聲失敗，不可讓每個多邊形默默變 NULL
 
 import config
 from collectors.base import BaseCollector
@@ -125,7 +126,6 @@ def _to_multipolygon_ewkt(geometry) -> Optional[str]:
     if not isinstance(geometry, dict) or geometry.get("type") not in ("Polygon", "MultiPolygon"):
         return None
     try:
-        from shapely.geometry import MultiPolygon, shape
         g = shape(geometry)
         if g.is_empty:
             return None
@@ -286,14 +286,28 @@ class MetofficeWarningsCollector(BaseCollector):
                 else:
                     rows.append(r)
 
+        raw: dict = {"feed": feed, "issued": None, "updated": {}}
         if issued_changed:
             feats = self._features(feed["related_href"])
             calls += 1
             issued_count = len(feats)
+            raw["issued"] = feats
             take(feats, "issued", _uuid_from_href(feed["related_href"]))
+        entry_failed = 0
         for e in new_entries:
-            take(self._features(e["href"]), "updated", _uuid_from_href(e["href"]))
             calls += 1
+            try:
+                feats = self._features(e["href"])
+            except requests.HTTPError as err:
+                # updated 連結只留 24 小時；404 代表已過期，記成看過、不再重試。其他錯誤下輪再試。
+                entry_failed += 1
+                status = getattr(getattr(err, "response", None), "status_code", None)
+                print(f"[{self.name}] ⚠ updated entry {e['id']} 抓取失敗（HTTP {status}）")
+                if status == 404:
+                    seen_entries[e["id"]] = collected_at
+                continue
+            raw["updated"][e["id"]] = feats
+            take(feats, "updated", _uuid_from_href(e["href"]))
             seen_entries[e["id"]] = collected_at  # 看到的時間（不是 entry 的 updated）
 
         # 同一版本在 issued 與 updated 都出現時只留一列；已寫過的版本不再送
@@ -335,9 +349,10 @@ class MetofficeWarningsCollector(BaseCollector):
             "new_entries": len(new_entries),
             "new_versions": len(data),
             "skipped_features": skipped,
+            "failed_entries": entry_failed,
             "invalid_geometry": bad_geom,
             "api_calls": calls,
             "collected_at": collected_at,
-            # 完整 feed 摘要只進本地 JSON → 每日歸檔 S3
-            "raw_payload": {"feed": feed},
+            # 上游原始 FeatureCollection（v1.1 欄位未驗證，S3 才是正本）只進本地 JSON → 每日歸檔 S3
+            "raw_payload": raw,
         }

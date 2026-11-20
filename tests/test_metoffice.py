@@ -41,7 +41,7 @@ class _Resp:
     def raise_for_status(self):
         if self.status_code >= 400:
             import requests
-            raise requests.HTTPError(str(self.status_code))
+            raise requests.HTTPError(str(self.status_code), response=self)
 
 
 # ───────────────────────── warnings ─────────────────────────
@@ -379,3 +379,64 @@ def test_grid_file_is_within_limits():
     assert 300 <= len(pts) <= 600
     assert all(-8.3 <= lon <= 1.9 and 49.8 <= lat <= 61.0 for lon, lat in pts)
     assert all(round(lon, 2) == lon and round(lat, 2) == lat for lon, lat in pts)
+
+
+def test_expired_updated_entry_404_does_not_block_issued(monkeypatch, tmp_path):
+    c = _warn(monkeypatch, tmp_path, {
+        mw.FEED_URL: _Resp(text=_text("feed_doc_example_with_entry.xml")),
+        ISSUED_URL: _Resp(_load("issued_doc_example_v1.0.json")),
+        UPDATED_URL: _Resp({}, status=404),
+    })
+    res = c.collect()
+    assert [r["warning_status"] for r in res["data"]] == ["ISSUED"] and res["failed_entries"] == 1
+    assert res["raw_payload"]["issued"][0]["properties"]["warningId"]  # 原始 FeatureCollection 進 S3 歸檔
+    _commit(c)
+    assert c.collect().get("no_change") is True  # 404 的 entry 記成看過、不再重試
+
+
+def test_warning_record_serializes_for_bulk_insert(monkeypatch, tmp_path):
+    from storage import bulk
+    c = _warn(monkeypatch, tmp_path, {
+        mw.FEED_URL: _Resp(text=_text("feed_doc_example_with_entry.xml")),
+        ISSUED_URL: _Resp(_load("issued_doc_example_v1.0.json")),
+        UPDATED_URL: _Resp(_load("updated_doc_example_cancelled_v1.0.json")),
+    })
+    cols = TABLE_MAP["metoffice_warnings"]["columns"]
+    types = {c_: ("text", "text") for c_ in cols}
+    types.update({"modified_at": ("timestamp with time zone", "timestamptz"),
+                  "valid_from": ("timestamp with time zone", "timestamptz"),
+                  "valid_to": ("timestamp with time zone", "timestamptz"),
+                  "issued_at": ("timestamp with time zone", "timestamptz"),
+                  "feed_updated_at": ("timestamp with time zone", "timestamptz"),
+                  "collected_at": ("timestamp with time zone", "timestamptz"),
+                  "weather_types": ("text[]", "_text"), "region_codes": ("text[]", "_text"),
+                  "warning_likelihood": ("smallint", "int2"), "warning_impact": ("smallint", "int2"),
+                  "affected_areas": ("jsonb", "jsonb"), "properties": ("jsonb", "jsonb"),
+                  "geom": ("geometry(MultiPolygon,4326)", "geometry")})
+    sql = (f"INSERT INTO live.metoffice_warning_events ({', '.join(cols)}) VALUES %s "
+           f"ON CONFLICT ({TABLE_MAP['metoffice_warnings']['upsert_key'].replace(',', ', ')}) DO NOTHING")
+    fixed, spec = bulk.build_insert_sql(sql, types, None)
+    row = c.collect()["data"][0]
+    payload = json.loads(bulk.serialize_rows([tuple(row.get(k) for k in cols)], spec))[0]
+    by_col = {cols[i]: payload[f"c{i}"] for i in range(len(cols))}
+    assert by_col["weather_types"] == ["THUNDERSTORM"] and by_col["region_codes"] == ["HE", "OS"]
+    assert isinstance(by_col["properties"], dict) and isinstance(by_col["affected_areas"], list)
+    assert by_col["geom"].startswith("SRID=4326;MULTIPOLYGON")
+    assert "json_to_recordset" in fixed and "DO NOTHING" in fixed
+
+
+def test_quota_rereads_file_written_by_another_run(monkeypatch, tmp_path):
+    routes = {"*": _Resp([])}
+    c = _obs(monkeypatch, tmp_path, routes, cap=5, grid=[(-1.0 - i * 0.01, 52.0) for i in range(10)])
+    c._quota = c._load_quota("2026-11-20", False)
+    c._save_json(c.quota_path, {"day": "2026-11-20", "calls": 4})  # 另一個行程（手動跑）已用 4 次
+    c._spend()
+    with pytest.raises(mo.QuotaExhausted):
+        c._spend()
+    assert json.loads(c.quota_path.read_text())["calls"] == 5
+
+
+def test_rate_limited_stops_run(monkeypatch, tmp_path):
+    c = _obs(monkeypatch, tmp_path, {"*": _Resp({}, status=429)})
+    res = c.collect()
+    assert len(c.requested) == 1 and res["quota_exhausted"] is True

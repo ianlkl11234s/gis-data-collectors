@@ -35,6 +35,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import math
@@ -251,16 +252,30 @@ class MetofficeObsCollector(BaseCollector):
         return q
 
     def _spend(self) -> None:
-        """呼叫前先記一次；超過上限或寫檔失敗就不打。"""
-        q = self._quota
-        if q["calls"] >= self.daily_cap:
-            raise QuotaExhausted(f"今日額度 {q['calls']}/{self.daily_cap} 已用完")
-        q["calls"] += 1
+        """呼叫前先記一次；超過上限或寫檔失敗就不打。
+
+        排程器本身 skip-if-running 不會疊跑；仍以檔案鎖＋重讀額度檔，讓容器內手動跑一輪時也不會少算。
+        """
         try:
-            self._save_json(self.quota_path, q)
+            self.quota_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.quota_path.with_suffix(".lock"), "w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                on_disk = self._read_json(self.quota_path) or {}
+                q = self._quota
+                if on_disk.get("day") == q["day"] and isinstance(on_disk.get("calls"), int):
+                    q["calls"] = max(q["calls"], on_disk["calls"])
+                if q["calls"] >= self.daily_cap:
+                    raise QuotaExhausted(f"今日額度 {q['calls']}/{self.daily_cap} 已用完")
+                q["calls"] += 1
+                try:
+                    self._save_json(self.quota_path, q)
+                except OSError:
+                    q["calls"] -= 1
+                    raise
+        except QuotaExhausted:
+            raise
         except OSError as e:
-            q["calls"] -= 1
-            raise QuotaExhausted(f"額度檔寫入失敗，停止呼叫（fail closed）: {e}") from e
+            raise QuotaExhausted(f"額度檔讀寫失敗，停止呼叫（fail closed）: {e}") from e
         self.calls += 1
 
     def _remaining(self) -> int:
@@ -274,6 +289,9 @@ class MetofficeObsCollector(BaseCollector):
             self._sleep(wait)
         self._last_call = time.monotonic()
         resp = self._session.get(f"{API_BASE}{path}", params=params, timeout=config.REQUEST_TIMEOUT)
+        if resp.status_code == 429:
+            # 被限流就整輪停，不再把額度燒在注定失敗的呼叫上
+            raise QuotaExhausted("上游回 429（限流／額度用完），本輪停止")
         resp.raise_for_status()
         return resp.json()
 
