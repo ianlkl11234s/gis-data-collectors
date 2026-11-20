@@ -2536,26 +2536,23 @@ class SupabaseWriter:
                 if c in ('sensors', 'licenses') and v is not None:
                     v = json.dumps(v, ensure_ascii=False)
                 row.append(v)
+            # geom 由 lon/lat 推出（缺座標 → NULL，不合成）；EWKT 文字照其他測站表寫法
+            lon, lat = r.get('lon'), r.get('lat')
+            row.append(f'SRID=4326;POINT({lon} {lat})' if lon is not None and lat is not None else None)
             values.append(tuple(row))
-        update_cols = [c for c in cols if c != 'location_id']
-        # geom 由 lon/lat 推出（缺座標 → NULL，不合成）；updated_at＝最後一次異動
+        update_cols = [c for c in cols if c != 'location_id'] + ['geom']
         update_set = ', '.join(f"{c} = EXCLUDED.{c}" for c in update_cols)
-        # VALUES 子查詢的型別由第一列推定（NULL／字串會變 text），所以每欄明寫轉型
-        casts = {'location_id': 'bigint', 'provider_id': 'integer', 'is_monitor': 'boolean', 'is_mobile': 'boolean',
-                 'instruments': 'text[]', 'parameters': 'text[]', 'sensors': 'jsonb', 'licenses': 'jsonb',
-                 'lon': 'float8', 'lat': 'float8', 'datetime_first': 'timestamptz', 'datetime_last': 'timestamptz'}
-        template = '(' + ', '.join(f"%s::{casts.get(c, 'text')}" for c in cols) + ')'
+        # storage.bulk 只接受 INSERT INTO <t> [AS a] (<cols>) VALUES %s <tail>（欄位型別取自表的 catalog），
+        # 不可寫 INSERT ... SELECT ... FROM (VALUES %s)（2026-11-20 上線首輪因此測站全數寫入失敗）。
+        # updated_at＝最後一次異動。
         sql = (
-            f"INSERT INTO live.openaq_locations AS s ({','.join(cols)}, geom) "
-            f"SELECT v.*, CASE WHEN v.lon IS NOT NULL AND v.lat IS NOT NULL "
-            f"THEN ST_SetSRID(ST_MakePoint(v.lon, v.lat), 4326) END "
-            f"FROM (VALUES %s) AS v({','.join(cols)}) "
-            f"ON CONFLICT (location_id) DO UPDATE SET {update_set}, geom = EXCLUDED.geom, updated_at = now() "
+            f"INSERT INTO live.openaq_locations AS s ({','.join(cols)}, geom) VALUES %s "
+            f"ON CONFLICT (location_id) DO UPDATE SET {update_set}, updated_at = now() "
             f"WHERE {_station_changed_cond(update_cols)}"
         )
         with self._pool.borrow() as conn:
             with self._txn(conn) as cur:
-                execute_values(cur, sql, values, template=template, page_size=500)
+                execute_values(cur, sql, values, page_size=500)
 
     def _transform_water_effluent_monitoring(self, result: dict, ts: datetime) -> list[dict]:
         """放流水：collector 已產出 TABLE_MAP 同名欄位（已去重、升冪）。"""
