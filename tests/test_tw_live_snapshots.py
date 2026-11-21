@@ -187,3 +187,14 @@ def test_nav_collector_skips_unchanged_rounds():
     r1, r2 = c.collect(), c.collect()
     assert "data" in r1 and "data" not in r2  # 沒變的輪次不存 9 MB 原檔
     assert c._r2.puts.count("live/tw/nav_notices/latest.geojson") == 1
+
+
+def test_nav_masks_contact_names():
+    src = {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [120.0, 23.0]},
+           "properties": {"code": "n1", "shape_name": "A", "name": "x", "noticekind": "礙航公告", "startdate": "2026/01/01 00:00:00",
+                          "enddate": "", "lifetime": "永久", "shape": "Point",
+                          "info": "宏華營造股份有限公司 陳宏菖先生(07-8711188)、李小姐 04-26569811#20。三、聯絡人：辛金山 07-5711369"}}]}
+    latest, _, st = T.nav_normalise(src, NOW)
+    info = latest["features"][0]["properties"]["info"]
+    assert "先生" not in info and "小姐" not in info and "辛金山" not in info and "宏華營造" in info
+    assert st["info_name_masked_features"] == 1

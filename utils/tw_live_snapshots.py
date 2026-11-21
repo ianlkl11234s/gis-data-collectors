@@ -78,6 +78,7 @@ def dengue_normalise(files: dict[str, dict], snapshot_date: str, retrieved_at: s
 
 # ─── nav notices ─────────────────────────────────────────────────────────────
 NAV_URL = "https://aton.motcmpb.gov.tw/navmark/get_notice_opendata/"
+_NAME = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]{1,3}(?:先生|小姐|女士)|(?<=聯絡人[：:])\s*[\u3400-\u9fff\uf900-\ufaff]{2,3}(?=[\s\d(（#]|$)")
 _PHONE = re.compile(r"(?:\(0\d{1,2}\)\s?|0\d{1,2}-?)\d{3,4}-?\d{3,4}(?:\s?(?:轉|#|分機)\s?\d{1,5})?|09\d{2}-?\d{3}-?\d{3}")
 _NM = 1852.0
 _EARTH_R = 6371008.8
@@ -141,7 +142,7 @@ def nav_normalise(src: dict, now: datetime) -> tuple[dict, dict, dict]:
             unlocated.setdefault(p["code"], p.get("noticekind"))
             continue
         groups[(p["code"], p["shape_name"], json.dumps(f["geometry"], sort_keys=True))].append(f)
-    feats, masked = [], 0
+    feats, masked, name_masked = [], 0, 0
     for (code, shape_name, _), fs in groups.items():
         p, geom = fs[0]["properties"], fs[0]["geometry"]
         # 來源 shape_start_times／shape_end_times 恆對調（2026-11-21 實測 721／721）→ end 欄是起、start 欄是迄
@@ -151,7 +152,9 @@ def nav_normalise(src: dict, now: datetime) -> tuple[dict, dict, dict]:
         info = p.get("info") or None
         if info:
             info, n = _PHONE.subn("（電話略）", info)
+            info, k = _NAME.subn("（姓名略）", info)  # 承辦／聯絡人姓名不公開
             masked += n > 0
+            name_masked += k > 0
         src_shape = p.get("shape") or geom["type"]
         radius, unit = _num(p.get("radius")), (p.get("unit") or "").strip() or None
         derived = False
@@ -185,7 +188,7 @@ def nav_normalise(src: dict, now: datetime) -> tuple[dict, dict, dict]:
               "state": dict(Counter(f["properties"]["state"] for f in feats)),
               "active_by_kind": dict(Counter(f["properties"]["notice_kind"] for f in active)),
               "unlocated_notices": len(unlocated), "suspect_coords_excluded": sorted(suspect),
-              "info_phone_masked_features": masked,
+              "info_phone_masked_features": masked, "info_name_masked_features": name_masked,
               "max_issued_at": max((f["properties"]["issued_at"] or "") for f in feats) or None}
     return ({"type": "FeatureCollection", "name": "motcmpb_nav_notices_latest", "features": active},
             {"type": "FeatureCollection", "name": "motcmpb_nav_notices_all", "features": feats}, status)

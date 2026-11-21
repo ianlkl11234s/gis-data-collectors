@@ -54,11 +54,13 @@ class CwaMarineAlertsCollector(BaseCollector):
             raise RuntimeError(f"cwa_marine_alerts: 0 located sites (unlocated={len(status['unlocated'])})")
         h = content_hash(fc)
         published = False
-        if self._r2 is not None and h != self._last_hash:
-            self._r2.put_json(R2_KEY, fc, R2_CACHE_CONTROL)
+        if self._r2 is not None:
+            if h != self._last_hash:
+                self._r2.put_json(R2_KEY, fc, R2_CACHE_CONTROL)
+                published = True
+            # status.json 每輪都寫（KB 級）：前端靠 retrieved_at 分辨「沒變」與「收集器停了」
             self._r2.put_json(R2_STATUS_KEY, {**status, "retrieved_at": retrieved_at, "content_sha256": h}, R2_CACHE_CONTROL)
             self._last_hash = h
-            published = True
         return {
             "data": fc["features"],
             "feature_count": status["feature_count"], "unlocated": status["unlocated"],

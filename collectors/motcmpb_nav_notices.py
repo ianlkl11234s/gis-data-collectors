@@ -50,12 +50,15 @@ class MotcmpbNavNoticesCollector(BaseCollector):
         result = {"feature_count": status["active_features"], "active_notices": status["active_notices"],
                   "unlocated_notices": status["unlocated_notices"], "suspect_coords": len(status["suspect_coords_excluded"]),
                   "_upstream_max_at": status["max_issued_at"], "r2_enabled": self._r2 is not None, "r2_published": False}
-        if h == self._last_hash:
-            return result  # 沒變：不存檔、不重寫 R2（成功心跳由 base 補）
+        changed = h != self._last_hash
         if self._r2 is not None:
-            self._r2.put_json(R2_KEY, latest, R2_CACHE_CONTROL)
-            self._r2.put_json(R2_STATUS_KEY, status, R2_CACHE_CONTROL)
-            result["r2_published"] = True
+            if changed:
+                self._r2.put_json(R2_KEY, latest, R2_CACHE_CONTROL)
+            # status.json 每輪都寫（KB 級）：前端靠 retrieved_at 分辨「沒變」與「收集器停了」
+            self._r2.put_json(R2_STATUS_KEY, {**status, "retrieved_at": now.isoformat(), "content_sha256": h}, R2_CACHE_CONTROL)
+            result["r2_published"] = changed
+        if not changed:
+            return result  # 沒變：不存 9 MB 原檔（成功心跳由 base 補）
         self._last_hash = h
         result["data"] = [{"_type": "source", "geojson": src, "status": status}]
         return result

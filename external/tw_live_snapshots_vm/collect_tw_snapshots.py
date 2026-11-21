@@ -9,8 +9,9 @@ collectors/cdc_dengue_cluster.py、collectors/motcmpb_nav_notices.py；解析邏
   python3 collect_tw_snapshots.py nav      # cron 每小時
 
 本機：/var/lib/tw-live-snapshots/data/<collector>/YYYY/MM/DD/<collector>_HHMM.json（archive_tw_snapshots.py 每日上 S3）。
-  - dengue 每輪都存（KB 級，空檔日也要留：來源只給近兩週，S3 是唯一的歷史正本）。
-  - nav 只在有效布告內容變動時存原檔（約 9 MB），狀態檔 state/nav_last_hash 記上次雜湊。
+  - dengue 每輪都存正規化結果＋原始 23 檔（KB 級，空檔日也要留：來源只給近兩週，S3 是唯一的歷史正本）。
+  - nav 只在有效布告內容變動時存原檔（約 9 MB）；state/nav_saved_hash 記本機存檔、state/nav_r2_hash 記 R2 發布，
+    兩者分開，R2 寫失敗或日後才加金鑰時下一輪會補發。status.json 每輪都寫。
 R2：環境檔有 R2_ACCESS_KEY_ID／R2_SECRET_ACCESS_KEY／R2_ENDPOINT_URL／R2_BUCKET 才寫（站主決定的方案 A）；
     沒有就只存本機與 S3、log 記 r2=skipped（方案 B 由別處鏡射）。
 """
@@ -89,6 +90,16 @@ def write_local(collector: str, now: datetime, payload: dict) -> Path:
     return path
 
 
+def _read_hash(name: str) -> str | None:
+    p = STATE_DIR / f"{name}_hash"
+    return p.read_text().strip() if p.exists() else None
+
+
+def _write_hash(name: str, h: str) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    (STATE_DIR / f"{name}_hash").write_text(h)
+
+
 def run_dengue(s, now):
     files, lm = {}, {}
     for name in T.DENGUE_CITIES + ["all"]:
@@ -99,9 +110,10 @@ def run_dengue(s, now):
     if st["issues"].get("bad_geometry") or st["all_matches_city_union"] is False:
         raise RuntimeError(f"QA failed: {st['issues']} all_match={st['all_matches_city_union']}")
     st["source_last_modified"] = lm
-    path = write_local(NAMES["dengue"], now, {"data": [{"geojson": fc, "status": st}], "row_count": st["feature_count"],
-                                              "collected_at": now.isoformat()})
-    return fc, st, path
+    # 原始 23 檔一起存（KB 級）：S3 是唯一歷史，正規化邏輯日後改了也能重算
+    path = write_local(NAMES["dengue"], now, {"data": [{"geojson": fc, "status": st, "source_files": files}],
+                                              "row_count": st["feature_count"], "collected_at": now.isoformat()})
+    return fc, st, path, None
 
 
 def run_nav(s, now):
@@ -110,14 +122,15 @@ def run_nav(s, now):
     src = r.json()
     latest, _all, st = T.nav_normalise(src, now)
     h = T.content_hash(latest)
-    hp = STATE_DIR / "nav_last_hash"
-    if hp.exists() and hp.read_text().strip() == h:
-        return None, st, None  # 沒變：不存 9 MB、不重寫 R2
-    path = write_local(NAMES["nav"], now, {"data": [{"geojson": src, "status": st}], "row_count": st["active_features"],
-                                           "collected_at": now.isoformat()})
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    hp.write_text(h)
-    return latest, st, path
+    st["content_sha256"] = h
+    # 本機存檔與 R2 各記一份雜湊：R2 寫失敗或日後才加金鑰時，下一輪仍會補發
+    if _read_hash("nav_saved") == h:
+        path = None  # 沒變：不存 9 MB
+    else:
+        path = write_local(NAMES["nav"], now, {"data": [{"geojson": src, "status": st}], "row_count": st["active_features"],
+                                               "collected_at": now.isoformat()})
+        _write_hash("nav_saved", h)
+    return latest, st, path, h
 
 
 def main() -> int:
@@ -127,13 +140,18 @@ def main() -> int:
         logging.error("用法：collect_tw_snapshots.py dengue|nav")
         return 2
     now = datetime.now(T.TPE).replace(microsecond=0)
-    fc, st, path = (run_dengue if which == "dengue" else run_nav)(session(), now)
+    fc, st, path, h = (run_dengue if which == "dengue" else run_nav)(session(), now)
+    st["retrieved_at"] = now.isoformat()
     r2 = r2_client()
-    r2_state = "skipped(no R2 keys)" if r2 is None else "unchanged"
-    if r2 is not None and fc is not None:
-        r2_put(r2, R2_KEYS[which] + "latest.geojson", fc)
-        r2_put(r2, R2_KEYS[which] + "status.json", st)
-        r2_state = "published"
+    r2_state = "skipped(no R2 keys)"
+    if r2 is not None:
+        r2_state = "unchanged"
+        if h is None or _read_hash(f"{which}_r2") != h:
+            r2_put(r2, R2_KEYS[which] + "latest.geojson", fc)
+            if h is not None:
+                _write_hash(f"{which}_r2", h)
+            r2_state = "published"
+        r2_put(r2, R2_KEYS[which] + "status.json", st)  # 每輪都寫：前端靠 retrieved_at 判斷收集器是否還活著
     logging.info(f"{which}: features={st.get('feature_count', st.get('active_features'))} local={path} r2={r2_state}")
     return 0
 
