@@ -294,6 +294,8 @@ class MetofficeWarningsCollector(BaseCollector):
             raw["issued"] = feats
             take(feats, "issued", _uuid_from_href(feed["related_href"]))
         entry_failed = 0
+        entry_hard_failed = 0  # 非 404 的失敗（404＝已過期，不算故障）
+        entry_ok = 0
         for e in new_entries:
             calls += 1
             try:
@@ -305,7 +307,15 @@ class MetofficeWarningsCollector(BaseCollector):
                 print(f"[{self.name}] ⚠ updated entry {e['id']} 抓取失敗（HTTP {status}）")
                 if status == 404:
                     seen_entries[e["id"]] = collected_at
+                else:
+                    entry_hard_failed += 1
                 continue
+            except requests.RequestException as err:
+                entry_failed += 1
+                entry_hard_failed += 1
+                print(f"[{self.name}] ⚠ updated entry {e['id']} 抓取失敗（{type(err).__name__}）")
+                continue
+            entry_ok += 1
             raw["updated"][e["id"]] = feats
             take(feats, "updated", _uuid_from_href(e["href"]))
             seen_entries[e["id"]] = collected_at  # 看到的時間（不是 entry 的 updated）
@@ -342,7 +352,7 @@ class MetofficeWarningsCollector(BaseCollector):
         data = list(fresh.values())
         print(f"[{self.name}]   ✓ issued {issued_count if issued_count is not None else '-'} 筆、"
               f"新 entry {len(new_entries)}；新版本 {len(data)} 列，API {calls} 次")
-        return {
+        result = {
             "data": data,
             "feed_updated": feed["feed_updated"],
             "issued_features": issued_count,
@@ -356,3 +366,7 @@ class MetofficeWarningsCollector(BaseCollector):
             # 上游原始 FeatureCollection（v1.1 欄位未驗證，S3 才是正本）只進本地 JSON → 每日歸檔 S3
             "raw_payload": raw,
         }
+        if entry_hard_failed and not entry_ok and not issued_changed:
+            # 這輪唯一的工作（updated entry）全部抓不到：不能回報成功心跳（取消／過期事件會被默默漏掉）
+            result["_collector_error"] = f"updated entry {entry_hard_failed} 筆全部抓取失敗"
+        return result
