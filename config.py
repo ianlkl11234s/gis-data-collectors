@@ -268,6 +268,10 @@ MARINE_WRITE_LOOKBACK_HOURS = float(os.getenv('MARINE_WRITE_LOOKBACK_HOURS', '3'
 CWA_MARINE_OBSERVATION_MINUTES = tuple(
     int(m) for m in os.getenv('CWA_MARINE_OBSERVATION_MINUTES', '7,22,37,52').split(',') if m.strip()
 )
+# CWA 大潮／長浪：來源約每小時 :50 發布（2026-11-21 實測 Sent 16:50）→ :56 抓
+CWA_MARINE_ALERTS_MINUTES = tuple(
+    int(m) for m in os.getenv('CWA_MARINE_ALERTS_MINUTES', '56').split(',') if m.strip()
+)
 # 連線池：取代舊「一條 conn + RLock」設計，避免單條連線 wedge 連鎖卡住所有 collector
 SUPABASE_POOL_MIN = int(os.getenv('SUPABASE_POOL_MIN', '2'))                       # pool 最小連線數
 # 預設 15；主站（Zeabur data-collectors-gomn）env 覆寫為 30。2026-07-05：db.py borrow()
@@ -392,6 +396,9 @@ _COLLECTOR_TOGGLES = (
     ('LAUNCH',                       False, 15),  # LL2 免費 tier ~15 calls/hr，15min 安全（4 calls/hr）
     ('CWA_SATELLITE',                True,  10),
     ('CWA_MARINE_OBSERVATION',       False, 15),  # O-B0076 + O-B0075 rolling 48h; CWA 官方整合入口
+    ('CWA_MARINE_ALERTS',            False, 60),  # B8 N16：O-B0069 大潮＋O-B0070 長浪警戒（公開 S3、免金鑰）→ R2 live/tw/cwa_tide_swell_alerts/，不寫 DB
+    ('CDC_DENGUE_CLUSTER',           False, 1440), # B8 N02：疾管署登革熱聚集區（擋境外 IP，正式跑 HiCloud VM；pulse-host 維持 false）→ R2 live/tw/dengue_cluster/
+    ('MOTCMPB_NAV_NOTICES',          False, 60),  # B8 N03：航港局航船布告（擋境外 IP，正式跑 HiCloud VM；pulse-host 維持 false）→ R2 live/tw/nav_notices/
     ('ISOHE_PORT_MARINE',            False, 10),  # Taiwan IP required; production runs through external HiCloud mirror
     ('NCDR_ALERTS',                  True,  15),
     ('CLOUDFLARE_RADAR',             False, 5),   # repo safe default false；production env 自 2026-08-31 啟用 5min

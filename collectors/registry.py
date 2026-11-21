@@ -18,6 +18,9 @@ from .bus import BusCollector
 from .bus_intercity import BusIntercityCollector
 from .cwa_satellite import CWASatelliteCollector
 from .cwa_marine_observation import CwaMarineObservationCollector
+from .cwa_marine_alerts import CwaMarineAlertsCollector
+from .cdc_dengue_cluster import CdcDengueClusterCollector
+from .motcmpb_nav_notices import MotcmpbNavNoticesCollector
 from .isohe_port_marine import IsohePortMarineCollector
 from .earthquake import EarthquakeCollector
 from .earthquake_catalog import EarthquakeCatalogCollector
@@ -160,6 +163,9 @@ COLLECTOR_REGISTRY: Tuple[CollectorEntry, ...] = (
     CollectorEntry(LaunchCollector, "Launch 收集器", "LAUNCH"),
     CollectorEntry(CWASatelliteCollector, "CWA Satellite 影像收集器", "CWA_SATELLITE", ("CWA_API_KEY",)),
     CollectorEntry(CwaMarineObservationCollector, "CWA 海洋浮標/潮位觀測收集器", "CWA_MARINE_OBSERVATION", ("CWA_API_KEY",)),
+    CollectorEntry(CwaMarineAlertsCollector, "CWA 大潮／長浪警戒收集器", "CWA_MARINE_ALERTS"),
+    CollectorEntry(CdcDengueClusterCollector, "疾管署登革熱聚集區收集器（VM）", "CDC_DENGUE_CLUSTER"),
+    CollectorEntry(MotcmpbNavNoticesCollector, "航港局航船布告收集器（VM）", "MOTCMPB_NAV_NOTICES"),
     CollectorEntry(IsohePortMarineCollector, "ISOHE 商港海氣象收集器（HiCloud）", "ISOHE_PORT_MARINE"),
     CollectorEntry(NCDRAlertsCollector, "NCDR Alerts 收集器", "NCDR_ALERTS"),
     # Token absence is written as a source_run config_missing ledger instead of
