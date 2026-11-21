@@ -110,6 +110,14 @@ NCDR 災害示警（CAP 總和 feed）。
 - 寫入：`live.cwa_uv_daily`。`observed_at` 是觀測日 00:00，落後 24–48 小時屬正常。
 - 守門：`UVIndex = -99` 是缺值，寫成 `uv_index NULL`、`uv_raw` 保留原值，不可當 0。
 
+### cwa_marine_alerts
+大潮監測（O-B0069-001，20 點）＋長浪監測（O-B0070-001，20 浮標）的警戒狀態（2026-11-21 B8 草稿，未部署）。
+
+- 頻率／位置：每小時 :56（`CWA_MARINE_ALERTS_MINUTES`；來源約 :50 發布、內容是過去 8 小時視窗），pulse-host。走氣象署公開 S3 `cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/`，不需金鑰，美國 IP 可連。
+- 寫入：不寫 DB。R2 `live/tw/cwa_tide_swell_alerts/latest.geojson`＋`status.json`（`max-age=300`，內容沒變不重寫）；本機 JSON 每日歸檔 S3 `cwa_marine_alerts/archives/`。
+- 守門：兩份來源只有監測點名稱，座標依 O-B0076 名稱對照（`utils/tw_live_snapshots.py`），對不上（臺東、嘉義、雲林）不畫；沒看過的警戒字串記 `unknown_status`、`alert_level` 留空。
+- 已知坑：O-B0079-001（日平均海溫）停在 2024-03-04、`Sent` 是未替換的 `{sent}`，不要接。
+
 ## 收這類資料要注意
 
 - 0 筆常常是合法結果（沒地震、沒落雷）。判斷健康要看「有沒有跑／有沒有解析成功／有沒有新資料」三件事，並盡量有第二來源交叉驗證（落雷三源就是例子）。見 [operations.md](../operations.md)。
