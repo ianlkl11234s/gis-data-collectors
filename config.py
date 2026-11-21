@@ -268,7 +268,7 @@ MARINE_WRITE_LOOKBACK_HOURS = float(os.getenv('MARINE_WRITE_LOOKBACK_HOURS', '3'
 CWA_MARINE_OBSERVATION_MINUTES = tuple(
     int(m) for m in os.getenv('CWA_MARINE_OBSERVATION_MINUTES', '7,22,37,52').split(',') if m.strip()
 )
-# CWA 大潮／長浪：來源約每小時 :50 發布（2026-11-21 實測 Sent 16:50）→ :56 抓
+# CWA 大潮／長浪：data.gov.tw 標每 1 小時；2026-11-21 觀察到 16:50、17:10 各更新一次（過去 8 小時視窗）→ 每小時 :56 抓即可
 CWA_MARINE_ALERTS_MINUTES = tuple(
     int(m) for m in os.getenv('CWA_MARINE_ALERTS_MINUTES', '56').split(',') if m.strip()
 )

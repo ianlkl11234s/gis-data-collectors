@@ -2,7 +2,7 @@
 
 B8 N16（2026-11-21）。來源走氣象署公開 S3（不需 CWA_API_KEY，美國 IP 實測 200 → 放 pulse-host）：
   https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/<DataID>.json
-每小時更新，內容是「過去 8 小時」各監測點最大潮高／浪高與警戒字串；兩份都沒有站號與座標，座標依 O-B0076-001
+data.gov.tw 標每 1 小時（實測 16:50、17:10 都有更新），內容是「過去 8 小時」各監測點最大潮高／浪高與警戒字串；兩份都沒有站號與座標，座標依 O-B0076-001
 名稱對照（utils/tw_live_snapshots.py，對不上的不畫）。
 
 放哪（ADR-0026 §5.1 Q2＝否）：每個人看都一樣的最新快照 → R2 `live/tw/cwa_tide_swell_alerts/latest.geojson`
