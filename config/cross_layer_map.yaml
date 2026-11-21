@@ -1359,8 +1359,8 @@ fire119:
     - live.fire119_incidents
     - live.pbs_road_events
   s3_prefixes:
-    - {prefix: fire119/archives/, expected_daily: true}
-    - {prefix: pbs_road_events/archives/, expected_daily: true}
+    - {prefix: fire119/archives/, expected_daily: true, archive_lag_days: 2}  # archive_fire119.py 只歸檔 today-2 以前（ARCHIVE_RETENTION_DAYS=2）
+    - {prefix: pbs_road_events/archives/, expected_daily: true, archive_lag_days: 2}  # archive_fire119.py 只歸檔 today-2 以前（ARCHIVE_RETENTION_DAYS=2）
   critical: false
   notes: >-
     VM 專用（external/fire119_vm/），主 repo 沒有 collector，列在 sync_cross_layer_map.NON_COLLECTOR_TASKS。
