@@ -154,7 +154,8 @@ def test_amedas_collect_backfills_missing_hour(monkeypatch, tmp_path):
     assert "amedas/data/map/20260101004000.json" in calls
     assert "amedas/data/map/20260101000000.json" in calls
     assert out["stale"] is True  # latest_time 遠早於現在 → stale
-    # 同一整點第二輪不再補抓
+    # 同一整點第二輪不再補抓（_hours_done 由成功的 run() 採用 _pending_hours；此處模擬）
+    c._hours_done = c._pending_hours
     calls.clear()
     out2 = c.collect()
     assert out2["hourly_count"] == 0

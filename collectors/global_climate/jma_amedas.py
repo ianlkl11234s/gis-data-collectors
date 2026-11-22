@@ -154,6 +154,7 @@ class JmaAmedasCollector(BaseCollector):
         self._stations: dict[str, dict] = {}
         self._stations_loaded_at: Optional[datetime] = None
         self._hours_done: set[str] = set()
+        self._pending_hours: Optional[set[str]] = None  # 本輪 collect 的整點完成集，run() 成功才併入 _hours_done
         self._s3 = None
         self.parquet_dir = Path(config.LOCAL_DATA_DIR) / "state" / "jma_amedas_parquet"
         self.local_base = Path(config.LOCAL_DATA_DIR) / "jma_amedas"
@@ -170,6 +171,18 @@ class JmaAmedasCollector(BaseCollector):
                     raise
                 print(f"[{self.name}] ⚠ 站表更新失敗，沿用舊表: {e}")
         return self._stations
+
+    def require_db_write(self) -> bool:
+        # 整點 observation 只進 DB：寫入失敗不可被當成功，否則 _hours_done 前進後該整點永遠不補
+        return True
+
+    def run(self) -> dict:
+        self._pending_hours = None
+        stats = super().run()
+        if self._pending_hours is not None and not stats.get("error"):
+            self._hours_done = self._pending_hours
+        self._pending_hours = None
+        return stats
 
     def collect(self) -> dict:
         collected_at = datetime.now(TAIPEI_TZ).isoformat()
@@ -192,11 +205,12 @@ class JmaAmedasCollector(BaseCollector):
         hour = latest.replace(minute=0, second=0, microsecond=0)
         hour_key = hour.isoformat()
         hourly_count = 0
+        hours_done = set(self._hours_done)  # 工作副本；DB 寫入成功後才由 run() 採用
         if latest.minute == 0:
             records.extend({**r, "_type": "observation"} for r in rows)
             hourly_count = len(rows)
-            self._hours_done.add(hour_key)
-        elif hour_key not in self._hours_done:
+            hours_done.add(hour_key)
+        elif hour_key not in hours_done:
             try:
                 hdata = fetch(self._session, URL_MAP.format(stamp=_stamp(hour)))
                 hrows = parse_amedas_map(hdata, stations, observed_at=hour_key,
@@ -204,14 +218,15 @@ class JmaAmedasCollector(BaseCollector):
                 records.extend({**r, "_type": "observation"} for r in hrows)
                 hourly_count = len(hrows)
                 if hrows:
-                    self._hours_done.add(hour_key)
+                    hours_done.add(hour_key)
                 else:  # 空 map 視為缺資料，不標完成，下輪重試
                     print(f"[{self.name}] ⚠ 整點 {hour_key} 回傳 0 站（下輪再試）")
             except JmaFetchError as e:
                 print(f"[{self.name}] ⚠ 補抓整點 {hour_key} 失敗（下輪再試）: {e}")
         # 只留最近 48 個整點，避免 set 無限長
-        if len(self._hours_done) > 48:
-            self._hours_done = set(sorted(self._hours_done)[-48:])
+        if len(hours_done) > 48:
+            hours_done = set(sorted(hours_done)[-48:])
+        self._pending_hours = hours_done
 
         lag = age_minutes(latest)
         stale = lag is not None and lag > STALE_MINUTES
