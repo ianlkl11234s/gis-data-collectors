@@ -540,3 +540,24 @@ def test_discovery_retries_do_not_consume_reserved_quota(monkeypatch, tmp_path):
         c.collect()
     assert len(c.requested) == 1  # 3 - 2 保留 = 只有 1 次可用於探站，不重試
     assert json.loads(c.quota_path.read_text())["calls"] == 1
+
+
+def test_retry_blocked_by_quota_preserves_request_failure(monkeypatch, tmp_path):
+    """D2：5xx 用掉最後一次額度 → 保留失敗（首請求時 raise），不得靜默 no_work 成功。"""
+    c = _obs(monkeypatch, tmp_path, {"*": _Resp({}, status=503)}, cap=1, now=NOW.replace(hour=23),
+             db_stations=_late_known(1))
+    c._save_json(c.quota_path, {"day": "2026-11-20", "calls": 0})
+    with pytest.raises(RuntimeError, match="全部失敗"):
+        c.collect()
+    assert len(c.requested) == 1
+
+
+def test_retry_blocked_by_concurrent_quota_use_preserves_failure(monkeypatch, tmp_path):
+    """D2：退避期間別的 run 把額度用完 → _spend 擋下重試時仍要浮出原本的請求失敗。"""
+    c = _obs(monkeypatch, tmp_path, {"*": _Resp({}, status=503)}, cap=5, now=NOW.replace(hour=23),
+             db_stations=_late_known(1))
+    c._save_json(c.quota_path, {"day": "2026-11-20", "calls": 0})
+    c._sleep = lambda s: c._save_json(c.quota_path, {"day": "2026-11-20", "calls": 5})
+    with pytest.raises(RuntimeError, match="全部失敗"):
+        c.collect()
+    assert len(c.requested) == 1

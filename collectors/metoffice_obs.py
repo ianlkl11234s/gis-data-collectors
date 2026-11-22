@@ -304,7 +304,12 @@ class MetofficeObsCollector(BaseCollector):
             wait = self.min_interval - (time.monotonic() - self._last_call)
             if wait > 0:
                 self._sleep(wait)  # 先等再記額度，跨午夜時記到實際送出那天
-            self._spend()
+            try:
+                self._spend()
+            except QuotaExhausted:
+                if last_exc is not None:
+                    break  # 重試被額度擋下：浮出上一次的請求失敗，不當成一般額度用完
+                raise
             self._last_call = time.monotonic()
             try:
                 resp = self._session.get(f"{API_BASE}{path}", params=params, timeout=config.REQUEST_TIMEOUT)
