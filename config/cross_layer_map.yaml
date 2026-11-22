@@ -1279,10 +1279,10 @@ jma_ocean_env:
   supabase_tables: [live.weather_raster_frames, live.weather_raster_daily]
   s3_prefixes:
     - {prefix: jma_ocean_env/archives/, expected_daily: false}
-    - {prefix: weather-raw/jma/sst_him/, expected_daily: true}
-    - {prefix: weather-grid/jma/sst_him/, expected_daily: true}
-    - {prefix: weather-raw/jma/sst_mgd/, expected_daily: true}
-    - {prefix: weather-grid/jma/sst_mgd/, expected_daily: true}
+    - {prefix: weather-raw/jma/sst_him/, expected_daily: true, archive_lag_days: 2}  # JMA 隔日較晚才發布前一天海溫
+    - {prefix: weather-grid/jma/sst_him/, expected_daily: true, archive_lag_days: 2}  # JMA 隔日較晚才發布前一天海溫
+    - {prefix: weather-raw/jma/sst_mgd/, expected_daily: true, archive_lag_days: 2}  # JMA 隔日較晚才發布前一天海溫
+    - {prefix: weather-grid/jma/sst_mgd/, expected_daily: true, archive_lag_days: 2}  # JMA 隔日較晚才發布前一天海溫
     - {prefix: weather-raw/jma/sea_ice/, expected_daily: false}   # 只有 12–5 月
     - {prefix: weather-grid/jma/sea_ice/, expected_daily: false}
     - {prefix: weather-raw/jma/uv_anal/, expected_daily: true}
