@@ -49,3 +49,11 @@ def test_steady_growth_just_over_threshold_stays_red():
     sizes = [100.0 * (1.0062 ** i) for i in range(35)]
     text = _cost_trend_text(_points(sizes))
     assert "🔴" in text and "一次性" not in text
+
+
+def test_gap_in_samples_not_counted_as_single_day_jump():
+    """F021: 缺 10 天後的累積增量不是單日跳升，不可降為一次性 🟡。"""
+    pts = _points([100.0] * 20)
+    pts += [{"Timestamp": T0 + timedelta(days=30 + i), "Maximum": 210 * GB} for i in range(5)]
+    text = _cost_trend_text(pts)
+    assert "🔴" in text and "一次性" not in text

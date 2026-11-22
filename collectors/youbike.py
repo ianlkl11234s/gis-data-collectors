@@ -11,6 +11,7 @@ import requests
 
 import config
 from utils.auth import TDXAuth
+from utils.redact import redact_secrets
 from utils.tdx_session import TDXSession
 from .base import BaseCollector
 
@@ -96,11 +97,11 @@ class YouBikeCollector(BaseCollector):
 
             except requests.exceptions.HTTPError as e:
                 print(f"   ✗ {city_name}: HTTP 錯誤 {e.response.status_code}")
-                city_stats[city] = {'name': city_name, 'error': str(e)}
+                city_stats[city] = {'name': city_name, 'error': redact_secrets(e)[:200]}
 
             except Exception as e:
                 print(f"   ✗ {city_name}: {e}")
-                city_stats[city] = {'name': city_name, 'error': str(e)}
+                city_stats[city] = {'name': city_name, 'error': redact_secrets(e)[:200]}
 
         # 總計
         total_stations = len(all_stations)

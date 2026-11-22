@@ -61,7 +61,7 @@ collector 原始檔（本機 /data/<collector>/YYYY/MM/DD/<collector>_HHMM.json�
 | `daily/<D>/manifest.json` | **只列真的已發布的檔**：`files[<前端檔名>] = {key（實際檔名，最新修訂）, rev, sha256, bytes, published_at}`；重跑沿用前次紀錄；仍被暫擋的族與理由、契約版本、建檔報告 | `pulse-sound-daily-manifest-v1` | 是 |
 | `static/natural-static-v1-<sha8>.json` | 海岸線＋河道（1,122,449 B） | — | 否 |
 
-slot 分片欄位：`slot`、`run_at`、`grid{id,sha256}`、`sources.<族>`。每族都有 `status`（`ok`／`no_new_data`／`error`／`disabled`），另外：
+slot 分片欄位：`slot`、`run_at`、`grid{id,sha256}`、`sources.<族>`。每族都有 `status`（`ok`／`no_new_data`／`error`／`disabled`；雷達另有 `partial`＝部分幀解碼失敗，成功幀照發、失敗幀列在 `decode_errors`，告警視同 `error` 累計），另外：
 
 - `radar`：`frames[{k, utc, class_b64gz, clutter_live_cells}]`（gzip＋base64 的 uint8[格數]）、`missing[k]`
 - `freeway_vd`：`vd_ids_sha256`、`slots{k: {fetch_unix, v[366]}}`、`null_reasons`

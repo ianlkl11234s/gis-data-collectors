@@ -20,6 +20,7 @@ import requests
 
 import config
 from utils.auth import TDXAuth
+from utils.redact import redact_secrets
 from utils.tdx_session import TDXSession
 from .base import BaseCollector
 
@@ -94,7 +95,7 @@ class RoadCongestionCollector(BaseCollector):
             stats[label] = {'error': f'HTTP {e.response.status_code}'}
             print(f"   ✗ {label}: HTTP {e.response.status_code}")
         except Exception as e:
-            stats[label] = {'error': str(e)}
+            stats[label] = {'error': redact_secrets(e)[:200]}
             print(f"   ✗ {label}: {e}")
 
     def collect(self) -> dict:

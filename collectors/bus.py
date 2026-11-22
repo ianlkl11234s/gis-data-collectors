@@ -24,6 +24,7 @@ import requests
 
 import config
 from utils.auth import TDXAuth
+from utils.redact import redact_secrets
 from utils.tdx_session import TDXSession
 from .base import BaseCollector
 
@@ -77,7 +78,7 @@ class BusCollector(BaseCollector):
         except requests.exceptions.Timeout:
             return {'city': city, 'raw': [], 'active': [], 'error': 'Timeout'}
         except Exception as e:
-            return {'city': city, 'raw': [], 'active': [], 'error': str(e)}
+            return {'city': city, 'raw': [], 'active': [], 'error': redact_secrets(e)[:200]}
 
     @staticmethod
     def _has_gps(buses: list) -> list:

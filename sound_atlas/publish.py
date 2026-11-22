@@ -87,6 +87,10 @@ class Sink:
     def get_json(self, key: str):  # pragma: no cover - 介面
         raise NotImplementedError
 
+    def get_body(self, key: str, kind: str = "json") -> Optional[bytes]:  # pragma: no cover - 介面
+        """已存在物件的原始（未壓縮）內容；不存在或讀不到 → None。"""
+        raise NotImplementedError
+
     def put_json(self, key: str, doc, immutable: bool = True) -> int:
         b = dumps_compact(doc)
         self.put(key, b, "json", immutable)
@@ -115,6 +119,14 @@ class LocalDirSink(Sink):
         tmp.write_bytes(data)
         tmp.replace(p)
         return True
+
+    def get_body(self, key: str, kind: str = "json") -> Optional[bytes]:
+        import gzip
+        p = self._path(key, kind)
+        if not p.exists():
+            return None
+        data = p.read_bytes()
+        return gzip.decompress(data) if kind == "json" else data
 
     def read_json(self, key: str):
         import gzip
@@ -161,6 +173,19 @@ class R2Sink(Sink):
             return json.loads(gzip.decompress(body))
         except OSError:
             return json.loads(body)
+
+    def get_body(self, key: str, kind: str = "json") -> Optional[bytes]:
+        import gzip
+        try:
+            data = self.r2.s3.get_object(Bucket=self.r2.bucket, Key=key)["Body"].read()
+        except Exception:  # noqa: BLE001 — 不存在或讀不到 → 當沒有
+            return None
+        if kind != "json":
+            return data
+        try:
+            return gzip.decompress(data)
+        except OSError:
+            return data
 
     def put(self, key: str, body: bytes, kind: str = "json", immutable: bool = True) -> bool:
         if immutable and self.exists(key):
