@@ -336,7 +336,7 @@ def test_all_calls_failing_raises(monkeypatch, tmp_path):
     c = _obs(monkeypatch, tmp_path, {"*": _Resp({}, status=500)})
     with pytest.raises(RuntimeError, match="全部失敗"):
         c.collect()
-    assert json.loads(c.quota_path.read_text())["calls"] == len(GRID)  # 失敗也算額度
+    assert json.loads(c.quota_path.read_text())["calls"] == len(GRID) * mo.HTTP_MAX_ATTEMPTS  # 失敗（含重試）也算額度
 
 
 def test_obs_transformer_matches_table_map(monkeypatch, tmp_path):
@@ -440,3 +440,124 @@ def test_rate_limited_stops_run(monkeypatch, tmp_path):
     c = _obs(monkeypatch, tmp_path, {"*": _Resp({}, status=429)})
     res = c.collect()
     assert len(c.requested) == 1 and res["quota_exhausted"] is True
+
+
+# ───────────────────────── Codex review 2026-11-21（#216）─────────────────────────
+
+def test_obs_transient_5xx_is_retried_with_quota_per_attempt(monkeypatch, tmp_path):
+    """C3：5xx／逾時有界重試，每次嘗試都記額度；成功後才算已抓。"""
+    import requests
+    seq = [_Resp({}, status=503), requests.Timeout("t"), _Resp(_load("obs_gcvw5v_20261120.json"))]
+    routes = {"/gcvw5v": seq, "*": _Resp(_load("nearest_edinburgh_20261120.json"))}
+    c = _obs(monkeypatch, tmp_path, routes, now=NOW.replace(hour=23))
+
+    def get(url, params=None, timeout=None):
+        path = url.replace(mo.API_BASE, "")
+        key = path if path != "/nearest" else f"/nearest?{params['lat']},{params['lon']}"
+        c.requested.append(key)
+        r = routes.get(key, routes.get("*"))
+        r = r.pop(0) if isinstance(r, list) else r
+        if isinstance(r, Exception):
+            raise r
+        return r
+    c._session.get.side_effect = get
+    res = c.collect()
+    assert c.requested.count("/gcvw5v") == 3
+    assert res["stations_fetched"] == 1 and res["stations_failed"] == 0 and res["total_readings"] > 0
+    assert json.loads(c.quota_path.read_text())["calls"] == len(c.requested)
+
+
+def test_obs_persistent_5xx_gives_up_after_bounded_attempts(monkeypatch, tmp_path):
+    c = _obs(monkeypatch, tmp_path, {"/gcvw5v": _Resp({}, status=503),
+                                     "*": _Resp(_load("nearest_edinburgh_20261120.json"))},
+             now=NOW.replace(hour=23))
+    res = c.collect()
+    assert c.requested.count("/gcvw5v") == mo.HTTP_MAX_ATTEMPTS and res["stations_failed"] == 1
+
+
+def test_spend_rolls_quota_day_at_utc_midnight(monkeypatch, tmp_path):
+    """C4：跨午夜時請求記在新的一天，不是 collect() 開頭載入的舊日期。"""
+    c = _obs(monkeypatch, tmp_path, {"*": _Resp([])}, cap=5)
+    c._quota = c._load_quota("2026-11-20", False)
+    c._quota["calls"] = 3
+    c._now = lambda: datetime(2026, 11, 21, 0, 5, tzinfo=timezone.utc)
+    c._spend()
+    q = json.loads(c.quota_path.read_text())
+    assert (q["day"], q["calls"]) == ("2026-11-21", 1)
+    assert c._remaining() == 4
+
+
+def test_nearest_429_restores_discovery_cursor(monkeypatch, tmp_path):
+    """C5：/nearest 429 時網格進度不前進，下輪從同一點重來。"""
+    c = _obs(monkeypatch, tmp_path, {"*": _Resp({}, status=429)})
+    res = c.collect()
+    assert res["quota_exhausted"] is True and res["grid_progress"] == f"0/{len(GRID)}"
+    assert c._pending_state["grid_next"] == 0
+
+
+def test_all_updated_entries_failing_is_reported_as_failure(monkeypatch, tmp_path):
+    """C6：feed 沒變、只剩 updated entry 且全失敗 → 帶 _collector_error，不當成功。"""
+    routes = {mw.FEED_URL: _Resp(text=_text("feed_doc_example_with_entry.xml")),
+              ISSUED_URL: _Resp(_load("issued_doc_example_v1.0.json")),
+              UPDATED_URL: [_Resp({}, status=503)]}
+    c = _warn(monkeypatch, tmp_path, routes)
+    c.collect()
+    _commit(c)  # issued 已成功處理；entry 503 未記為看過
+    routes[mw.FEED_URL] = _Resp(text=_text("feed_doc_example_with_entry.xml"))
+    routes[UPDATED_URL] = [_Resp({}, status=503)]
+    res = c.collect()
+    assert res["failed_entries"] == 1 and "_collector_error" in res
+
+
+# ───────────────────────── Codex review 2026-11-22（#219）─────────────────────────
+
+def _late_known(n):
+    """挑 n 個時段 > 0 的 geohash，00:xx 時它們都還沒到時段（保持「未抓」）。"""
+    gs = [g for g in ("gcpvj0", "gcvw5v", "gcpuz1", "gcpv5x", "gcw2h0", "gfjmzt") if mo.station_slot(g) > 0]
+    assert len(gs) >= n
+    return {g: {"area": "x"} for g in gs[:n]}
+
+
+def _seq_get(c, nearest_seq):
+    def get(url, params=None, timeout=None):
+        path = url.replace(mo.API_BASE, "")
+        c.requested.append(path)
+        r = nearest_seq.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    c._session.get.side_effect = get
+
+
+def test_discovery_retries_do_not_consume_reserved_quota(monkeypatch, tmp_path):
+    """D1：只剩 3 次、2 站未抓 → 探站重試不得吃掉留給已知站的額度。"""
+    c = _obs(monkeypatch, tmp_path, {"*": _Resp([])}, cap=3, now=NOW.replace(hour=0),
+             db_stations=_late_known(2))
+    c.rescan_per_week = 5
+    c._save_json(c.quota_path, {"day": "2026-11-20", "calls": 0})
+    _seq_get(c, [_Resp({}, status=503), _Resp({}, status=503), _Resp([])])
+    with pytest.raises(RuntimeError, match="全部失敗"):  # 失敗如實浮出，不被重試蓋掉
+        c.collect()
+    assert len(c.requested) == 1  # 3 - 2 保留 = 只有 1 次可用於探站，不重試
+    assert json.loads(c.quota_path.read_text())["calls"] == 1
+
+
+def test_retry_blocked_by_quota_preserves_request_failure(monkeypatch, tmp_path):
+    """D2：5xx 用掉最後一次額度 → 保留失敗（首請求時 raise），不得靜默 no_work 成功。"""
+    c = _obs(monkeypatch, tmp_path, {"*": _Resp({}, status=503)}, cap=1, now=NOW.replace(hour=23),
+             db_stations=_late_known(1))
+    c._save_json(c.quota_path, {"day": "2026-11-20", "calls": 0})
+    with pytest.raises(RuntimeError, match="全部失敗"):
+        c.collect()
+    assert len(c.requested) == 1
+
+
+def test_retry_blocked_by_concurrent_quota_use_preserves_failure(monkeypatch, tmp_path):
+    """D2：退避期間別的 run 把額度用完 → _spend 擋下重試時仍要浮出原本的請求失敗。"""
+    c = _obs(monkeypatch, tmp_path, {"*": _Resp({}, status=503)}, cap=5, now=NOW.replace(hour=23),
+             db_stations=_late_known(1))
+    c._save_json(c.quota_path, {"day": "2026-11-20", "calls": 0})
+    c._sleep = lambda s: c._save_json(c.quota_path, {"day": "2026-11-20", "calls": 5})
+    with pytest.raises(RuntimeError, match="全部失敗"):
+        c.collect()
+    assert len(c.requested) == 1
