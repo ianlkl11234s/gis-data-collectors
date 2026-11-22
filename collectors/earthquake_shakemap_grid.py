@@ -220,8 +220,12 @@ class EarthquakeShakemapGridCollector(BaseCollector):
                 'data': [],
             }
 
-        if self._event_published(event_time):
-            print(f"   {event_name} {event_time} 的事件檔已在 R2 → 略過 {len(raw)} 格")
+        # R2 事件檔先於 DB 寫入產生，不能單憑它判定「處理過」：DB 寫入失敗後 R2 仍有檔，
+        # 會讓之後每輪都略過、DB 永遠缺這場（上游只留最新一場）。有 writer 時須 DB 也已入庫才略過。
+        if self._event_published(event_time) and (
+            not self.supabase_writer or self._already_stored(event_time)
+        ):
+            print(f"   {event_name} {event_time} 的事件檔已在 R2（且 DB 已入庫）→ 略過 {len(raw)} 格")
             try:
                 if ensure_indexed(self._r2, shakemap_event_key(event_time)):
                     print("   index.json 缺這個事件 → 已補回")
