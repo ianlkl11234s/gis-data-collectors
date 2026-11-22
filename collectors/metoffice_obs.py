@@ -293,10 +293,14 @@ class MetofficeObsCollector(BaseCollector):
         return self.daily_cap - self._quota["calls"]
 
     # ── HTTP ────────────────────────────────────────────
-    def _get(self, path: str, params: Optional[dict] = None):
-        """節流 → 記額度 → 打 API；逾時／連線錯誤／5xx 有界重試（每次嘗試都過額度守門）。"""
+    def _get(self, path: str, params: Optional[dict] = None, reserve: int = 0):
+        """節流 → 記額度 → 打 API；逾時／連線錯誤／5xx 有界重試（每次嘗試都過額度守門）。
+
+        reserve：這次呼叫要替其他工作保留的額度；重試時剩餘額度扣掉 reserve 不足一次就停止重試。"""
         last_exc: Optional[Exception] = None
         for attempt in range(1, HTTP_MAX_ATTEMPTS + 1):
+            if attempt > 1 and self._remaining() - reserve < 1:
+                break  # 重試不得動用保留額度
             wait = self.min_interval - (time.monotonic() - self._last_call)
             if wait > 0:
                 self._sleep(wait)  # 先等再記額度，跨午夜時記到實際送出那天
@@ -417,7 +421,8 @@ class MetofficeObsCollector(BaseCollector):
                 else:
                     break
                 try:
-                    body = self._get("/nearest", {"lat": f"{lat:.2f}", "lon": f"{lon:.2f}"})
+                    body = self._get("/nearest", {"lat": f"{lat:.2f}", "lon": f"{lon:.2f}"},
+                                     reserve=unfetched_today())
                 except QuotaExhausted:
                     # 沒真的查到就不算掃過：還原進度，下輪從同一點重來
                     st["grid_next"], rescan["cursor"], rescan["count"] = prev_progress

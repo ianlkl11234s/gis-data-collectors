@@ -507,3 +507,36 @@ def test_all_updated_entries_failing_is_reported_as_failure(monkeypatch, tmp_pat
     routes[UPDATED_URL] = [_Resp({}, status=503)]
     res = c.collect()
     assert res["failed_entries"] == 1 and "_collector_error" in res
+
+
+# ───────────────────────── Codex review 2026-11-22（#219）─────────────────────────
+
+def _late_known(n):
+    """挑 n 個時段 > 0 的 geohash，00:xx 時它們都還沒到時段（保持「未抓」）。"""
+    gs = [g for g in ("gcpvj0", "gcvw5v", "gcpuz1", "gcpv5x", "gcw2h0", "gfjmzt") if mo.station_slot(g) > 0]
+    assert len(gs) >= n
+    return {g: {"area": "x"} for g in gs[:n]}
+
+
+def _seq_get(c, nearest_seq):
+    def get(url, params=None, timeout=None):
+        path = url.replace(mo.API_BASE, "")
+        c.requested.append(path)
+        r = nearest_seq.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    c._session.get.side_effect = get
+
+
+def test_discovery_retries_do_not_consume_reserved_quota(monkeypatch, tmp_path):
+    """D1：只剩 3 次、2 站未抓 → 探站重試不得吃掉留給已知站的額度。"""
+    c = _obs(monkeypatch, tmp_path, {"*": _Resp([])}, cap=3, now=NOW.replace(hour=0),
+             db_stations=_late_known(2))
+    c.rescan_per_week = 5
+    c._save_json(c.quota_path, {"day": "2026-11-20", "calls": 0})
+    _seq_get(c, [_Resp({}, status=503), _Resp({}, status=503), _Resp([])])
+    with pytest.raises(RuntimeError, match="全部失敗"):  # 失敗如實浮出，不被重試蓋掉
+        c.collect()
+    assert len(c.requested) == 1  # 3 - 2 保留 = 只有 1 次可用於探站，不重試
+    assert json.loads(c.quota_path.read_text())["calls"] == 1
