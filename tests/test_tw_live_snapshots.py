@@ -105,13 +105,28 @@ def _marine():
 
 def test_marine_alerts_match_counts():
     fc, st = T.marine_alerts_build(*_marine(), "x")
-    assert st["feature_count"] == 37
-    assert sorted(st["unlocated"]) == ["spring:嘉義", "spring:臺東", "spring:雲林"]
+    assert st["feature_count"] == 40 and st["unlocated"] == []
     by = {f["properties"]["site_id"]: f["properties"] for f in fc["features"]}
     assert by["spring:基隆"]["station_uid"] == "cwa:C4B01" and by["spring:基隆"]["match_method"] == "exact_name"
-    assert by["spring:宜蘭"]["match_method"] == "inferred_admin_unique_active"
+    # 地區名監測點：以最大潮高對 O-B0075 逐時潮高比對出的站（兩個視窗都唯一）
+    for site, sid in [("雲林", "C4J01"), ("嘉義", "C4L02"), ("臺東", "1586"), ("宜蘭", "C4U02"), ("恆春", "C4Q03"),
+                      ("苗栗", "C4E01"), ("桃園", "C4C01")]:
+        assert by[f"spring:{site}"]["station_uid"] == f"cwa:{sid}"
+        assert by[f"spring:{site}"]["match_method"] == "max_tide_crosscheck"
     assert by["swell:臺北港浮標"]["station_uid"] is None  # 舊站表座標，不在既有測站層
     assert all(p["alert_level"] == 0 for p in by.values())
+
+
+def test_marine_yunlin_surge_warning_20261122():
+    """2026-11-22 雲林「暴潮警戒」（最大潮高 2.77 m ≥ 潮位警戒值 2.35 m）：要畫在萡子寮、等級 2、會脈動。"""
+    spring = _load("O-B0069-001_20261122.json")["cwaopendata"]
+    swell = _load("O-B0070-001_20261122.json")["cwaopendata"]
+    stations = _load("O-B0076-001_20261121_trimmed.json")["cwaopendata"]
+    fc, st = T.marine_alerts_build(spring, swell, stations, "x")
+    p = next(f["properties"] for f in fc["features"] if f["properties"]["site_id"] == "spring:雲林")
+    assert p["warning_status"] == "暴潮警戒" and p["alert_level"] == 2
+    assert p["station_name"] == "萡子寮潮位站" and p["max_height_m"] == 2.77 and p["surge_criteria_m"] == 2.35
+    assert st["alert_sites"] == ["spring:雲林"] and st["unknown_status"] == [] and st["unlocated"] == []
 
 
 def test_marine_unknown_status_kept_not_crash():
@@ -171,7 +186,7 @@ def test_marine_collector_publishes_once_until_content_changes():
     r1, r2 = c.collect(), c.collect()
     assert r1["r2_published"] is True and r2["r2_published"] is False
     assert c._r2.puts.count("live/tw/cwa_tide_swell_alerts/latest.geojson") == 1
-    assert len(r1["data"]) == 37 and r1["_upstream_max_at"]
+    assert len(r1["data"]) == 40 and r1["_upstream_max_at"]
 
 
 def test_nav_collector_skips_unchanged_rounds():
