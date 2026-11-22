@@ -197,10 +197,20 @@ def nav_normalise(src: dict, now: datetime) -> tuple[dict, dict, dict]:
 # ─── marine alerts ───────────────────────────────────────────────────────────
 CWA_S3 = "https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/"
 MARINE_IDS = {"spring": "O-B0069-001", "swell": "O-B0070-001", "stations": "O-B0076-001"}
-LEVELS = {"spring": {"低於警戒": 0, "潮位注意": 1, "潮位警戒": 2}, "swell": {"低於警戒": 0, "長浪警戒": 1, "巨浪警戒": 2}}
+# 警戒字串：官方定義取自 O-B0069／O-B0070 檔內 Metadata 的 warningStatus 說明（2026-11-22 讀取）
+#   大潮：潮位注意（潮高 ≥ springCriteria 潮位注意值）、潮位警戒（≥ surgeCriteria 潮位警戒值）、低於警戒
+#   長浪：長浪警戒（週期 ≥ 8 秒且浪高 ≥ 1.5 m）、巨浪警戒（浪高 > 6 m）、低於警戒
+# 實際觀察到、但說明沒列的字串：「暴潮警戒」（2026-11-22 雲林，最大潮高 2.77 m ≥ 潮位警戒值 2.35 m，
+#   即說明裡的「潮位警戒」條件）→ 同等級 2。其他沒看過的字串一律記 unknown_status、等級留空，不猜。
+LEVELS = {"spring": {"低於警戒": 0, "潮位注意": 1, "潮位警戒": 2, "暴潮警戒": 2},
+          "swell": {"低於警戒": 0, "長浪警戒": 1, "巨浪警戒": 2}}
 KIND_ZH = {"spring": "大潮監測", "swell": "長浪監測"}
-ADMIN_ALIAS = {"宜蘭": ("宜蘭縣", None), "臺東": ("臺東縣", None), "嘉義": ("嘉義縣", None), "雲林": ("雲林縣", None),
-               "苗栗": ("苗栗縣", None), "桃園": ("桃園市", None), "恆春": ("屏東縣", "恆春鎮")}
+# 大潮監測點名是地區名、不是站名。下列對照以「該點最大潮高＝某潮位站同時段 O-B0075 逐時潮高最大值」比對，
+# 兩個獨立 8 小時視窗（2026-11-21 09–17 時、2026-11-22 04–12 時）在 85 站中都只對到同一站才採用：
+#   雲林→萡子寮（麥寮 1.26／—，不符）、嘉義→東石（塭港 0.84，不符）、臺東→富岡（綠島 0.55、小港 0.79，不符）、
+#   宜蘭→烏石、恆春→後壁湖、苗栗→外埔、桃園→竹圍。官方沒有公開「監測點↔潮位站」清單。
+SPRING_SITE_STATION = {"雲林": "C4J01", "嘉義": "C4L02", "臺東": "1586", "宜蘭": "C4U02", "恆春": "C4Q03",
+                       "苗栗": "C4E01", "桃園": "C4C01"}
 # 不在 O-B0076 的長浪浮標：座標取自 O-B0079-001 站表（2024-03 最後版本；該資料集已停更）
 LEGACY_COORDS = {"臺北港浮標": (121.35, 25.1658, "TPBU01")}
 
@@ -220,7 +230,7 @@ def _stations(meta: dict) -> list[dict]:
     return out
 
 
-def _match_spring(name, st, taken):
+def _match_spring(name, st):
     tide = [s for s in st if s["attr"] == "潮位站"]
     exact = [s for s in tide if s["name"] == f"{name}潮位站"]
     if len(exact) == 1:
@@ -228,11 +238,9 @@ def _match_spring(name, st, taken):
     sub = [s for s in tide if s["name"].removesuffix("潮位站") and s["name"].removesuffix("潮位站") in name]
     if len(sub) == 1:
         return sub[0], "name_substring"
-    if name in ADMIN_ALIAS:
-        county, town = ADMIN_ALIAS[name]
-        c = [s for s in tide if s["county"] == county and (town is None or s["town"] == town) and s["status"] == "1"
-             and s["id"] not in taken]
-        return (c[0], "inferred_admin_unique_active") if len(c) == 1 else (None, "ambiguous_admin")
+    hit = [s for s in tide if s["id"] == SPRING_SITE_STATION.get(name)]
+    if len(hit) == 1:
+        return hit[0], "max_tide_crosscheck"
     return None, "no_candidate"
 
 
@@ -252,8 +260,6 @@ def marine_alerts_build(spring: dict, swell: dict, stations: dict, retrieved_at:
     st = _stations(stations)
     docs = {"spring": spring, "swell": swell}
     sites = {k: d["Resources"]["Resource"]["Data"]["SeaSurfaceObs"] for k, d in docs.items()}
-    taken = {s["id"] for x in sites["spring"] for s, m in [_match_spring(x["Location"]["StationName"], st, set())]
-             if m == "exact_name"}
     feats, unlocated, unknown = [], [], []
     for kind in ("spring", "swell"):
         for x in sites[kind]:
@@ -266,7 +272,7 @@ def marine_alerts_build(spring: dict, swell: dict, stations: dict, retrieved_at:
             if level is None:
                 unknown.append(f"{kind}:{name}:{status}")
             if kind == "spring":
-                s, method = _match_spring(name, st, taken)
+                s, method = _match_spring(name, st)
                 crit = loc.get("StationWarningCriteria") or {}
                 extra = {"max_height_m": _hnum(we.get("MaximumTideHeight")),
                          "spring_criteria_m": _hnum((crit.get("SpringCriteria") or {}).get("TideHeight")),
