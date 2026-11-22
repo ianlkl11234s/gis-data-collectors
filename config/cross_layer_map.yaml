@@ -1369,8 +1369,8 @@ fire119:
 
 cdc_dengue_cluster:
   label: 疾管署近兩週本土登革熱聚集區
-  enabled: false  # 2026-11-21 草稿未部署；正式要跑 HiCloud VM（external/tw_live_snapshots_vm/）
-  deployment: disabled  # 部署後改 hicloud_vm；pulse-host 的 CDC_DENGUE_CLUSTER_ENABLED 一律 false
+  enabled: true  # 2026-11-22 部署 HiCloud VM（external/tw_live_snapshots_vm/，cron 15:13）
+  deployment: hicloud_vm  # pulse-host 的 CDC_DENGUE_CLUSTER_ENABLED 一律 false
   expected_interval_min: 1440
   supabase_tables: []  # 不寫 DB：R2 live/tw/dengue_cluster/latest.geojson
   s3_prefixes:
@@ -1380,8 +1380,8 @@ cdc_dengue_cluster:
 
 cwa_marine_alerts:
   label: 氣象署大潮／長浪警戒
-  enabled: false  # 2026-11-21 草稿未部署
-  deployment: disabled  # 部署後改 pulse_host（公開 S3，美國 IP 200）
+  enabled: true  # 2026-11-22 部署 pulse-host（75ed4b8）
+  deployment: pulse_host  # 公開 S3，美國 IP 200
   expected_interval_min: 60
   supabase_tables: []  # 不寫 DB：R2 live/tw/cwa_tide_swell_alerts/latest.geojson
   s3_prefixes:
@@ -1391,8 +1391,8 @@ cwa_marine_alerts:
 
 motcmpb_nav_notices:
   label: 航港局航船布告
-  enabled: false  # 2026-11-21 草稿未部署；正式要跑 HiCloud VM（external/tw_live_snapshots_vm/）
-  deployment: disabled  # 部署後改 hicloud_vm；pulse-host 的 MOTCMPB_NAV_NOTICES_ENABLED 一律 false
+  enabled: true  # 2026-11-22 部署 HiCloud VM（external/tw_live_snapshots_vm/，cron 每小時 :27）
+  deployment: hicloud_vm  # pulse-host 的 MOTCMPB_NAV_NOTICES_ENABLED 一律 false
   expected_interval_min: 60
   supabase_tables: []  # 不寫 DB：R2 live/tw/nav_notices/latest.geojson
   s3_prefixes:
