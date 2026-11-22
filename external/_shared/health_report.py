@@ -118,6 +118,31 @@ DEFAULT_TARGETS: list[dict] = [
         "status_file": "/var/lib/fire119/state/source_health.json",
         "status_stale_min": 15,
     },
+    # tw_live_snapshots（2026-11-22）：同一支 collect_tw_snapshots.py、同一份 log，每輪恰好一行「<which>: features=」；
+    # 失敗時只有 traceback、沒有這行，靠「多久沒出現」判斷。nav 內容沒變時不存檔，data_dir 新鮮度不代表有跑
+    {
+        "name": "motcmpb_nav_notices",
+        "log_path": "/var/log/tw-live-snapshots/collect.log",
+        "data_dir": "/var/lib/tw-live-snapshots/data/motcmpb_nav_notices",
+        "outbound": [
+            {"label": "aton", "host": "aton.motcmpb.gov.tw", "path": "/navmark/get_notice_opendata/"},
+        ],
+        "run_pattern": r"\[INFO\] nav: features=",
+        "success_pattern": r"\[INFO\] nav: features=(\d+) ",
+        "expected_interval_min": 60,
+    },
+    {
+        "name": "cdc_dengue_cluster",
+        "log_path": "/var/log/tw-live-snapshots/collect.log",
+        "data_dir": "/var/lib/tw-live-snapshots/data/cdc_dengue_cluster",
+        "outbound": [
+            {"label": "cdc_od", "host": "od.cdc.gov.tw", "path": "/eic/DengueCluster/DengueCluster_all.json"},
+        ],
+        "run_pattern": r"\[INFO\] dengue: features=",
+        # 非流行季 0 筆是正常的，只要有跑完就算成功
+        "success_pattern": r"\[INFO\] dengue: features=(\d+) ",
+        "expected_interval_min": 1440,
+    },
 ]
 
 
@@ -139,6 +164,8 @@ ARCHIVE_TARGETS: list[dict] = [
     # fire119：解析後的列（原始回應在 /var/lib/fire119/raw，不歸檔、3 天後刪，不在這裡檢查）
     {"app": "fire119", "root": "/var/lib/fire119/data", "collectors": ["fire119", "pbs_road_events"],
      "default_retention": 2},
+    {"app": "tw-live-snapshots", "root": "/var/lib/tw-live-snapshots/data",
+     "collectors": ["cdc_dengue_cluster", "motcmpb_nav_notices"], "default_retention": 7},
 ]
 _NON_COLLECTOR_DIRS = {"buffer", "state", ".archive-receipts", "weather_raw"}
 

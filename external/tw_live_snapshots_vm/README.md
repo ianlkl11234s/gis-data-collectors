@@ -1,6 +1,6 @@
 # external/tw_live_snapshots_vm — 登革熱聚集區＋航船布告（HiCloud VM）
 
-> 2026-11-21 B8 草稿，**未部署**。兩個來源都擋境外 IP（美國雲端 45 秒逾時），所以放台灣 IP 的 VM。
+> 2026-11-21 B8 草稿；**2026-11-22 已部署**到 HiCloud VM（R2 金鑰方案 A，cron 已啟用）。兩個來源都擋境外 IP（美國雲端 45 秒逾時），所以放台灣 IP 的 VM。
 > 主 repo schema 正本：`collectors/cdc_dengue_cluster.py`、`collectors/motcmpb_nav_notices.py`（pulse-host 上
 > `CDC_DENGUE_CLUSTER_ENABLED`／`MOTCMPB_NAV_NOTICES_ENABLED` 一律維持 false，避免雙跑）。
 > 解析邏輯：`utils/tw_live_snapshots.py`（部署時 scp 到本目錄，與主 repo 同一份）。

@@ -111,7 +111,7 @@ NCDR 災害示警（CAP 總和 feed）。
 - 守門：`UVIndex = -99` 是缺值，寫成 `uv_index NULL`、`uv_raw` 保留原值，不可當 0。
 
 ### cwa_marine_alerts
-大潮監測（O-B0069-001，20 點）＋長浪監測（O-B0070-001，20 浮標）的警戒狀態（2026-11-21 B8 草稿，未部署）。
+大潮監測（O-B0069-001，20 點）＋長浪監測（O-B0070-001，20 浮標）的警戒狀態（2026-11-21 B8；2026-11-22 部署）。
 
 - 頻率／位置：每小時 :56（`CWA_MARINE_ALERTS_MINUTES`；來源約 :50 發布、內容是過去 8 小時視窗），pulse-host。走氣象署公開 S3 `cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/`，不需金鑰，美國 IP 可連。
 - 寫入：不寫 DB。R2 `live/tw/cwa_tide_swell_alerts/latest.geojson`＋`status.json`（`max-age=300`，內容沒變不重寫）；本機 JSON 每日歸檔 S3 `cwa_marine_alerts/archives/`。
