@@ -1366,3 +1366,36 @@ fire119:
     VM 專用（external/fire119_vm/），主 repo 沒有 collector，列在 sync_cross_layer_map.NON_COLLECTOR_TASKS。
     cron 每分鐘一次、runner 內 1／2／5 分鐘分頻；只寫有變化的列，last_seen_at 每 30 分鐘批次推（新鮮度看它）。
     站主限定（gated_layers）；VM 版不寫 collector_status，健康看 source_health.json（health_report）。
+
+cdc_dengue_cluster:
+  label: 疾管署近兩週本土登革熱聚集區
+  enabled: false  # 2026-11-21 草稿未部署；正式要跑 HiCloud VM（external/tw_live_snapshots_vm/）
+  deployment: disabled  # 部署後改 hicloud_vm；pulse-host 的 CDC_DENGUE_CLUSTER_ENABLED 一律 false
+  expected_interval_min: 1440
+  supabase_tables: []  # 不寫 DB：R2 live/tw/dengue_cluster/latest.geojson
+  s3_prefixes:
+    - {prefix: cdc_dengue_cluster/archives/, expected_daily: true}
+  critical: false
+  notes: 擋境外 IP；每日 1 次；非流行季整天 0 筆屬預期（不可套 0 筆＝失敗），健康看 23 檔都 200 且 _all 與縣市聯集一致；S3 是唯一歷史正本（來源只給近兩週）
+
+cwa_marine_alerts:
+  label: 氣象署大潮／長浪警戒
+  enabled: false  # 2026-11-21 草稿未部署
+  deployment: disabled  # 部署後改 pulse_host（公開 S3，美國 IP 200）
+  expected_interval_min: 60
+  supabase_tables: []  # 不寫 DB：R2 live/tw/cwa_tide_swell_alerts/latest.geojson
+  s3_prefixes:
+    - {prefix: cwa_marine_alerts/archives/, expected_daily: true}
+  critical: false
+  notes: O-B0069＋O-B0070 公開 S3 免金鑰；每小時 :56；座標依 O-B0076 名稱對照；前端以 station_uid 疊在既有 marineObservationCwa
+
+motcmpb_nav_notices:
+  label: 航港局航船布告
+  enabled: false  # 2026-11-21 草稿未部署；正式要跑 HiCloud VM（external/tw_live_snapshots_vm/）
+  deployment: disabled  # 部署後改 hicloud_vm；pulse-host 的 MOTCMPB_NAV_NOTICES_ENABLED 一律 false
+  expected_interval_min: 60
+  supabase_tables: []  # 不寫 DB：R2 live/tw/nav_notices/latest.geojson
+  s3_prefixes:
+    - {prefix: motcmpb_nav_notices/archives/, expected_daily: false}  # 只在內容變動時存檔，週末可能整天沒變
+  critical: false
+  notes: 擋境外 IP；每小時；來源約 9 MB 即時產生，只在有效布告內容變動時存原檔與重寫 R2

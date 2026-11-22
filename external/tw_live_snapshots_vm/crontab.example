@@ -1,0 +1,10 @@
+# ─── tw_live_snapshots cron BEGIN ───
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# 航船布告：每小時 :27（錯開 waste */2、ship */10、isohe :08/:18/…、immigration :07、fire119 每分鐘）
+27 * * * * cd /opt/tw-live-snapshots && /usr/bin/timeout -k 30 600 /usr/bin/python3 ./collect_tw_snapshots.py nav >> /var/log/tw-live-snapshots/collect.log 2>&1
+# 登革熱聚集區：每日 15:13（2026-11-21 來源 Last-Modified 14:31 台北時間；data.gov.tw modified 14:02）
+13 15 * * * cd /opt/tw-live-snapshots && /usr/bin/timeout -k 30 600 /usr/bin/python3 ./collect_tw_snapshots.py dengue >> /var/log/tw-live-snapshots/collect.log 2>&1
+# 歸檔：03:00–03:30 錯開既有（ship 03:00、waste 03:05、isohe 03:10、immigration 03:15、cdc 03:20、moa 03:21、fire119 03:33）
+27 3 * * * cd /opt/tw-live-snapshots && /usr/bin/python3 ./archive_tw_snapshots.py >> /var/log/tw-live-snapshots/archive.log 2>&1
+# ─── tw_live_snapshots cron END ───

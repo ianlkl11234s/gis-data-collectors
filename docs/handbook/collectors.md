@@ -4,7 +4,7 @@
 > **自動產生，勿手改**；跑 `python3 scripts/gen_handbook_catalog.py` 重產，`--check` 檢查是否最新（CI：`tests/test_handbook_catalog.py`）。
 > 來源：`collectors/registry.py`、`config.py` 的 `_COLLECTOR_TOGGLES`、`config/cross_layer_map.yaml`、`storage/supabase_tables.py` 的 `TABLE_MAP`、`config/realtime_tables.yaml`。要改內容就改這些來源（備註取自 cross_layer_map 的 notes）。
 
-共 108 筆（含排程 task），production 應在跑 100 筆。
+共 111 筆（含排程 task），production 應在跑 100 筆。
 
 欄位說明：
 
@@ -40,6 +40,7 @@
 | `earthquake_moment_tensor` | 氣象署／NCDR | 30 分 | pulse-host | live.earthquake_moment_tensor | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#earthquake_moment_tensor) | 需 CWA_API_KEY；中研院 AutoBATS 震源機制解 |
 | `cwa_satellite` | 氣象署／NCDR | 10 分 | pulse-host | live.cwa_imagery_frames | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#cwa_satellite) | 需 CWA_API_KEY |
 | `cwa_marine_observation` | 氣象署／NCDR | 15 分 | pulse-host | reference.marine_observation_stations<br>live.marine_observation_readings<br>live.marine_observation_current<br>live.marine_observation_quarantine | current＋history＋reference（多表） | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#cwa_marine_observation) | 需 CWA_API_KEY；與 isohe_port_marine 共用表（一源壞掉可能被他源新鮮度蓋過）；CWA O-B0076 registry plus O-B0075 rolling 48h; 85th orphan StationID is quarantined, never… |
+| `cwa_marine_alerts` | 氣象署／NCDR | 1 小時 | 停用 | — | 不寫 DB（本地／S3） | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#cwa_marine_alerts) | O-B0069＋O-B0070 公開 S3 免金鑰 |
 | `isohe_port_marine` | 氣象署／NCDR | 10 分 | VM | reference.marine_observation_stations<br>live.marine_observation_readings<br>live.marine_observation_current | current＋history＋reference（多表） | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#isohe_port_marine) | 與 cwa_marine_observation 共用表（一源壞掉可能被他源新鮮度蓋過）；8 ports x wave/current/tide/wind; Taiwan egress only; MZ legacy XML excluded and tide datu… |
 | `ncdr_alerts` | 氣象署／NCDR | 15 分 | pulse-host | live.disaster_alerts | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#ncdr_alerts) | critical |
 | `rain_gauge_realtime` | 氣象署／NCDR | 10 分 | pulse-host | live.rain_gauge_readings | history | 見 retention_policies | [sources/cwa-ncdr](sources/cwa-ncdr.md#rain_gauge_realtime) | 需 CWA_API_KEY |
@@ -75,6 +76,7 @@
 | `satellite` | 海空太空 | 2 小時 | pulse-host | live.satellite_positions<br>live.satellite_current<br>live.satellite_tle<br>live.satellite_tle_history | current＋history | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#satellite) |  |
 | `satellite_passes_daily` | 海空太空 | 1 日 | pulse-host | — | 不寫 DB（本地／S3） | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#satellite_passes_daily) | 無表級監控；表級監控待人工設計 |
 | `launch` | 海空太空 | 15 分 | pulse-host | live.launches<br>live.launch_events<br>live.launch_pads | history（多表） | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#launch) |  |
+| `motcmpb_nav_notices` | 海空太空 | 1 小時 | 停用 | — | 不寫 DB（本地／S3） | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#motcmpb_nav_notices) | 擋境外 IP |
 | `gfw_hourly_publish` | 海空太空 | 1 日 | pulse-host | live.gfw_hourly_publish_runs | ledger | 見 retention_policies | [sources/marine-air-space](sources/marine-air-space.md#gfw_hourly_publish) | 排程 task（非 registry）；Zeabur production fixed-time job（每日 08:30 Asia/Taipei，UTC 換日後） |
 | `metoffice_warnings` | 日本／全球氣候 | 10 分 | pulse-host | live.metoffice_warning_events | history | 見 retention_policies | [sources/jma-global](sources/jma-global.md#metoffice_warnings) | 需 METOFFICE_WARNINGS_API_KEY；監控門檻 1 日；需 METOFFICE_WARNINGS_API_KEY |
 | `metoffice_obs` | 日本／全球氣候 | 1 小時 | pulse-host | live.metoffice_obs_measurements<br>live.metoffice_obs_stations | history＋reference | 見 retention_policies | [sources/jma-global](sources/jma-global.md#metoffice_obs) | 需 METOFFICE_OBS_API_KEY；需 METOFFICE_OBS_API_KEY |
@@ -100,6 +102,7 @@
 | `ioda_internet_health` | 網路健康 | 5 分 | pulse-host | live.internet_health_source_runs<br>live.internet_health_observations<br>live.internet_health_current<br>live.internet_health_incidents | current＋history＋ledger（多表） | 見 retention_policies | [sources/internet-health](sources/internet-health.md#ioda_internet_health) | 與 cloudflare_radar、ripe_atlas_internet_health、ripe_ris_live 共用表（一源壞掉可能被他源新鮮度蓋過）；IODA raw country signals |
 | `ripe_atlas_internet_health` | 網路健康 | 5 分 | pulse-host | live.internet_health_source_runs<br>live.internet_health_observations<br>live.internet_health_current | current＋history＋ledger（多表） | 見 retention_policies | [sources/internet-health](sources/internet-health.md#ripe_atlas_internet_health) | 與 cloudflare_radar、ioda_internet_health、ripe_ris_live 共用表（一源壞掉可能被他源新鮮度蓋過）；RIPE Atlas reviewed public ping measurements |
 | `ripe_ris_live` | 網路健康 | 5 分 | pulse-host（長駐 worker） | live.internet_health_source_runs<br>live.internet_health_observations<br>live.internet_health_current | current＋history＋ledger（多表） | 見 retention_policies | [sources/internet-health](sources/internet-health.md#ripe_ris_live) | 長駐 WebSocket worker；與 cloudflare_radar、ioda_internet_health、ripe_atlas_internet_health 共用表（一源壞掉可能被他源新鮮度蓋過）；RIPE RIS Live bounded WebSocket |
+| `cdc_dengue_cluster` | 政府雜項 | 1 日 | 停用 | — | 不寫 DB（本地／S3） | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#cdc_dengue_cluster) | 擋境外 IP |
 | `foursquare_poi` | 政府雜項 | 30 日 | 停用 | reference.foursquare_poi | reference | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#foursquare_poi) | 需 HF_TOKEN |
 | `waste_positions` | 政府雜項 | 2 分 | VM | spatial.waste_positions_realtime | history | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#waste_positions) | critical |
 | `waste_match` | 政府雜項 | 5 分 | 停用 | — | 不寫 DB（本地／S3） | 見 retention_policies | [sources/gov-misc](sources/gov-misc.md#waste_match) |  |

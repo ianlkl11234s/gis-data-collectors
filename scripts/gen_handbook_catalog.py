@@ -66,6 +66,8 @@ SOURCES_DOC = {
     "earthquake_town_intensity": "cwa-ncdr", "earthquake_shakemap_grid": "cwa-ncdr",
     "earthquake_moment_tensor": "cwa-ncdr", "cwa_satellite": "cwa-ncdr",
     "cwa_marine_observation": "cwa-ncdr", "isohe_port_marine": "cwa-ncdr",
+    "cwa_marine_alerts": "cwa-ncdr",
+    "motcmpb_nav_notices": "marine-air-space",
     "ncdr_alerts": "cwa-ncdr", "lightning_cwa": "cwa-ncdr", "lightning_events": "cwa-ncdr",
     "cwa_uv_daily": "cwa-ncdr",
     # 水利／環境
@@ -103,6 +105,7 @@ SOURCES_DOC = {
     "twse_market_index": "gov-misc", "food_prices": "gov-misc",
     "pla_activity_daily": "gov-misc", "pla_tracks_vectorize": "gov-misc",
     "cdc_public_health_weekly": "gov-misc", "yt_live_video_resolver": "gov-misc",
+    "cdc_dengue_cluster": "gov-misc",
     "correctional_daily_snapshot": "gov-misc", "animal_adoption": "gov-misc",
     "animal_shelter_outcomes": "gov-misc", "animal_shelter_pressure": "gov-misc",
     "animal_veterinary_clinics": "gov-misc", "animal_licensed_pet_businesses": "gov-misc",

@@ -150,6 +150,13 @@ Foursquare 開放 POI（Hugging Face `foursquare/fsq-os-places`，DuckDB 讀遠�
 - 精度：只有臺北給座標（精確／站方模糊點），其他來源靠路名對照表給路段中點（`road`，不是事發地），對不到降行政區級，不猜。
 - 已知坑：原始回應含隱私欄位（臺北隱藏點、新北救護車軌跡），落地前就剔除；解析器先找表頭／容器，版面改了算「解析失敗」，不會變成 0 筆；宜蘭、澎湖、臺東常態 0 筆。來源細節在 analytics `docs/topic-research/realtime_incidents/`；部署與保護措施見該目錄 README。
 
+### cdc_dengue_cluster
+疾管署近兩週本土登革熱病例聚集區（data.gov.tw 179291；22 縣市檔＋`DengueCluster_all.json`）（2026-11-21 B8 草稿，未部署）。
+
+- 頻率／位置：每日 1 次；od.cdc.gov.tw 擋境外 IP，正式跑 HiCloud VM（`external/tw_live_snapshots_vm/`），pulse-host 的 `CDC_DENGUE_CLUSTER_ENABLED` 維持 false。
+- 寫入：不寫 DB。R2 `live/tw/dengue_cluster/latest.geojson`＋`status.json`；S3 `cdc_dengue_cluster/archives/` 是唯一的歷史正本（來源只給近兩週）。
+- 守門：非流行季整天 0 筆是正常的，健康看 23 檔都 200、都是 FeatureCollection、`_all` 與縣市聯集一致。TLS 只放寬 `VERIFY_X509_STRICT`，不關驗證。
+
 ## 收這類資料要注意
 
 - ConnectTimeout 先懷疑 IP 被擋；擋雲端 IP 的來源放 VM，主 repo 保留完整實作，Zeabur 端保持關閉，VM 用手動部署並另外看表確認健康。

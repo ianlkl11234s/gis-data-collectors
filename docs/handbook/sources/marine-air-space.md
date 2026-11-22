@@ -67,6 +67,13 @@ GFW 每小時軌跡＋格網＋SAR 未配對偵測的每日發布 job（`tasks/g
 - 本機 POC 腳本：`scripts/gfw_hourly_tracks_poc.py`、`gfw_hourly_grid_poc.py`、`gfw_hourly_release.py`；測試 `tests/test_gfw_*`。
 - 舊檔 [`docs/GFW_VESSEL_PRESENCE.md`](../../GFW_VESSEL_PRESENCE.md)、[`docs/GFW_HOURLY_FULL_FIDELITY.md`](../../GFW_HOURLY_FULL_FIDELITY.md) 已改為指向本節。官方文件：GFW 4Wings report API、license-rate-limits。上游：analytics `global_fishing_watch/`。
 
+### motcmpb_nav_notices
+航港局航船布告（data.gov.tw 179037）（2026-11-21 B8 草稿，未部署）。
+
+- 頻率／位置：每小時；aton.motcmpb.gov.tw 擋境外 IP，正式跑 HiCloud VM（`external/tw_live_snapshots_vm/`），pulse-host 的 `MOTCMPB_NAV_NOTICES_ENABLED` 維持 false。
+- 寫入：不寫 DB。R2 `live/tw/nav_notices/latest.geojson`（約 6 MB，gzip 約 0.5 MB）＋`status.json`；只在有效布告內容變動時存原檔（約 9 MB）並歸檔 S3 `motcmpb_nav_notices/archives/`。
+- 守門：同一 (code, shape_name, 幾何) 重複多列要合併；`shape_start_times`／`shape_end_times` 對調；Circle／Sector 只給中心點＋半徑＋方位角，推算成面；info 電話遮蔽；東亞寬框外座標不畫。
+
 ## 航空
 
 ### flight_fr24_zone
