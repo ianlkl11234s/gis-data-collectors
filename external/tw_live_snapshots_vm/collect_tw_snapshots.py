@@ -22,6 +22,7 @@ import logging
 import os
 import ssl
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -40,6 +41,8 @@ STATE_DIR = Path(os.environ.get("STATE_DIR", "/var/lib/tw-live-snapshots/state")
 NAMES = {"dengue": "cdc_dengue_cluster", "nav": "motcmpb_nav_notices"}
 R2_KEYS = {"dengue": "live/tw/dengue_cluster/", "nav": "live/tw/nav_notices/"}
 R2_CACHE = "public, max-age=600"
+RETRY_ATTEMPTS = 3          # 每個請求最多試幾次（含第一次）
+RETRY_BACKOFF_S = (5, 15)   # 第 1、2 次失敗後等多久；cron timeout 600 s，總量要壓在其內
 UA = "GIS-DataCollectors/1.0 (tw-live-snapshots-vm)"
 
 
@@ -62,6 +65,23 @@ def session() -> requests.Session:
     s.mount("https://", _NoStrictTls())
     s.headers.update({"User-Agent": UA})
     return s
+
+
+def get_with_retry(s, url: str, timeout: int):
+    """有界重試：逾時／連線錯誤／HTTP 5xx／429 重試（退避），其他 4xx 直接失敗；用完次數照實 raise。"""
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            r = s.get(url, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            transient = status is None or status >= 500 or status == 429
+            if attempt >= RETRY_ATTEMPTS or not transient:
+                raise
+            wait = RETRY_BACKOFF_S[min(attempt, len(RETRY_BACKOFF_S)) - 1]
+            logging.warning(f"{url} 第 {attempt} 次失敗（{type(e).__name__} {status or ''}），{wait}s 後重試")
+            time.sleep(wait)
 
 
 def r2_client():
@@ -103,8 +123,7 @@ def _write_hash(name: str, h: str) -> None:
 def run_dengue(s, now):
     files, lm = {}, {}
     for name in T.DENGUE_CITIES + ["all"]:
-        r = s.get(f"{T.DENGUE_BASE}DengueCluster_{name}.json", timeout=60)
-        r.raise_for_status()
+        r = get_with_retry(s, f"{T.DENGUE_BASE}DengueCluster_{name}.json", timeout=60)
         files[name], lm[name] = r.json(), r.headers.get("Last-Modified")
     fc, st = T.dengue_normalise(files, now.strftime("%Y%m%d"), now.isoformat())
     if st["issues"].get("bad_geometry") or st["all_matches_city_union"] is False:
@@ -117,8 +136,7 @@ def run_dengue(s, now):
 
 
 def run_nav(s, now):
-    r = s.get(T.NAV_URL, timeout=180)
-    r.raise_for_status()
+    r = get_with_retry(s, T.NAV_URL, timeout=180)
     src = r.json()
     latest, _all, st = T.nav_normalise(src, now)
     h = T.content_hash(latest)
