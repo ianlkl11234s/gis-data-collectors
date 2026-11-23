@@ -189,6 +189,31 @@ def test_marine_collector_publishes_once_until_content_changes():
     assert len(r1["data"]) == 40 and r1["_upstream_max_at"]
 
 
+def _marine_collector(payload):
+    from collectors.cwa_marine_alerts import CwaMarineAlertsCollector
+    c = object.__new__(CwaMarineAlertsCollector)
+    c._r2, c._last_hash = _FakeR2(), None
+
+    class S:
+        def get(self, url, timeout):
+            return _Resp({"cwaopendata": payload[url.rsplit("/", 1)[1].removesuffix(".json")]})
+    c._session = S()
+    return c
+
+
+@pytest.mark.parametrize("empty", ["spring", "swell"])
+def test_marine_collector_rejects_partial_dataset(empty):
+    """E4：任一警戒資料集 200 但沒有監測點 → raise，不可用另一份覆寫完整快照。"""
+    import copy
+    spring, swell, stations = _marine()
+    docs = {"spring": copy.deepcopy(spring), "swell": copy.deepcopy(swell)}
+    docs[empty]["Resources"]["Resource"]["Data"]["SeaSurfaceObs"] = []
+    c = _marine_collector({"O-B0069-001": docs["spring"], "O-B0070-001": docs["swell"], "O-B0076-001": stations})
+    with pytest.raises(RuntimeError, match=empty):
+        c.collect()
+    assert c._r2.puts == []
+
+
 def test_nav_collector_skips_unchanged_rounds():
     from collectors.motcmpb_nav_notices import MotcmpbNavNoticesCollector
     src = _load("nav_notices_subset_20261121.json")
