@@ -73,6 +73,8 @@ python3 /opt/external-health/health_report.py
   expected_interval_min: 5
 ```
 
+可選 `max_success_age_min`：過去這麼多分鐘內沒有成功行就紅燈（log 只讀 24h，上限實際 1440）。
+
 `run_pattern` 要挑「每一輪恰好印一行」的 log（成功與抓取失敗各一種），不能用每個城市各印一行的訊息。
 
 ## 維運

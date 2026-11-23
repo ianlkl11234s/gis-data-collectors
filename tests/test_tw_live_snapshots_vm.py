@@ -81,6 +81,40 @@ def test_get_does_not_retry_client_error(vm, monkeypatch):
     assert s.calls == 1
 
 
+# ─── E2 ──────────────────────────────────────────────────────────────────────
+def test_main_failure_logs_marker_and_returns_nonzero(vm, monkeypatch, caplog):
+    def boom(s, now):
+        raise RuntimeError("down")
+    monkeypatch.setattr(vm, "run_nav", boom)
+    monkeypatch.setattr(sys, "argv", ["x", "nav"])
+    with caplog.at_level(logging.ERROR):
+        assert vm.main() == 1
+    assert any(r.getMessage().startswith("nav: FAILED") for r in caplog.records)
+
+
+@pytest.mark.parametrize("name,which", [("motcmpb_nav_notices", "nav"), ("cdc_dengue_cluster", "dengue")])
+def test_health_run_pattern_counts_only_own_failures(health, name, which):
+    import re
+    t = next(x for x in health.DEFAULT_TARGETS if x["name"] == name)
+    run, ok = re.compile(t["run_pattern"]), re.compile(t["success_pattern"])
+    other = "dengue" if which == "nav" else "nav"
+    assert run.search(f"2026-11-23 10:00:00 [ERROR] {which}: FAILED: RuntimeError('x')")
+    assert not ok.search(f"2026-11-23 10:00:00 [ERROR] {which}: FAILED: RuntimeError('x')")
+    assert not run.search(f"2026-11-23 10:00:00 [ERROR] {other}: FAILED: RuntimeError('x')")
+
+
+def test_health_freshness_alert_when_no_recent_success(health):
+    now = datetime(2026, 11, 23, 7, 0, tzinfo=TZ)
+    targets = [{"name": "a", "max_success_age_min": 180}, {"name": "b"}]
+    ok = {"a": {"last_success_at": (now - timedelta(minutes=60)).isoformat()}, "b": {"last_success_at": None}}
+    assert health.freshness_alerts(targets, ok, now) == []
+    stale = {"a": {"last_success_at": (now - timedelta(hours=10)).isoformat()}}
+    assert any("a" in x for x in health.freshness_alerts(targets, stale, now))
+    none = {"a": {"last_success_at": None}}
+    assert any("a" in x for x in health.freshness_alerts(targets, none, now))
+    assert health.freshness_alerts(targets, {"a": {"error": "log file not found"}}, now)  # 讀不到 log 也不能當正常
+
+
 # ─── E3 橫向：cdc_public_health_weekly_vm（每週一次的 cron，單次失敗就丟一週）─────────────
 def test_cdc_weekly_session_has_bounded_retries():
     import os

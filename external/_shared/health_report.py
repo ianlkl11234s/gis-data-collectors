@@ -119,7 +119,9 @@ DEFAULT_TARGETS: list[dict] = [
         "status_stale_min": 15,
     },
     # tw_live_snapshots（2026-11-22）：同一支 collect_tw_snapshots.py、同一份 log，每輪恰好一行「<which>: features=」；
-    # 失敗時只有 traceback、沒有這行，靠「多久沒出現」判斷。nav 內容沒變時不存檔，data_dir 新鮮度不代表有跑
+    # 失敗時印「<which>: FAILED: …」（2026-11-23 起，兩個來源各自一種，共用 log 不會互相算到）；
+    # max_success_age_min：超過這麼久沒有成功行就紅燈（連 cron 沒跑、被 timeout 殺掉都抓得到）。
+    # nav 內容沒變時不存檔，data_dir 新鮮度不代表有跑
     {
         "name": "motcmpb_nav_notices",
         "log_path": "/var/log/tw-live-snapshots/collect.log",
@@ -127,9 +129,10 @@ DEFAULT_TARGETS: list[dict] = [
         "outbound": [
             {"label": "aton", "host": "aton.motcmpb.gov.tw", "path": "/navmark/get_notice_opendata/"},
         ],
-        "run_pattern": r"\[INFO\] nav: features=",
+        "run_pattern": r"\[INFO\] nav: features=|\[ERROR\] nav: FAILED: ",
         "success_pattern": r"\[INFO\] nav: features=(\d+) ",
         "expected_interval_min": 60,
+        "max_success_age_min": 180,
     },
     {
         "name": "cdc_dengue_cluster",
@@ -138,10 +141,11 @@ DEFAULT_TARGETS: list[dict] = [
         "outbound": [
             {"label": "cdc_od", "host": "od.cdc.gov.tw", "path": "/eic/DengueCluster/DengueCluster_all.json"},
         ],
-        "run_pattern": r"\[INFO\] dengue: features=",
+        "run_pattern": r"\[INFO\] dengue: features=|\[ERROR\] dengue: FAILED: ",
         # 非流行季 0 筆是正常的，只要有跑完就算成功
         "success_pattern": r"\[INFO\] dengue: features=(\d+) ",
         "expected_interval_min": 1440,
+        "max_success_age_min": 1440,  # log 只讀 24h，等於「過去 24 小時要有一次成功」
     },
 ]
 
@@ -252,6 +256,31 @@ def status_file_checks(targets: list[dict], now: datetime | None = None) -> tupl
         detail[name] = {"updated_at": status.get("updated_at"),
                         "last_round": (status.get("runner") or {}).get("last_round")}
     return detail, alerts, warnings
+
+
+def freshness_alerts(targets: list[dict], collectors: dict[str, dict], now: datetime | None = None) -> list[str]:
+    """target 設了 max_success_age_min：過去沒有成功行、或最後成功太久以前 → 紅燈。
+
+    log 讀不到（error）也要報，不能因為沒有統計就當正常。沒設該欄位的 target 不檢查。
+    """
+    now = now or datetime.now(TAIPEI_TZ)
+    alerts: list[str] = []
+    for t in targets:
+        limit = t.get("max_success_age_min")
+        if not limit:
+            continue
+        c = collectors.get(t["name"]) or {}
+        if "error" in c:
+            alerts.append(f"{t['name']} 無法確認新鮮度：{c['error']}")
+            continue
+        last = c.get("last_success_at")
+        if not last:
+            alerts.append(f"{t['name']} 過去 24 小時沒有任何成功紀錄（要求 {limit} 分鐘內）")
+            continue
+        age = (now - datetime.fromisoformat(last)).total_seconds() / 60
+        if age > limit:
+            alerts.append(f"{t['name']} 已 {age:.0f} 分鐘沒有成功紀錄（> {limit}）")
+    return alerts
 
 
 def load_targets() -> list[dict]:
@@ -431,6 +460,7 @@ def build_snapshot() -> dict:
     checks, alerts = run_checks(system)
     checks["status_files"], st_alerts, warnings = status_file_checks(targets)
     alerts.extend(st_alerts)
+    alerts.extend(freshness_alerts(targets, collectors_report))
     return {
         "host": os.environ.get("VM_HOSTNAME") or socket.gethostname(),
         "generated_at": datetime.now(TAIPEI_TZ).isoformat(),

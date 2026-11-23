@@ -158,6 +158,15 @@ def main() -> int:
         logging.error("用法：collect_tw_snapshots.py dengue|nav")
         return 2
     now = datetime.now(T.TPE).replace(microsecond=0)
+    try:
+        return _run(which, now)
+    except Exception as e:
+        # 失敗留一行固定標記，health_report 才算得到「這輪失敗」（成功行只在完成時才印）
+        logging.error(f"{which}: FAILED: {type(e).__name__}: {e}")
+        return 1
+
+
+def _run(which: str, now) -> int:
     fc, st, path, h = (run_dengue if which == "dengue" else run_nav)(session(), now)
     st["retrieved_at"] = now.isoformat()
     r2 = r2_client()
