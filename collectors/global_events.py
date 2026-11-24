@@ -598,6 +598,46 @@ def parse_gkg_artifact(artifact: GKGArtifact, payload: bytes) -> list[dict[str, 
     return records
 
 
+# Shared people / organisations (GDELT GKG Persons / Organizations). Only rows
+# that already carry a title-level impact signal can be routed, so only those
+# rows are counted; each group keeps a bounded counter (HOST-1: no full arrays
+# retained per parsed document during catch-up rounds).
+ENTITY_NAMES_PER_ROW = 5
+ENTITY_COUNTER_CAP = 20
+ENTITIES_PER_CANDIDATE = 5
+ENTITY_NAME_MAX = 120
+
+
+def add_group_entities(group: dict[str, Any], row: dict[str, Any]) -> None:
+    if not row.get("impact_signals"):
+        return
+    counts = group.setdefault("entity_counts", {})
+    for kind, field in (("person", "gkg_persons"), ("org", "gkg_organizations")):
+        for name in (row.get(field) or [])[:ENTITY_NAMES_PER_ROW]:
+            name = name.strip()
+            if not name or len(name) > ENTITY_NAME_MAX:
+                continue
+            key = (kind, name)
+            counts[key] = counts.get(key, 0) + 1
+    if len(counts) > ENTITY_COUNTER_CAP * 2:
+        keep = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[
+            :ENTITY_COUNTER_CAP
+        ]
+        group["entity_counts"] = dict(keep)
+
+
+def group_entities(group: dict[str, Any]) -> list[dict[str, str]]:
+    """Top shared names, most-mentioned first; deterministic for replay."""
+    ranked = sorted(
+        (group.get("entity_counts") or {}).items(),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return [
+        {"kind": kind, "name": name}
+        for (kind, name), _count in ranked[:ENTITIES_PER_CANDIDATE]
+    ]
+
+
 def _candidate_id(fingerprint: str, first_slot: str, last_slot: str) -> str:
     identity = {
         "candidate_id_version": CANDIDATE_ID_VERSION,
@@ -714,6 +754,8 @@ def build_compact_batch(
                 "representative_documents": representatives,
                 # These are mentions, not confirmed occurrence coordinates.
                 "location_evidence": location_evidence,
+                # Display/linking metadata only; never part of the model prompt.
+                "entities": group_entities(group),
             }
         )
     slots = [
@@ -1083,6 +1125,9 @@ def candidate_display_records(
             "source_headline": documents[0]["title"][:500] if documents else None,
             "places": places,
         }
+        entities = candidate.get("entities") or []
+        if entities:
+            record["entities"] = entities[:ENTITIES_PER_CANDIDATE]
         for field in (
             "title_zh_tw",
             "summary_zh_tw",
@@ -2470,7 +2515,8 @@ class GlobalEventsCollector(BaseCollector):
                         # Only these row fields are read downstream. Catch-up
                         # rounds hold up to 48 files at once, so the unused GKG
                         # arrays (themes/persons/organisations/tone) are dropped
-                        # here rather than retained for every parsed document.
+                        # here rather than retained for every parsed document;
+                        # people/orgs go into a bounded per-group counter instead.
                         group["rows"].append(
                             {
                                 "title": row["title"],
@@ -2480,6 +2526,7 @@ class GlobalEventsCollector(BaseCollector):
                                 "noise_signals": row["noise_signals"],
                             }
                         )
+                        add_group_entities(group, row)
                         group["domains"].add(row["source_domain"])
                         group["streams"].add(stream)
                         group["impact_signals"].update(row["impact_signals"])

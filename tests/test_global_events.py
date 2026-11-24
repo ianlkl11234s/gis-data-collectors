@@ -15,6 +15,7 @@ from collectors.global_events import (
     GKGArtifact,
     GKGIndexGap,
     GlobalEventsCollector,
+    add_group_entities,
     ambiguous_congo_evidence_ids,
     artifact_sha256,
     batch_country_anchors,
@@ -23,6 +24,7 @@ from collectors.global_events import (
     content_sha256,
     gazetteer_entries_from_locations,
     gazetteer_lookup,
+    group_entities,
     headline_gazetteer_places,
     parse_gkg_artifact,
     parse_master_index,
@@ -2589,3 +2591,120 @@ def test_republic_of_congo_admin1_still_downgrades_to_cf_anchor():
     assert ("CF", "Congo") in codes
     downgraded = next(p for p in record["places"] if p["country_code"] == "CF")
     assert "Kouilou" in downgraded["evidence_basis"]
+
+
+def _entity_group(**extra):
+    return {
+        "fingerprint": "f" * 16,
+        "rows": [
+            {
+                "title": "EU envoy visits Kyiv",
+                "url": "https://example.test/a",
+                "source_domain": "example.test",
+                "gkg_locations": [],
+                "noise_signals": [],
+            }
+        ],
+        "domains": {"example.test"},
+        "streams": {"standard"},
+        "categories": set(),
+        "impact_signals": {"national_politics"},
+        "noise_signals": set(),
+        "first_slot": "20261122100000",
+        "last_slot": "20261122100000",
+        "documents": 1,
+        **extra,
+    }
+
+
+def test_group_entities_only_from_impact_rows_and_bounded():
+    group = {}
+    add_group_entities(
+        group, {"impact_signals": [], "gkg_persons": ["Ignored Person"]}
+    )
+    assert "entity_counts" not in group
+    for _ in range(2):
+        add_group_entities(
+            group,
+            {
+                "impact_signals": ["national_politics"],
+                "gkg_persons": ["Kaja Kallas", " ", "x" * 121],
+                "gkg_organizations": ["European Commission"],
+            },
+        )
+    add_group_entities(
+        group,
+        {
+            "impact_signals": ["national_politics"],
+            "gkg_persons": [f"Person {i}" for i in range(50)],
+        },
+    )
+    # Per-row cap (5) keeps the counter small; whitespace/oversized names dropped.
+    assert len(group["entity_counts"]) == 7
+    assert group_entities(group) == [
+        {"kind": "org", "name": "European Commission"},
+        {"kind": "person", "name": "Kaja Kallas"},
+        {"kind": "person", "name": "Person 0"},
+        {"kind": "person", "name": "Person 1"},
+        {"kind": "person", "name": "Person 2"},
+    ]
+    for i in range(60):
+        add_group_entities(
+            group,
+            {"impact_signals": ["x"], "gkg_organizations": [f"Org {i}"]},
+        )
+    assert len(group["entity_counts"]) <= 40
+
+
+def test_entities_reach_display_records_but_not_the_model_prompt(monkeypatch):
+    import config
+
+    group = _entity_group(
+        entity_counts={("person", "Kaja Kallas"): 3, ("org", "NATO"): 1}
+    )
+    batch = build_compact_batch(
+        [group],
+        source_manifest_sha256="a" * 64,
+        source_registry_sha256=None,
+        producer_git_commit="c" * 40,
+    )
+    candidate = batch["payload"]["candidates"][0]
+    assert candidate["entities"] == [
+        {"kind": "person", "name": "Kaja Kallas"},
+        {"kind": "org", "name": "NATO"},
+    ]
+    # candidate identity is unchanged by the new metadata
+    plain = build_compact_batch(
+        [_entity_group()],
+        source_manifest_sha256="a" * 64,
+        source_registry_sha256=None,
+        producer_git_commit="c" * 40,
+    )["payload"]["candidates"][0]
+    assert plain["candidate_id"] == candidate["candidate_id"]
+    assert plain["entities"] == []
+
+    record = candidate_display_records(batch, {"assessments": []}, "2026-11-22T10:00:00Z")[0]
+    assert record["entities"] == candidate["entities"]
+    plain_batch = {**batch, "payload": {**batch["payload"], "candidates": [plain]}}
+    assert "entities" not in candidate_display_records(
+        plain_batch, {"assessments": []}, "2026-11-22T10:00:00Z"
+    )[0]
+
+    calls = []
+
+    class Stop(Exception):
+        pass
+
+    class Session:
+        def post(self, *args, **kwargs):
+            calls.append(kwargs)
+            raise Stop()
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    monkeypatch.setattr(config, "GLOBAL_EVENTS_QWEN_MAX_COST_USD", 0.02)
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = Session()
+    with pytest.raises(Exception):
+        collector._request_stage1([candidate])
+    assert calls, "prompt was not built"
+    assert "Kaja" not in json.dumps(calls[0], ensure_ascii=False)
