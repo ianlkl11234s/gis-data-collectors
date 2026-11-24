@@ -98,6 +98,9 @@ def iso_week_monday(iso_year: int, iso_week: int) -> date:
 
 SESSION = requests.Session()
 SESSION.verify = False
+# 每週四才跑一次：單次逾時／5xx 不能丟掉一週，加有界重試（用完仍失敗照常 raise → 該疾病標 error、結束碼非 0）
+SESSION.mount("https://", requests.adapters.HTTPAdapter(max_retries=urllib3.util.retry.Retry(
+    total=3, backoff_factor=5, status_forcelist=(429, 500, 502, 503, 504), allowed_methods=("GET",))))
 SESSION.headers.update({
     "User-Agent": "Mozilla/5.0 (compatible; TaipeiGISBot/1.0; +https://github.com/)",
     "Accept": "text/csv, application/csv, */*",

@@ -9,7 +9,7 @@ data.gov.tw 標每 1 小時（實測 16:50、17:10 都有更新），內容是�
 （短快取）；正本是本機 JSON → 每日 archive 任務上傳 S3 `cwa_marine_alerts/archives/`。內容沒變就不重寫 R2。
 前端可用 station_uid 疊到既有 marineObservationCwa 的測站上（警戒時脈動）。
 
-健康：三份來源任一非 200／解析不到監測點 → raise；監測點全對不到座標 → raise；遇到沒看過的警戒字串只記
+健康：三份來源任一非 200／解析不到監測點 → raise；大潮、長浪兩份各自至少要有一個可定位監測點，否則 raise 不發布；監測點全對不到座標 → raise；遇到沒看過的警戒字串只記
 unknown_status（alert_level=None），不中斷（2026-11-21 實測只看過「低於警戒」）。
 """
 from __future__ import annotations
@@ -52,6 +52,12 @@ class CwaMarineAlertsCollector(BaseCollector):
         fc, status = marine_alerts_build(docs["spring"], docs["swell"], docs["stations"], retrieved_at)
         if not fc["features"]:
             raise RuntimeError(f"cwa_marine_alerts: 0 located sites (unlocated={len(status['unlocated'])})")
+        # 兩份警戒資料集各自驗證：任一份 200 卻沒有可定位監測點，不能讓另一份撐起「完整」快照覆寫 R2
+        located = {f["properties"]["kind"] for f in fc["features"]}
+        missing = [k for k in MARINE_IDS if k in ("spring", "swell") and k not in located]
+        if missing:
+            raise RuntimeError(f"cwa_marine_alerts: dataset without located sites: {','.join(missing)} "
+                               f"(unlocated={len(status['unlocated'])})")
         h = content_hash(fc)
         published = False
         if self._r2 is not None:

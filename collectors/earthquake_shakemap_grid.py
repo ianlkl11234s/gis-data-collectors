@@ -176,6 +176,30 @@ class EarthquakeShakemapGridCollector(BaseCollector):
             print(f"   [shakemap_grid] R2 事件檔查詢失敗（改用 DB 守門）: {e}")
             return False
 
+    @staticmethod
+    def _receipt_key(event_time: str) -> str:
+        return f"{EVENT_PREFIX}/receipts/{shakemap_event_key(event_time).rsplit('/', 1)[1].replace('.json', '.db-ok.json')}"
+
+    def _db_receipt_exists(self, event_time: str) -> bool:
+        """「這場已確認入庫過 DB」的 R2 收據。DB 保留期限清掉列後，收據仍在＝別重寫。查詢失敗回 False（退回 DB 守門）。"""
+        if self._r2 is None:
+            return False
+        try:
+            return self._r2.head(self._receipt_key(event_time)) is not None
+        except Exception as e:
+            print(f"   [shakemap_grid] R2 入庫收據查詢失敗（改用 DB 守門）: {e}")
+            return False
+
+    def _write_db_receipt(self, event_time: str) -> None:
+        if self._r2 is None:
+            return
+        try:
+            self._r2.put_json(self._receipt_key(event_time),
+                              {"event_time": event_time, "confirmed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                              INDEX_CACHE_CONTROL)
+        except Exception as e:
+            print(f"   [shakemap_grid] ⚠️ 入庫收據寫入失敗（不影響收集）: {e}")
+
     def _already_stored(self, event_time: str) -> bool:
         if not self.supabase_writer:
             return False
@@ -222,9 +246,17 @@ class EarthquakeShakemapGridCollector(BaseCollector):
 
         # R2 事件檔先於 DB 寫入產生，不能單憑它判定「處理過」：DB 寫入失敗後 R2 仍有檔，
         # 會讓之後每輪都略過、DB 永遠缺這場（上游只留最新一場）。有 writer 時須 DB 也已入庫才略過。
-        if self._event_published(event_time) and (
-            not self.supabase_writer or self._already_stored(event_time)
-        ):
+        # DB 保留期限會清掉舊網格而 NCDR 仍可能回同一事件：DB 沒列時，以「確認入庫過」的 R2 收據
+        # 區分「已過期被清」（不重寫）與「寫入失敗」（無收據，補寫）。
+        published = self._event_published(event_time)
+        stored_ok = False
+        if published and self.supabase_writer:
+            if self._db_receipt_exists(event_time):
+                stored_ok = True
+            elif self._already_stored(event_time):
+                self._write_db_receipt(event_time)
+                stored_ok = True
+        if published and (not self.supabase_writer or stored_ok):
             print(f"   {event_name} {event_time} 的事件檔已在 R2（且 DB 已入庫）→ 略過 {len(raw)} 格")
             try:
                 if ensure_indexed(self._r2, shakemap_event_key(event_time)):
@@ -273,6 +305,7 @@ class EarthquakeShakemapGridCollector(BaseCollector):
                 print(f"   [shakemap_grid] ⚠️ 事件檔發布失敗（DB 照寫）: {e}")
 
         if self._already_stored(event_time):
+            self._write_db_receipt(event_time)
             print(f"   {event_name} {event_time} 的網格已入庫 → 不重寫 DB")
             return {
                 'fetch_time': fetch_time.isoformat(),
