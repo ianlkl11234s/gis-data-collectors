@@ -1374,7 +1374,7 @@ cdc_dengue_cluster:
   expected_interval_min: 1440
   supabase_tables: []  # 不寫 DB：R2 live/tw/dengue_cluster/latest.geojson
   s3_prefixes:
-    - {prefix: cdc_dengue_cluster/archives/, expected_daily: true}
+    - {prefix: cdc_dengue_cluster/archives/, expected_daily: true, archive_lag_days: 7}  # archive_tw_snapshots.py 本機保留 7 天（ARCHIVE_RETENTION_DAYS=7）才上傳
   critical: false
   notes: 擋境外 IP；每日 1 次；非流行季整天 0 筆屬預期（不可套 0 筆＝失敗），健康看 23 檔都 200 且 _all 與縣市聯集一致；S3 是唯一歷史正本（來源只給近兩週）
 
