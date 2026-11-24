@@ -982,7 +982,7 @@ pla_tracks_vectorize:
   expected_interval_min: 1440
   supabase_tables: [spatial.pla_tracks, live.pla_activity_items, spatial.pla_tracks_runs]
   s3_prefixes:
-    - {prefix: pla/track_charts/, expected_daily: true}
+    - {prefix: pla/track_charts/, expected_daily: true, archive_lag_days: 2}  # key=report_date，每日一次的 collector 跑到才上傳，常晚於隔天早上
   critical: false
   notes: >-
     共機航跡示意圖 CV 向量化（非 API collector）。上游 pla_activity_daily 只寫
