@@ -167,6 +167,23 @@ def notify_trails_export(stats: dict):
         alerting.clear_alert('trails_export', "軌跡凍結匯出")
 
 
+def notify_global_event_months(stats: dict):
+    """04:30 全球事件每月期別檔：成功不送；失敗 🟡（候選表留 180 天，隔天重跑來得及，但要在保留期前補上）。"""
+    from utils import alerting
+    failed = stats.get('failed', 0)
+    kept = f"（公開保留 {stats['kept_range']}）" if stats.get('kept_range') else ""
+    alerting.record_routine('global_event_months', not failed,
+                            f"{stats.get('ok', 0)} 個月" + (f"，失敗 {failed}" if failed else "") + kept)
+    if failed:
+        failures = "；".join(str(f)[:120] for f in (stats.get('failures') or [])[:5])
+        alerting.raise_alert(
+            'global_event_months', alerting.YELLOW,
+            f"全球事件每月期別檔失敗 {failed} 個月（候選表只留 180 天，要在期限內補跑）：{failures}",
+        )
+    else:
+        alerting.clear_alert('global_event_months', "全球事件每月期別檔")
+
+
 def _escape_md(text: str) -> str:
     """簡易 Markdown 特殊字元跳脫"""
     for char in ('_', '*', '`', '['):

@@ -1233,7 +1233,7 @@ class DailyReportTask:
                 bits.append("備份 ✅" if b.get("last_success_date") == today else "備份 ❌")
         except Exception:
             pass
-        names = {"archive": "歸檔", "trails_export": "軌跡匯出"}
+        names = {"archive": "歸檔", "trails_export": "軌跡匯出", "global_event_months": "全球事件月檔"}
         for key, label in names.items():
             r = snap.get("routines", {}).get(key)
             if not r:

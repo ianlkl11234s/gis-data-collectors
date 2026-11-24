@@ -147,6 +147,16 @@ TRAILS_EXPORT_TIME = os.getenv('TRAILS_EXPORT_TIME', '02:00')
 # 軌跡匯出在子行程跑；超過此秒數強制結束（排程的 1200s 只告警）
 TRAILS_EXPORT_KILL_TIMEOUT_SEC = int(os.getenv('TRAILS_EXPORT_KILL_TIMEOUT_SEC', '3600'))
 
+# === 全球重大事件每月期別檔 (tasks/global_event_months.py) ===
+# 候選表只在 Supabase 留 180 天；每天唯讀產「本月（未完結）＋上個月」的期別檔，寫 S3 deploy-assets/static-rpc/
+# （正本）並在 R2_* 齊全時同寫 R2 site/static-rpc/（網站 /static-rpc/ 公開）。
+# ⚠️ 預設 false：部署後不會自己開始寫檔。開啟方式：pulse-host 環境設定加 GLOBAL_EVENT_MONTHS_ENABLED=true 後重啟容器。
+GLOBAL_EVENT_MONTHS_ENABLED = os.getenv('GLOBAL_EVENT_MONTHS_ENABLED', 'false').lower() in ('true', '1', 'yes')
+# 容器本地時間（TZ=Asia/Taipei）；避開 02:00 軌跡匯出與整點收集
+GLOBAL_EVENT_MONTHS_TIME = os.getenv('GLOBAL_EVENT_MONTHS_TIME', '04:30')
+# 公開空間（R2）保留最近幾個月（含本月）；更早的月檔由本工作從 R2 移除，S3 正本不刪（站主 2026-11-24「最多留六個月」）
+GLOBAL_EVENT_MONTHS_KEEP_MONTHS = int(os.getenv('GLOBAL_EVENT_MONTHS_KEEP_MONTHS', '6'))
+
 # === 城市聲景（sound_atlas/；設計見 docs/sound-atlas-live/DESIGN.md）===
 # 兩個開關預設都關。開了也只寫本機目錄（dry-run），要上傳 R2 另開 SOUND_ATLAS_UPLOAD_ENABLED。
 # ⚠️ 只能在單一實例開：分片 key 依時間決定，兩個實例會搶同一個 key。

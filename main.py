@@ -44,7 +44,7 @@ from tasks import (
     MiniTaipeiPublishTask,
 )
 from tasks.gfw_hourly_publish import run_in_subprocess as run_gfw_hourly_publish_in_subprocess
-from utils.notify import notify_archive_complete, notify_trails_export
+from utils.notify import notify_archive_complete, notify_global_event_months, notify_trails_export
 
 
 def _init_collector_from_entry(entry, first: bool) -> "BaseCollector | None":
@@ -450,6 +450,38 @@ def run_trails_export_task():
         return None
 
 
+def run_global_event_months_task():
+    """設定全球重大事件每月期別檔（tasks/global_event_months.py；預設關）。
+
+    每日只產本月與上個月（已定版的月份 S3 有檔就跳過），DB 只讀；失敗走 notify_global_event_months。
+    """
+    if not config.GLOBAL_EVENT_MONTHS_ENABLED:
+        print("\n⏸️  全球事件每月期別檔已停用 (GLOBAL_EVENT_MONTHS_ENABLED=false)")
+        return None
+    if not (config.S3_BUCKET and config.SUPABASE_DB_URL):
+        print("\n⚠️  S3_BUCKET 或 SUPABASE_DB_URL 未設定，全球事件每月期別檔停用")
+        return None
+
+    from tasks import global_event_months
+
+    def run_with_notify():
+        try:
+            # 不帶月份 → 執行當下才決定「本月／上個月」（排程在啟動時註冊，不能把月份算死）
+            stats = global_event_months.run()
+        except Exception as e:
+            notify_global_event_months({'ok': 0, 'failed': 1, 'failures': [f'任務中止: {e}']})
+            raise
+        notify_global_event_months(stats)
+        return stats
+
+    sched = get_scheduler()
+    # 單月查詢約 1–2 秒、檔案 1–3 MB；兩個月加上傳抓 600 秒
+    schedule.every().day.at(config.GLOBAL_EVENT_MONTHS_TIME).do(
+        sched.submit, _as_task("global_event_months", run_with_notify, timeout=600))
+    print(f"\n✓ 全球事件每月期別檔已設定 (每日 {config.GLOBAL_EVENT_MONTHS_TIME} Asia/Taipei)")
+    return True
+
+
 def run_sound_atlas_tasks():
     """城市聲景：即時分片（每 10 分 :x9）＋每日檔（子行程）。兩個開關預設關；上傳 R2 另需 SOUND_ATLAS_UPLOAD_ENABLED。"""
     live_on = getattr(config, 'SOUND_ATLAS_LIVE_ENABLED', False)
@@ -553,6 +585,9 @@ def main():
 
     # 設定每日軌跡凍結匯出任務
     run_trails_export_task()
+
+    # 全球重大事件每月期別檔（預設關）
+    run_global_event_months_task()
 
     # 城市聲景即時分片＋每日檔（預設關）
     sound_atlas_on = run_sound_atlas_tasks()

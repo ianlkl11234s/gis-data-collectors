@@ -30,6 +30,7 @@
                          │  每日 task：archive、backup_supabase、daily_report、trails_export、 │
                          │            mini_taipei_publish、gfw_hourly_publish（子行程）、     │
                          │            sound_atlas_daily（子行程）；每 10 分 sound_atlas_live │
+                         │            global_event_months（預設關）                           │
                          │  長駐 worker：AISStream、RIPE RIS Live（獨立執行緒，不進排程器）     │
                          │  Flask API（/health 等）＋ 主迴圈 heartbeat ＋ watchdog            │
                          └───────────────┬────────────────────────────┬────────────────────────┘
