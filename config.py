@@ -226,6 +226,9 @@ GLOBAL_EVENTS_PENDING_TTL_HOURS = int(os.getenv('GLOBAL_EVENTS_PENDING_TTL_HOURS
 GLOBAL_EVENTS_STAGE1_BUDGET_SECONDS = int(os.getenv('GLOBAL_EVENTS_STAGE1_BUDGET_SECONDS', '1200'))
 GLOBAL_EVENTS_INITIAL_SLOTS = int(os.getenv('GLOBAL_EVENTS_INITIAL_SLOTS', '4'))
 GLOBAL_EVENTS_PRODUCER_GIT_COMMIT = os.getenv('GLOBAL_EVENTS_PRODUCER_GIT_COMMIT', '')
+# 「AI 未判讀」機器欄位 assessment_note：gis-platform migration 566 套用後才可設 true，
+# 否則舊版 ingest 白名單會整批拒收。未開啟時只寫白話 reason_zh_tw（固定句，前端逐字比對）。
+GLOBAL_EVENTS_ASSESSMENT_NOTE_ENABLED = os.getenv('GLOBAL_EVENTS_ASSESSMENT_NOTE_ENABLED', 'false').lower() in ('true', '1', 'yes')
 GLOBAL_EVENTS_QWEN_MODEL = os.getenv('GLOBAL_EVENTS_QWEN_MODEL', 'qwen/qwen3.7-flash')
 # OpenRouter models fallback（逗號分隔）；留空＝行為與請求 body 完全不變
 GLOBAL_EVENTS_QWEN_FALLBACK_MODELS = os.getenv('GLOBAL_EVENTS_QWEN_FALLBACK_MODELS', '')

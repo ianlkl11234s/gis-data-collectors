@@ -2816,8 +2816,13 @@ def test_single_rejected_candidate_is_ai_rejected_and_round_moves_on(
     rejected = records[titles[2]]
     assert rejected["assessment_status"] == "pending"
     assert rejected["decision"] is None
-    assert "內容審查" in rejected["reason_zh_tw"]
-    assert "data_inspection_failed" in rejected["reason_zh_tw"]
+    from collectors.global_events import AI_UNASSESSED_REASONS_ZH_TW
+
+    assert rejected["reason_zh_tw"] == AI_UNASSESSED_REASONS_ZH_TW["provider_rejected"]
+    # 給人看的理由不含供應商與代碼；那些只在 log／run manifest
+    assert not re.search(r"[A-Za-z_]{4,}", rejected["reason_zh_tw"])
+    # 旗標未開（migration 566 未套）時不送新鍵，舊版 ingest 白名單才不會整批拒收
+    assert "assessment_note" not in rejected
     assert all(
         records[title]["assessment_status"] == "assessed"
         for title in titles
@@ -2864,6 +2869,144 @@ def test_normal_round_reports_zero_ai_rejections(monkeypatch, tmp_path):
     assert "error" not in result
     assert result["handoff_manifest"]["routing"]["ai_rejected_count"] == 0
     assert all(
-        "內容審查" not in (record.get("reason_zh_tw") or "")
+        not (record.get("reason_zh_tw") or "").startswith("AI 未判讀")
         for record in result["_candidate_display_records"]
     )
+
+
+# ---- 2026-11-24 根治：「AI 未判讀」固定白話句＋（566 後）assessment_note ----
+
+# 565 版 ingest_global_event_candidates 的欄位白名單；旗標關閉時送出的鍵必須在這裡面。
+_INGEST_565_KEYS = {
+    "candidate_id", "ai_group_id", "observed_at", "assessed_at", "assessment_status",
+    "source_urls", "source_headline", "title_zh_tw", "summary_zh_tw", "category",
+    "severity", "decision", "taiwan_relationship", "taiwan_impact_zh_tw", "confidence",
+    "reason_zh_tw", "places", "entities",
+}
+
+
+def test_in_stream_content_error_is_rejection(monkeypatch):
+    """200 回應但 finish_reason='error'＋choice.error 403（Alibaba 輸出中途審查）。"""
+    from collectors.global_events import Stage1ContentRejected
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    payload = {
+        "provider": "Alibaba",
+        "choices": [
+            {
+                "finish_reason": "error",
+                "message": {"content": '{"assessments": ['},
+                "error": {
+                    "code": 403,
+                    "message": "Output data may contain inappropriate content.",
+                    "metadata": {"error_type": "content_policy_violation"},
+                },
+            }
+        ],
+    }
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = _OpenRouterSequence([_OpenRouterResponse(200, payload=payload)])
+    with pytest.raises(Stage1ContentRejected) as info:
+        collector._request_stage1([])
+    assert info.value.summary["error_type"] == "content_policy_violation"
+
+
+def test_plain_in_stream_error_without_policy_marker_stays_content_failure(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    payload = {
+        "choices": [
+            {"finish_reason": "error", "message": {"content": "{"}, "error": {"code": 502, "message": "upstream reset"}}
+        ]
+    }
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = _OpenRouterSequence([_OpenRouterResponse(200, payload=payload)])
+    with pytest.raises(ValueError, match="incomplete response"):
+        collector._request_stage1([])
+
+
+def test_cohort_refused_only_together_is_split_and_every_member_assessed(
+    monkeypatch, tmp_path
+):
+    """今天那 10 筆：整批被審查擋，單筆都過 → 同一輪二分後全部判讀，沒有人被標未判讀。"""
+    from collectors.global_events import Stage1ContentRejected
+
+    titles = [f"Major earthquake kills dozens {index}" for index in range(4)]
+    payload = _zip([_row(f"news{i}.example", title) for i, title in enumerate(titles)])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(config_module(), "GLOBAL_EVENTS_QWEN_CHUNK_SIZE", 4)
+
+    def request(candidates):
+        if len(candidates) == 4:
+            raise Stage1ContentRejected({"status": 403, "error_type": "content_policy_violation"})
+        return _fake_assessments(collector, candidates, decision="keep_watch")
+
+    monkeypatch.setattr(collector, "_request_stage1", request)
+    result = collector.run()
+    assert "error" not in result
+    assert all(r["assessment_status"] == "assessed" for r in result["_candidate_display_records"])
+    assert result["handoff_manifest"]["routing"]["ai_rejected_count"] == 0
+    assert not collector.routing_pending_path.exists()
+
+
+def test_released_after_repeated_model_failures_is_marked_model_failed(
+    monkeypatch, tmp_path
+):
+    from collectors.global_events import AI_UNASSESSED_REASONS_ZH_TW
+
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+
+    def refuse(candidates):
+        raise ValueError("OpenRouter Stage1 incomplete response: finish_reason='error'")
+
+    monkeypatch.setattr(collector, "_request_stage1", refuse)
+    reasons = []
+    for _ in range(4):
+        result = collector.run()
+        assert "error" not in result
+        reasons.append(result["_candidate_display_records"][0].get("reason_zh_tw"))
+    # 前三輪仍是一般待判（還會再試），第四輪放行時才標「AI 未判讀」
+    assert reasons[:3] == [None, None, None]
+    assert reasons[3] == AI_UNASSESSED_REASONS_ZH_TW["model_failed"]
+    assert not collector.routing_pending_path.exists()
+
+
+def test_flag_off_sends_only_565_keys_flag_on_adds_assessment_note(
+    monkeypatch, tmp_path
+):
+    titles = [f"Major earthquake kills dozens {index}" for index in range(2)]
+    for enabled in (False, True):
+        sub = tmp_path / str(enabled)
+        sub.mkdir()
+        payload = _zip([_row(f"news{i}.example", t) for i, t in enumerate(titles)])
+        collector = _configure_enabled_collector(monkeypatch, sub, payload)
+        monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+        monkeypatch.setattr(config_module(), "GLOBAL_EVENTS_ASSESSMENT_NOTE_ENABLED", enabled)
+        monkeypatch.setattr(
+            collector, "_request_stage1", _rejecting_stage1(collector, {titles[0]}, [])
+        )
+        records = collector.run()["_candidate_display_records"]
+        for record in records:
+            extra = set(record) - _INGEST_565_KEYS
+            assert extra == ({"assessment_note"} if enabled and record["source_headline"] == titles[0] else set())
+        rejected = next(r for r in records if r["source_headline"] == titles[0])
+        assert rejected.get("assessment_note") == ("provider_rejected" if enabled else None)
+
+
+def test_partial_success_with_many_rejections_does_not_freeze_cursor(
+    monkeypatch, tmp_path
+):
+    """#229 的「被拒太多就中止」只在一批都沒成功時觸發，否則會每小時卡在同一批。"""
+    titles = [f"Major earthquake kills dozens {index}" for index in range(8)]
+    payload = _zip([_row(f"news{i}.example", t) for i, t in enumerate(titles)])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector, "_request_stage1", _rejecting_stage1(collector, set(titles[:7]), [])
+    )
+    result = collector.run()
+    assert "error" not in result
+    assert result["handoff_manifest"]["routing"]["ai_rejected_count"] == 7
+    assert collector._load_checkpoints()

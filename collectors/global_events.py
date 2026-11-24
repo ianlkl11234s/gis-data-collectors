@@ -149,9 +149,21 @@ STAGE1_CHUNK_RELEASE_ATTEMPTS = 4
 # More rejections than this in one round smells like an account / provider
 # policy change rather than a few sensitive headlines, so the round fails loudly.
 STAGE1_REJECTION_FATAL_MIN = 5
-AI_REJECTED_REASON_ZH_TW = (
-    "AI 供應商內容審查拒絕判讀（{provider} {code}）；本筆未經 AI 判讀，不代表不相關或不重要。"
-)
+# Contract (docs/GLOBAL_EVENTS_AI_UNASSESSED.md): a candidate that will never get
+# an AI assessment is published as assessment_status=pending with one of these
+# exact, plain sentences in reason_zh_tw. The sentences are stable constants that
+# the frontend matches verbatim; provider names and error codes stay in logs and
+# the private run manifest. With GLOBAL_EVENTS_ASSESSMENT_NOTE_ENABLED (only after
+# gis-platform migration 566) the same state is also sent as assessment_note.
+AI_UNASSESSED_REASONS_ZH_TW = {
+    "provider_rejected": (
+        "AI 未判讀：這則新聞沒有通過 AI 服務的自動內容審查，所以沒有 AI 判讀，之後也不會再判；"
+        "不代表不重要。"
+    ),
+    "model_failed": (
+        "AI 未判讀：多次嘗試都沒有取得有效的 AI 判讀，之後不會再判；不代表不重要。"
+    ),
+}
 PENDING_QUEUE_VERSION = 2
 STAGE1_PROMPT_VERSION = "global-events-stage1/v3"
 STAGE1_RUN_SCHEMA_VERSION = "global-events-stage1-shadow/v3"
@@ -984,7 +996,8 @@ def candidate_display_records(
     assessed_at: str,
     assessment_times: dict[str, str] | None = None,
     gazetteer: dict[str, dict[str, Any]] | None = None,
-    rejections: dict[str, dict[str, Any]] | None = None,
+    unassessed: dict[str, str] | None = None,
+    send_assessment_note: bool = False,
 ) -> list[dict[str, Any]]:
     """Explicit public allowlist: AI assessments never become formal publications."""
     assessments = {item["candidate_id"]: item for item in stage1["assessments"]}
@@ -1150,14 +1163,13 @@ def candidate_display_records(
             "reason_zh_tw",
         ):
             record[field] = assessment.get(field)
-        rejection = (rejections or {}).get(candidate["candidate_id"])
-        if rejection is not None and not assessment:
-            # ai_rejected: the DB only allows assessed|pending, so keep pending
-            # and say why. Never a silent drop and never a "not relevant" call.
-            record["reason_zh_tw"] = AI_REJECTED_REASON_ZH_TW.format(
-                provider=rejection.get("provider_name") or "OpenRouter",
-                code=rejection.get("provider_error_code") or rejection.get("status"),
-            )
+        note = (unassessed or {}).get(candidate["candidate_id"])
+        if note in AI_UNASSESSED_REASONS_ZH_TW and not assessment:
+            # AI 未判讀: the DB only allows assessed|pending, so keep pending and
+            # say why in plain words. Never a silent drop or a "not relevant" call.
+            record["reason_zh_tw"] = AI_UNASSESSED_REASONS_ZH_TW[note]
+            if send_assessment_note:
+                record["assessment_note"] = note
         records.append(record)
     return records
 
@@ -1234,6 +1246,8 @@ def is_content_rejection(summary: dict[str, Any]) -> bool:
     if summary.get("status") != 403:
         return False
     if summary.get("provider_error_code") == "data_inspection_failed":
+        return True
+    if summary.get("error_type") == "content_policy_violation":
         return True
     if summary.get("reasons"):
         return True
@@ -1687,6 +1701,7 @@ class GlobalEventsCollector(BaseCollector):
         self._stage1_chunk_stats: dict[str, Any] = {}
         self._stage1_failed_candidate_ids: list[str] = []
         self._stage1_rejections: dict[str, dict[str, Any]] = {}
+        self._unassessed_notes: dict[str, str] = {}
         self._stage1_deferred_candidate_ids: list[str] = []
 
     @property
@@ -2246,6 +2261,30 @@ class GlobalEventsCollector(BaseCollector):
             self._raw_response_sha256 = hashlib.sha256(
                 content.encode("utf-8")
             ).hexdigest()
+        choice_error = choice.get("error") if isinstance(choice, dict) else None
+        if finish_reason == "error" and isinstance(choice_error, dict):
+            # Alibaba can stop a 200 stream mid-output with an inspection error
+            # (2026-11-24: 10-candidate cohort, every member fine on its own).
+            metadata = choice_error.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            in_stream = {
+                key: value
+                for key, value in {
+                    "status": choice_error.get("code"),
+                    "message": str(choice_error.get("message") or "")[:300],
+                    "provider_name": payload.get("provider"),
+                    "error_type": metadata.get("error_type"),
+                    "in_stream": True,
+                }.items()
+                if value not in (None, "")
+            }
+            logger.warning(
+                "OpenRouter Stage1 in-stream error (candidates=%d): %s",
+                len(candidates),
+                json.dumps(in_stream, ensure_ascii=False, sort_keys=True),
+            )
+            if is_content_rejection(in_stream):
+                raise Stage1ContentRejected(in_stream)
         if finish_reason != "stop":
             raise ValueError(
                 "OpenRouter Stage1 incomplete response: "
@@ -2467,9 +2506,12 @@ class GlobalEventsCollector(BaseCollector):
             # hash; with no complete provider output this is the canonical
             # digest of the (possibly empty) Stage1 artifact, never a fake one.
             self._raw_response_sha256 = content_sha256(stage1)
-        if len(rejections) > max(STAGE1_REJECTION_FATAL_MIN, len(candidates) // 2):
-            # Too broad to be a few sensitive headlines: provider or account
-            # policy most likely changed. Fail loudly instead of publishing a
+        if not results and len(rejections) > max(
+            STAGE1_REJECTION_FATAL_MIN, len(candidates) // 2
+        ):
+            # Nothing got through and most of the round was refused: provider or
+            # account policy most likely changed. (Any successful chunk proves the
+            # service works; failing then would only re-freeze the cursor.) Fail loudly instead of publishing a
             # round of mostly-refused candidates.
             raise RuntimeError(
                 f"Stage1 content rejections too broad: {len(rejections)} of "
@@ -2568,6 +2610,7 @@ class GlobalEventsCollector(BaseCollector):
         self._stage1_failed_candidate_ids = []
         self._stage1_deferred_candidate_ids = []
         self._stage1_rejections = {}
+        self._unassessed_notes = {}
         checkpoints = self._load_checkpoints()
         queue = self._load_queue()
         now = datetime.now(UTC)
@@ -2973,6 +3016,15 @@ class GlobalEventsCollector(BaseCollector):
                     # keeps one unassessable cohort from freezing the queue.
                     released.add(candidate_id)
             drained = resolved | released
+            # Both end states are final: published once with a plain reason,
+            # then out of the queue (no hourly resend, no silent TTL expiry).
+            self._unassessed_notes = {
+                **{candidate_id: "model_failed" for candidate_id in released},
+                **{
+                    candidate_id: "provider_rejected"
+                    for candidate_id in self._stage1_rejections
+                },
+            }
             manifest["routing"]["released_pending_count"] = len(released)
             manifest["routing"]["retried_candidate_count"] = len(blamed - released)
             remaining = [
@@ -3081,7 +3133,10 @@ class GlobalEventsCollector(BaseCollector):
                     finished_at,
                     self._assessment_times,
                     gazetteer,
-                    rejections=self._stage1_rejections,
+                    unassessed=self._unassessed_notes,
+                    send_assessment_note=bool(
+                        getattr(config, "GLOBAL_EVENTS_ASSESSMENT_NOTE_ENABLED", False)
+                    ),
                 )
                 if handoff_ok and stage1 is not None and not errors
                 else []
