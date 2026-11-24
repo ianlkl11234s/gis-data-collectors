@@ -17,6 +17,8 @@
 
 ## 機器可讀標記
 
+**上線狀態**：2026-11-24 15:4x（台北）gis-platform migration 566 已套用正式 DB（#256，merge 6ab0f07）；pulse-host collector.env 已加 `GLOBAL_EVENTS_ASSESSMENT_NOTE_ENABLED=true`、收集器以 d071ba8 重建。
+
 - **現在（不需 migration）**：`reason_zh_tw` 等於上表兩句之一，就是「AI 未判讀」。這兩句是常數（`collectors/global_events.py` 的 `AI_UNASSESSED_REASONS_ZH_TW`），改字要同步改前端的比對表。
 - **gis-platform migration 566 套用後**：在 pulse-host 的 collector.env 設 `GLOBAL_EVENTS_ASSESSMENT_NOTE_ENABLED=true` 並重建容器，collector 會另外送 `assessment_note`（`provider_rejected`｜`model_failed`），window RPC 會帶到前端。前端優先看 `assessment_note`，沒有才比對文字。
 - **順序**：566 沒套之前不可開這個旗標。舊版 ingest 有欄位白名單，多一個鍵會整批拒收。測試 `test_flag_off_sends_only_565_keys_flag_on_adds_assessment_note` 守住這一點。
