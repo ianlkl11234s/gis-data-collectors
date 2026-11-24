@@ -2708,3 +2708,162 @@ def test_entities_reach_display_records_but_not_the_model_prompt(monkeypatch):
         collector._request_stage1([candidate])
     assert calls, "prompt was not built"
     assert "Kaja" not in json.dumps(calls[0], ensure_ascii=False)
+
+
+# ---- 2026-11-24：Alibaba 內容審查 403 讓整輪中止（11-23 03:04 起 32 小時無新候選）----
+
+
+def _inspection_403_payload():
+    return {
+        "error": {
+            "message": "Upstream error from Alibaba: Output data may contain inappropriate content.",
+            "code": 403,
+            "metadata": {
+                "provider_name": "Alibaba",
+                "provider_error_code": "data_inspection_failed",
+            },
+        }
+    }
+
+
+def test_openrouter_403_content_inspection_is_rejection_not_fatal(monkeypatch, caplog):
+    from collectors.global_events import Stage1ContentRejected, classify_stage1_failure
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    session = _OpenRouterSequence(
+        [_OpenRouterResponse(403, payload=_inspection_403_payload())]
+    )
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = session
+    with pytest.raises(Stage1ContentRejected) as info:
+        collector._request_stage1([])
+    assert len(session.calls) == 1
+    assert info.value.summary["provider_error_code"] == "data_inspection_failed"
+    assert classify_stage1_failure(info.value) == "rejected"
+    # 錯誤內文要進 log，之前只有「403 Client Error: Forbidden」
+    assert "data_inspection_failed" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("status", "payload"),
+    [
+        (401, {"error": {"message": "User not found. sk-or-v1-abcdef", "code": 401}}),
+        (402, {"error": {"message": "Insufficient credits", "code": 402}}),
+        (403, {"error": {"message": "Key limit exceeded", "code": 403}}),
+    ],
+)
+def test_openrouter_key_or_account_failures_stay_fatal_and_logged(
+    monkeypatch, caplog, status, payload
+):
+    from collectors.global_events import classify_stage1_failure
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture-key")
+    collector = GlobalEventsCollector.__new__(GlobalEventsCollector)
+    collector._session = _OpenRouterSequence(
+        [_OpenRouterResponse(status, payload=payload)]
+    )
+    with pytest.raises(requests.HTTPError) as info:
+        collector._request_stage1([])
+    assert classify_stage1_failure(info.value) == "fatal"
+    assert f"HTTP {status}" in str(info.value)
+    assert payload["error"]["message"].split(" sk-or")[0] in str(info.value)
+    assert "sk-or-v1-abcdef" not in str(info.value)
+    assert "sk-or-v1-abcdef" not in caplog.text
+
+
+def _rejecting_stage1(collector, bad_titles, sizes):
+    from collectors.global_events import Stage1ContentRejected
+
+    def request(candidates):
+        sizes.append(len(candidates))
+        titles = {
+            document["title"]
+            for candidate in candidates
+            for document in candidate["representative_documents"]
+        }
+        if titles & bad_titles:
+            raise Stage1ContentRejected(
+                {
+                    "status": 403,
+                    "provider_name": "Alibaba",
+                    "provider_error_code": "data_inspection_failed",
+                }
+            )
+        return _fake_assessments(collector, candidates, decision="keep_watch")
+
+    return request
+
+
+def test_single_rejected_candidate_is_ai_rejected_and_round_moves_on(
+    monkeypatch, tmp_path
+):
+    titles = [f"Major earthquake kills dozens {index}" for index in range(4)]
+    payload = _zip([_row(f"news{i}.example", title) for i, title in enumerate(titles)])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(config_module(), "GLOBAL_EVENTS_QWEN_CHUNK_SIZE", 4)
+    sizes = []
+    monkeypatch.setattr(
+        collector, "_request_stage1", _rejecting_stage1(collector, {titles[2]}, sizes)
+    )
+
+    result = collector.run()
+
+    assert "error" not in result
+    # 4 → 2+2 → 其中一半再拆 1+1：同一輪內二分，不等下一小時
+    assert sorted(sizes) == [1, 1, 2, 2, 4]
+    records = {r["source_headline"]: r for r in result["_candidate_display_records"]}
+    rejected = records[titles[2]]
+    assert rejected["assessment_status"] == "pending"
+    assert rejected["decision"] is None
+    assert "內容審查" in rejected["reason_zh_tw"]
+    assert "data_inspection_failed" in rejected["reason_zh_tw"]
+    assert all(
+        records[title]["assessment_status"] == "assessed"
+        for title in titles
+        if title != titles[2]
+    )
+    routing = result["handoff_manifest"]["routing"]
+    assert routing["ai_rejected_count"] == 1
+    assert routing["ai_rejected"][0]["provider_error_code"] == "data_inspection_failed"
+    # 進度游標往前、佇列清空，被拒的那筆不會每小時重送
+    assert collector._load_checkpoints()
+    assert not collector.routing_pending_path.exists()
+
+
+def test_whole_batch_rejected_fails_loudly_and_keeps_cursor(monkeypatch, tmp_path):
+    titles = [f"Major earthquake kills dozens {index}" for index in range(8)]
+    payload = _zip([_row(f"news{i}.example", title) for i, title in enumerate(titles)])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    sizes = []
+    monkeypatch.setattr(
+        collector, "_request_stage1", _rejecting_stage1(collector, set(titles), sizes)
+    )
+
+    result = collector.run()
+
+    assert "error" in result
+    assert "content rejections too broad" in result["error"]
+    assert collector._load_checkpoints() == {}
+    assert collector.routing_pending_path.exists()
+
+
+def test_normal_round_reports_zero_ai_rejections(monkeypatch, tmp_path):
+    payload = _zip([_row("one.example", "Major earthquake kills dozens")])
+    collector = _configure_enabled_collector(monkeypatch, tmp_path, payload)
+    monkeypatch.setattr(collector, "_upload_handoff", lambda *args: True)
+    monkeypatch.setattr(
+        collector,
+        "_request_stage1",
+        lambda candidates: _fake_assessments(collector, candidates),
+    )
+
+    result = collector.run()
+
+    assert "error" not in result
+    assert result["handoff_manifest"]["routing"]["ai_rejected_count"] == 0
+    assert all(
+        "內容審查" not in (record.get("reason_zh_tw") or "")
+        for record in result["_candidate_display_records"]
+    )

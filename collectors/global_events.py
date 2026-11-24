@@ -24,6 +24,7 @@ import time
 import unicodedata
 import uuid
 import zipfile
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -143,6 +144,14 @@ HTTP_RETRY_CAP_SECONDS = 30.0
 # A chunk that keeps failing is split, then finally released with
 # assessment_status=pending so one poisoned cohort cannot stall the queue.
 STAGE1_CHUNK_RELEASE_ATTEMPTS = 4
+# A single candidate the provider's content inspection refuses is recorded as
+# ai_rejected (published pending + explicit reason) instead of failing the run.
+# More rejections than this in one round smells like an account / provider
+# policy change rather than a few sensitive headlines, so the round fails loudly.
+STAGE1_REJECTION_FATAL_MIN = 5
+AI_REJECTED_REASON_ZH_TW = (
+    "AI 供應商內容審查拒絕判讀（{provider} {code}）；本筆未經 AI 判讀，不代表不相關或不重要。"
+)
 PENDING_QUEUE_VERSION = 2
 STAGE1_PROMPT_VERSION = "global-events-stage1/v3"
 STAGE1_RUN_SCHEMA_VERSION = "global-events-stage1-shadow/v3"
@@ -975,6 +984,7 @@ def candidate_display_records(
     assessed_at: str,
     assessment_times: dict[str, str] | None = None,
     gazetteer: dict[str, dict[str, Any]] | None = None,
+    rejections: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Explicit public allowlist: AI assessments never become formal publications."""
     assessments = {item["candidate_id"]: item for item in stage1["assessments"]}
@@ -1140,6 +1150,14 @@ def candidate_display_records(
             "reason_zh_tw",
         ):
             record[field] = assessment.get(field)
+        rejection = (rejections or {}).get(candidate["candidate_id"])
+        if rejection is not None and not assessment:
+            # ai_rejected: the DB only allows assessed|pending, so keep pending
+            # and say why. Never a silent drop and never a "not relevant" call.
+            record["reason_zh_tw"] = AI_REJECTED_REASON_ZH_TW.format(
+                provider=rejection.get("provider_name") or "OpenRouter",
+                code=rejection.get("provider_error_code") or rejection.get("status"),
+            )
         records.append(record)
     return records
 
@@ -1160,6 +1178,66 @@ def group_signal_priority(signals: Iterable[str]) -> int:
         ),
         default=0,
     )
+
+
+_SECRET_LIKE = re.compile(r"(sk-or-[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._-]+)")
+
+
+class Stage1ContentRejected(Exception):
+    """The provider's content inspection refused this exact cohort (HTTP 403)."""
+
+    def __init__(self, summary: dict[str, Any]):
+        self.summary = summary
+        super().__init__(
+            "OpenRouter Stage1 content rejected: "
+            + json.dumps(summary, ensure_ascii=False, sort_keys=True)
+        )
+
+
+def openrouter_error_summary(response: Any, limit: int = 300) -> dict[str, Any]:
+    """Bounded, secret-free view of a non-2xx OpenRouter body for logs/receipts."""
+    status = getattr(response, "status_code", None)
+    summary: dict[str, Any] = {"status": status}
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001 - non-JSON bodies (HTML gateways) are common
+        body = None
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        metadata = error.get("metadata") if isinstance(error.get("metadata"), dict) else {}
+        summary.update(
+            {
+                "code": error.get("code"),
+                "message": str(error.get("message") or "")[:limit],
+                "provider_name": metadata.get("provider_name"),
+                "provider_error_code": metadata.get("provider_error_code"),
+            }
+        )
+        if metadata.get("reasons"):
+            summary["reasons"] = [str(item)[:80] for item in metadata["reasons"]][:5]
+    else:
+        text = getattr(response, "text", "")
+        summary["body"] = (text if isinstance(text, str) else "")[:limit]
+    for key, value in list(summary.items()):
+        if isinstance(value, str):
+            summary[key] = _SECRET_LIKE.sub("<REDACTED>", value)
+    return {key: value for key, value in summary.items() if value not in (None, "")}
+
+
+_CONTENT_REJECTION_MESSAGE = re.compile(
+    r"inappropriate|moderation|flagged|content.?polic|safety", re.I
+)
+
+
+def is_content_rejection(summary: dict[str, Any]) -> bool:
+    """403 from content inspection (per cohort), not from the key or account."""
+    if summary.get("status") != 403:
+        return False
+    if summary.get("provider_error_code") == "data_inspection_failed":
+        return True
+    if summary.get("reasons"):
+        return True
+    return bool(_CONTENT_REJECTION_MESSAGE.search(str(summary.get("message", ""))))
 
 
 def openrouter_retry_delay(response: requests.Response) -> float:
@@ -1188,9 +1266,15 @@ def classify_stage1_failure(exc: BaseException) -> str:
     ``provider`` transport-level outage after retries; isolate the chunk but do
                  not blame it, otherwise an OpenRouter incident would burn every
                  candidate's attempt budget and release the whole queue blind.
-    ``fatal``    misconfiguration (missing key, 401/403, missing OpenCC). Fail
-                 the run; retrying or releasing would hide a broken deployment.
+    ``rejected`` the provider's content inspection refused this cohort (403
+                 data_inspection_failed / moderation); split it now and record
+                 single refusals as ai_rejected.
+    ``fatal``    misconfiguration (missing key, 401/402, 403 without a content
+                 inspection marker, missing OpenCC). Fail the run; retrying or
+                 releasing would hide a broken deployment.
     """
+    if isinstance(exc, Stage1ContentRejected):
+        return "rejected"
     if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
         return "provider"
     if isinstance(exc, requests.HTTPError):
@@ -1602,6 +1686,7 @@ class GlobalEventsCollector(BaseCollector):
         self._assessment_times: dict[str, str] = {}
         self._stage1_chunk_stats: dict[str, Any] = {}
         self._stage1_failed_candidate_ids: list[str] = []
+        self._stage1_rejections: dict[str, dict[str, Any]] = {}
         self._stage1_deferred_candidate_ids: list[str] = []
 
     @property
@@ -2088,11 +2173,24 @@ class GlobalEventsCollector(BaseCollector):
             except requests.HTTPError as exc:
                 error_response = exc.response if exc.response is not None else None
                 status = getattr(error_response, "status_code", None)
+                summary = openrouter_error_summary(error_response)
+                logger.warning(
+                    "OpenRouter Stage1 HTTP %s (candidates=%d): %s",
+                    status,
+                    len(candidates),
+                    json.dumps(summary, ensure_ascii=False, sort_keys=True),
+                )
+                if is_content_rejection(summary):
+                    raise Stage1ContentRejected(summary) from exc
                 if (
                     status not in RETRYABLE_STATUS_CODES
                     or attempt + 1 >= OPENROUTER_MAX_ATTEMPTS
                 ):
-                    raise
+                    raise requests.HTTPError(
+                        f"OpenRouter Stage1 HTTP {status}: "
+                        + json.dumps(summary, ensure_ascii=False, sort_keys=True),
+                        response=error_response,
+                    ) from exc
                 last_error: Exception = exc
             except (requests.Timeout, requests.ConnectionError) as exc:
                 if attempt + 1 >= OPENROUTER_MAX_ATTEMPTS:
@@ -2206,13 +2304,18 @@ class GlobalEventsCollector(BaseCollector):
         deferred_ids: list[str] = []
         totals: dict[str, Any] = {}
         next_group = 1
-        for index, chunk in enumerate(chunks):
+        rejections: dict[str, dict[str, Any]] = {}
+        work = deque(chunks)
+        sent = 0
+        while work:
+            chunk = work.popleft()
             chunk_ids = [candidate["candidate_id"] for candidate in chunk]
-            if index and time.monotonic() - started > budget:
+            if sent and time.monotonic() - started > budget:
                 # Stay inside COLLECT_TIMEOUT. Unsent chunks keep their attempt
                 # budget intact and are picked up by the next scheduled run.
                 deferred_ids.extend(chunk_ids)
                 continue
+            sent += 1
             cache_key = content_sha256(
                 {
                     "model": getattr(
@@ -2274,6 +2377,33 @@ class GlobalEventsCollector(BaseCollector):
                         "completed_chunks": len(observations),
                     }
                     raise
+                if kind == "rejected":
+                    # Content inspection refuses a cohort, not the service:
+                    # bisect now so the rest of the cohort is still assessed,
+                    # and record a lone refused candidate explicitly.
+                    chunk_failures.append(
+                        {
+                            "kind": kind,
+                            "chunk_size": len(chunk),
+                            "candidate_ids": chunk_ids,
+                            "error": str(exc)[:300],
+                        }
+                    )
+                    if len(chunk) > 1:
+                        middle = len(chunk) // 2
+                        work.appendleft(chunk[middle:])
+                        work.appendleft(chunk[:middle])
+                    else:
+                        rejections[chunk_ids[0]] = dict(
+                            getattr(exc, "summary", {}) or {}
+                        )
+                    logger.warning(
+                        "global_events Stage1 content rejected (size=%d, %s): %s",
+                        len(chunk),
+                        "split" if len(chunk) > 1 else "ai_rejected",
+                        str(exc)[:200],
+                    )
+                    continue
                 chunk_failures.append(
                     {
                         "kind": kind,
@@ -2337,6 +2467,16 @@ class GlobalEventsCollector(BaseCollector):
             # hash; with no complete provider output this is the canonical
             # digest of the (possibly empty) Stage1 artifact, never a fake one.
             self._raw_response_sha256 = content_sha256(stage1)
+        if len(rejections) > max(STAGE1_REJECTION_FATAL_MIN, len(candidates) // 2):
+            # Too broad to be a few sensitive headlines: provider or account
+            # policy most likely changed. Fail loudly instead of publishing a
+            # round of mostly-refused candidates.
+            raise RuntimeError(
+                f"Stage1 content rejections too broad: {len(rejections)} of "
+                f"{len(candidates)} candidates refused; check provider/account policy. "
+                + json.dumps(next(iter(rejections.values())), ensure_ascii=False)[:200]
+            )
+        self._stage1_rejections = rejections
         self._stage1_chunk_stats = {
             "chunk_count": len(chunks),
             "failed_chunk_count": len(chunk_failures),
@@ -2346,6 +2486,7 @@ class GlobalEventsCollector(BaseCollector):
             "provider_failure_count": sum(
                 1 for item in chunk_failures if item["kind"] == "provider"
             ),
+            "rejected_candidate_count": len(rejections),
             "split_chunk_count": sum(1 for chunk in chunks if len(chunk) < base),
             "failed_candidate_count": len(failed_ids),
             "deferred_candidate_count": len(deferred_ids),
@@ -2426,6 +2567,7 @@ class GlobalEventsCollector(BaseCollector):
         self._stage1_chunk_stats = {}
         self._stage1_failed_candidate_ids = []
         self._stage1_deferred_candidate_ids = []
+        self._stage1_rejections = {}
         checkpoints = self._load_checkpoints()
         queue = self._load_queue()
         now = datetime.now(UTC)
@@ -2787,6 +2929,13 @@ class GlobalEventsCollector(BaseCollector):
                 ),
                 "released_pending_count": 0,
                 "retried_candidate_count": 0,
+                # Refused by provider content inspection: published as pending
+                # with an explicit reason and drained (not retried forever).
+                "ai_rejected_count": len(self._stage1_rejections),
+                "ai_rejected": [
+                    {"candidate_id": candidate_id, **summary}
+                    for candidate_id, summary in sorted(self._stage1_rejections.items())
+                ][:20],
             },
             "stage1_chunks": dict(self._stage1_chunk_stats),
             "stage1_observation": self._stage1_observation,
@@ -2927,7 +3076,12 @@ class GlobalEventsCollector(BaseCollector):
             "deferred_candidate_count": deferred_count,
             "_candidate_display_records": (
                 candidate_display_records(
-                    batch, stage1, finished_at, self._assessment_times, gazetteer
+                    batch,
+                    stage1,
+                    finished_at,
+                    self._assessment_times,
+                    gazetteer,
+                    rejections=self._stage1_rejections,
                 )
                 if handoff_ok and stage1 is not None and not errors
                 else []
