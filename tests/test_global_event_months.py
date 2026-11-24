@@ -43,7 +43,8 @@ def test_plan_increment_only():
 
 
 def test_plan_refuses_months_older_than_retention_margin():
-    action = gem.plan(["2026-09"], date(2027, 3, 1), {})[0][2]
+    # 保留月數放大時，150 天保護仍擋住候選表可能已殘缺的月份
+    action = gem.plan(["2026-09"], date(2027, 3, 1), {}, keep=12)[0][2]
     assert action.startswith("skip:早於 150 天")
 
 
@@ -84,7 +85,7 @@ class FakeConn:
 
 class FakeBoto:
     def __init__(self, heads=None):
-        self.heads, self.puts = heads or {}, []
+        self.heads, self.puts, self.deleted, self.fail_delete = dict(heads or {}), [], [], set()
 
     def head_object(self, Bucket, Key):
         from botocore.exceptions import ClientError
@@ -94,6 +95,22 @@ class FakeBoto:
 
     def put_object(self, **kw):
         self.puts.append(kw)
+        self.heads[kw["Key"]] = kw.get("Metadata", {})
+
+    def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None):
+        keys = sorted(k for k in self.heads if k.startswith(Prefix))
+        # 兩頁，驗分頁
+        half = (len(keys) + 1) // 2
+        if ContinuationToken is None and len(keys) > 1:
+            return {"Contents": [{"Key": k} for k in keys[:half]], "IsTruncated": True, "NextContinuationToken": "t"}
+        rest = keys[half:] if ContinuationToken else keys
+        return {"Contents": [{"Key": k} for k in rest], "IsTruncated": False}
+
+    def delete_object(self, Bucket, Key):
+        if Key in self.fail_delete:
+            raise RuntimeError("AccessDenied")
+        self.deleted.append(Key)
+        self.heads.pop(Key, None)
 
 
 class FakeStore:
@@ -161,3 +178,61 @@ def test_notify_success_clears_failure_yellow(sent):
     notify.notify_global_event_months({"ok": 1, "failed": 1, "failures": ["2026-10: timeout"]})
     assert sent[0][:3] == ("routine", "global_event_months", False)
     assert sent[1][:3] == ("raise", "global_event_months", alerting.YELLOW) and "2026-10: timeout" in sent[1][3]
+
+
+R2K = "site/static-rpc/get_global_event_month_{}.json"
+
+
+def test_earliest_kept_and_range_cross_year():
+    assert gem.earliest_kept(date(2026, 11, 24), 6) == "2026-06"
+    assert gem.earliest_kept(date(2027, 3, 1), 6) == "2026-10"
+    assert gem.earliest_kept(date(2027, 1, 31), 6) == "2026-08"
+    assert gem.kept_range(date(2027, 1, 31), 6) == "2026-08～2027-01"
+
+
+def test_prune_keeps_sixth_month_deletes_seventh_and_ignores_other_names():
+    today = date(2027, 3, 1)  # 保留 2026-10～2027-03
+    r2 = FakeStore({R2K.format(m): {} for m in ("202609", "202610", "202611", "202703")})
+    for other in ("site/static-rpc/get_global_event_month_202608.json.bak", "site/static-rpc/get_global_event_month_2026.json",
+                  "site/static-rpc/get_global_event_month_202613.json", "site/static-rpc/get_fire_events_by_year_114.json",
+                  "site/other/get_global_event_month_202601.json"):
+        r2.s3.heads[other] = {}
+    out = gem.prune_r2(r2, today, 6)
+    assert out["targets"] == [R2K.format("202609")] and out["deleted"] == [R2K.format("202609")]
+    assert R2K.format("202610") in r2.s3.heads  # 剛好第 6 個月不刪
+    assert "site/static-rpc/get_global_event_month_202608.json.bak" in r2.s3.heads
+    assert "site/static-rpc/get_global_event_month_202613.json" in r2.s3.heads
+
+
+def test_prune_dry_run_lists_but_deletes_nothing():
+    r2 = FakeStore({R2K.format(m): {} for m in ("202512", "202601", "202606")})
+    out = gem.prune_r2(r2, date(2026, 11, 24), 6, dry_run=True)
+    assert out["targets"] == [R2K.format("202512"), R2K.format("202601")] and out["deleted"] == []
+    assert r2.s3.deleted == []
+
+
+def test_run_prunes_after_generating_and_delete_failure_alerts():
+    s3 = FakeStore()
+    r2 = FakeStore({R2K.format("202604"): {}, R2K.format("202605"): {}})
+    r2.s3.fail_delete = {R2K.format("202605")}
+    stats = gem.run(["2026-11"], today=date(2026, 11, 24), conn=FakeConn(), s3=s3, r2=r2, keep=6)
+    assert stats["kept_range"] == "2026-06～2026-11"
+    assert stats["pruned"] == [R2K.format("202604")]
+    assert stats["failed"] == 1 and "AccessDenied" in stats["failures"][0]
+
+
+def test_run_dry_run_writes_and_deletes_nothing():
+    s3, r2 = FakeStore(), FakeStore({R2K.format("202601"): {}})
+    stats = gem.run(["2026-11"], today=date(2026, 11, 24), conn=FakeConn(), s3=s3, r2=r2, dry_run=True)
+    assert s3.s3.puts == [] and r2.s3.puts == [] and r2.s3.deleted == []
+    assert stats["prune_targets"] == [R2K.format("202601")]
+
+
+def test_plan_skips_months_outside_public_retention():
+    assert gem.plan(["2026-05", "2026-11"], date(2026, 11, 24), {}, keep=6) == [
+        ("2026-05", False, "skip:超過公開保留期（最近 6 個月）"), ("2026-11", True, "run")]
+
+
+def test_notify_summary_includes_kept_range(sent):
+    notify.notify_global_event_months({"ok": 1, "failed": 0, "kept_range": "2026-06～2026-11"})
+    assert sent[0] == ("routine", "global_event_months", True, "1 個月（公開保留 2026-06～2026-11）")

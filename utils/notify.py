@@ -171,8 +171,9 @@ def notify_global_event_months(stats: dict):
     """04:30 全球事件每月期別檔：成功不送；失敗 🟡（候選表留 180 天，隔天重跑來得及，但要在保留期前補上）。"""
     from utils import alerting
     failed = stats.get('failed', 0)
+    kept = f"（公開保留 {stats['kept_range']}）" if stats.get('kept_range') else ""
     alerting.record_routine('global_event_months', not failed,
-                            f"{stats.get('ok', 0)} 個月" + (f"，失敗 {failed}" if failed else ""))
+                            f"{stats.get('ok', 0)} 個月" + (f"，失敗 {failed}" if failed else "") + kept)
     if failed:
         failures = "；".join(str(f)[:120] for f in (stats.get('failures') or [])[:5])
         alerting.raise_alert(

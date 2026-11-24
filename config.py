@@ -154,6 +154,8 @@ TRAILS_EXPORT_KILL_TIMEOUT_SEC = int(os.getenv('TRAILS_EXPORT_KILL_TIMEOUT_SEC',
 GLOBAL_EVENT_MONTHS_ENABLED = os.getenv('GLOBAL_EVENT_MONTHS_ENABLED', 'false').lower() in ('true', '1', 'yes')
 # 容器本地時間（TZ=Asia/Taipei）；避開 02:00 軌跡匯出與整點收集
 GLOBAL_EVENT_MONTHS_TIME = os.getenv('GLOBAL_EVENT_MONTHS_TIME', '04:30')
+# 公開空間（R2）保留最近幾個月（含本月）；更早的月檔由本工作從 R2 移除，S3 正本不刪（站主 2026-11-24「最多留六個月」）
+GLOBAL_EVENT_MONTHS_KEEP_MONTHS = int(os.getenv('GLOBAL_EVENT_MONTHS_KEEP_MONTHS', '6'))
 
 # === 城市聲景（sound_atlas/；設計見 docs/sound-atlas-live/DESIGN.md）===
 # 兩個開關預設都關。開了也只寫本機目錄（dry-run），要上傳 R2 另開 SOUND_ATLAS_UPLOAD_ENABLED。

@@ -16,6 +16,11 @@
     - 本月、以及月底後未滿 FINAL_AFTER_DAYS 天的上個月：每天重產，標 partial=true（等改判、補判落定）。
     - 已結束滿 FINAL_AFTER_DAYS 天的月份：S3 已有 partial=false 的檔就跳過；沒有檔、或還是 partial 的檔才產一次定版。
     - 不重產早於 MAX_AGE_DAYS 天的月份：候選表 180 天後會被刪，重產只會得到殘缺的檔。
+    - 公開保留期（站主 2026-11-24「最多留六個月」）：R2 只留最近 KEEP_MONTHS 個月（含本月，預設 6，
+      GLOBAL_EVENT_MONTHS_KEEP_MONTHS），更早的月檔每天由本工作從 R2 移除；只刪完全符合命名規則
+      `site/static-rpc/get_global_event_month_<YYYYMM>.json` 的物件（白名單比對，不整批刪前綴），先寫將刪清單 log 再刪。
+      S3 正本不由本工作刪除（ADR-0026：S3 永久；bucket 既有規則只有 30/90 天轉冷與舊版本 30 天到期）。
+      例：2026-09 的檔在 2027-03 的第一次執行（台北時間）從 R2 移除。
     - 每個候選取最新版本；不含 AI 判為雜訊者；每列＝一個候選，地點收成陣列
       （新聞提及的城市／國家代表點，不是精確發生地；座標到小數 2 位）。
     - 資料庫只讀：交易 READ ONLY＋SET LOCAL（timeout、時區），結束一律 ROLLBACK。
@@ -31,6 +36,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -47,6 +53,9 @@ S3_PREFIX = 'deploy-assets/static-rpc/'
 R2_PREFIX = 'site/static-rpc/'
 FINAL_AFTER_DAYS = 3
 MAX_AGE_DAYS = 150
+KEEP_MONTHS_DEFAULT = 6
+# 只認這個樣式；其他 static-rpc 檔、命名不符的物件一律不碰
+R2_MONTH_KEY = re.compile(r'^site/static-rpc/get_global_event_month_(\d{4})(0[1-9]|1[0-2])\.json$')
 CACHE_PARTIAL = 'public, max-age=300, must-revalidate'
 CACHE_FINAL = 'public, max-age=3600'
 
@@ -121,6 +130,55 @@ def too_old(month: str, today: date) -> bool:
     return date(y, m, 1) < today - timedelta(days=MAX_AGE_DAYS)
 
 
+def keep_months() -> int:
+    """公開保留月數（含本月）；設定壞掉時用預設，不會變成 0 而把全部刪掉。"""
+    n = getattr(config, 'GLOBAL_EVENT_MONTHS_KEEP_MONTHS', KEEP_MONTHS_DEFAULT)
+    return n if isinstance(n, int) and n >= 1 else KEEP_MONTHS_DEFAULT
+
+
+def earliest_kept(today: date, keep: int) -> str:
+    """保留範圍的第一個月（台北）。keep=6、today=2026-11-24 → '2026-06'。"""
+    idx = today.year * 12 + (today.month - 1) - (keep - 1)
+    return f"{idx // 12:04d}-{idx % 12 + 1:02d}"
+
+
+def kept_range(today: date, keep: int) -> str:
+    return f"{earliest_kept(today, keep)}～{today.strftime('%Y-%m')}"
+
+
+def prune_r2(r2, today: date, keep: int, *, dry_run: bool = False) -> dict:
+    """從 R2 移除早於保留範圍的全球事件月檔。回傳 {'targets': [...], 'deleted': [...], 'failures': [...]}。"""
+    first = earliest_kept(today, keep)
+    targets: list[str] = []
+    token = None
+    while True:
+        kw = {'Bucket': r2.bucket, 'Prefix': R2_PREFIX + FILE_STEM}
+        if token:
+            kw['ContinuationToken'] = token
+        page = r2.s3.list_objects_v2(**kw)
+        for obj in page.get('Contents', []) or []:
+            m = R2_MONTH_KEY.match(obj.get('Key', ''))
+            if m and f"{m.group(1)}-{m.group(2)}" < first:
+                targets.append(obj['Key'])
+        if not page.get('IsTruncated'):
+            break
+        token = page.get('NextContinuationToken')
+    targets.sort()
+    out = {'targets': targets, 'deleted': [], 'failures': []}
+    logger.info("[global_event_months] R2 保留 %s，%s將刪 %d 個：%s", kept_range(today, keep),
+                '（dry-run）' if dry_run else '', len(targets), ', '.join(targets) or '無')
+    if dry_run:
+        return out
+    for key in targets:
+        try:
+            r2.s3.delete_object(Bucket=r2.bucket, Key=key)
+            out['deleted'].append(key)
+        except Exception as e:
+            out['failures'].append(f"刪除 {key}: {e}")
+            logger.exception("[global_event_months] 刪除 %s 失敗", key)
+    return out
+
+
 def scheduled_months(today: date) -> list[str]:
     """每日排程要看的月份：上個月與本月（上個月已定版且 S3 有定版檔時由 plan 跳過）。"""
     this = today.strftime('%Y-%m')
@@ -128,7 +186,8 @@ def scheduled_months(today: date) -> list[str]:
     return [prev, this]
 
 
-def plan(months: list[str], today: date, existing_partial: dict[str, bool | None], force: bool = False) -> list[tuple[str, bool, str]]:
+def plan(months: list[str], today: date, existing_partial: dict[str, bool | None], force: bool = False,
+         keep: int = KEEP_MONTHS_DEFAULT) -> list[tuple[str, bool, str]]:
     """回傳 [(month, partial, 動作說明)]；動作為 'skip:<原因>' 或 'run'。
 
     existing_partial：S3 現有物件的 partial（True／False），沒有檔為 None。
@@ -136,7 +195,9 @@ def plan(months: list[str], today: date, existing_partial: dict[str, bool | None
     out = []
     for month in months:
         partial = not is_final(month, today)
-        if too_old(month, today):
+        if month < earliest_kept(today, keep):
+            out.append((month, partial, f'skip:超過公開保留期（最近 {keep} 個月）'))
+        elif too_old(month, today):
             out.append((month, partial, f'skip:早於 {MAX_AGE_DAYS} 天，候選表可能已刪掉一部分'))
         elif not partial and existing_partial.get(month) is False and not force:
             out.append((month, partial, 'skip:已有定版檔'))
@@ -174,15 +235,19 @@ def _stored_partial(store, key: str) -> bool | None:
 
 
 def run(months: list[str] | None = None, *, force: bool = False, upload: bool = True,
-        out_dir: str | None = None, today: date | None = None, conn=None, s3=None, r2=None) -> dict:
+        out_dir: str | None = None, today: date | None = None, conn=None, s3=None, r2=None,
+        dry_run: bool = False, keep: int | None = None) -> dict:
     """產檔主流程。回傳統計 dict（給 notify_global_event_months）。
 
     每個月獨立：一個月失敗不影響其他月，最後一起回報。
     upload=False：只寫 out_dir，不碰 S3／R2（本機回補、驗證用）。
+    dry_run=True：照常規劃與查詢，但不寫 S3／R2、不刪 R2，只寫 log（將刪清單在 stats['prune_targets']）。
     """
     today = today or datetime.now(TAIPEI).date()
     months = months or scheduled_months(today)
-    stats = {'ok': 0, 'skipped': 0, 'failed': 0, 'bytes': 0, 'months': [], 'failures': [], 'r2': 'off'}
+    keep = keep or keep_months()
+    stats = {'ok': 0, 'skipped': 0, 'failed': 0, 'bytes': 0, 'months': [], 'failures': [], 'r2': 'off',
+             'kept_range': kept_range(today, keep), 'prune_targets': [], 'pruned': []}
 
     if upload and s3 is None:
         from storage.s3 import S3Storage
@@ -199,7 +264,7 @@ def run(months: list[str] | None = None, *, force: bool = False, upload: bool = 
             on_s3 = _stored_partial(s3, S3_PREFIX + file_name(m))
             on_r2 = _stored_partial(r2, R2_PREFIX + file_name(m)) if r2 is not None else False
             existing[m] = False if (on_s3 is False and on_r2 is False) else (None if on_s3 is None else True)
-    todo = plan(months, today, existing, force=force)
+    todo = plan(months, today, existing, force=force, keep=keep)
 
     own_conn = conn is None
     if own_conn and any(action == 'run' for _, _, action in todo):
@@ -220,7 +285,7 @@ def run(months: list[str] | None = None, *, force: bool = False, upload: bool = 
                     tmp = Path(out_dir) / f".{name}.tmp"
                     tmp.write_bytes(body)
                     tmp.replace(Path(out_dir) / name)  # 成功才換掉正式檔
-                if upload:
+                if upload and not dry_run:
                     meta = {'partial': 'true' if partial else 'false', 'sha256': sha}
                     s3.s3.put_object(Bucket=s3.bucket, Key=S3_PREFIX + name, Body=body,
                                      ContentType='application/json', Metadata=meta)
@@ -243,6 +308,15 @@ def run(months: list[str] | None = None, *, force: bool = False, upload: bool = 
     finally:
         if own_conn and conn is not None:
             conn.close()
+    if upload and r2 is not None:
+        try:
+            pr = prune_r2(r2, today, keep, dry_run=dry_run)
+        except Exception as e:  # 列清單失敗也要告警，不影響已產好的檔
+            pr = {'targets': [], 'deleted': [], 'failures': [f"列出 R2 月檔失敗: {e}"]}
+        stats['prune_targets'], stats['pruned'] = pr['targets'], pr['deleted']
+        if pr['failures']:
+            stats['failed'] += len(pr['failures'])
+            stats['failures'].extend(pr['failures'])
     return stats
 
 
@@ -254,12 +328,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--force', action='store_true', help='已有定版檔也重產')
     ap.add_argument('--out-dir', help='另外寫一份到本地目錄')
     ap.add_argument('--no-upload', action='store_true', help='不上傳 S3／R2（只寫 --out-dir）')
+    ap.add_argument('--dry-run', action='store_true', help='照常查詢與規劃，但不寫 S3／R2、不刪 R2；印出將刪清單')
     args = ap.parse_args(argv)
     today = datetime.now(TAIPEI).date()
     months = args.months or (months_between(args.since, today.strftime('%Y-%m')) if args.since else None)
     if args.no_upload and not args.out_dir:
         ap.error('--no-upload 要搭配 --out-dir')
-    stats = run(months, force=args.force, upload=not args.no_upload, out_dir=args.out_dir, today=today)
+    stats = run(months, force=args.force, upload=not args.no_upload, out_dir=args.out_dir, today=today, dry_run=args.dry_run)
     print(json.dumps(stats, ensure_ascii=False))
     return 1 if stats['failed'] else 0
 
