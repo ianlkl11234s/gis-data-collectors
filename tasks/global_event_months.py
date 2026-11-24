@@ -161,11 +161,11 @@ def query_month(conn, month: str, partial: bool) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
 
 
-def _s3_partial(s3, key: str) -> bool | None:
-    """S3 物件的 partial metadata；沒有檔回 None；metadata 缺漏當成 partial（保守：會重產）。"""
+def _stored_partial(store, key: str) -> bool | None:
+    """S3／R2 物件的 partial metadata；沒有檔回 None；metadata 缺漏當成 partial（保守：會重產）。"""
     from botocore.exceptions import ClientError
     try:
-        head = s3.s3.head_object(Bucket=s3.bucket, Key=key)
+        head = store.s3.head_object(Bucket=store.bucket, Key=key)
     except ClientError as e:
         if e.response.get('Error', {}).get('Code') in ('404', 'NoSuchKey', 'NotFound'):
             return None
@@ -192,7 +192,13 @@ def run(months: list[str] | None = None, *, force: bool = False, upload: bool = 
         r2 = get_r2_storage()
     stats['r2'] = 'on' if (upload and r2 is not None) else 'off'
 
-    existing = {m: _s3_partial(s3, S3_PREFIX + file_name(m)) for m in months} if upload else {}
+    # 定版檔要 S3（正本）與 R2（公開）都有才算：只看 S3 的話，S3 成功、R2 失敗的那個月隔天會被跳過，R2 永遠缺定版檔。
+    existing: dict[str, bool | None] = {}
+    if upload:
+        for m in months:
+            on_s3 = _stored_partial(s3, S3_PREFIX + file_name(m))
+            on_r2 = _stored_partial(r2, R2_PREFIX + file_name(m)) if r2 is not None else False
+            existing[m] = False if (on_s3 is False and on_r2 is False) else (None if on_s3 is None else True)
     todo = plan(months, today, existing, force=force)
 
     own_conn = conn is None

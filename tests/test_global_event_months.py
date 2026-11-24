@@ -102,7 +102,9 @@ class FakeStore:
 
 
 def test_run_read_only_writes_s3_and_r2_with_partial_metadata():
-    conn, s3, r2 = FakeConn(), FakeStore({"deploy-assets/static-rpc/get_global_event_month_202610.json": {"partial": "false"}}), FakeStore()
+    conn = FakeConn()
+    s3 = FakeStore({"deploy-assets/static-rpc/get_global_event_month_202610.json": {"partial": "false"}})
+    r2 = FakeStore({"site/static-rpc/get_global_event_month_202610.json": {"partial": "false"}})
     stats = gem.run(today=date(2026, 11, 24), conn=conn, s3=s3, r2=r2)
     assert stats["ok"] == 1 and stats["skipped"] == 1 and stats["failed"] == 0 and stats["r2"] == "on"
     assert conn.sql[:3] == ["SET TRANSACTION READ ONLY", "SET LOCAL statement_timeout = '120s'", "SET LOCAL TimeZone = 'Asia/Taipei'"]
@@ -114,6 +116,17 @@ def test_run_read_only_writes_s3_and_r2_with_partial_metadata():
     assert r2put["Key"] == "site/static-rpc/get_global_event_month_202611.json"
     assert r2put["CacheControl"] == gem.CACHE_PARTIAL
     assert json.loads(s3put["Body"])["month"] == "2026-11"
+
+
+def test_final_month_rerun_when_r2_missing_even_if_s3_final():
+    key = "get_global_event_month_202610.json"
+    s3, r2 = FakeStore({"deploy-assets/static-rpc/" + key: {"partial": "false"}}), FakeStore()
+    stats = gem.run(["2026-10"], today=date(2026, 11, 24), conn=FakeConn(), s3=s3, r2=r2)
+    assert stats["ok"] == 1 and [p["Key"] for p in r2.s3.puts] == ["site/static-rpc/" + key]
+    # 兩邊都有定版檔才跳過
+    s3, r2 = FakeStore({"deploy-assets/static-rpc/" + key: {"partial": "false"}}), FakeStore({"site/static-rpc/" + key: {"partial": "false"}})
+    stats = gem.run(["2026-10"], today=date(2026, 11, 24), conn=FakeConn(), s3=s3, r2=r2)
+    assert stats["skipped"] == 1 and stats["ok"] == 0
 
 
 def test_run_failure_isolated(monkeypatch):
