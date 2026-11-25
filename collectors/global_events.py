@@ -1195,6 +1195,17 @@ def group_signal_priority(signals: Iterable[str]) -> int:
 _SECRET_LIKE = re.compile(r"(sk-or-[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._-]+)")
 
 
+def _redact_secrets(value: Any) -> Any:
+    """Recursively mask credential-looking strings in str/list/tuple/dict values."""
+    if isinstance(value, str):
+        return _SECRET_LIKE.sub("<REDACTED>", value)
+    if isinstance(value, dict):
+        return {key: _redact_secrets(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_secrets(item) for item in value]
+    return value
+
+
 class Stage1ContentRejected(Exception):
     """The provider's content inspection refused this exact cohort (HTTP 403)."""
 
@@ -1226,13 +1237,14 @@ def openrouter_error_summary(response: Any, limit: int = 300) -> dict[str, Any]:
             }
         )
         if metadata.get("reasons"):
-            summary["reasons"] = [str(item)[:80] for item in metadata["reasons"]][:5]
+            # Redact before truncating so a cut can't leave a partial credential.
+            summary["reasons"] = [
+                _redact_secrets(str(item))[:80] for item in metadata["reasons"]
+            ][:5]
     else:
         text = getattr(response, "text", "")
         summary["body"] = (text if isinstance(text, str) else "")[:limit]
-    for key, value in list(summary.items()):
-        if isinstance(value, str):
-            summary[key] = _SECRET_LIKE.sub("<REDACTED>", value)
+    summary = _redact_secrets(summary)
     return {key: value for key, value in summary.items() if value not in (None, "")}
 
 
