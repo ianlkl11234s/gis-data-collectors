@@ -3010,3 +3010,24 @@ def test_partial_success_with_many_rejections_does_not_freeze_cursor(
     assert "error" not in result
     assert result["handoff_manifest"]["routing"]["ai_rejected_count"] == 7
     assert collector._load_checkpoints()
+
+
+def test_openrouter_error_summary_redacts_credentials_in_reasons_and_provider_fields():
+    from collectors.global_events import openrouter_error_summary
+
+    response = _OpenRouterResponse(
+        403,
+        payload={
+            "error": {
+                "code": 403,
+                "message": "bad Bearer fixture_credential",
+                "metadata": {
+                    "provider_name": "sk-or-fixture_credential",
+                    "reasons": ["flagged Bearer fixture_credential", "sk-or-fixture_credential"],
+                },
+            }
+        },
+    )
+    text = json.dumps(openrouter_error_summary(response), ensure_ascii=False)
+    assert "fixture_credential" not in text
+    assert "<REDACTED>" in text
